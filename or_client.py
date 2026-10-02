@@ -4,6 +4,7 @@ import sys
 import time
 import base64
 import logging
+import os
 import threading
 from pathlib import Path
 from typing import Optional
@@ -22,17 +23,69 @@ def _get_base_dir() -> Path:
 BASE_DIR     = _get_base_dir()
 API_KEY_PATH = get_user_data_dir() / "config" / "api_keys.json"
 
+
+def normalize_api_key(value: str | None) -> str:
+    """Normalize common clipboard/paste variants without altering valid keys."""
+    key = (value or "").strip()
+    if key.lower().startswith("bearer "):
+        key = key[7:].strip()
+    if len(key) >= 2 and key[0] == key[-1] and key[0] in {"'", '"'}:
+        key = key[1:-1].strip()
+    return key
+
+
+def validate_api_key_format(value: str | None) -> tuple[bool, str]:
+    key = normalize_api_key(value)
+    if not key:
+        return False, "OpenRouter API key is empty."
+    if not key.startswith("sk-or-"):
+        return False, "OpenRouter keys should start with 'sk-or-'."
+    if any(ch.isspace() for ch in key):
+        return False, "OpenRouter API key contains whitespace."
+    return True, ""
+
+
 def _load_api_key() -> str:
+    """Load the file key first, then fall back to OPENROUTER_API_KEY."""
     try:
-        with open(API_KEY_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        key = data.get("openrouter_api_key", "").strip()
-        return key
-    except FileNotFoundError:
-        return ""
-    except Exception as e:
-        logger.warning(f"[OpenRouter] Failed to load API key: {e}")
-        return ""
+        if API_KEY_PATH.exists():
+            with open(API_KEY_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            key = normalize_api_key(data.get("openrouter_api_key"))
+            if key:
+                return key
+    except (OSError, json.JSONDecodeError, TypeError) as e:
+        logger.warning(f"[OpenRouter] Failed to load API key file: {e}")
+
+    return normalize_api_key(os.environ.get("OPENROUTER_API_KEY", ""))
+
+
+def save_api_key(value: str | None) -> tuple[bool, str]:
+    """Persist the OpenRouter key atomically while preserving other credentials."""
+    key = normalize_api_key(value)
+    if key:
+        ok, error = validate_api_key_format(key)
+        if not ok:
+            return False, error
+
+    API_KEY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        current: dict = {}
+        if API_KEY_PATH.exists():
+            with API_KEY_PATH.open("r", encoding="utf-8") as f:
+                loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    current = loaded
+        current["openrouter_api_key"] = key
+        temp_path = API_KEY_PATH.with_name(f".{API_KEY_PATH.name}.tmp")
+        with temp_path.open("w", encoding="utf-8", newline="\n") as f:
+            f.write(json.dumps(current, indent=4, ensure_ascii=False))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, API_KEY_PATH)
+        return True, ""
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return False, f"Could not save OpenRouter API key: {exc}"
 
 TEXT_MODELS: list[str] = [
     "nvidia/nemotron-3-super-120b-a12b:free",
@@ -92,6 +145,46 @@ class OpenRouterClient:
             "X-Title":       "Brahma Evo",
         }
 
+    def test_api_key(self, key: str | None = None) -> tuple[bool, str, dict]:
+        """Validate credentials against OpenRouter without consuming model inference."""
+        candidate = normalize_api_key(key) if key is not None else _load_api_key()
+        ok, error = validate_api_key_format(candidate)
+        if not ok:
+            return False, error, {}
+
+        headers = {
+            "Authorization": f"Bearer {candidate}",
+            "Accept": "application/json",
+            "HTTP-Referer": "https://github.com/brahma-ai",
+            "X-Title": "Brahma Evo",
+        }
+        try:
+            response = requests.get(
+                "https://openrouter.ai/api/v1/key",
+                headers=headers,
+                timeout=10,
+            )
+            if response.status_code == 200:
+                data = response.json() if response.content else {}
+                return True, "OpenRouter API key verified.", data if isinstance(data, dict) else {}
+            if response.status_code == 401:
+                return False, "OpenRouter rejected the API key (401 Unauthorized).", {}
+            if response.status_code == 403:
+                return False, "OpenRouter rejected the API key (403 Forbidden).", {}
+            if response.status_code == 429:
+                return False, "OpenRouter rate-limited the key check (429). Try again shortly.", {}
+            detail = ""
+            try:
+                payload = response.json()
+                detail = str(payload.get("error", {}).get("message", "")) if isinstance(payload, dict) else ""
+            except ValueError:
+                detail = ""
+            return False, f"OpenRouter key check failed (HTTP {response.status_code}){': ' + detail if detail else ''}.", {}
+        except requests.exceptions.Timeout:
+            return False, "OpenRouter key check timed out.", {}
+        except requests.exceptions.RequestException as exc:
+            return False, f"Could not reach OpenRouter: {exc}", {}
+
     def _refresh_api_key(self) -> None:
         """Reload the key when the credentials file changes without restarting."""
         key = _load_api_key()
@@ -139,8 +232,11 @@ class OpenRouterClient:
 
         if not self.api_key:
             raise PermissionError(
-                "[OpenRouter] API key is missing. Add a valid sk-or- key in config/api_keys.json."
+                "[OpenRouter] API key is missing. Add a valid sk-or- key in Settings or OPENROUTER_API_KEY."
             )
+        valid, error = validate_api_key_format(self.api_key)
+        if not valid:
+            raise PermissionError(f"[OpenRouter] {error}")
 
         for attempt in range(1, MAX_RETRIES_PER_MODEL + 1):
             try:
