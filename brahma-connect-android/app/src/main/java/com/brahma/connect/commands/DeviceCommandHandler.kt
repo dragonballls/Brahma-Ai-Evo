@@ -218,10 +218,11 @@ class DeviceCommandHandler(private val context: Context) {
     }
 
     private fun resolveFileTarget(path: String?): java.io.File {
-        val storage = android.os.Environment.getExternalStorageDirectory()
+        val storageRoot = android.os.Environment.getExternalStorageDirectory().canonicalFile
         if (path.isNullOrBlank() || path.equals("home", ignoreCase = true)) {
-            return storage
+            return storageRoot
         }
+
         val lower = path.lowercase().trim()
         val baseDir = when (lower) {
             "downloads" -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
@@ -229,9 +230,16 @@ class DeviceCommandHandler(private val context: Context) {
             "pictures" -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_PICTURES)
             "music" -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC)
             "movies", "videos" -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MOVIES)
-            else -> java.io.File(storage, path)
+            else -> java.io.File(storageRoot, path)
         }
-        return baseDir
+
+        val canonical = baseDir.canonicalFile
+        val rootPath = storageRoot.path
+        val candidatePath = canonical.path
+        if (candidatePath != rootPath && !candidatePath.startsWith(rootPath + java.io.File.separator)) {
+            throw SecurityException("Path must remain inside shared external storage.")
+        }
+        return canonical
     }
 
     private fun fileList(parameters: Map<String, Any?>): CommandResult {
@@ -240,22 +248,31 @@ class DeviceCommandHandler(private val context: Context) {
         if (!dir.exists() || !dir.isDirectory) {
             return CommandResult(false, errorCode = "NOT_FOUND", error = "Directory not found: ${dir.absolutePath}")
         }
-        val items = dir.listFiles()?.map { file ->
-            mapOf(
-                "name" to file.name,
-                "is_dir" to file.isDirectory,
-                "size" to file.length(),
-                "path" to file.absolutePath
-            )
-        } ?: emptyList()
+        val items = dir.listFiles()
+            ?.take(1000)
+            ?.map { file ->
+                mapOf(
+                    "name" to file.name,
+                    "is_dir" to file.isDirectory,
+                    "size" to file.length(),
+                    "path" to file.absolutePath
+                )
+            } ?: emptyList()
         return CommandResult(true, data = mapOf("items" to items, "path" to dir.absolutePath))
     }
 
     private fun fileRead(parameters: Map<String, Any?>): CommandResult {
         val path = parameters["path"]?.toString()
-        val file = resolveFileTarget(path)
+        val file = try {
+            resolveFileTarget(path)
+        } catch (e: SecurityException) {
+            return CommandResult(false, errorCode = "PATH_NOT_ALLOWED", error = e.message ?: "Path is not allowed.")
+        }
         if (!file.exists() || !file.isFile) {
             return CommandResult(false, errorCode = "NOT_FOUND", error = "File not found: ${file.absolutePath}")
+        }
+        if (file.length() > 8L * 1024L * 1024L) {
+            return CommandResult(false, errorCode = "FILE_TOO_LARGE", error = "Refusing to read files larger than 8 MB.")
         }
         return try {
             val content = file.readText()
@@ -269,7 +286,14 @@ class DeviceCommandHandler(private val context: Context) {
         val path = parameters["path"]?.toString()
         val content = parameters["content"]?.toString() ?: ""
         val append = parameters["append"] as? Boolean ?: false
-        val file = resolveFileTarget(path)
+        if (content.toByteArray(Charsets.UTF_8).size > 10 * 1024 * 1024) {
+            return CommandResult(false, errorCode = "FILE_TOO_LARGE", error = "Refusing to write files larger than 10 MB.")
+        }
+        val file = try {
+            resolveFileTarget(path)
+        } catch (e: SecurityException) {
+            return CommandResult(false, errorCode = "PATH_NOT_ALLOWED", error = e.message ?: "Path is not allowed.")
+        }
         return try {
             file.parentFile?.mkdirs()
             if (append) {
@@ -285,7 +309,14 @@ class DeviceCommandHandler(private val context: Context) {
 
     private fun fileDelete(parameters: Map<String, Any?>): CommandResult {
         val path = parameters["path"]?.toString()
-        val file = resolveFileTarget(path)
+        val file = try {
+            resolveFileTarget(path)
+        } catch (e: SecurityException) {
+            return CommandResult(false, errorCode = "PATH_NOT_ALLOWED", error = e.message ?: "Path is not allowed.")
+        }
+        if (file == android.os.Environment.getExternalStorageDirectory().canonicalFile) {
+            return CommandResult(false, errorCode = "PATH_NOT_ALLOWED", error = "Refusing to delete the external-storage root.")
+        }
         if (!file.exists()) {
             return CommandResult(false, errorCode = "NOT_FOUND", error = "File or directory not found: ${file.absolutePath}")
         }
