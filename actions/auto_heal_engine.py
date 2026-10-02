@@ -74,7 +74,6 @@ class TracebackAnalyzer:
         if not tb_text:
             return result
 
-        # Extract exception type and message from the last line
         lines = [line.strip() for line in tb_text.strip().splitlines() if line.strip()]
         if lines:
             last_line = lines[-1]
@@ -86,46 +85,59 @@ class TracebackAnalyzer:
                 result["exception_type"] = last_line
                 result["exception_message"] = ""
 
-        # Match all File "path", line X, in func entries
-        file_pattern = re.compile(r'File\s+["\']([^"\']+\.py)["\'],\s+line\s+(\d+)(?:,\s+in\s+([^\n\r]+))?', re.IGNORECASE)
-        matches = file_pattern.findall(tb_text)
+        file_pattern = re.compile(
+            r'File\s+["\']([^"\']+\.py)["\'],\s+line\s+(\d+)(?:,\s+in\s+([^\n\r]+))?',
+            re.IGNORECASE,
+        )
 
-        # Iterate in reverse (innermost / latest frame first) to find first-party codebase file
-        for raw_path, line_str, func_name in reversed(matches):
-            p = Path(raw_path)
-            # Skip third-party packages or virtualenvs
-            if "site-packages" in raw_path.lower() or ".venv" in raw_path.lower() or "lib\\python" in raw_path.lower():
+        base_resolved = BASE_DIR.resolve()
+        for raw_path, line_str, func_name in reversed(file_pattern.findall(tb_text)):
+            raw = raw_path.strip()
+            p = Path(raw)
+
+            # Never let Auto-Heal patch an arbitrary path supplied through a
+            # traceback. Relative paths are resolved against the application
+            # root; absolute paths must already live inside the application root.
+            candidate = p if p.is_absolute() else (BASE_DIR / p)
+            try:
+                resolved = candidate.resolve()
+                resolved.relative_to(base_resolved)
+            except (OSError, ValueError):
                 continue
 
-            # Check if file exists in our codebase
-            resolved = None
-            if (BASE_DIR / p).exists():
-                resolved = (BASE_DIR / p).resolve()
-            elif p.is_absolute() and p.exists():
-                resolved = p
-            else:
-                candidate = BASE_DIR / p.name
-                if candidate.exists():
-                    resolved = candidate
-                else:
-                    # Search inside subdirectories
-                    for sub in ("actions", "core", "agent", "services"):
-                        c2 = BASE_DIR / sub / p.name
-                        if c2.exists():
-                            resolved = c2
-                            break
+            lower_path = str(resolved).lower()
+            if "site-packages" in lower_path or ".venv" in lower_path:
+                continue
+            if resolved.suffix.lower() != ".py" or not resolved.exists():
+                continue
 
-            if resolved and resolved.exists():
-                # Check immunity
-                if resolved.name in PROTECTED_CORE_FILES:
-                    logger.warning(f"[AutoHeal] File '{resolved.name}' is core-protected and cannot be patched.")
-                    continue
+            rel = resolved.relative_to(base_resolved).as_posix()
+            if rel.startswith(("installer/", "build/", "dist/")):
+                continue
 
-                result["success"] = True
-                result["target_file"] = str(resolved.resolve())
-                result["line_number"] = int(line_str)
-                result["function_name"] = func_name.strip() if func_name else None
-                break
+            # Core entrypoints and the updater/runtime boundary are protected
+            # from autonomous hot-patching.
+            if rel in {
+                "main.py",
+                "ui.py",
+                "or_client.py",
+                "llm_client.py",
+                "updater.py",
+                "setup.py",
+                "requirements.txt",
+                "core/boot_sentry.py",
+                "core/auto_heal_engine.py",
+                "core/updater.py",
+                "core/updater_ota.py",
+            }:
+                logger.warning("[AutoHeal] Refusing to autonomously patch protected file '%s'.", rel)
+                continue
+
+            result["success"] = True
+            result["target_file"] = str(resolved)
+            result["line_number"] = int(line_str)
+            result["function_name"] = func_name.strip() if func_name else None
+            break
 
         return result
 
@@ -138,8 +150,7 @@ class SafetySandbox:
     @staticmethod
     def create_backup(file_path: Path) -> Path:
         BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
-        stamp = int(time.time())
-        backup_name = f"{file_path.stem}.bak_{stamp}{file_path.suffix}"
+        backup_name = f"{file_path.stem}.bak_{int(time.time())}_{uuid.uuid4().hex[:8]}{file_path.suffix}"
         backup_path = BACKUPS_DIR / backup_name
         shutil.copy2(file_path, backup_path)
         return backup_path
@@ -197,8 +208,12 @@ class SafetySandbox:
     def _save_history(history: List[Dict[str, Any]]) -> None:
         try:
             CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            with open(PATCH_HISTORY_FILE, "w", encoding="utf-8") as f:
+            temp_path = PATCH_HISTORY_FILE.with_name(f".{PATCH_HISTORY_FILE.name}.tmp")
+            with temp_path.open("w", encoding="utf-8", newline="\n") as f:
                 json.dump(history, f, indent=4)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, PATCH_HISTORY_FILE)
         except Exception as e:
             logger.error(f"[AutoHeal] Failed to save patch history: {e}")
 
@@ -313,25 +328,32 @@ class AutoHealEngine:
                 "message": f"Dry-run passed syntax validation for {target_path.name}.",
             }
 
-        # Create atomic backup
+        # Create a backup before changing source.
         backup_path = SafetySandbox.create_backup(target_path)
 
-        # Write patch to disk
+        # Write to a sibling temp file, compile that exact candidate, then replace
+        # the real source atomically. This prevents a crash/power loss from
+        # leaving a truncated Python module on disk.
+        temp_path = target_path.with_name(
+            f".{target_path.name}.{uuid.uuid4().hex[:8]}.tmp"
+        )
         try:
-            with open(target_path, "w", encoding="utf-8") as f:
+            with temp_path.open("w", encoding="utf-8", newline="\n") as f:
                 f.write(staged_source)
-        except Exception as e:
-            # Immediate rollback if write failed
-            shutil.copy2(backup_path, target_path)
-            return {"success": False, "message": f"File write failed, restored backup: {e}"}
+                f.flush()
+                os.fsync(f.fileno())
 
-        # Verify on-disk compilation via py_compile
-        try:
-            py_compile.compile(str(target_path), doraise=True)
-        except Exception as pyc_err:
-            logger.error(f"[AutoHeal] py_compile failed after write, rolling back: {pyc_err}")
-            shutil.copy2(backup_path, target_path)
-            return {"success": False, "message": f"Post-write compilation failed, rolled back: {pyc_err}"}
+            py_compile.compile(str(temp_path), doraise=True)
+            os.replace(temp_path, target_path)
+        except Exception as err:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return {
+                "success": False,
+                "message": f"Patch write/compile failed; original source left intact: {err}",
+            }
 
         patch_id = str(uuid.uuid4())[:8]
         entry = {
