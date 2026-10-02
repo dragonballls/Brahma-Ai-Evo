@@ -11,12 +11,6 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-import warnings
-with warnings.catch_warnings():
-    warnings.filterwarnings("ignore", category=FutureWarning)
-    import google.generativeai as genai
-
-
 def _base_dir() -> Path:
     return Path(__file__).resolve().parent
 
