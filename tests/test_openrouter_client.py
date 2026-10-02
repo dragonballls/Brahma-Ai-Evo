@@ -81,3 +81,24 @@ def test_model_pool_puts_free_router_first(monkeypatch):
     pool = client._model_pool()
     assert pool[0] == "openrouter/free"
     assert "meta-llama/llama-3.3-70b-instruct:free" in pool
+
+
+def test_client_propagates_authentication_error(monkeypatch):
+    response = Mock()
+    response.status_code = 401
+    response.content = b'{"error":{"message":"Invalid API key"}}'
+
+    def fake_post(*args, **kwargs):
+        return response
+
+    monkeypatch.setattr(or_client.requests, "post", fake_post)
+    monkeypatch.setattr(or_client, "_load_api_key", lambda: "sk-or-v1-invalid")
+
+    client = or_client.OpenRouterClient()
+    try:
+        client._call("openrouter/free", [{"role": "user", "content": "hello"}])
+    except PermissionError as exc:
+        assert "401" in str(exc)
+        assert "API key" in str(exc)
+    else:
+        raise AssertionError("Expected PermissionError for HTTP 401")
