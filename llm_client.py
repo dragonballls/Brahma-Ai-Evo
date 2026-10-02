@@ -3,6 +3,7 @@ import json
 import logging
 import requests
 from pathlib import Path
+from memory import config_manager
 from typing import Optional
 from or_client import client as openrouter_client
 
@@ -26,11 +27,14 @@ class UnifiedAIClient:
 
     def reload_settings(self):
         try:
-            with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            data = config_manager.load_settings()
             self._provider = data.get("default_ai_provider", "OpenRouter")
-            self._local_url = data.get("local_ai_url", "http://localhost:11434/v1").rstrip("/")
-            self._local_model = data.get("local_ai_model", "llama3.2")
+            self._local_url = str(
+                data.get("local_ai_url", "http://localhost:11434/v1")
+            ).strip().rstrip("/")
+            self._local_model = str(
+                data.get("local_ai_model", "qwen2.5:3b")
+            ).strip() or "qwen2.5:3b"
         except Exception as e:
             logger.error(f"[LLM Client] Failed to load settings: {e}")
 
