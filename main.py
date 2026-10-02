@@ -4843,6 +4843,23 @@ class BrahmaLive:
             response={"result": result}
         )
 
+    def _enqueue_realtime_audio(self, packet: dict) -> None:
+        """Keep realtime audio bounded; drop the oldest stale frame under backpressure."""
+        queue = self.out_queue
+        if queue is None:
+            return
+        try:
+            queue.put_nowait(packet)
+        except asyncio.QueueFull:
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            try:
+                queue.put_nowait(packet)
+            except asyncio.QueueFull:
+                pass
+
     async def _serve_dashboard(self):
         if self._dashboard is None:
             self.ui.write_log("ERR: Mobile Connect disabled because dashboard dependencies are missing.")
@@ -4883,8 +4900,13 @@ class BrahmaLive:
 
     async def _send_realtime(self):
         while True:
-            msg = await self.out_queue.get()
-            await self.session.send_realtime_input(media=msg)
+            queue = self.out_queue
+            session = self.session
+            if queue is None or session is None:
+                await asyncio.sleep(0.05)
+                continue
+            msg = await queue.get()
+            await session.send_realtime_input(media=msg)
 
     async def _listen_audio(self):
         print("[BRAHMA EVO] 🎤 Mic started")
@@ -4918,7 +4940,7 @@ class BrahmaLive:
             if getattr(self, "_ptt_enabled", False) and not getattr(self, "_ptt_held", False):
                 data = np.zeros_like(indata).tobytes()
                 loop.call_soon_threadsafe(
-                    self.out_queue.put_nowait,
+                    self._enqueue_realtime_audio,
                     {"data": data, "mime_type": "audio/pcm"}
                 )
                 return
@@ -4974,7 +4996,7 @@ class BrahmaLive:
                         data = np.zeros_like(indata).tobytes()
                     
                 loop.call_soon_threadsafe(
-                    self.out_queue.put_nowait,
+                    self._enqueue_realtime_audio,
                     {"data": data, "mime_type": "audio/pcm"}
                 )
 
@@ -5136,7 +5158,6 @@ class BrahmaLive:
                 except Exception:
                     pass
             asyncio.create_task(self._consume_remote_commands())
-            asyncio.create_task(self._relay_phone_audio())
         try:
             self.ui.boot_set_progress(36, "Initializing AI client")
         except Exception:
@@ -5160,7 +5181,9 @@ class BrahmaLive:
                         self.session        = session
                         self._loop          = asyncio.get_event_loop()
                         self.audio_in_queue = asyncio.Queue()
-                        self.out_queue      = asyncio.Queue()  # Fix: removed maxsize=10 to prevent dropping packets
+                        # ~1.28 seconds of 40 ms audio frames bounds memory during transient
+                        # network backpressure while keeping enough continuity for Live API audio.
+                        self.out_queue      = asyncio.Queue(maxsize=32)
                         
                         print("[BRAHMA EVO] ✅ Connected.")
                         try:
