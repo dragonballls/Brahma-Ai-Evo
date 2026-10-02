@@ -130,6 +130,36 @@ def _build_sandbox() -> dict:
     return sandbox
 
 
+def _validate_generated_desktop_code(code: str) -> tuple[bool, str]:
+    """Reject imports, dynamic execution, OS APIs, and path mutation."""
+    try:
+        tree = ast.parse(code, filename="<brahma_desktop>")
+    except SyntaxError as exc:
+        return False, f"Syntax error on line {exc.lineno}: {exc.msg}"
+
+    banned_names = {
+        "exec", "eval", "compile", "__import__", "open",
+        "ctypes", "subprocess", "importlib", "os",
+    }
+    banned_attributes = {
+        "write_text", "write_bytes", "unlink", "rmdir", "mkdir",
+        "touch", "rename", "replace", "chmod", "lchmod",
+        "symlink_to", "hardlink_to", "open",
+    }
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            return False, "Import statements are not allowed."
+        if isinstance(node, ast.Name) and node.id in banned_names:
+            return False, f"Prohibited name '{node.id}'."
+        if isinstance(node, ast.Attribute):
+            if node.attr.startswith("__"):
+                return False, "Dunder attribute access is not allowed."
+            if node.attr in banned_attributes:
+                return False, f"Path mutation '{node.attr}' is not allowed."
+
+    return True, ""
+
 def _execute_generated_code(code: str, player=None) -> str:
     if not code or code.strip() == "UNSAFE":
         return "This action cannot be performed safely."
@@ -138,6 +168,10 @@ def _execute_generated_code(code: str, player=None) -> str:
     if code.startswith("```"):
         lines = code.split("\n")
         code  = "\n".join(lines[1:-1]).strip()
+
+    valid, error = _validate_generated_desktop_code(code)
+    if not valid:
+        return f"This action was blocked by the desktop safety policy: {error}"
 
     sandbox      = _build_sandbox()
     output_lines = []
