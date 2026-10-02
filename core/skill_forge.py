@@ -170,12 +170,10 @@ class SkillForge:
         feature_py_file = features_dir / f"{actual_name}.py"
         target_dir = features_dir / actual_name
         if feature_py_file.exists() or target_dir.exists():
-            existing_manifest = target_dir / "manifest.json"
-            if not (existing_manifest.exists() and actual_name in DynamicToolRegistry._skills):
-                return {
-                    "success": False,
-                    "message": f"Feature name '{actual_name}' already exists; refusing to overwrite it.",
-                }
+            return {
+                "success": False,
+                "message": f"Feature name '{actual_name}' already exists; refusing to overwrite it.",
+            }
 
         try:
             temp_feature = feature_py_file.with_name(f".{feature_py_file.name}.tmp")
