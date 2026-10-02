@@ -175,16 +175,35 @@ class SkillCrucible:
 
         missing: list[str] = []
         for dep in sorted(set(dependencies)):
-            check_script = f"import {dep}"
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", dep):
+                missing.append(dep)
+                continue
+
+            # Keep the generated dependency name out of executable source code.
+            # Pass it as argv data instead, preventing import-check injection.
+            check_script = (
+                "import importlib.util, sys; "
+                "raise SystemExit(0 if importlib.util.find_spec(sys.argv[1]) else 1)"
+            )
+            argv = [_get_python_executable(), "-c", check_script, dep]
             if dep == "speedtest":
-                check_script = "import speedtest; assert hasattr(speedtest, 'Speedtest')"
+                argv = [
+                    _get_python_executable(), "-c",
+                    "import speedtest; raise SystemExit(0 if hasattr(speedtest, 'Speedtest') else 1)",
+                ]
             elif dep == "PIL":
-                check_script = "import PIL.Image"
+                argv = [
+                    _get_python_executable(), "-c",
+                    "import PIL.Image",
+                ]
             elif dep == "cv2":
-                check_script = "import cv2; assert hasattr(cv2, 'imread')"
+                argv = [
+                    _get_python_executable(), "-c",
+                    "import cv2; raise SystemExit(0 if hasattr(cv2, 'imread') else 1)",
+                ]
             try:
                 proc = subprocess.run(
-                    [_get_python_executable(), "-c", check_script],
+                    argv,
                     capture_output=True,
                     text=True,
                     timeout=5,
