@@ -288,9 +288,9 @@ class OpenRouterClient:
         self._refresh_api_key()
 
         payload: dict = {
-            "model":       model,
-            "messages":    messages,
-            "max_tokens":  max_tokens,
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
             "temperature": temperature,
         }
         if response_format:
@@ -315,14 +315,15 @@ class OpenRouterClient:
 
                 if resp.status_code == 401:
                     raise PermissionError(
-                        f"[OpenRouter] Authentication failed for model {model}. "
-                        "Check your API key in config/api_keys.json."
+                        "[OpenRouter] Authentication failed (401 Unauthorized). "
+                        "The saved API key may be invalid, revoked, expired, or malformed. "
+                        "Open Settings → OpenRouter → Test Connection."
                     )
 
                 if resp.status_code == 403:
                     raise PermissionError(
-                        f"[OpenRouter] Access denied for model {model} (HTTP 403). "
-                        "Check your account permissions and model access."
+                        f"[OpenRouter] Access denied (403 Forbidden) for model {model}. "
+                        "The API key is valid-looking but the key/model access was rejected."
                     )
 
                 if resp.status_code == 429:
@@ -330,26 +331,51 @@ class OpenRouterClient:
                     return None
 
                 if resp.status_code == 200:
-                    data    = resp.json()
-                    content = (
-                        data.get("choices", [{}])[0]
-                            .get("message", {})
-                            .get("content", "")
-                    )
+                    try:
+                        data = resp.json()
+                    except ValueError as exc:
+                        logger.warning(f"[OpenRouter] {model} returned invalid JSON: {exc}")
+                        return None
+                    choices = data.get("choices") if isinstance(data, dict) else None
+                    message = choices[0].get("message", {}) if isinstance(choices, list) and choices else {}
+                    content = message.get("content", "") if isinstance(message, dict) else ""
                     return content.strip() if content else None
+
+                detail = ""
+                try:
+                    payload_json = resp.json()
+                    if isinstance(payload_json, dict):
+                        err = payload_json.get("error")
+                        if isinstance(err, dict):
+                            detail = str(err.get("message") or "").strip()
+                except ValueError:
+                    detail = ""
 
                 logger.warning(
                     f"[OpenRouter] {model} → HTTP {resp.status_code} "
                     f"(attempt {attempt}/{MAX_RETRIES_PER_MODEL})"
+                    + (f": {detail[:300]}" if detail else "")
                 )
 
+                # Client-side validation/request errors are model-specific; don't
+                # waste another identical retry, just let the fallback pool continue.
+                if 400 <= resp.status_code < 500:
+                    return None
+
+            except PermissionError:
+                # Authentication/authorization errors must reach _call_with_fallback
+                # so Brahma reports the actual credential problem instead of hiding it.
+                raise
             except requests.exceptions.Timeout:
                 logger.warning(
                     f"[OpenRouter] {model} → Timeout "
                     f"(attempt {attempt}/{MAX_RETRIES_PER_MODEL})"
                 )
-            except Exception as e:
-                logger.error(f"[OpenRouter] {model} → Unexpected error: {e}")
+            except requests.exceptions.RequestException as exc:
+                logger.warning(
+                    f"[OpenRouter] {model} → Network error "
+                    f"(attempt {attempt}/{MAX_RETRIES_PER_MODEL}): {exc}"
+                )
 
             if attempt < MAX_RETRIES_PER_MODEL:
                 time.sleep(RETRY_DELAY)
