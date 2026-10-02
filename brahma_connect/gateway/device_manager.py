@@ -43,11 +43,9 @@ class DeviceManager:
             self.registry_path.parent.mkdir(parents=True, exist_ok=True)
             temp_path = self.registry_path.with_name(f".{self.registry_path.name}.tmp")
             try:
-                temp_path.write_text(
-                    json.dumps(payload, indent=2, ensure_ascii=False),
-                    encoding="utf-8",
-                )
-                with temp_path.open("r", encoding="utf-8") as handle:
+                with temp_path.open("w", encoding="utf-8") as handle:
+                    handle.write(json.dumps(payload, indent=2, ensure_ascii=False))
+                    handle.flush()
                     os.fsync(handle.fileno())
                 os.replace(temp_path, self.registry_path)
             except OSError:
