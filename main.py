@@ -1,19 +1,34 @@
 from core.user_paths import get_user_data_dir
 import os
 
-# Hardware acceleration & WebGL flags for smooth 180fps+ rendering in Chromium
-os.environ.setdefault(
-    "QTWEBENGINE_CHROMIUM_FLAGS",
-    "--enable-gpu-rasterization --enable-zero-copy --ignore-gpu-blocklist --enable-accelerated-2d-canvas --enable-webgl --enable-webgl2-compute-context --disable-frame-rate-limit --disable-gpu-vsync --num-raster-threads=4 --use-angle=d3d11 --disable-gpu-driver-bug-workarounds"
+# Conservative Chromium defaults: use driver-managed frame pacing. The aggressive
+# unlimited-FPS/no-vsync flags are opt-in for experimental holographic rendering.
+_WEBENGINE_FLAGS = (
+    "--enable-gpu-rasterization "
+    "--enable-zero-copy "
+    "--enable-accelerated-2d-canvas "
+    "--enable-webgl "
+    "--enable-webgl2 "
+    "--use-angle=d3d11"
 )
+if os.environ.get("BRAHMA_EXPERIMENTAL_HOLO_RENDER") == "1":
+    _WEBENGINE_FLAGS += (
+        " --ignore-gpu-blocklist"
+        " --disable-frame-rate-limit"
+        " --disable-gpu-vsync"
+        " --num-raster-threads=4"
+        " --disable-gpu-driver-bug-workarounds"
+    )
+os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", _WEBENGINE_FLAGS)
 
 try:
     from PyQt6.QtCore import QCoreApplication, Qt
     from PyQt6.QtGui import QSurfaceFormat
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
-    fmt = QSurfaceFormat.defaultFormat()
-    fmt.setSwapInterval(0)
-    QSurfaceFormat.setDefaultFormat(fmt)
+    if os.environ.get("BRAHMA_EXPERIMENTAL_HOLO_RENDER") == "1":
+        fmt = QSurfaceFormat.defaultFormat()
+        fmt.setSwapInterval(0)
+        QSurfaceFormat.setDefaultFormat(fmt)
 except Exception:
     pass
 
@@ -121,17 +136,24 @@ BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = get_user_data_dir() / "config" / "api_keys.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
 STARTUP_LOG     = Path(os.environ.get("LOCALAPPDATA", str(BASE_DIR))) / "Brahma Evo" / "startup.log"
-LIVE_MODEL          = "models/gemini-2.5-flash-native-audio-preview-12-2025"
+LIVE_MODEL          = os.environ.get("BRAHMA_LIVE_MODEL") or config_manager.get_setting("live_model", "gemini-3.8-live")
 CHANNELS            = 1
 SEND_SAMPLE_RATE    = 16000
 RECEIVE_SAMPLE_RATE = 24000
-CHUNK_SIZE          = 1024
+CHUNK_SIZE          = 640
 LIVE_CONNECT_TIMEOUT = 12
 
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    try:
+        with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        key = str(data.get("gemini_api_key", "") or "").strip()
+        if key:
+            return key
+    except (OSError, json.JSONDecodeError, TypeError):
+        pass
+    return str(os.environ.get("GEMINI_API_KEY", "") or "").strip()
 
 
 def _is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
