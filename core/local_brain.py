@@ -76,11 +76,15 @@ class LocalBrain:
         """Reload the user-selected local endpoint/model when settings changed."""
         try:
             settings = config_manager.load_settings()
-            endpoint = settings.get("local_ai_url", self.endpoint)
-            model = settings.get("local_ai_model", self.default_model)
-            self.endpoint = self._normalize_endpoint(endpoint)
+            endpoint = self._normalize_endpoint(settings.get("local_ai_url", self.endpoint))
+            model = str(settings.get("local_ai_model", self.default_model) or "").strip()
+            if endpoint != self.endpoint:
+                with self._cache_lock:
+                    self._cached_models = []
+                    self._models_cached_at = 0.0
+            self.endpoint = endpoint
             if model:
-                self.default_model = str(model).strip()
+                self.default_model = model
         except Exception:
             # Keep the last known-good runtime configuration.
             pass
@@ -138,8 +142,11 @@ class LocalBrain:
             )
             with urllib.request.urlopen(request, timeout=2.5) as response:
                 data = self._decode_json_response(response)
+            raw_models = data.get("models")
+            if not isinstance(raw_models, list):
+                raw_models = data.get("data", [])
             models = []
-            for model in data.get("models", []) or []:
+            for model in raw_models or []:
                 if isinstance(model, dict):
                     name = model.get("name") or model.get("id")
                     if name:
