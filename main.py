@@ -5171,8 +5171,24 @@ class BrahmaLive:
         except Exception:
             pass
 
+        gemini_key = _get_api_key()
+        app_settings = config_manager.load_settings()
+        configured_provider = str(app_settings.get("default_ai_provider", "Gemini") or "Gemini")
+
+        # OpenRouter/Local can operate without a Gemini key for text commands.
+        # Do not enter a pointless reconnect loop when Gemini Live is unavailable.
+        if not gemini_key and configured_provider in {"OpenRouter", "Local"}:
+            provider_label = "OpenRouter" if configured_provider == "OpenRouter" else "Local AI"
+            self.ui.write_log(
+                f"SYS: {provider_label} text mode active. Gemini API key is not configured, "
+                "so native Gemini Live voice is disabled."
+            )
+            self.ui.set_state("LISTENING")
+            while True:
+                await asyncio.sleep(3600)
+
         client = genai.Client(
-            api_key=_get_api_key(),
+            api_key=gemini_key,
             http_options={"api_version": "v1beta"}
         )
 
