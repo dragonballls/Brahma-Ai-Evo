@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,9 +37,25 @@ class DeviceManager:
             }
 
     def save(self) -> None:
+        """Atomically persist the device registry to avoid partial JSON files."""
         with self._lock:
             payload = {"devices": {device_id: record.to_dict() for device_id, record in self._devices.items()}}
-            self.registry_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+            self.registry_path.parent.mkdir(parents=True, exist_ok=True)
+            temp_path = self.registry_path.with_name(f".{self.registry_path.name}.tmp")
+            try:
+                temp_path.write_text(
+                    json.dumps(payload, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                with temp_path.open("r", encoding="utf-8") as handle:
+                    os.fsync(handle.fileno())
+                os.replace(temp_path, self.registry_path)
+            except OSError:
+                try:
+                    temp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                raise
 
     def list_devices(self) -> list[dict[str, Any]]:
         with self._lock:
@@ -139,6 +156,12 @@ class DeviceManager:
             self.save()
 
     def touch(self, device_id: str, *, ip: str = "") -> None:
+        """Update transient connection state in memory.
+
+        Last-seen heartbeats can be frequent; persisting the full registry on
+        every touch creates unnecessary disk I/O. Durable writes occur on
+        connect, disconnect, revoke, rename, capability changes, and removal.
+        """
         with self._lock:
             record = self._devices.get(str(device_id))
             if record is None:
@@ -147,7 +170,6 @@ class DeviceManager:
             record.online = True
             if ip:
                 record.ip = ip
-            self.save()
 
     def update_capabilities(self, device_id: str, capabilities: list[str], permissions: list[str] | None = None) -> DeviceRecord | None:
         with self._lock:
