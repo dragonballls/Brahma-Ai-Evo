@@ -7,11 +7,26 @@ import html as html_lib
 import math
 import os
 
-# Hardware acceleration & WebGL flags for smooth 180fps+ rendering in Chromium
-os.environ.setdefault(
-    "QTWEBENGINE_CHROMIUM_FLAGS",
-    "--enable-gpu-rasterization --enable-zero-copy --ignore-gpu-blocklist --enable-accelerated-2d-canvas --enable-webgl --enable-webgl2-compute-context --disable-frame-rate-limit --disable-gpu-vsync --num-raster-threads=4 --use-angle=d3d11 --disable-gpu-driver-bug-workarounds"
+# Conservative Chromium defaults: let the graphics driver pace frames and manage
+# worker counts. The previous forced 180 FPS/no-vsync configuration could waste
+# CPU/GPU time and increase heat/memory pressure on ordinary displays.
+_WEBENGINE_FLAGS = (
+    "--enable-gpu-rasterization "
+    "--enable-zero-copy "
+    "--enable-accelerated-2d-canvas "
+    "--enable-webgl "
+    "--enable-webgl2 "
+    "--use-angle=d3d11"
 )
+if os.environ.get("BRAHMA_EXPERIMENTAL_HOLO_RENDER") == "1":
+    _WEBENGINE_FLAGS += (
+        " --ignore-gpu-blocklist"
+        " --disable-frame-rate-limit"
+        " --disable-gpu-vsync"
+        " --num-raster-threads=4"
+        " --disable-gpu-driver-bug-workarounds"
+    )
+os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", _WEBENGINE_FLAGS)
 
 import platform
 import random
