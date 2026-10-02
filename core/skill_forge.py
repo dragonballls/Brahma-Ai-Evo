@@ -3,7 +3,8 @@ The Skill Forge: Autonomous Capability Synthesis Engine
 Part of Project Ultron for Brahma AI.
 
 Transforms natural language goals into fully architected, tested,
-and hot-pluggable Python skills for Brahma AI.
+and hot-pluggable Python skills for Brahma AI. Generated code is validated before
+it is written to the feature registry.
 """
 
 from __future__ import annotations
