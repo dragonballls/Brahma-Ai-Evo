@@ -10,6 +10,33 @@ from .websocket import ConnectionHub
 
 
 class CommandRouter:
+    # Canonical requirements enforced by the gateway. A remote caller may add
+    # requirements, but can never remove these action-level requirements.
+    ACTION_CAPABILITIES = {
+        "launch_app": ["launch_app"],
+        "close_app": ["launch_app"],
+        "open_url": ["launch_app"],
+        "capture_screen": ["screen_capture"],
+        "take_photo": ["camera"],
+        "clipboard_get": ["clipboard"],
+        "clipboard_set": ["clipboard"],
+        "send_file": ["files"],
+        "receive_file": ["files"],
+        "media_play": ["media"],
+        "media_pause": ["media"],
+        "volume_set": ["media"],
+        "notification_list": ["notifications"],
+        "get_battery": ["battery"],
+        "get_device_info": ["device_info"],
+        "mouse_move": ["mouse"],
+        "keyboard_type": ["keyboard"],
+        "ui_dump": ["accessibility"],
+        "ui_tap": ["accessibility"],
+        "ui_swipe": ["accessibility"],
+        "ui_type": ["accessibility"],
+        "unlock_phone": ["accessibility"],
+    }
+
     def __init__(self, device_manager: DeviceManager, hub: ConnectionHub, capability_manager: CapabilityManager):
         self.device_manager = device_manager
         self.hub = hub
@@ -53,7 +80,11 @@ class CommandRouter:
                 "error_code": "DEVICE_OFFLINE",
             }
 
-        required = parameters.pop("required_capabilities", [])
+        caller_required = parameters.pop("required_capabilities", [])
+        canonical_required = self.ACTION_CAPABILITIES.get(
+            str(action or "").strip().lower(), []
+        )
+        required = list(dict.fromkeys([*canonical_required, *caller_required]))
         missing = self.capability_manager.missing(device.capabilities, required)
         if missing:
             return {
