@@ -10567,6 +10567,8 @@ class SettingsHubPage(QWidget):
         lay.addStretch(2)
 
 class SystemConnectivityPage(QWidget):
+    local_models_ready = pyqtSignal(list, bool, str)
+
     def __init__(self, controller=None, parent=None):
         super().__init__(parent)
         self._controller = controller
@@ -10654,6 +10656,49 @@ class SystemConnectivityPage(QWidget):
     def set_controller(self, controller):
         self._controller = controller
         self.refresh()
+
+    def _apply_local_models(self, models: list, online: bool, error: str = ""):
+        """Apply worker results on the Qt GUI thread."""
+        models = [str(x) for x in (models or []) if str(x).strip()]
+        self._local_status_lbl.setText(
+            "🟢 Local Engine Online" if online else "🔴 Local Engine Offline"
+        )
+        self._local_status_lbl.setStyleSheet(
+            "color: #00ffaa; font-weight: bold;"
+            if online else "color: #ff5555; font-weight: bold;"
+        )
+        saved_model = self._load_app_settings().get("local_ai_model", "qwen2.5:3b")
+        self._local_model_combo.blockSignals(True)
+        self._local_model_combo.clear()
+        self._local_model_combo.addItems(models or ["qwen2.5:3b"])
+        self._local_model_combo.setCurrentText(saved_model)
+        self._local_model_combo.blockSignals(False)
+        if hasattr(self, "_local_pull_btn"):
+            self._local_pull_btn.setEnabled(True)
+            self._local_pull_btn.setText(
+                "📥 Pull Qwen 2.5 (3B)" if not error else "📥 Retry Qwen 2.5 (3B)"
+            )
+        if error and self._ctrl() and hasattr(self._ctrl(), "write_log"):
+            self._ctrl().write_log(f"ERR: Local model operation failed: {error}")
+
+    def _refresh_local_models_async(self):
+        """Probe the local runtime off the GUI thread to keep settings responsive."""
+        self._local_status_lbl.setText("🟡 Checking local engine…")
+        self._local_status_lbl.setStyleSheet("color: #ffd166; font-weight: bold;")
+
+        def _worker():
+            try:
+                online = local_brain.is_available(force=True)
+                models = local_brain.list_installed_models()
+                self.local_models_ready.emit(models, online, "")
+            except Exception as exc:
+                self.local_models_ready.emit([], False, str(exc))
+
+        threading.Thread(
+            target=_worker,
+            daemon=True,
+            name="brahma-local-model-status",
+        ).start()
 
     def _ctrl(self):
         return self._controller
@@ -11098,71 +11143,77 @@ class SystemConnectivityPage(QWidget):
         local_lay = QVBoxLayout(self._local_ai_widget)
         local_lay.setContentsMargins(0, 8, 0, 8)
         local_lay.setSpacing(10)
-        
-        # Engine Status Row
+
         status_row = QHBoxLayout()
-        is_online = local_brain.is_available()
-        status_text = "🟢 Local Engine Online (Ollama)" if is_online else "🔴 Local Engine Offline"
-        self._local_status_lbl = QLabel(status_text)
-        self._local_status_lbl.setStyleSheet("color: #00ffaa; font-weight: bold;" if is_online else "color: #ff5555; font-weight: bold;")
         status_row.addWidget(QLabel("Engine Status:"))
+        self._local_status_lbl = QLabel("🟡 Checking local engine…")
+        self._local_status_lbl.setStyleSheet("color: #ffd166; font-weight: bold;")
         status_row.addWidget(self._local_status_lbl, 1)
         local_lay.addLayout(status_row)
 
-        # Server URL
         url_row = QHBoxLayout()
         url_row.addWidget(QLabel("Local Server URL"))
-        self._local_url_input = QLineEdit(self._load_app_settings().get("local_ai_url", "http://localhost:11434/v1"))
-        self._local_url_input.textChanged.connect(lambda t: self._set_setting("local_ai_url", t))
+        self._local_url_input = QLineEdit(
+            self._load_app_settings().get("local_ai_url", "http://localhost:11434/v1")
+        )
+        # Persist on commit rather than once per keystroke.
+        self._local_url_input.editingFinished.connect(
+            lambda: self._set_setting("local_ai_url", self._local_url_input.text().strip())
+        )
         url_row.addWidget(self._local_url_input, 1)
         local_lay.addLayout(url_row)
-        
-        # Model Selection with Combo Box & Refresh
+
         model_row = QHBoxLayout()
         model_row.addWidget(QLabel("Local Model"))
         self._local_model_combo = QComboBox()
         self._local_model_combo.setEditable(True)
-        
-        def _populate_models():
-            self._local_model_combo.clear()
-            installed = local_brain.list_installed_models()
-            if installed:
-                self._local_model_combo.addItems(installed)
-            else:
-                self._local_model_combo.addItem("qwen2.5:3b")
-            saved_model = self._load_app_settings().get("local_ai_model", "qwen2.5:3b")
-            self._local_model_combo.setCurrentText(saved_model)
-            online = local_brain.is_available()
-            self._local_status_lbl.setText("🟢 Local Engine Online (Ollama)" if online else "🔴 Local Engine Offline")
-            self._local_status_lbl.setStyleSheet("color: #00ffaa; font-weight: bold;" if online else "color: #ff5555; font-weight: bold;")
-
-        _populate_models()
-        self._local_model_combo.currentTextChanged.connect(lambda t: self._set_setting("local_ai_model", t))
+        self._local_model_combo.currentTextChanged.connect(
+            lambda t: self._set_setting("local_ai_model", t.strip())
+        )
         model_row.addWidget(self._local_model_combo, 1)
 
         btn_refresh = QPushButton("🔄 Refresh")
         btn_refresh.setFixedWidth(85)
-        btn_refresh.setStyleSheet("background: rgba(255, 255, 255, 0.1); border-radius: 4px; padding: 5px;")
-        btn_refresh.clicked.connect(_populate_models)
+        btn_refresh.setStyleSheet(
+            "background: rgba(255, 255, 255, 0.1); border-radius: 4px; padding: 5px;"
+        )
+        btn_refresh.clicked.connect(self._refresh_local_models_async)
         model_row.addWidget(btn_refresh)
         local_lay.addLayout(model_row)
 
-        # 1-Click Model Download Helper Button
         action_row = QHBoxLayout()
         btn_pull = QPushButton("📥 Pull Qwen 2.5 (3B)")
-        btn_pull.setStyleSheet("background: rgba(0, 255, 170, 0.15); color: #00ffaa; border: 1px solid #00ffaa; border-radius: 4px; padding: 6px;")
+        btn_pull.setStyleSheet(
+            "background: rgba(0, 255, 170, 0.15); color: #00ffaa; "
+            "border: 1px solid #00ffaa; border-radius: 4px; padding: 6px;"
+        )
+        self._local_pull_btn = btn_pull
+
         def _on_download_click():
-            btn_pull.setText("⏳ Downloading model in background...")
+            btn_pull.setText("⏳ Downloading model in background…")
             btn_pull.setEnabled(False)
-            local_brain.pull_model_async("qwen2.5:3b", lambda chunk: _populate_models())
+
+            def _pull_progress(chunk):
+                if isinstance(chunk, dict) and chunk.get("error"):
+                    self.local_models_ready.emit([], False, str(chunk["error"]))
+                elif isinstance(chunk, dict) and chunk.get("status") in {
+                    "success", "completed", "already existing"
+                }:
+                    self.local_models_ready.emit([], True, "")
+
+            local_brain.pull_model_async("qwen2.5:3b", _pull_progress)
+
         btn_pull.clicked.connect(_on_download_click)
         action_row.addWidget(btn_pull)
         local_lay.addLayout(action_row)
 
+        self.local_models_ready.connect(self._apply_local_models)
         self._local_ai_widget.setVisible(current_provider == "Local")
-        self._default_provider.currentTextChanged.connect(lambda t: self._local_ai_widget.setVisible(t == "Local"))
-        
-        lay1.addWidget(self._local_ai_widget)
+        self._default_provider.currentTextChanged.connect(
+            lambda t: self._local_ai_widget.setVisible(t == "Local")
+        )
+        self._refresh_local_models_async()
+
         
         self._auto_switch_btn = self._mk_toggle("Automatically switch if a provider fails", bool(self._load_app_settings().get("auto_provider_switch", True)), self._toggle_auto_provider_switch)
         lay1.addWidget(self._auto_switch_btn)
