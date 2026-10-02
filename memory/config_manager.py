@@ -66,11 +66,18 @@ def _atomic_write(data: Dict[str, Any]) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     temp_path = SETTINGS_FILE.with_name(f".{SETTINGS_FILE.name}.tmp")
     payload = json.dumps(data, indent=4, ensure_ascii=False)
-    with temp_path.open("w", encoding="utf-8", newline="\n") as f:
-        f.write(payload)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(temp_path, SETTINGS_FILE)
+    try:
+        with temp_path.open("w", encoding="utf-8", newline="\n") as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, SETTINGS_FILE)
+    except OSError:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def save_settings(data: Dict[str, Any]) -> None:
