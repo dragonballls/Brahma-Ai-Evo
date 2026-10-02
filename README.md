@@ -6,9 +6,9 @@
 
 ### *The Self-Evolving, Multimodal Personal AI Desktop Environment*
 
-[![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12-blue?logo=python&logoColor=white)](https://python.org)
+[![Python](https://img.shields.io/badge/Python-3.12%20%7C%203.13-blue?logo=python&logoColor=white)](https://python.org)
 [![PyQt6](https://img.shields.io/badge/GUI-PyQt6%20%2B%20WebEngine-darkgreen?logo=qt&logoColor=white)](https://riverbankcomputing.com/software/pyqt/)
-[![Gemini 2.5](https://img.shields.io/badge/Model-Gemini%202.5%20Flash%20Native%20Audio-orange?logo=google&logoColor=white)](https://ai.google.dev/)
+[![Gemini 2.5](https://img.shields.io/badge/Model-Gemini%203.8%20Flash%20Native%20Audio-orange?logo=google&logoColor=white)](https://ai.google.dev/)
 [![MCP](https://img.shields.io/badge/Protocol-Model%20Context%20Protocol-purple)](https://modelcontextprotocol.io/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6?logo=windows&logoColor=white)](https://microsoft.com/windows)
 
@@ -33,7 +33,7 @@
   - Operating voltage safety callouts and ready-to-flash Arduino C++ firmware.
 
 ### 2. 🧬 Project Ultron — Self-Evolving Autonomous Skill Crucible
-- **On-the-Fly Code Synthesis**: When asked to execute a task outside its built-in toolkit, Brahma identifies the capability gap, writes a brand-new Python tool directly into `features/`, tests it inside an isolated sandbox ("The Crucible"), and auto-registers it dynamically without restarting the application.
+- **On-the-Fly Code Synthesis**: When asked to execute a task outside its built-in toolkit, Brahma identifies the capability gap, writes a brand-new Python tool into `features/`, verifies it through the Crucible, and auto-registers it dynamically without restarting the application.
 - **Persistent Vault**: All forged skills are saved in your `features/` directory and hot-reloaded automatically.
 
 ### 3. 🛡️ Proactive Auto-Heal Engine
@@ -72,7 +72,7 @@
 ## 🛠️ Core Capabilities
 
 ### 🎙️ Multimodal Native Audio & Vision
-- Sub-500ms low-latency conversation via Gemini 2.5 Flash Native Audio.
+- Low-latency bidirectional voice conversation through Gemini 3.8 Live.
 - Live webcam and desktop screen vision for real-time document analysis, code debugging, and hardware component recognition.
 
 ### 🖥️ Deep Windows Desktop Orchestration
@@ -103,7 +103,7 @@
 
 ### Prerequisites
 - **Windows 10 / 11** (64-bit)
-- **Python 3.11** or **Python 3.12**
+- **Python 3.12** or **Python 3.13**
 - **Git**
 - Working Microphone & Speakers (Webcam optional for vision)
 - **Google Gemini API Key** (Get from [Google AI Studio](https://aistudio.google.com/))
@@ -112,7 +112,7 @@
 
 1. **Clone the repository:**
    ```powershell
-   git clone https://github.com/titechprabhasolutions/Brahma-Ai-Evo.git
+   git clone https://github.com/dragonballls/Brahma-Ai-Evo.git
    cd Brahma-Ai-Evo
    ```
 
