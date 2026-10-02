@@ -1,3 +1,4 @@
+import ast
 #desktop.py
 import os
 import sys
@@ -30,6 +31,63 @@ def _get_desktop() -> Path:
             return Path(xdg)
     return Path.home() / "Desktop"
 
+class _ReadOnlyPath:
+    """Read-only Path facade for generated desktop code."""
+
+    def __init__(self, value):
+        self._path = Path(value).expanduser()
+
+    def __fspath__(self):
+        return str(self._path)
+
+    def __str__(self):
+        return str(self._path)
+
+    def __truediv__(self, other):
+        return _ReadOnlyPath(self._path / str(other))
+
+    @property
+    def parent(self):
+        return _ReadOnlyPath(self._path.parent)
+
+    @property
+    def name(self):
+        return self._path.name
+
+    @property
+    def suffix(self):
+        return self._path.suffix
+
+    def exists(self):
+        return self._path.exists()
+
+    def is_file(self):
+        return self._path.is_file()
+
+    def is_dir(self):
+        return self._path.is_dir()
+
+    def stat(self):
+        return self._path.stat()
+
+    def read_text(self, *args, **kwargs):
+        return self._path.read_text(*args, **kwargs)
+
+    def read_bytes(self):
+        return self._path.read_bytes()
+
+    def iterdir(self):
+        return [_ReadOnlyPath(item) for item in self._path.iterdir()]
+
+
+def _safe_home_path(value) -> Path:
+    candidate = value._path if isinstance(value, _ReadOnlyPath) else Path(value).expanduser().resolve()
+    home = Path.home().resolve()
+    if candidate != home and not candidate.is_relative_to(home):
+        raise PermissionError(f"Generated desktop code may only access paths inside {home}")
+    return candidate
+
+
 def _build_sandbox() -> dict:
     import time
 
@@ -38,14 +96,14 @@ def _build_sandbox() -> dict:
         "len": len, "str": str, "int": int, "float": float,
         "bool": bool, "list": list, "dict": dict, "tuple": tuple,
         "range": range, "enumerate": enumerate, "sorted": sorted,
-        "isinstance": isinstance, "hasattr": hasattr, "getattr": getattr,
+        "isinstance": isinstance,
         "max": max, "min": min, "sum": sum, "abs": abs,
         "zip": zip, "map": map, "filter": filter,
     }
 
     sandbox = {
         "__builtins__": safe_builtins,
-        "Path": Path,
+        "Path": _ReadOnlyPath,
         "time": time,
         "shutil": type("shutil", (), {
             "copy2":      shutil.copy2,
@@ -60,12 +118,9 @@ def _build_sandbox() -> dict:
 
     if _OS == "Windows":
         try:
-            import ctypes
             import winreg
-            sandbox["ctypes"] = ctypes
             sandbox["winreg"] = type("winreg", (), {
-                # Sadece okuma
-                "OpenKey":      winreg.OpenKey,
+                "OpenKey": winreg.OpenKey,
                 "QueryValueEx": winreg.QueryValueEx,
                 "HKEY_CURRENT_USER": winreg.HKEY_CURRENT_USER,
             })()
