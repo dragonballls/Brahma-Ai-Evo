@@ -12660,7 +12660,7 @@ class SystemConnectivityPage(QWidget):
             self.refresh()
             return
 
-        key = self._load_api_defaults().get("openrouter_api_key", "")
+        key = self._load_api_defaults().get("openrouter_api_key", "") or None
         button = self._provider_test_buttons.get("openrouter")
         label = self._provider_status_labels.get("openrouter")
         if button:
