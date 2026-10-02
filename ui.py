@@ -1408,29 +1408,44 @@ def _quote_cmd_arg(path: str) -> str:
     return f'"{path}"'
 
 
+def _pythonw_candidate() -> Path | None:
+    """Resolve pythonw from Brahma's venv or the active interpreter."""
+    venv_pythonw = BASE_DIR / ".venv" / "Scripts" / "pythonw.exe"
+    if venv_pythonw.exists():
+        return venv_pythonw
+
+    active = Path(sys.executable)
+    sibling = active.with_name("pythonw.exe")
+    if sibling.exists():
+        return sibling
+
+    import shutil
+    discovered = shutil.which("pythonw.exe") or shutil.which("pythonw")
+    return Path(discovered) if discovered else None
+
+
 def _hidden_launch_args(*extra_args: str) -> list[str]:
-    pythonw = Path(r"C:\Users\ravit\AppData\Local\Programs\Python\Python313\pythonw.exe")
-    python = Path(sys.executable)
     main_py = BASE_DIR / "main.py"
     if getattr(sys, "frozen", False):
-        exe = Path(sys.executable)
-        return [str(exe), *extra_args]
-    if pythonw.exists():
-        return [str(pythonw), str(main_py), *extra_args]
-    return [str(python), str(main_py), *extra_args]
+        return [sys.executable, *extra_args]
+
+    pythonw = _pythonw_candidate()
+    python = Path(sys.executable)
+    interpreter = pythonw or python
+    return [str(interpreter), str(main_py), *extra_args]
+
 
 def _startup_run_value() -> str:
     if getattr(sys, "frozen", False):
         exe = Path(sys.executable)
         return f'{_quote_cmd_arg(str(exe))} --startup'
+
     main_py = BASE_DIR / "main.py"
-    venv_pythonw = BASE_DIR / ".venv" / "Scripts" / "pythonw.exe"
-    pythonw = Path(r"C:\Users\ravit\AppData\Local\Programs\Python\Python313\pythonw.exe")
-    if venv_pythonw.exists():
-        return f'{_quote_cmd_arg(str(venv_pythonw))} {_quote_cmd_arg(str(main_py))} --startup'
-    if pythonw.exists():
-        return f'{_quote_cmd_arg(str(pythonw))} {_quote_cmd_arg(str(main_py))} --startup'
-    return f'{_quote_cmd_arg(sys.executable)} {_quote_cmd_arg(str(main_py))} --startup'
+    interpreter = _pythonw_candidate() or Path(sys.executable)
+    return (
+        f'{_quote_cmd_arg(str(interpreter))} '
+        f'{_quote_cmd_arg(str(main_py))} --startup'
+    )
 
 
 def _startup_registry_key():
@@ -13034,7 +13049,7 @@ class SystemConnectivityPage(QWidget):
             shortcut_path = desktop_dir / "Brahma Evo - Premium.lnk"
             
             # Base variables
-            base_dir = Path(os.path.abspath("."))
+            base_dir = BASE_DIR
             script_path = base_dir / "main.py"
             icon_path = base_dir / "assets" / "Brahma_Lite_Logo.ico"
             
