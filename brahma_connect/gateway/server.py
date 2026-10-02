@@ -350,6 +350,39 @@ class BrahmaGateway:
             "pairing_token": offer.pairing_token,
         }
 
+    @staticmethod
+    def _is_loopback_client(request: Request) -> bool:
+        host = str(request.client.host if request.client else "").strip().lower()
+        return host in {"127.0.0.1", "::1", "localhost"}
+
+    async def _require_local_admin(self, request: Request):
+        if not self._is_loopback_client(request):
+            return JSONResponse(
+                {"ok": False, "error": "Gateway administration is restricted to the local machine."},
+                status_code=403,
+            )
+        return None
+
+    def _prune_pending_requests(self) -> None:
+        now = time.time()
+        stale: list[str] = []
+        for pending_id, item in self._pending_requests.items():
+            created = item.get("_created_ts", now)
+            try:
+                if now - float(created) > max(60, self.config.pairing_ttl_seconds):
+                    stale.append(pending_id)
+            except (TypeError, ValueError):
+                stale.append(pending_id)
+        for pending_id in stale:
+            self._pending_requests.pop(pending_id, None)
+        # Defensive cap against connection/request floods.
+        while len(self._pending_requests) > 64:
+            oldest = min(
+                self._pending_requests,
+                key=lambda pid: self._pending_requests[pid].get("_created_ts", now),
+            )
+            self._pending_requests.pop(oldest, None)
+
     def _build_app(self) -> FastAPI:
         app = FastAPI(docs_url=None, redoc_url=None)
 
@@ -370,44 +403,69 @@ class BrahmaGateway:
             }
 
         @app.get("/gateway/pair")
-        async def get_pairing_offer():
+        async def get_pairing_offer(request: Request):
+            denied = await self._require_local_admin(request)
+            if denied:
+                return denied
             return self.create_pairing_offer()
 
         @app.get("/gateway/devices")
-        async def list_devices():
+        async def list_devices(request: Request):
+            denied = await self._require_local_admin(request)
+            if denied:
+                return denied
             return {"ok": True, "devices": self.device_manager.list_devices()}
 
         @app.post("/gateway/devices/{device_id}/revoke")
-        async def revoke_device(device_id: str):
+        async def revoke_device(request: Request, device_id: str):
+            denied = await self._require_local_admin(request)
+            if denied:
+                return denied
             if not self.device_manager.revoke(device_id):
                 return JSONResponse({"ok": False, "error": "Device not found."}, status_code=404)
             self._append_log("DEVICE_REVOKED", device_id=device_id)
             return {"ok": True}
 
         @app.post("/gateway/devices/{device_id}/forget")
-        async def forget_device(device_id: str):
+        async def forget_device(request: Request, device_id: str):
+            denied = await self._require_local_admin(request)
+            if denied:
+                return denied
             if not self.device_manager.remove(device_id):
                 return JSONResponse({"ok": False, "error": "Device not found."}, status_code=404)
             self._append_log("DEVICE_FORGOTTEN", device_id=device_id)
             return {"ok": True}
 
         @app.get("/gateway/logs")
-        async def logs():
+        async def logs(request: Request):
+            denied = await self._require_local_admin(request)
+            if denied:
+                return denied
             return {"ok": True, "entries": self.log()}
 
         @app.get("/gateway/pending")
-        async def pending_requests():
+        async def pending_requests(request: Request):
+            denied = await self._require_local_admin(request)
+            if denied:
+                return denied
+            self._prune_pending_requests()
             return {"ok": True, "requests": self.list_pending_requests()}
 
         @app.post("/gateway/pending/{pending_id}/approve")
-        async def approve_pending(pending_id: str):
+        async def approve_pending(request: Request, pending_id: str):
+            denied = await self._require_local_admin(request)
+            if denied:
+                return denied
             result = await self.approve_pending_request(pending_id)
             if not result.get("success"):
                 return JSONResponse(result, status_code=404)
             return result
 
         @app.post("/gateway/pending/{pending_id}/reject")
-        async def reject_pending(pending_id: str):
+        async def reject_pending(request: Request, pending_id: str):
+            denied = await self._require_local_admin(request)
+            if denied:
+                return denied
             if not self.reject_pending_request(pending_id):
                 return JSONResponse({"ok": False, "error": "Pending request not found."}, status_code=404)
             return {"ok": True}
@@ -433,10 +491,12 @@ class BrahmaGateway:
                         continue
 
                     if msg_type == ProtocolTypes.HELLO:
+                        self._prune_pending_requests()
                         pending_id = new_request_id()
                         self._pending_requests[pending_id] = {
                             "request_id": pending_id,
                             "websocket": websocket,
+                            "_created_ts": time.time(),
                             "timestamp": now_iso(),
                             "device_name": str(payload.get("device_name") or "Unknown Device"),
                             "platform": str(payload.get("platform") or "unknown"),
