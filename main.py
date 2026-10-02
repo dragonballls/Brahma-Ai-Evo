@@ -4114,6 +4114,14 @@ class BrahmaLive:
         except Exception as exc:
             print(f"[SkillRegistry] Dynamic tools unavailable: {exc}")
 
+        # Gemini 3.8 Live defaults to asynchronous tool execution. Brahma's
+        # executor is intentionally request/response and expects blocking tool
+        # semantics, so opt into the backwards-compatible mode explicitly.
+        if str(LIVE_MODEL).split("@", 1)[0] == "gemini-3.8-live":
+            tool_declarations = [
+                {**tool, "behavior": "BLOCKING"} for tool in tool_declarations
+            ]
+
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             output_audio_transcription={},
