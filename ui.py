@@ -11050,7 +11050,7 @@ class SystemConnectivityPage(QWidget):
         
         # Pre-fill from API keys if they exist
         try:
-            with open(Path("config/api_keys.json"), "r", encoding="utf-8") as f:
+            with open(CONFIG_DIR / "api_keys.json", "r", encoding="utf-8") as f:
                 d = json.load(f)
                 if d.get("instagram_username"):
                     self._ig_username.setText(d.get("instagram_username"))
@@ -11660,7 +11660,7 @@ class SystemConnectivityPage(QWidget):
                 return
             from pathlib import Path
             import json
-            api_keys = Path("config/api_keys.json")
+            api_keys = CONFIG_DIR / "api_keys.json"
             username = ""
             d = {}
             if api_keys.exists():
@@ -11675,7 +11675,7 @@ class SystemConnectivityPage(QWidget):
                 self._ig_status_lbl.setStyleSheet("color: #00ffcc; font-size: 11px; font-weight: bold; margin-bottom: 4px;")
                 return
 
-            if username and Path("config/ig_session.json").exists():
+            if username and (CONFIG_DIR / "ig_session.json").exists():
                 self._ig_status_lbl.setText(f"Status: 🟢 Connected (@{username})")
                 self._ig_status_lbl.setStyleSheet("color: #00ffcc; font-size: 11px; font-weight: bold; margin-bottom: 4px;")
                 return
@@ -11697,14 +11697,14 @@ class SystemConnectivityPage(QWidget):
             d["instagram_sessionid"] = ""
             d["instagram_user_id"] = ""
             d["instagram_browser_authenticated"] = False
-            with open("config/api_keys.json", "w", encoding="utf-8") as f:
+            with open(CONFIG_DIR / "api_keys.json", "w", encoding="utf-8") as f:
                 json.dump(d, f, indent=4)
                 
-            session_path = Path("config/ig_session.json")
+            session_path = CONFIG_DIR / "ig_session.json"
             if session_path.exists():
                 session_path.unlink()
 
-            profile_dir = Path("config/ig_browser_profile")
+            profile_dir = CONFIG_DIR / "ig_browser_profile"
             if profile_dir.exists():
                 try:
                     shutil.rmtree(profile_dir)
@@ -11738,7 +11738,7 @@ class SystemConnectivityPage(QWidget):
                 import json
                 import time
 
-                profile_dir = Path("config/ig_browser_profile").resolve()
+                profile_dir = (CONFIG_DIR / "ig_browser_profile").resolve()
                 profile_dir.mkdir(parents=True, exist_ok=True)
 
                 self.status_update.emit("Launching browser for Instagram...")
@@ -11790,7 +11790,7 @@ class SystemConnectivityPage(QWidget):
                                     pass
 
                                 try:
-                                    cfg_path = Path("config/api_keys.json")
+                                    cfg_path = CONFIG_DIR / "api_keys.json"
                                     data = {}
                                     if cfg_path.exists():
                                         with open(cfg_path, "r", encoding="utf-8") as f:
@@ -12078,7 +12078,7 @@ class SystemConnectivityPage(QWidget):
         if path:
             try:
                 import shutil
-                shutil.copy2(path, Path("config/google_workspace_credentials.json"))
+                shutil.copy2(path, CONFIG_DIR / "google_workspace_credentials.json")
                 self._gw_status_lbl.setText("Status: OAuth credentials.json loaded.")
                 self._gw_status_lbl.setStyleSheet("color: #4caf50;")
                 QMessageBox.information(self, "Success", "Google Cloud OAuth credentials loaded successfully!")
