@@ -53,6 +53,15 @@ class DynamicSkill:
     def _load_module(self) -> Any:
         if self.module is None:
             code_path = self.skill_path / "skill.py" if self.skill_path.is_dir() else self.skill_path
+            # Synthetic skills are re-validated immediately before first import so
+            # a post-verification file edit cannot bypass the Crucible policy.
+            if bool(self.manifest.get("generated")) or str(self.manifest.get("author", "")).startswith("Project Ultron"):
+                from core.skill_crucible import SkillCrucible
+                source = code_path.read_text(encoding="utf-8")
+                valid, error = SkillCrucible.validate_ast(source)
+                if not valid:
+                    raise PermissionError(f"Generated skill rejected at load time: {error}")
+
             module_name = f"brahma_skill_{self.name}_{abs(hash(str(code_path.resolve())))}"
             spec = importlib.util.spec_from_file_location(module_name, str(code_path))
             if not spec or not spec.loader:
@@ -193,11 +202,19 @@ class DynamicToolRegistry:
         return count
 
     @classmethod
+    @classmethod
     def get_tool_declarations(cls) -> List[Dict[str, Any]]:
-        """Returns Gemini-compatible tool declarations for all active skills."""
+        """Return one declaration per active skill; aliases must not duplicate tools."""
         if not cls._initialized:
             cls.initialize()
-        return [skill.to_tool_declaration() for skill in cls._skills.values() if skill.active]
+        declarations: list[Dict[str, Any]] = []
+        seen: set[int] = set()
+        for skill in cls._skills.values():
+            if not skill.active or id(skill) in seen:
+                continue
+            seen.add(id(skill))
+            declarations.append(skill.to_tool_declaration())
+        return declarations
 
     @classmethod
     def has_tool(cls, name: str) -> bool:
@@ -212,11 +229,16 @@ class DynamicToolRegistry:
         return cls._skills.get(name)
 
     @classmethod
+    @classmethod
     def get_latest_skill(cls) -> Optional[DynamicSkill]:
-        """Returns the most recently created active synthetic skill."""
+        """Return the most recently created active synthetic skill."""
         if not cls._initialized:
             cls.initialize()
-        active = [s for s in cls._skills.values() if s.active]
+        unique: dict[int, DynamicSkill] = {}
+        for skill in cls._skills.values():
+            if skill.active:
+                unique[id(skill)] = skill
+        active = list(unique.values())
         if not active:
             return None
         active.sort(key=lambda s: getattr(s, "created_at", 0), reverse=True)
@@ -286,9 +308,11 @@ class DynamicToolRegistry:
         best_skill = None
         best_score = 0
 
+        seen_skills: set[int] = set()
         for skill in cls._skills.values():
-            if not skill.active:
+            if id(skill) in seen_skills or not skill.active:
                 continue
+            seen_skills.add(id(skill))
 
             score = 0
             s_name_words = re.findall(r"[a-z0-9]+", skill.name.lower())
@@ -427,20 +451,30 @@ class DynamicToolRegistry:
             return False
 
     @classmethod
+    @classmethod
     def delete_skill(cls, name: str) -> bool:
-        """Permanently removes a synthetic skill."""
+        """Permanently remove a generated skill without touching native features."""
         skill = cls.get_skill(name)
         if not skill:
+            return False
+        if not bool(skill.manifest.get("generated")):
+            logger.warning("[Registry] Refusing to delete non-generated feature '%s'.", name)
             return False
 
         try:
             if skill.skill_dir.exists():
                 shutil.rmtree(skill.skill_dir)
-            if name in cls._skills:
-                del cls._skills[name]
+            # A generated feature may also have a native module file next to
+            # its package directory.
+            module_file = FEATURES_DIR / f"{skill.name}.py"
+            if module_file.exists():
+                module_file.unlink()
+            for key, value in list(cls._skills.items()):
+                if value is skill:
+                    cls._skills.pop(key, None)
             return True
         except Exception as e:
-            logger.error(f"[Registry] Failed to delete skill '{name}': {e}")
+            logger.error(f"[Registry] Failed to delete generated skill '{name}': {e}")
             return False
 
     @classmethod
