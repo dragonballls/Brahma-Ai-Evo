@@ -78,3 +78,23 @@ def test_command_router_reports_offline_device(tmp_path: Path):
 
     assert result["success"] is False
     assert "offline" in result["error"].lower()
+
+
+def test_router_enforces_canonical_capabilities(tmp_path: Path):
+    registry_path = tmp_path / "devices.json"
+    manager = DeviceManager(registry_path)
+    record = DeviceRecord(
+        device_id="android_002",
+        name="Test Phone",
+        platform="android",
+        online=True,
+        capabilities=["battery"],
+    )
+    manager._devices[record.device_id] = record
+    router = CommandRouter(manager, ConnectionHub(), CapabilityManager())
+    result = asyncio.run(
+        router.route("Test Phone", "ui_tap", {"x": 10, "y": 20})
+    )
+    assert result["success"] is False
+    assert result["error_code"] == "CAPABILITY_MISSING"
+    assert "accessibility" in result["missing"]
