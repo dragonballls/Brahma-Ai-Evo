@@ -195,11 +195,13 @@ class OpenRouterClient:
             return dict(_model_catalog_meta)
 
     def _model_pool(self, *, vision: bool = False) -> list[str]:
-        """Return a live-validated pool, with the provider's resilient free router first."""
+        """Return a live-validated pool without blocking on catalog discovery when unauthenticated."""
+        static_pool = VISION_MODELS if vision else TEXT_MODELS
+        if not _load_api_key():
+            return [FREE_ROUTER_MODEL]
+
         catalog = self._get_model_catalog()
         live_ids = set(catalog)
-
-        static_pool = VISION_MODELS if vision else TEXT_MODELS
         pool = [model for model in static_pool if not live_ids or model in live_ids]
 
         if FREE_ROUTER_MODEL in live_ids:
@@ -207,7 +209,6 @@ class OpenRouterClient:
         elif not pool:
             pool = [FREE_ROUTER_MODEL]
 
-        # Remove duplicates while preserving order.
         return list(dict.fromkeys(pool))
 
     def test_api_key(self, key: str | None = None) -> tuple[bool, str, dict]:
