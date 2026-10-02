@@ -1,4 +1,4 @@
-"""Check for and apply fast-forward updates from the Brahma GitHub repository."""
+"""Safe, fast-forward-only updater for Brahma Evo."""
 
 from __future__ import annotations
 
@@ -8,8 +8,11 @@ import sys
 from pathlib import Path
 
 
-REMOTE = "https://github.com/titechprabhasolutions/Brahma---personal.git"
-BRANCH = "main"
+BRANCH = os.environ.get("BRAHMA_UPDATE_BRANCH", "main")
+REMOTE_URL = os.environ.get(
+    "BRAHMA_UPDATE_REMOTE_URL",
+    "https://github.com/dragonballls/Brahma-Ai-Evo.git",
+)
 
 
 def _run_git(base_dir: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -18,16 +21,26 @@ def _run_git(base_dir: Path, *args: str) -> subprocess.CompletedProcess[str]:
         cwd=base_dir,
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=45,
         check=False,
     )
 
 
+def _remote_url(base_dir: Path) -> str | None:
+    remote = _run_git(base_dir, "remote", "get-url", "origin")
+    if remote.returncode == 0 and remote.stdout.strip():
+        return remote.stdout.strip()
+    return None
+
+
 def update_from_github(base_dir: Path) -> bool:
-    """Update a clean Git checkout and return whether the app should restart."""
+    """Fast-forward a clean Git checkout and return True when a restart is needed.
+
+    No force reset, stash, checkout, or overwrite operation is performed.
+    """
     if os.environ.get("BRAHMA_SKIP_UPDATE") == "1":
         return False
-
+    base_dir = Path(base_dir).resolve()
     if not (base_dir / ".git").exists():
         return False
 
@@ -35,31 +48,37 @@ def update_from_github(base_dir: Path) -> bool:
     if status.returncode != 0 or status.stdout.strip():
         return False
 
-    remote = _run_git(base_dir, "remote", "get-url", "origin")
-    if remote.returncode != 0 or not remote.stdout.strip():
-        _run_git(base_dir, "remote", "add", "origin", REMOTE)
+    remote = _remote_url(base_dir)
+    if not remote:
+        add = _run_git(base_dir, "remote", "add", "origin", REMOTE_URL)
+        if add.returncode != 0:
+            return False
 
-    fetch = _run_git(base_dir, "fetch", "origin", BRANCH, "--quiet")
+    fetch = _run_git(base_dir, "fetch", "--quiet", "origin", BRANCH)
     if fetch.returncode != 0:
         return False
 
     local = _run_git(base_dir, "rev-parse", "HEAD")
-    upstream = _run_git(base_dir, "rev-parse", f"origin/{BRANCH}")
-    if local.returncode != 0 or upstream.returncode != 0:
+    remote_head = _run_git(base_dir, "rev-parse", f"origin/{BRANCH}")
+    if local.returncode != 0 or remote_head.returncode != 0:
         return False
-    if local.stdout.strip() == upstream.stdout.strip():
+    if local.stdout.strip() == remote_head.stdout.strip():
         return False
 
-    ancestor = _run_git(base_dir, "merge-base", "--is-ancestor", "HEAD", f"origin/{BRANCH}")
+    ancestor = _run_git(
+        base_dir, "merge-base", "--is-ancestor", "HEAD", f"origin/{BRANCH}"
+    )
     if ancestor.returncode != 0:
+        # Never auto-merge or overwrite a branch that diverged.
         return False
 
-    pull = _run_git(base_dir, "pull", "--ff-only", "origin", BRANCH)
-    if pull.returncode != 0:
-        return False
-    return True
+    pull = _run_git(base_dir, "merge", "--ff-only", f"origin/{BRANCH}")
+    return pull.returncode == 0
 
 
 def restart_application(base_dir: Path) -> None:
-    """Replace the current process with the updated application."""
-    os.execv(sys.executable, [sys.executable, str(base_dir / "main.py"), *sys.argv[1:]])
+    """Restart the current Python application after a successful update."""
+    main_path = Path(base_dir) / "main.py"
+    if not main_path.exists():
+        raise FileNotFoundError(f"Cannot restart: {main_path} does not exist.")
+    os.execv(sys.executable, [sys.executable, str(main_path), *sys.argv[1:]])
