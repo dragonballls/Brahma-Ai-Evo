@@ -6363,8 +6363,8 @@ class SetupOverlay(QWidget):
         lay.insertWidget(lay.count() - 1, self._or_prompt_widget, 0, Qt.AlignmentFlag.AlignCenter)
 
     def _skip_or(self):
-        """User chose to skip OpenRouter, go to color selection."""
-        self._or_key_value = ""
+        """Skip OpenRouter without erasing a previously saved credential."""
+        self._or_key_value = (self._defaults.get("openrouter_api_key") or "").strip()
         self._or_prompt_widget.hide()
         self._show_color_stage()
 
@@ -6459,7 +6459,17 @@ class SetupOverlay(QWidget):
         lay.insertWidget(lay.count() - 1, self._or_box, 0, Qt.AlignmentFlag.AlignCenter)
 
     def _save_or_key(self):
-        self._or_key_value = self._or_input.text().strip()
+        from or_client import normalize_api_key, validate_api_key_format
+        value = normalize_api_key(self._or_input.text())
+        if value:
+            ok, error = validate_api_key_format(value)
+            if not ok:
+                QMessageBox.warning(self, "Invalid OpenRouter Key", error)
+                return
+            self._or_key_value = value
+        else:
+            # Empty means "leave the existing value alone", not "erase it".
+            self._or_key_value = (self._defaults.get("openrouter_api_key") or "").strip()
         self._or_box.hide()
         self._show_color_stage()
 
@@ -10020,17 +10030,30 @@ class MainWindow(QMainWindow):
     # Change signature:
     def _on_setup_done(self, key: str, or_key: str, os_name: str):
         try:
+            import tempfile
+
             os.makedirs(CONFIG_DIR, exist_ok=True)
             existing = self._load_api_defaults()
-            API_FILE.write_text(
-                json.dumps({
-                    "gemini_api_key":    key,
-                    "openrouter_api_key": or_key,
-                    "anthropic_api_key": existing.get("anthropic_api_key", ""),
-                    "os_system":         os_name,
-                }, indent=4),
-                encoding="utf-8",
-            )
+
+            # Setup edits are non-destructive: an omitted/empty provider value
+            # preserves the credential already stored on the machine.
+            payload = dict(existing)
+            normalized_gemini = (key or "").strip()
+            normalized_openrouter = (or_key or "").strip()
+            if normalized_gemini:
+                payload["gemini_api_key"] = normalized_gemini
+            if normalized_openrouter:
+                payload["openrouter_api_key"] = normalized_openrouter
+            payload["anthropic_api_key"] = existing.get("anthropic_api_key", "")
+            payload["os_system"] = os_name
+
+            temp_path = API_FILE.with_name(f".{API_FILE.name}.tmp")
+            with temp_path.open("w", encoding="utf-8", newline="\n") as f:
+                f.write(json.dumps(payload, indent=4, ensure_ascii=False))
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, API_FILE)
+
             self._ready = True
             self._api_ready = True
             if self._overlay:
@@ -10583,10 +10606,14 @@ class SettingsHubPage(QWidget):
 
 class SystemConnectivityPage(QWidget):
     local_models_ready = pyqtSignal(list, bool, str)
+    provider_test_ready = pyqtSignal(str, bool, str)
 
     def __init__(self, controller=None, parent=None):
         super().__init__(parent)
         self._controller = controller
+        self._provider_test_buttons = {}
+        self._provider_status_labels = {}
+        self.provider_test_ready.connect(self._apply_provider_test)
         self.setObjectName("SystemConnectivityPage")
         self.setStyleSheet(f"""
             QWidget#SystemConnectivityPage {{
@@ -10802,6 +10829,7 @@ class SystemConnectivityPage(QWidget):
         model_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; border: none;")
         api_lbl = QLabel(self._provider_key_preview(key))
         api_lbl.setStyleSheet(f"color: {C.TEXT_MED}; border: none;")
+        self._provider_status_labels[setting_key] = status
         meta.addWidget(title)
         meta.addWidget(status)
         meta.addWidget(model_lbl)
@@ -10827,9 +10855,10 @@ class SystemConnectivityPage(QWidget):
                     border: 1px solid rgba(0, 229, 255, 0.5);
                 }
             """)
-        edit.clicked.connect(lambda: self._open_api_keys())
+        edit.clicked.connect(lambda: self._open_provider_key_editor(setting_key, name))
         test = QPushButton("Test Connection")
         test.clicked.connect(lambda: self._test_provider(setting_key))
+        self._provider_test_buttons[setting_key] = test
         btn_lay.addWidget(edit)
         btn_lay.addWidget(test)
         r.addLayout(btn_lay)
@@ -12529,14 +12558,149 @@ class SystemConnectivityPage(QWidget):
         if self._ctrl() and hasattr(self._ctrl(), "_win"):
             self._ctrl()._win._show_setup(self._ctrl()._win._load_api_defaults())
 
+    def _open_provider_key_editor(self, setting_key: str, provider_name: str):
+        """Edit one API key without reopening the complete onboarding wizard."""
+        if setting_key != "openrouter":
+            self._open_api_keys()
+            return
+
+        from or_client import normalize_api_key, validate_api_key_format, save_api_key
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("OpenRouter API Key")
+        dlg.setModal(True)
+        dlg.setMinimumWidth(480)
+        dlg.setStyleSheet(f"""
+            QDialog {{ background: #080a10; color: {C.WHITE}; }}
+            QLabel {{ color: {C.TEXT_MED}; }}
+            QLineEdit {{
+                background: rgba(255,255,255,0.04);
+                color: {C.WHITE};
+                border: 1px solid rgba(255,255,255,0.12);
+                border-radius: 10px;
+                padding: 10px 12px;
+            }}
+            QPushButton {{
+                background: rgba(0,229,255,0.10);
+                color: #00e5ff;
+                border: 1px solid rgba(0,229,255,0.30);
+                border-radius: 10px;
+                padding: 9px 14px;
+            }}
+        """)
+        lay = QVBoxLayout(dlg)
+        title = QLabel(f"{provider_name} API Key")
+        title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+        lay.addWidget(title)
+        hint = QLabel("Paste the key exactly as issued by OpenRouter. You can also paste a full 'Bearer …' value.")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+
+        current = str(self._load_api_defaults().get("openrouter_api_key") or "").strip()
+        inp = QLineEdit()
+        inp.setEchoMode(QLineEdit.EchoMode.Password)
+        inp.setPlaceholderText(self._provider_key_preview(current) if current else "sk-or-v1-…")
+        inp.setClearButtonEnabled(True)
+        lay.addWidget(inp)
+
+        status = QLabel("")
+        status.setWordWrap(True)
+        lay.addWidget(status)
+
+        buttons = QHBoxLayout()
+        cancel = QPushButton("Cancel")
+        save = QPushButton("Save Key")
+        clear = QPushButton("Clear Saved Key")
+        buttons.addWidget(cancel)
+        buttons.addStretch(1)
+        buttons.addWidget(clear)
+        buttons.addWidget(save)
+        lay.addLayout(buttons)
+
+        cancel.clicked.connect(dlg.reject)
+
+        def _save():
+            value = normalize_api_key(inp.text())
+            ok, error = validate_api_key_format(value)
+            if not ok:
+                status.setText(error)
+                status.setStyleSheet("color: #ff6b6b;")
+                return
+            saved, save_error = save_api_key(value)
+            if not saved:
+                status.setText(save_error)
+                status.setStyleSheet("color: #ff6b6b;")
+                return
+            status.setText("Key saved. Click Test Connection to verify it with OpenRouter.")
+            status.setStyleSheet(f"color: {C.GREEN};")
+            self.refresh()
+            QTimer.singleShot(350, dlg.accept)
+
+        def _clear():
+            saved, save_error = save_api_key("")
+            if not saved:
+                status.setText(save_error)
+                status.setStyleSheet("color: #ff6b6b;")
+                return
+            status.setText("Saved OpenRouter key cleared.")
+            status.setStyleSheet(f"color: {C.GREEN};")
+            self.refresh()
+            QTimer.singleShot(350, dlg.accept)
+
+        save.clicked.connect(_save)
+        clear.clicked.connect(_clear)
+        dlg.exec()
+
     def _test_provider(self, setting_key: str):
-        if setting_key == "gemini":
-            msg = "Google Gemini key detected." if self._load_api_defaults().get("gemini_api_key") else "Google Gemini key missing."
-        else:
-            msg = "OpenRouter key detected." if self._load_api_defaults().get("openrouter_api_key") else "OpenRouter key missing."
+        if setting_key != "openrouter":
+            key = self._load_api_defaults().get("gemini_api_key", "")
+            msg = "Google Gemini key detected." if key else "Google Gemini key missing."
+            if self._ctrl() and hasattr(self._ctrl(), "write_log"):
+                self._ctrl().write_log(f"SYS: {msg}")
+            self.refresh()
+            return
+
+        key = self._load_api_defaults().get("openrouter_api_key", "")
+        button = self._provider_test_buttons.get("openrouter")
+        label = self._provider_status_labels.get("openrouter")
+        if button:
+            button.setEnabled(False)
+            button.setText("Testing…")
+        if label:
+            label.setText("Testing OpenRouter…")
+            label.setStyleSheet(f"color: {C.ACC}; border: none; font-weight: bold;")
+
+        def _worker():
+            try:
+                from or_client import client
+                ok, message, _ = client.test_api_key(key)
+                self.provider_test_ready.emit("openrouter", ok, message)
+            except Exception as exc:
+                self.provider_test_ready.emit("openrouter", False, str(exc))
+
+        threading.Thread(
+            target=_worker,
+            daemon=True,
+            name="brahma-openrouter-key-test",
+        ).start()
+
+    def _apply_provider_test(self, setting_key: str, success: bool, message: str):
+        label = self._provider_status_labels.get(setting_key)
+        button = self._provider_test_buttons.get(setting_key)
+        if label:
+            label.setText(message)
+            label.setStyleSheet(
+                f"color: {C.GREEN}; border: none; font-weight: bold;"
+                if success else
+                "color: #ff6b6b; border: none; font-weight: bold;"
+            )
+        if button:
+            button.setEnabled(True)
+            button.setText("Test Connection")
         if self._ctrl() and hasattr(self._ctrl(), "write_log"):
-            self._ctrl().write_log(f"SYS: {msg}")
-        self.refresh()
+            self._ctrl().write_log(
+                f"SYS: OpenRouter connection test {'passed' if success else 'failed'}: {message}"
+            )
 
     def _connect_mobile(self):
         ctrl = self._ctrl()
