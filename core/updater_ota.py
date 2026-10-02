@@ -3,7 +3,6 @@ import sys
 import json
 import urllib.request
 import urllib.error
-import threading
 from pathlib import Path
 import subprocess
 
@@ -62,14 +61,21 @@ def check_for_updates() -> dict | None:
     return None
 
 def download_and_apply_update(url: str, ui_callback=None):
-    """Downloads the setup executable and triggers the silent installation."""
+    """Download the signed-source release asset and trigger the installer."""
     try:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(str(url))
+        expected_prefix = f"/{GITHUB_REPO}/releases/"
+        if parsed.scheme != "https" or parsed.netloc.lower() != "github.com" or not parsed.path.startswith(expected_prefix):
+            raise ValueError("OTA download URL is not an approved HTTPS GitHub release asset.")
+
         from core.user_paths import get_user_data_dir
         update_dir = get_user_data_dir() / "updates"
         update_dir.mkdir(parents=True, exist_ok=True)
         setup_path = update_dir / "BrahmaEvo_Setup_Update.exe"
         
-        req = urllib.request.Request(url, headers={'User-Agent': 'BrahmaEcho-OTA'})
+        req = urllib.request.Request(url, headers={'User-Agent': 'BrahmaEvo-OTA'})
         with urllib.request.urlopen(req, timeout=15) as response:
             total_size = int(response.info().get('Content-Length', 0))
             downloaded = 0
