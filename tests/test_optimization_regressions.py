@@ -128,3 +128,17 @@ def test_autoheal_protects_runtime_boundary(tmp_path, monkeypatch):
     tb = f'Traceback (most recent call last):\n  File "{target}", line 1, in <module>\nValueError: boom'
     parsed = TracebackAnalyzer.parse(tb)
     assert parsed["success"] is False
+
+
+def test_desktop_generated_code_blocks_dangerous_operations():
+    from actions.desktop import _execute_generated_code
+
+    blocked_ctypes = _execute_generated_code(
+        "ctypes.windll.user32.MessageBoxW(0, 'x', 'x', 0)"
+    )
+    assert "blocked by the desktop safety policy" in blocked_ctypes
+
+    blocked_delete = _execute_generated_code(
+        "Path.home().joinpath('x').unlink()"
+    )
+    assert "blocked by the desktop safety policy" in blocked_delete
