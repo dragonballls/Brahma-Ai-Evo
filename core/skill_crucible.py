@@ -24,23 +24,21 @@ logger = logging.getLogger("SkillCrucible")
 
 # Dangerous calls and patterns that synthetic skills must NEVER execute
 BANNED_AST_PATTERNS = [
-    # Destructive disk / partition commands
-    "format c:",
-    "format d:",
-    "format /fs",
-    "diskpart",
-    "vssadmin",
-    "bcdedit",
-    # System32 destruction
-    "system32",
-    "syswow64",
-    # Self-destruction of Brahma AI core
-    "boot_sentry",
-    "auto_heal_engine",
-    "install_wizard",
-    "build_exe",
+    "format c:", "format d:", "format /fs", "diskpart", "vssadmin", "bcdedit",
+    "system32", "syswow64", "boot_sentry", "auto_heal_engine",
+    "install_wizard", "build_exe",
 ]
 
+# High-risk primitives are denied for generated skills by default.
+BANNED_IMPORTS = {
+    "subprocess", "ctypes", "winreg", "multiprocessing",
+    "pty", "pwd", "resource",
+}
+BANNED_CALLS = {
+    ("os", "system"), ("os", "popen"), ("os", "execv"),
+    ("os", "execve"), ("os", "execvp"), ("os", "execvpe"),
+    ("shutil", "rmtree"), ("shutil", "move"),
+}
 STANDARD_LIB_MODULES = {
     "abc", "argparse", "array", "ast", "asyncio", "base64", "binascii", "bisect",
     "calendar", "cmath", "collections", "colorsys", "concurrent", "configparser",
@@ -98,10 +96,9 @@ class SkillCrucible:
 
     @staticmethod
     def validate_ast(code_str: str) -> Tuple[bool, Optional[str]]:
-        """Parses syntax and blocks destructive patterns."""
+        """Validate syntax and reject high-risk primitives before execution."""
         if not code_str or not code_str.strip():
             return False, "Code cannot be empty."
-
         try:
             tree = ast.parse(code_str)
         except SyntaxError as e:
@@ -109,24 +106,36 @@ class SkillCrucible:
         except Exception as e:
             return False, f"Validation Error: {e}"
 
-        # Ensure it defines the mandatory execute function
-        has_execute = False
-        for node in tree.body:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                if node.name == "execute":
-                    has_execute = True
-                    break
-
-        if not has_execute:
+        if not any(
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "execute"
+            for node in tree.body
+        ):
             return False, "Skill code must define an 'execute(**kwargs)' or 'async def execute(**kwargs)' function."
 
-        # Safety scans for banned keywords in string literals or function calls
         for node in ast.walk(tree):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                val_lower = node.value.lower()
+                value = node.value.lower()
                 for banned in BANNED_AST_PATTERNS:
-                    if banned in val_lower:
-                        return False, f"Security Violation: Prohibited term or system path '{banned}' detected."
+                    if banned in value:
+                        return False, f"Security Violation: prohibited term '{banned}' detected."
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    root = alias.name.split(".")[0]
+                    if root in BANNED_IMPORTS:
+                        return False, f"Security Violation: import '{root}' is not allowed."
+            elif isinstance(node, ast.ImportFrom):
+                root = (node.module or "").split(".")[0]
+                if root in BANNED_IMPORTS:
+                    return False, f"Security Violation: import '{root}' is not allowed."
+            elif isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+                    pair = (func.value.id, func.attr)
+                    if pair in BANNED_CALLS:
+                        return False, f"Security Violation: call '{func.value.id}.{func.attr}(...)' is not allowed."
+                elif isinstance(func, ast.Name) and func.id == "__import__":
+                    return False, "Security Violation: dynamic imports are not allowed."
 
         return True, None
 
@@ -155,52 +164,58 @@ class SkillCrucible:
 
     @classmethod
     def resolve_dependencies(cls, dependencies: List[str]) -> Tuple[bool, str]:
-        """Installs missing dependencies into the Python environment."""
+        """Verify dependencies without mutating the application's environment.
+
+        Generated import names must never become arbitrary pip install targets.
+        Missing packages are reported so they can be added deliberately to the
+        normal requirements/setup flow.
+        """
         if not dependencies:
             return True, "No external dependencies required."
 
-        py_exe = _get_python_executable()
-        installed_any = []
-
-        for dep in dependencies:
-            pip_name = IMPORT_TO_PIP.get(dep, dep)
-            # Check if importable and healthy
-            is_healthy = False
+        missing: list[str] = []
+        for dep in sorted(set(dependencies)):
+            check_script = f"import {dep}"
+            if dep == "speedtest":
+                check_script = "import speedtest; assert hasattr(speedtest, 'Speedtest')"
+            elif dep == "PIL":
+                check_script = "import PIL.Image"
+            elif dep == "cv2":
+                check_script = "import cv2; assert hasattr(cv2, 'imread')"
             try:
-                check_script = f"import {dep}"
-                if dep == "speedtest":
-                    check_script = "import speedtest; assert hasattr(speedtest, 'Speedtest')"
-                elif dep == "PIL":
-                    check_script = "import PIL.Image"
-                elif dep == "cv2":
-                    check_script = "import cv2; assert hasattr(cv2, 'imread')"
-                check_cmd = [py_exe, "-c", check_script]
-                proc = subprocess.run(check_cmd, capture_output=True, timeout=5)
-                if proc.returncode == 0:
-                    is_healthy = True
-            except Exception:
-                is_healthy = False
-
-            if is_healthy:
-                continue
-
-            logger.info(f"[Crucible] Installing missing or repairing dependency: {pip_name}")
-            try:
-                if dep == "speedtest":
-                    subprocess.run([py_exe, "-m", "pip", "uninstall", "-y", "speedtest"], capture_output=True, timeout=30)
-                install_cmd = [py_exe, "-m", "pip", "install", pip_name, "--quiet"]
-                proc = subprocess.run(install_cmd, capture_output=True, text=True, timeout=180)
+                proc = subprocess.run(
+                    [_get_python_executable(), "-c", check_script],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    env=cls._safe_environment(),
+                )
                 if proc.returncode != 0:
-                    err_sample = proc.stderr.strip()[:180] or "Unknown pip error"
-                    return False, f"Failed to install dependency '{pip_name}': {err_sample}"
-                installed_any.append(pip_name)
-            except subprocess.TimeoutExpired:
-                return False, f"Timeout installing '{pip_name}'."
-            except Exception as e:
-                return False, f"Exception installing '{pip_name}': {e}"
+                    missing.append(dep)
+            except Exception:
+                missing.append(dep)
 
-        msg = f"Installed: {', '.join(installed_any)}" if installed_any else "All dependencies satisfied."
-        return True, msg
+        if missing:
+            return False, (
+                "Missing preinstalled dependencies: "
+                + ", ".join(missing)
+                + ". Install them through the normal requirements/setup process."
+            )
+        return True, "All external dependencies are already installed."
+
+    @staticmethod
+    def _safe_environment() -> dict[str, str]:
+        """Remove common secrets from generated-skill subprocesses."""
+        env = dict(os.environ)
+        for key in list(env):
+            upper = key.upper()
+            if any(token in upper for token in (
+                "API_KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD",
+                "PRIVATE_KEY", "ACCESS_KEY",
+            )):
+                env.pop(key, None)
+        env["PYTHONNOUSERSITE"] = "1"
+        return env
 
     @classmethod
     def run_sandbox_test(
@@ -276,7 +291,8 @@ if __name__ == '__main__':
                 [py_exe, "-c", harness_script],
                 capture_output=True,
                 text=True,
-                timeout=timeout
+                timeout=timeout,
+                env=cls._safe_environment(),
             )
             elapsed = time.time() - start_time
             if proc.returncode != 0:
