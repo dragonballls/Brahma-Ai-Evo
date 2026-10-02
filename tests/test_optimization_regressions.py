@@ -77,3 +77,20 @@ def test_gateway_admin_is_loopback_only():
     remote = Request({"type": "http", "client": ("192.168.1.50", 1234)})
     assert gateway._is_loopback_client(local) is True
     assert gateway._is_loopback_client(remote) is False
+
+
+def test_crucible_dependency_names_are_data_only(monkeypatch):
+    calls = []
+
+    class Proc:
+        returncode = 1
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return Proc()
+
+    monkeypatch.setattr("core.skill_crucible.subprocess.run", fake_run)
+    ok, message = SkillCrucible.resolve_dependencies(["os;__import__('shutil').rmtree('x')"])
+    assert ok is False
+    assert calls == []
+    assert "Missing preinstalled dependencies" in message
