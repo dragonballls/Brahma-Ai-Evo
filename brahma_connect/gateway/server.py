@@ -107,6 +107,7 @@ class BrahmaGateway:
         self._server: uvicorn.Server | None = None
         self._log: list[dict[str, Any]] = []
         self._pending_requests: dict[str, dict[str, Any]] = {}
+        self._pair_attempts: dict[str, list[float]] = {}
         self.on_chat_message = None
         self.app = self._build_app()
 
@@ -316,6 +317,10 @@ class BrahmaGateway:
         return await self.command_router.route(target, action, parameters or {}, timeout=self.config.request_timeout_seconds)
 
     async def _pair_device(self, payload: dict[str, Any], websocket: WebSocket) -> dict[str, Any]:
+        client_ip = websocket.client.host if websocket.client else "unknown"
+        if not self._allow_pair_attempt(client_ip):
+            return {"success": False, "error": "Too many pairing attempts. Try again later.", "error_code": "PAIR_RATE_LIMITED"}
+
         offer_token = str(payload.get("pairing_token") or "").strip()
         offer_code = str(payload.get("pairing_code") or "").strip()
         offer = self.pairing_manager.get_offer(offer_token) if offer_token else self.pairing_manager.get_offer_by_code(offer_code)
@@ -362,6 +367,24 @@ class BrahmaGateway:
                 status_code=403,
             )
         return None
+
+    def _allow_pair_attempt(self, client_ip: str, limit: int = 10, window_seconds: int = 60) -> bool:
+        """Rate-limit pairing guesses per source address."""
+        key = str(client_ip or "unknown")
+        now = time.time()
+        attempts = [ts for ts in self._pair_attempts.get(key, []) if now - ts < window_seconds]
+        if len(attempts) >= limit:
+            self._pair_attempts[key] = attempts
+            return False
+        attempts.append(now)
+        self._pair_attempts[key] = attempts
+        if len(self._pair_attempts) > 256:
+            oldest_key = min(
+                self._pair_attempts,
+                key=lambda k: self._pair_attempts[k][-1] if self._pair_attempts[k] else 0,
+            )
+            self._pair_attempts.pop(oldest_key, None)
+        return True
 
     def _prune_pending_requests(self) -> None:
         now = time.time()
