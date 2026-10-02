@@ -43,3 +43,4 @@ pydub
 pdfplumber
 PyPDF2
 pywin32
+SpeechRecognition
