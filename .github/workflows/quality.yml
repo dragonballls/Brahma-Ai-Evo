@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: brahma-quality-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   python-quality:
     runs-on: windows-latest
