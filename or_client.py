@@ -4,6 +4,7 @@ import sys
 import time
 import base64
 import logging
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -78,6 +79,7 @@ RETRY_DELAY           = 2    # seconds between retries
 RATE_LIMIT_COOLDOWN   = 60   # seconds before retrying a rate-limited model
 
 _rate_limited: dict[str, float] = {}
+_rate_limit_lock = threading.RLock()
 
 class OpenRouterClient:
 
@@ -90,17 +92,27 @@ class OpenRouterClient:
             "X-Title":       "Brahma Evo",
         }
 
+    def _refresh_api_key(self) -> None:
+        """Reload the key when the credentials file changes without restarting."""
+        key = _load_api_key()
+        if key == self.api_key:
+            return
+        self.api_key = key
+        self._headers["Authorization"] = f"Bearer {key}"
+
     def _is_rate_limited(self, model: str) -> bool:
-        ts = _rate_limited.get(model)
-        if ts is None:
-            return False
-        if time.time() - ts > RATE_LIMIT_COOLDOWN:
-            del _rate_limited[model]
-            return False
-        return True
+        with _rate_limit_lock:
+            ts = _rate_limited.get(model)
+            if ts is None:
+                return False
+            if time.time() - ts > RATE_LIMIT_COOLDOWN:
+                _rate_limited.pop(model, None)
+                return False
+            return True
 
     def _mark_rate_limited(self, model: str) -> None:
-        _rate_limited[model] = time.time()
+        with _rate_limit_lock:
+            _rate_limited[model] = time.time()
         logger.warning(
             f"[OpenRouter] Rate limited: {model} — "
             f"cooling down for {RATE_LIMIT_COOLDOWN}s"
@@ -114,6 +126,8 @@ class OpenRouterClient:
         temperature: float = DEFAULT_TEMPERATURE,
         response_format: Optional[dict] = None,
     ) -> Optional[str]:
+        self._refresh_api_key()
+
         payload: dict = {
             "model":       model,
             "messages":    messages,
