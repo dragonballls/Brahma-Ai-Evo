@@ -8901,26 +8901,27 @@ class MainWindow(QMainWindow):
         self._refresh_discord_card()
 
     def _load_api_defaults(self) -> dict:
-        if not API_FILE.exists():
-            return {
-                "gemini_api_key": "",
-                "openrouter_api_key": "",
-                "anthropic_api_key": "",
-                "os_system": platform.system(),
-            }
-        try:
-            data = json.loads(API_FILE.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                data.setdefault("anthropic_api_key", "")
-                return data
-        except Exception:
-            pass
-        return {
+        data = {
             "gemini_api_key": "",
             "openrouter_api_key": "",
             "anthropic_api_key": "",
             "os_system": platform.system(),
         }
+        try:
+            if API_FILE.exists():
+                loaded = json.loads(API_FILE.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    data.update(loaded)
+        except (OSError, json.JSONDecodeError, TypeError):
+            pass
+
+        # Environment credentials are useful for headless/managed installs and
+        # should be reflected in the UI without writing them back to disk.
+        if not data.get("openrouter_api_key"):
+            data["openrouter_api_key"] = os.environ.get("OPENROUTER_API_KEY", "")
+        if not data.get("gemini_api_key"):
+            data["gemini_api_key"] = os.environ.get("GEMINI_API_KEY", "")
+        return data
 
     def _startup_enabled(self) -> bool:
         if platform.system() != "Windows":
@@ -9826,13 +9827,20 @@ class MainWindow(QMainWindow):
                 self._result_card.set_body("Action completed")
 
     def _check_config(self) -> bool:
-        if not API_FILE.exists(): return False
-        try:
-            d = json.loads(API_FILE.read_text(encoding="utf-8"))
-            return (bool(d.get("gemini_api_key")) and
-                    bool(d.get("os_system")))
-        except Exception:
-            return False
+        settings = self._load_app_settings()
+        api = self._load_api_defaults()
+        provider = str(settings.get("default_ai_provider", "Gemini") or "Gemini").strip()
+        has_gemini = bool(api.get("gemini_api_key"))
+        has_openrouter = bool(api.get("openrouter_api_key"))
+
+        # Gemini Live is still the native voice transport. For an OpenRouter
+        # text-only configuration, let the UI enter the app, while the voice
+        # session can report that Gemini credentials are required separately.
+        if provider == "OpenRouter":
+            return (has_openrouter or has_gemini) and bool(api.get("os_system"))
+        if provider == "Local":
+            return bool(api.get("os_system"))
+        return has_gemini and bool(api.get("os_system"))
 
     def _apply_scan_state(self, enabled: bool, text: str = ""):
         if enabled:
