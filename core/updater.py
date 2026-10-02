@@ -1,76 +1,107 @@
+"""Background update detection and safe fast-forward application for Brahma Evo."""
+
+from __future__ import annotations
+
 import os
-import sys
 import subprocess
 import threading
-import time
-import requests
+from pathlib import Path
+
 from PyQt6.QtCore import QObject, pyqtSignal
+
 
 class UpdateChecker(QObject):
     update_available_sig = pyqtSignal(str)
 
-    def __init__(self, repo_owner="titechprabhasolutions", repo_name="Brahma---personal", branch="main"):
+    def __init__(self, repo_owner: str = "", repo_name: str = "", branch: str = "main", base_dir: str | Path | None = None):
         super().__init__()
-        self.repo_owner = repo_owner
-        self.repo_name = repo_name
-        self.branch = branch
+        self.branch = branch or os.environ.get("BRAHMA_UPDATE_BRANCH", "main")
+        self.base_dir = Path(base_dir or Path(__file__).resolve().parent.parent).resolve()
         self._stop_event = threading.Event()
-        self._check_thread = None
+        self._check_thread: threading.Thread | None = None
 
-    def start(self):
-        if self._check_thread is None:
-            self._check_thread = threading.Thread(target=self._check_loop, daemon=True, name="updater-thread")
-            self._check_thread.start()
+    def start(self) -> None:
+        if self._check_thread and self._check_thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._check_thread = threading.Thread(
+            target=self._check_loop,
+            daemon=True,
+            name="brahma-updater",
+        )
+        self._check_thread.start()
 
-    def stop(self):
+    def stop(self) -> None:
         self._stop_event.set()
-        if self._check_thread:
-            self._check_thread.join(timeout=1.0)
+        thread = self._check_thread
+        if thread and thread.is_alive():
+            thread.join(timeout=1.5)
 
-    def _get_local_hash(self):
+    def _get_local_hash(self) -> str | None:
         try:
-            output = subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL)
-            return output.decode("utf-8").strip()
+            output = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=self.base_dir,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            return output.stdout.strip() if output.returncode == 0 else None
         except Exception:
             return None
 
-    def _get_remote_hash(self):
-        url = f"https://api.github.com/repos/{self.repo_owner}/{self.repo_name}/commits/{self.branch}"
+    def _get_remote_hash(self) -> str | None:
         try:
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                return data.get("sha")
-        except Exception as e:
-            print(f"[Updater] Error fetching remote hash: {e}")
-        return None
+            output = subprocess.run(
+                ["git", "ls-remote", "origin", f"refs/heads/{self.branch}"],
+                cwd=self.base_dir,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+            if output.returncode != 0:
+                return None
+            first = output.stdout.strip().splitlines()
+            return first[0].split()[0] if first and first[0].split() else None
+        except Exception as exc:
+            print(f"[Updater] Error checking remote revision: {exc}")
+            return None
 
-    def _check_loop(self):
+    def _check_loop(self) -> None:
         while not self._stop_event.is_set():
             local_hash = self._get_local_hash()
             remote_hash = self._get_remote_hash()
 
-            if local_hash and remote_hash and local_hash != remote_hash:
-                print(f"[Updater] Update detected! Local: {local_hash[:7]}, Remote: {remote_hash[:7]}")
+            if (
+                local_hash
+                and remote_hash
+                and local_hash != remote_hash
+            ):
+                print(
+                    f"[Updater] Update detected! "
+                    f"Local: {local_hash[:7]}, Remote: {remote_hash[:7]}"
+                )
                 self.update_available_sig.emit(remote_hash)
-                break # Stop checking once an update is detected
+                return
 
-            # Check every hour
-            for _ in range(3600):
-                if self._stop_event.is_set():
-                    break
-                time.sleep(1)
+            # Event.wait() is interruptible and avoids one-second polling loops.
+            self._stop_event.wait(3600)
 
-def apply_update_and_restart():
-    print("[Updater] Applying update...")
+
+def apply_update_and_restart(base_dir: str | Path | None = None) -> bool:
+    """Apply only a clean fast-forward update, then restart the application."""
     try:
-        # Fetch the latest changes from the origin
-        subprocess.check_call(["git", "fetch", "origin", "main"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        # Hard reset to the remote branch to ensure clean state
-        subprocess.check_call(["git", "reset", "--hard", "origin/main"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        
-        print("[Updater] Update applied successfully. Restarting application...")
-        # Restart the app
-        os.execv(sys.executable, ['python'] + sys.argv)
-    except Exception as e:
-        print(f"[Updater] Failed to apply update: {e}")
+        from updater import restart_application, update_from_github
+
+        root = Path(base_dir or Path(__file__).resolve().parent.parent).resolve()
+        changed = update_from_github(root)
+        if changed:
+            print("[Updater] Safe update applied. Restarting application...")
+            restart_application(root)
+            return True
+        print("[Updater] Update was not applied (working tree may be dirty or branch diverged).")
+    except Exception as exc:
+        print(f"[Updater] Failed to apply update: {exc}")
+    return False
