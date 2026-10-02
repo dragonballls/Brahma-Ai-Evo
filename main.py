@@ -3719,13 +3719,13 @@ class BrahmaLive:
             except Exception:
                 pass
             reply = ""
-            gemini_first = not self._use_openrouter_first
             request_text = f"{memory_ctx}\n\nCurrent User Request:\n{text}" if memory_ctx else text
 
             app_settings = config_manager.load_settings()
             configured_provider = app_settings.get("default_ai_provider", "Gemini")
             local_model_target = app_settings.get("local_ai_model", "qwen2.5:3b")
-            is_offline_mode = app_settings.get("offline_mode_enabled", False)
+            is_offline_mode = bool(app_settings.get("offline_mode_enabled", False))
+            auto_provider_switch = bool(app_settings.get("auto_provider_switch", True))
 
             is_cloud_gemini = configured_provider in ("Gemini", "Google Gemini")
             is_cloud_openrouter = configured_provider == "OpenRouter"
@@ -3850,18 +3850,19 @@ class BrahmaLive:
                 except Exception as e_loc:
                     print(f"[BRAHMA EVO] ⚠️ Local Brain failed: {e_loc}")
 
-            # 4. Fallback cascading: if primary cloud choice failed, try secondary cloud choice
-            if not reply and not is_offline_mode:
-                if is_cloud_gemini and self._use_openrouter_first:
+            # 4. Optional cloud fallback. Respect the user's auto-switch setting;
+            # a provider selected explicitly must not silently change when disabled.
+            if not reply and not is_offline_mode and auto_provider_switch:
+                if is_cloud_gemini:
                     try:
                         reply = openrouter_client.chat(request_text)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        print(f"[BRAHMA EVO] ⚠️ OpenRouter fallback failed: {exc}")
                 elif is_cloud_openrouter:
                     try:
                         reply = _gemini_text_reply(request_text)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        print(f"[BRAHMA EVO] ⚠️ Gemini fallback failed: {exc}")
 
             # 4. Ultimate offline safety net: Local Brain fallback
             if not reply and local_brain.is_available():
