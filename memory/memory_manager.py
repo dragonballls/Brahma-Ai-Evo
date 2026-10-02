@@ -2,6 +2,7 @@ from __future__ import annotations
 from core.user_paths import get_user_data_dir
 
 import json
+import os
 import re
 from datetime import datetime
 from threading import Lock
@@ -132,10 +133,19 @@ def save_memory(memory: dict) -> None:
     memory = _trim_to_limit(memory)
     MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _lock:
-        MEMORY_PATH.write_text(
-            json.dumps(memory, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        temp_path = MEMORY_PATH.with_name(f".{MEMORY_PATH.name}.tmp")
+        try:
+            temp_path.write_text(
+                json.dumps(memory, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            os.replace(temp_path, MEMORY_PATH)
+        except OSError as exc:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            print(f"[Memory] ⚠️ Save error: {exc}")
 
 
 def _truncate_value(val: str) -> str:
