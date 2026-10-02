@@ -94,3 +94,37 @@ def test_crucible_dependency_names_are_data_only(monkeypatch):
     assert ok is False
     assert calls == []
     assert "Missing preinstalled dependencies" in message
+
+
+def test_autoheal_rejects_external_absolute_path(monkeypatch, tmp_path):
+    external = tmp_path / "outside.py"
+    external.write_text("print('outside')\n", encoding="utf-8")
+    tb = f'Traceback (most recent call last):\n  File "{external}", line 1, in <module>\nValueError: boom'
+    parsed = __import__("actions.auto_heal_engine", fromlist=["TracebackAnalyzer"]).TracebackAnalyzer.parse(tb)
+    assert parsed["success"] is False
+
+
+def test_autoheal_allows_repo_source_and_parses_line(tmp_path, monkeypatch):
+    from actions.auto_heal_engine import TracebackAnalyzer
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    target = repo_root / "actions" / "safe_feature.py"
+    target.parent.mkdir()
+    target.write_text("def execute():\n    return 1\n", encoding="utf-8")
+    monkeypatch.setattr("actions.auto_heal_engine.BASE_DIR", repo_root)
+    tb = f'Traceback (most recent call last):\n  File "{target}", line 2, in execute\nValueError: boom'
+    parsed = TracebackAnalyzer.parse(tb)
+    assert parsed["success"] is True
+    assert parsed["line_number"] == 2
+
+
+def test_autoheal_protects_runtime_boundary(tmp_path, monkeypatch):
+    from actions.auto_heal_engine import TracebackAnalyzer
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    target = repo_root / "main.py"
+    target.write_text("print('x')\n", encoding="utf-8")
+    monkeypatch.setattr("actions.auto_heal_engine.BASE_DIR", repo_root)
+    tb = f'Traceback (most recent call last):\n  File "{target}", line 1, in <module>\nValueError: boom'
+    parsed = TracebackAnalyzer.parse(tb)
+    assert parsed["success"] is False
