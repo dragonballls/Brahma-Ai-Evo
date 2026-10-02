@@ -25,13 +25,20 @@ import tempfile
 from pathlib import Path
 from datetime import datetime
 
+from core.user_paths import get_user_data_dir
 import google.generativeai as genai
 
 
 def _get_api_key() -> str:
-    config_path = Path(__file__).resolve().parent.parent / "config" / "api_keys.json"
-    with open(config_path, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    config_path = get_user_data_dir() / "config" / "api_keys.json"
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            key = str(json.load(f).get("gemini_api_key", "")).strip()
+    except (OSError, json.JSONDecodeError, TypeError):
+        key = ""
+    if not key:
+        raise RuntimeError("Gemini API key is not configured. Add it in Brahma Evo settings.")
+    return key
 
 
 def _gemini_client():
@@ -676,20 +683,26 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
     if action == "transcribe":
         if not _ffmpeg_available():
             return "ffmpeg not found. Needed for video transcription."
-        tmp_audio = Path(tempfile.mktemp(suffix=".mp3"))
+        tmp_file = tempfile.NamedTemporaryFile(prefix="brahma_", suffix=".mp3", delete=False)
+        tmp_audio = Path(tmp_file.name)
+        tmp_file.close()
         try:
-            subprocess.run(
+            proc = subprocess.run(
                 ["ffmpeg", "-i", str(path), "-q:a", "0", "-map", "a",
                  str(tmp_audio), "-y"],
-                capture_output=True, timeout=300
+                capture_output=True, text=True, timeout=300
             )
-            result = _process_audio(tmp_audio, "transcribe", params, speak)
-            return result
+            if proc.returncode != 0:
+                detail = (proc.stderr or proc.stdout or "ffmpeg failed").strip()[-500:]
+                return f"Video transcription failed: {detail}"
+            return _process_audio(tmp_audio, "transcribe", params, speak)
         except Exception as e:
             return f"Video transcription failed: {e}"
         finally:
-            if tmp_audio.exists():
-                tmp_audio.unlink()
+            try:
+                tmp_audio.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     if action == "convert":
         fmt = params.get("format", "mp4").lstrip(".")
@@ -729,11 +742,48 @@ def _process_archive(path: Path, action: str, params: dict, speak=None) -> str:
             return f"List failed: {e}"
 
     if action == "extract":
-        dest = Path(params.get("destination", str(path.parent / path.stem)))
-        dest.mkdir(parents=True, exist_ok=True)
+        dest = Path(params.get("destination", str(path.parent / path.stem))).expanduser().resolve()
         try:
-            shutil.unpack_archive(path, dest)
-            return f"Extracted to: {dest}"
+            import zipfile, tarfile
+
+            dest.mkdir(parents=True, exist_ok=True)
+            ext = path.suffix.lower()
+
+            def _safe_target(member_name: str) -> Path:
+                target = (dest / member_name).resolve()
+                try:
+                    target.relative_to(dest)
+                except ValueError as exc:
+                    raise RuntimeError(f"Archive entry escapes destination: {member_name!r}") from exc
+                return target
+
+            if ext == ".zip":
+                with zipfile.ZipFile(path) as archive:
+                    for info in archive.infolist():
+                        target = _safe_target(info.filename)
+                        if info.is_dir():
+                            target.mkdir(parents=True, exist_ok=True)
+                            continue
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        with archive.open(info) as src, target.open("wb") as dst:
+                            shutil.copyfileobj(src, dst)
+            elif ext in (".tar", ".gz", ".bz2", ".xz"):
+                with tarfile.open(path) as archive:
+                    for member in archive.getmembers():
+                        if member.islnk() or member.issym() or member.isdev():
+                            raise RuntimeError(f"Unsafe archive entry type: {member.name!r}")
+                        target = _safe_target(member.name)
+                        if member.isdir():
+                            target.mkdir(parents=True, exist_ok=True)
+                        elif member.isfile():
+                            target.parent.mkdir(parents=True, exist_ok=True)
+                            extracted = archive.extractfile(member)
+                            if extracted is not None:
+                                with extracted, target.open("wb") as dst:
+                                    shutil.copyfileobj(extracted, dst)
+            else:
+                return f"Unsupported archive format: {ext}"
+            return f"Extracted safely to: {dest}"
         except Exception as e:
             return f"Extract failed: {e}"
 
