@@ -11690,7 +11690,7 @@ class SystemConnectivityPage(QWidget):
             import json
             import shutil
             from pathlib import Path
-            with open("config/api_keys.json", "r", encoding="utf-8") as f:
+            with open(CONFIG_DIR / "api_keys.json", "r", encoding="utf-8") as f:
                 d = json.load(f)
             d["instagram_username"] = ""
             d["instagram_password"] = ""
@@ -11954,7 +11954,7 @@ class SystemConnectivityPage(QWidget):
         d["instagram_username"] = username
         d["instagram_password"] = password
         
-        with open("config/api_keys.json", "w", encoding="utf-8") as f:
+        with open(CONFIG_DIR / "api_keys.json", "w", encoding="utf-8") as f:
             json.dump(d, f, indent=4)
             
         self._ig_worker = self.IGLoginWorker(username, password)
