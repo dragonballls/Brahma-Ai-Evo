@@ -73,7 +73,14 @@ class SkillForge:
         manifest = synthesis["manifest"]
         code = synthesis["code"]
         test_cases = synthesis.get("test_cases", [{"input": {}}])
-        actual_name = manifest.get("name", name_hint or "custom_skill")
+
+        # Never trust an LLM-generated filename or allow it to select a path.
+        raw_name = str(manifest.get("name") or name_hint or "custom_skill")
+        actual_name = re.sub(r"[^A-Za-z0-9_]", "_", raw_name).strip("_")[:64]
+        if not actual_name:
+            actual_name = "custom_skill"
+        if actual_name in {"__init__", "core", "actions", "memory", "plugins", "features"}:
+            actual_name = f"generated_{actual_name}"
 
         # 2. Iterative Verification & Self-Repair Loop
         for attempt in range(max_repair_attempts + 1):
@@ -161,9 +168,19 @@ class SkillForge:
 
         # Primary native module: features/{actual_name}.py
         feature_py_file = features_dir / f"{actual_name}.py"
+        target_dir = features_dir / actual_name
+        if feature_py_file.exists() or target_dir.exists():
+            existing_manifest = target_dir / "manifest.json"
+            if not (existing_manifest.exists() and actual_name in DynamicToolRegistry._skills):
+                return {
+                    "success": False,
+                    "message": f"Feature name '{actual_name}' already exists; refusing to overwrite it.",
+                }
+
         try:
-            with open(feature_py_file, "w", encoding="utf-8") as f:
-                f.write(feature_code)
+            temp_feature = feature_py_file.with_name(f".{feature_py_file.name}.tmp")
+            temp_feature.write_text(feature_code, encoding="utf-8")
+            temp_feature.replace(feature_py_file)
 
             # Update features/__init__.py for self-evolving codebase integration
             init_file = features_dir / "__init__.py"
@@ -177,7 +194,6 @@ class SkillForge:
                 logger.warning(f"[Forge] Could not update features/__init__.py: {e_init}")
 
             # Also maintain feature package directory for telemetry and test cases
-            target_dir = features_dir / actual_name
             target_dir.mkdir(parents=True, exist_ok=True)
             with open(target_dir / "manifest.json", "w", encoding="utf-8") as f:
                 json.dump(manifest, f, indent=4)
