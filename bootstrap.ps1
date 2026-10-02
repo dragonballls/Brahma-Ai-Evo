@@ -37,8 +37,8 @@ if (Get-Command "py" -ErrorAction SilentlyContinue) { $PythonExe = "py" }
 elseif (Get-Command "python" -ErrorAction SilentlyContinue) { $PythonExe = "python" }
 
 if (-not $PythonExe) {
-    Write-Host "Python not found. Downloading Python 3.11.8..." -ForegroundColor Yellow
-    $PythonUrl = "https://www.python.org/ftp/python/3.11.8/python-3.11.8-amd64.exe"
+    Write-Host "Python not found. Downloading Python 3.13.16..." -ForegroundColor Yellow
+    $PythonUrl = "https://www.python.org/ftp/python/3.13.16/python-3.13.16-amd64.exe"
     $PythonInstaller = "$env:TEMP\python_installer.exe"
     Invoke-WebRequest -Uri $PythonUrl -OutFile $PythonInstaller
     
@@ -54,8 +54,8 @@ if (-not $PythonExe) {
 
 # 4. Check for Node.js
 if (-not (Get-Command "node" -ErrorAction SilentlyContinue)) {
-    Write-Host "Node.js not found. Downloading Node v20 LTS..." -ForegroundColor Yellow
-    $NodeUrl = "https://nodejs.org/dist/v20.11.1/node-v20.11.1-x64.msi"
+    Write-Host "Node.js not found. Downloading Node v24 LTS..." -ForegroundColor Yellow
+    $NodeUrl = "https://nodejs.org/dist/v24.21.0/node-v24.21.0-x64.msi"
     $NodeInstaller = "$env:TEMP\node_installer.msi"
     Invoke-WebRequest -Uri $NodeUrl -OutFile $NodeInstaller
     
