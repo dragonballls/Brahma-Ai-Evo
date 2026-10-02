@@ -143,6 +143,7 @@ class SkillForge:
         manifest["version"] = "1.0.0"
         manifest["author"] = "Project Ultron Autonomous Self-Evolution Engine"
         manifest["active"] = True
+        manifest["generated"] = True
 
         # Build clean native feature code with embedded FEATURE_METADATA
         feature_code = code
