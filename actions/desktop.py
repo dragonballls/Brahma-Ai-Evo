@@ -230,7 +230,9 @@ def set_wallpaper(image_path: str) -> str:
             if path.suffix.lower() in {".webp", ".png"}:
                 try:
                     from PIL import Image
-                    bmp_path = Path(tempfile.mktemp(suffix=".bmp"))
+                    tmp_file = tempfile.NamedTemporaryFile(prefix="brahma_wallpaper_", suffix=".bmp", delete=False)
+                    bmp_path = Path(tmp_file.name)
+                    tmp_file.close()
                     Image.open(path).convert("RGB").save(bmp_path, "BMP")
                     path = bmp_path
                 except ImportError:
@@ -305,7 +307,9 @@ def set_wallpaper_from_url(url: str) -> str:
     try:
         import urllib.request
         suffix = Path(url.split("?")[0]).suffix or ".jpg"
-        tmp    = Path(tempfile.mktemp(suffix=suffix))
+        tmp_file = tempfile.NamedTemporaryFile(prefix="brahma_wallpaper_", suffix=suffix, delete=False)
+        tmp = Path(tmp_file.name)
+        tmp_file.close()
         urllib.request.urlretrieve(url, str(tmp))
         result = set_wallpaper(str(tmp))
         try:
