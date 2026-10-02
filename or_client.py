@@ -130,9 +130,16 @@ REQUEST_TIMEOUT       = 60   # seconds per request
 MAX_RETRIES_PER_MODEL = 2    # attempts before moving to next model
 RETRY_DELAY           = 2    # seconds between retries
 RATE_LIMIT_COOLDOWN   = 60   # seconds before retrying a rate-limited model
+MODEL_CATALOG_URL      = "https://openrouter.ai/api/v1/models"
+MODEL_CATALOG_TTL      = 900
+FREE_ROUTER_MODEL      = "openrouter/free"
 
 _rate_limited: dict[str, float] = {}
 _rate_limit_lock = threading.RLock()
+_model_catalog_lock = threading.RLock()
+_model_catalog_ids: set[str] = set()
+_model_catalog_meta: dict[str, dict] = {}
+_model_catalog_cached_at = 0.0
 
 class OpenRouterClient:
 
@@ -144,6 +151,64 @@ class OpenRouterClient:
             "HTTP-Referer":  "https://github.com/brahma-ai",
             "X-Title":       "Brahma Evo",
         }
+
+    def _get_model_catalog(self, *, force: bool = False) -> dict[str, dict]:
+        """Fetch and cache the public OpenRouter model catalog."""
+        global _model_catalog_ids, _model_catalog_meta, _model_catalog_cached_at
+        now = time.time()
+        with _model_catalog_lock:
+            if (
+                not force
+                and _model_catalog_cached_at
+                and now - _model_catalog_cached_at < MODEL_CATALOG_TTL
+            ):
+                return dict(_model_catalog_meta)
+
+        try:
+            response = requests.get(
+                MODEL_CATALOG_URL,
+                headers={"Accept": "application/json", "User-Agent": "Brahma-Evo"},
+                timeout=10,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            rows = payload.get("data", []) if isinstance(payload, dict) else []
+            catalog = {}
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                model_id = str(row.get("id") or "").strip()
+                if model_id:
+                    catalog[model_id] = row
+
+            with _model_catalog_lock:
+                _model_catalog_meta = catalog
+                _model_catalog_ids = set(catalog)
+                _model_catalog_cached_at = now
+                return dict(catalog)
+        except requests.exceptions.RequestException as exc:
+            logger.warning(f"[OpenRouter] Model catalog unavailable: {exc}")
+        except (ValueError, TypeError) as exc:
+            logger.warning(f"[OpenRouter] Model catalog returned invalid data: {exc}")
+
+        with _model_catalog_lock:
+            return dict(_model_catalog_meta)
+
+    def _model_pool(self, *, vision: bool = False) -> list[str]:
+        """Return a live-validated pool, with the provider's resilient free router first."""
+        catalog = self._get_model_catalog()
+        live_ids = set(catalog)
+
+        static_pool = VISION_MODELS if vision else TEXT_MODELS
+        pool = [model for model in static_pool if not live_ids or model in live_ids]
+
+        if FREE_ROUTER_MODEL in live_ids:
+            pool.insert(0, FREE_ROUTER_MODEL)
+        elif not pool:
+            pool = [FREE_ROUTER_MODEL]
+
+        # Remove duplicates while preserving order.
+        return list(dict.fromkeys(pool))
 
     def test_api_key(self, key: str | None = None) -> tuple[bool, str, dict]:
         """Validate credentials against OpenRouter without consuming model inference."""
@@ -343,7 +408,7 @@ class OpenRouterClient:
         messages.append({"role": "user", "content": prompt})
 
         return self._call_with_fallback(
-            TEXT_MODELS, messages, model, max_tokens, temperature
+            self._model_pool(vision=False), messages, model, max_tokens, temperature
         )
 
     def chat_json(
@@ -361,7 +426,7 @@ class OpenRouterClient:
             {"role": "user",   "content": prompt},
         ]
         raw = self._call_with_fallback(
-            TEXT_MODELS, messages, model, max_tokens, temperature=0.2
+            self._model_pool(vision=False), messages, model, max_tokens, temperature=0.2
         )
 
         clean = raw.strip()
@@ -409,7 +474,7 @@ class OpenRouterClient:
             },
         ]
         return self._call_with_fallback(
-            VISION_MODELS, messages, model, max_tokens, temperature=0.2
+            self._model_pool(vision=True), messages, model, max_tokens, temperature=0.2
         )
 
     def vision_from_file(
@@ -444,16 +509,19 @@ class OpenRouterClient:
     ) -> str:
     
         return self._call_with_fallback(
-            TEXT_MODELS, messages, model, max_tokens, temperature
+            self._model_pool(vision=False), messages, model, max_tokens, temperature
         )
 
     def available_models(self) -> dict:
+        catalog = self._get_model_catalog()
         return {
-            "text_models":   TEXT_MODELS,
-            "vision_models": VISION_MODELS,
-            "rate_limited":  list(_rate_limited.keys()),
-            "total_text":    len(TEXT_MODELS),
-            "total_vision":  len(VISION_MODELS),
+            "text_models": self._model_pool(vision=False),
+            "vision_models": self._model_pool(vision=True),
+            "catalog_models": sorted(catalog),
+            "rate_limited": list(_rate_limited.keys()),
+            "total_text": len(self._model_pool(vision=False)),
+            "total_vision": len(self._model_pool(vision=True)),
+            "catalog_count": len(catalog),
         }
 
 client = OpenRouterClient()
