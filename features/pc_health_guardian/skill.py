@@ -10,7 +10,6 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from statistics import mean
 from typing import Any
 
 import psutil
@@ -42,8 +41,6 @@ _PROTECTED = {
     "spoolsv.exe",
     "taskhostw.exe",
     "brahmaevo.exe",
-    "python.exe",
-    "pythonw.exe",
 }
 
 _WATCH_LOCK = threading.Lock()
@@ -215,8 +212,8 @@ def _network_check() -> dict[str, Any]:
     }
 
 
-def diagnose() -> dict[str, Any]:
-    """Collects evidence locally without changing system state."""
+def diagnose(deep: bool = False) -> dict[str, Any]:
+    """Collects evidence locally without changing system state. Deep mode adds expensive Windows integrity checks."""
     vm = _memory_summary()
     processes = _snapshot_processes()
     storage = _storage_summary()
@@ -268,19 +265,21 @@ def diagnose() -> dict[str, Any]:
             "evidence": {"cpu_percent": cpu_percent},
         })
 
-    integrity = _windows_integrity_check()
-    if integrity.get("supported") and (
-        integrity["dism"]["returncode"] not in (0,) or integrity["sfc"]["returncode"] not in (0,)
-    ):
-        findings.append({
-            "severity": "high",
-            "category": "system_integrity",
-            "summary": "Windows DISM/SFC verification reported a problem or could not complete successfully.",
-            "evidence": {
-                "dism_returncode": integrity["dism"]["returncode"],
-                "sfc_returncode": integrity["sfc"]["returncode"],
-            },
-        })
+    integrity = {"supported": False, "skipped": True, "reason": "Deep integrity verification was not requested."}
+    if deep:
+        integrity = _windows_integrity_check()
+        if integrity.get("supported") and (
+            integrity["dism"]["returncode"] not in (0,) or integrity["sfc"]["returncode"] not in (0,)
+        ):
+            findings.append({
+                "severity": "high",
+                "category": "system_integrity",
+                "summary": "Windows DISM/SFC verification reported a problem or could not complete successfully.",
+                "evidence": {
+                    "dism_returncode": integrity["dism"]["returncode"],
+                    "sfc_returncode": integrity["sfc"]["returncode"],
+                },
+            })
 
     network = _network_check()
     if not network["healthy"]:
@@ -443,7 +442,7 @@ def _repair_network() -> dict[str, Any]:
 def repair(target: str = "auto", allow_disruptive: bool = False) -> dict[str, Any]:
     """Runs only conservative, evidence-backed fixes. Destructive registry/driver changes are not attempted."""
     target = str(target or "auto").strip().lower()
-    findings = diagnose().get("findings", [])
+    findings = diagnose(deep=(target == "system_files" or allow_disruptive)).get("findings", [])
     actions: list[Any] = []
 
     if target in ("auto", "memory"):
@@ -504,7 +503,7 @@ def repair(target: str = "auto", allow_disruptive: bool = False) -> dict[str, An
     }
 
 
-def _watch_loop(duration_seconds: float | None = None, auto_repair: bool = False) -> None:
+def _watch_loop(duration_seconds: float | None = None, interval_seconds: int = 60, auto_repair: bool = False) -> None:
     global _WATCH_STATUS
     started = time.time()
     deadline = started + duration_seconds if duration_seconds else None
@@ -516,6 +515,7 @@ def _watch_loop(duration_seconds: float | None = None, auto_repair: bool = False
             "last_scan": None,
             "last_alert": None,
             "last_repair": None,
+            "interval_seconds": interval_seconds,
         })
     _state_save()
 
@@ -540,7 +540,8 @@ def _watch_loop(duration_seconds: float | None = None, auto_repair: bool = False
             with _WATCH_LOCK:
                 _WATCH_STATUS["last_alert"] = {"error": str(exc)}
         remaining = (deadline - time.time()) if deadline else None
-        sleep_for = min(60.0, remaining) if remaining is not None else 60.0
+        base_interval = max(15.0, min(float(interval_seconds), 3600.0))
+        sleep_for = min(base_interval, remaining) if remaining is not None else base_interval
         if sleep_for > 0:
             _WATCH_STOP.wait(timeout=sleep_for)
 
@@ -552,7 +553,6 @@ def _watch_loop(duration_seconds: float | None = None, auto_repair: bool = False
 
 def start_monitor(duration: str | int | float = "24 hours", interval_seconds: int = 60, auto_repair: bool = False) -> str:
     global _WATCH_THREAD
-    _ = interval_seconds  # Kept for forward compatibility; leak detection itself controls sample cadence.
     duration_seconds = _parse_duration(duration)
     with _WATCH_LOCK:
         if _WATCH_THREAD and _WATCH_THREAD.is_alive():
@@ -560,7 +560,7 @@ def start_monitor(duration: str | int | float = "24 hours", interval_seconds: in
         _WATCH_STOP.clear()
         _WATCH_THREAD = threading.Thread(
             target=_watch_loop,
-            kwargs={"duration_seconds": duration_seconds, "auto_repair": auto_repair},
+            kwargs={"duration_seconds": duration_seconds, "interval_seconds": int(interval_seconds), "auto_repair": auto_repair},
             daemon=True,
             name="Brahma-PC-Health",
         )
@@ -619,7 +619,7 @@ def _format_duration(seconds: float | None) -> str:
 def execute(**kwargs: Any) -> dict[str, Any]:
     action = str(kwargs.get("action", "diagnose")).strip().lower()
     if action in {"diagnose", "scan", "full"}:
-        result = diagnose()
+        result = diagnose(deep=bool(kwargs.get("deep", False)))
         return {
             "summary": f"PC diagnosis complete: {len(result['findings'])} findings, RAM {result['memory']['percent']}%, CPU {result['cpu_percent']}%.",
             "output": result,
