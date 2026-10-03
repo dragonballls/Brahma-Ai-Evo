@@ -351,14 +351,18 @@ def _cleanup_current_audio() -> None:
         _current_audio_path = None
 
 
-def _speak_sapi_male(text: str) -> None:
-    """Speaks using an offline native Windows male voice (Microsoft George / David)."""
+def _speak_sapi_male(text: str, *, rate: int = 0) -> None:
+    """Speaks using an offline native Windows male voice with SAPI rate control."""
     try:
         import win32com.client
         import pythoncom
         pythoncom.CoInitialize()
         v = win32com.client.Dispatch("SAPI.SpVoice")
         v.Volume = 100
+        try:
+            v.Rate = max(-10, min(10, int(rate)))
+        except Exception:
+            pass
 
         # Prioritize Windows Speech OneCore male voices (e.g. George, David, Mark)
         selected = False
@@ -395,19 +399,34 @@ def _speak_sapi_male(text: str) -> None:
 _speak_lock = threading.Lock()
 
 
-def _speak_edge_native(text: str, force_edge: bool = False) -> None:
+def _speak_edge_native(
+    text: str,
+    force_edge: bool = False,
+    *,
+    rate: str = "+0%",
+    pitch: str = "+0Hz",
+    sapi_rate: int = 0,
+) -> None:
+    """Speak with lightweight, caller-selected fallback prosody."""
     global _current_player_alias, _current_audio_path
     text = (text or "").strip()
     if not text:
         return
 
-    # When entered fully local mode from settings, use the offline native male voice unless force_edge requested
+    rate = str(rate or "+0%")
+    pitch = str(pitch or "+0Hz")
+    try:
+        sapi_rate = max(-10, min(10, int(sapi_rate)))
+    except Exception:
+        sapi_rate = 0
+
+    # When entered fully local mode from settings, use the offline native male voice unless force_edge requested.
     if not force_edge:
         try:
             from memory import config_manager
             cfg = config_manager.load_settings()
             if cfg.get("offline_mode_enabled", False):
-                _speak_sapi_male(text)
+                _speak_sapi_male(text, rate=sapi_rate)
                 return
         except Exception:
             pass
@@ -417,7 +436,7 @@ def _speak_edge_native(text: str, force_edge: bool = False) -> None:
             import edge_tts
         except Exception as exc:
             print(f"[AttentionMonitor] Edge TTS import failed: {exc}. Falling back to offline male voice.")
-            _speak_sapi_male(text)
+            _speak_sapi_male(text, rate=sapi_rate)
             return
 
         try:
@@ -427,15 +446,20 @@ def _speak_edge_native(text: str, force_edge: bool = False) -> None:
 
         audio_path = os.path.join(tempfile.gettempdir(), f"brahma_edge_tts_{uuid.uuid4().hex}.mp3")
         try:
-            communicator = edge_tts.Communicate(text, voice="en-US-GuyNeural")
+            communicator = edge_tts.Communicate(
+                text,
+                voice="en-US-GuyNeural",
+                rate=rate,
+                pitch=pitch,
+            )
             communicator.save_sync(audio_path)
         except Exception as exc:
             print(f"[AttentionMonitor] Edge TTS generation failed: {exc}. Falling back to offline male voice.")
             _cleanup_current_audio()
-            _speak_sapi_male(text)
+            _speak_sapi_male(text, rate=sapi_rate)
             return
 
-        # Play Edge TTS audio via Windows PresentationCore MediaPlayer (native across Windows 10 & 11)
+        # Play Edge TTS audio via Windows PresentationCore MediaPlayer (native across Windows 10 & 11).
         _current_audio_path = audio_path
         try:
             cmd = [
@@ -448,7 +472,7 @@ def _speak_edge_native(text: str, force_edge: bool = False) -> None:
             _current_speech_proc = None
         except Exception as exc:
             print(f"[AttentionMonitor] MediaPlayer playback failed: {exc}. Falling back to offline male voice.")
-            _speak_sapi_male(text)
+            _speak_sapi_male(text, rate=sapi_rate)
         finally:
             _cleanup_current_audio()
 
