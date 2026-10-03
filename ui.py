@@ -12618,6 +12618,53 @@ class SystemConnectivityPage(QWidget):
         if self._ctrl() and hasattr(self._ctrl(), "_win"):
             self._ctrl()._win._show_setup(self._ctrl()._win._load_api_defaults())
 
+    def _save_cloud_provider_key(self, provider: str, field: str, key: str, status_lbl):
+        key = (key or "").strip()
+        data = self._load_api_defaults()
+        data[field] = key
+        try:
+            os.makedirs(CONFIG_DIR, exist_ok=True)
+            API_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+            status_lbl.setText("Saved locally")
+            status_lbl.setStyleSheet(f"color: {C.GREEN if key else C.TEXT_DIM}; font-size: 10px;")
+            # Mark the running gateway stale so the newly saved provider is picked up
+            # on its next request without blocking the settings UI.
+            try:
+                from core.omniroute import gateway
+                gateway()._credentials_synced = False
+            except Exception:
+                pass
+            if self._ctrl() and hasattr(self._ctrl(), "write_log"):
+                self._ctrl().write_log(
+                    f"SYS: {provider} cloud credential {'saved' if key else 'cleared'}."
+                )
+        except Exception as exc:
+            status_lbl.setText("Save failed")
+            status_lbl.setStyleSheet(f"color: {C.RED}; font-size: 10px;")
+            if self._ctrl() and hasattr(self._ctrl(), "write_log"):
+                self._ctrl().write_log(f"ERR: {provider} credential save failed: {exc}")
+
+    def _test_cloud_provider_key(self, provider: str, key: str, status_lbl):
+        key = (key or "").strip() or str(self._load_api_defaults().get(f"{provider}_api_key") or "").strip()
+        if not key:
+            status_lbl.setText("Key required")
+            status_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: 10px;")
+            return
+        status_lbl.setText("Testing...")
+        status_lbl.setStyleSheet(f"color: {C.ACC}; font-size: 10px;")
+        def worker():
+            try:
+                from core.omniroute import gateway
+                gateway().provisioner.configure_provider(provider, key)
+                result = gateway().test_provider(provider)
+                msg = f"SYS: {provider} test {'passed' if result.get('ok') else 'failed'}."
+            except Exception as exc:
+                msg = f"SYS: {provider} test failed: {exc}"
+            if self._ctrl() and hasattr(self._ctrl(), "write_log"):
+                self._ctrl().write_log(msg)
+
+        threading.Thread(target=worker, name=f"brahma-provider-test-{provider}", daemon=True).start()
+
     def _test_provider(self, setting_key: str):
         if setting_key == "gemini":
             msg = "Google Gemini key detected." if self._load_api_defaults().get("gemini_api_key") else "Google Gemini key missing."
