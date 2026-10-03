@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import importlib
+import importlib.util
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
@@ -8,9 +9,19 @@ from unittest.mock import patch
 import psutil
 
 
+def _load_skill_module(name: str, relative_path: str):
+    path = Path(__file__).resolve().parents[1] / relative_path
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Unable to load {relative_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 class PCHealthGuardianTests(TestCase):
     def test_duration_parser(self):
-        mod = importlib.import_module("features.pc_health_guardian.skill")
+        mod = _load_skill_module("pc_health_guardian_skill", "features/pc_health_guardian/skill.py")
         self.assertEqual(mod._parse_duration("15 seconds"), 15)
         self.assertEqual(mod._parse_duration("5 minutes"), 300)
         self.assertEqual(mod._parse_duration("24 hours"), 86400)
@@ -72,12 +83,12 @@ class MissionNoteUiTests(TestCase):
         self.assertIn('if self._mission_note_hidden:', source)
         self.assertIn('return self._set_mission_note_visibility(True)', source)
         self.assertIn('return self._set_mission_note_visibility(False)', source)
-        self.assertIn('"Mission note reopened; autonomous work continues."', source)
-        self.assertIn('"Mission note hidden; autonomous work continues."', source)
+        self.assertIn("Mission note reopened; autonomous work continues.", source)
+        self.assertIn("Mission note hidden; autonomous work continues.", source)
 
 class AutonomousMissionTests(TestCase):
     def test_duration_parser(self):
-        mod = importlib.import_module("features.autonomous_mission.skill")
+        mod = _load_skill_module("autonomous_mission_skill", "features/autonomous_mission/skill.py")
         self.assertEqual(mod._parse_duration("15 seconds"), 15)
         self.assertEqual(mod._parse_duration("5 minutes"), 300)
         self.assertEqual(mod._parse_duration("24 hours"), 86400)
