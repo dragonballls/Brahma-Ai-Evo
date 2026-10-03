@@ -31,10 +31,9 @@ NODE_ZIP_NAME = f"node-v{NODE_VERSION}-win-x64.zip"
 NODE_URL = f"https://nodejs.org/dist/v{NODE_VERSION}/{NODE_ZIP_NAME}"
 NODE_SHA256 = "158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541"
 # The runtime version is owned by core.omniroute_setup so packaging cannot drift.
-# The npm registry's exact version + tarball integrity are authoritative for the
-# published package; an independent git commit pin would create a second source
-# of truth and can reject a valid republished package.
-OMNIROUTE_COMMIT = ""
+# The published version is owned by core.omniroute_setup; this commit pin verifies
+# the exact known-good 3.8.50 package lineage without duplicating the version source.
+OMNIROUTE_COMMIT = "5458026c216f77a3da68ea49152dc33470cfe2cb"
 OMNIROUTE_METADATA_URL = f"https://registry.npmjs.org/omniroute/{OMNIROUTE_VERSION}"
 CACHE_SCHEMA = "1"
 
