@@ -99,6 +99,7 @@
     // an uncapped render loop that continuously burns CPU/GPU power at idle.
     let renderTimer = null;
     let lastRenderMs = 0.0;
+    let isDeepIdle = false;
 
     function targetFrameDelayMs() {
       if (document.visibilityState !== "visible") return 1000;
@@ -721,6 +722,10 @@
     }
 
     function renderLoop() {
+      if (isDeepIdle) {
+        renderTimer = null;
+        return;
+      }
       const now = performance.now();
       const frameDelay = targetFrameDelayMs();
       if (now - lastRenderMs >= frameDelay) {
@@ -806,6 +811,20 @@
         targetCameraZ = 46.0;
         targetSpeedMult = 1.0;
         targetPulseMod = 1.0;
+      }
+    };
+
+    window.setDeepIdle = function(enabled) {
+      isDeepIdle = !!enabled;
+      if (isDeepIdle) {
+        if (renderTimer !== null) {
+          window.clearTimeout(renderTimer);
+          renderTimer = null;
+        }
+        targetAudioLevel = 0.0;
+      } else if (window._hasBooted && renderTimer === null) {
+        lastRenderMs = performance.now();
+        renderLoop();
       }
     };
 

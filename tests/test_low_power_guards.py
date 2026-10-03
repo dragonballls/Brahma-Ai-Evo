@@ -46,6 +46,24 @@ class LowPowerGuardTests(unittest.TestCase):
         main = self.read("main.py")
         self.assertIn('get_setting("clipboard_auto_comment_enabled", False)', main)
 
+    def test_deep_idle_suspends_nonessential_work(self):
+        ui = self.read("ui.py")
+        main = self.read("main.py")
+        html = self.read("assets/web_background/index.html")
+        self.assertIn("def set_deep_idle(self, enabled: bool)", ui)
+        self.assertIn("def set_deep_idle_handlers(self, on_enter=None, on_exit=None)", ui)
+        self.assertIn("self._deep_idle_tmr.start()", ui)
+        self.assertIn("def pause(self):", ui)
+        self.assertIn("self._resume_event", ui)
+        self.assertIn("sensorium.stop()", main)
+        self.assertIn("sensorium.start()", main)
+        self.assertIn("brahma_evo._attention_monitor.stop()", main)
+        self.assertIn("brahma_evo._attention_monitor.start()", main)
+        self.assertIn('getattr(self.ui, "_deep_idle", False)', main)
+        self.assertIn("window.setDeepIdle = function(enabled)", html)
+        self.assertIn("if (isDeepIdle)", html)
+        self.assertIn("renderTimer = null;", html)
+
     def test_updater_targets_this_repository(self):
         root_updater = self.read("updater.py")
         core_updater = self.read("core/updater.py")
