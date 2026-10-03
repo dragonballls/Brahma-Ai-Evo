@@ -63,11 +63,10 @@ try:
 except Exception:
     pass
 
-try:
-    from PyQt6.QtWebEngineWidgets import QWebEngineView
-    WEB_ENGINE_AVAILABLE = True
-except Exception:
-    WEB_ENGINE_AVAILABLE = False
+# PyQt6-WebEngine is intentionally lazy. A WebEngine process can add a large
+# resident footprint even when the holographic background is only decorative.
+QWebEngineView = None
+WEB_ENGINE_AVAILABLE = True
 
 from discord_bot import DiscordBotService
 from gesture_utils import estimate_gesture_state, GestureTracker
@@ -99,6 +98,19 @@ _LEFT_W  = 160
 _RIGHT_W = 340
 
 _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
+
+def _low_power_ui_enabled() -> bool:
+    env = os.environ.get("BRAHMA_LOW_POWER_MODE")
+    if env is not None:
+        return env.strip().lower() not in {"0", "false", "off", "no"}
+    try:
+        if APP_SETTINGS_FILE.exists():
+            data = json.loads(APP_SETTINGS_FILE.read_text(encoding="utf-8"))
+            return bool(data.get("low_power_mode", True)) if isinstance(data, dict) else True
+    except Exception:
+        pass
+    return True
+
 
 
 class C:
@@ -235,18 +247,20 @@ class BackgroundWidget(QWidget):
             except Exception:
                 self._fallback_pixmap = None
         self._web_view = None
-
-        if WEB_ENGINE_AVAILABLE:
+        if not _low_power_ui_enabled() or os.environ.get("BRAHMA_EXPERIMENTAL_HOLO_RENDER") == "1":
             self._init_web_engine()
 
     def _init_web_engine(self):
         if self._web_view is not None:
             return
+        if _low_power_ui_enabled() and os.environ.get("BRAHMA_EXPERIMENTAL_HOLO_RENDER") != "1":
+            return
         try:
+            from PyQt6.QtWebEngineWidgets import QWebEngineView as _QWebEngineView
             html_path = BASE_DIR / "assets" / "web_background" / "index.html"
             if not html_path.exists():
                 return
-            self._web_view = QWebEngineView(self)
+            self._web_view = _QWebEngineView(self)
             st = self._web_view.settings()
             try:
                 st.setAttribute(st.WebAttribute.WebGLEnabled, True)
@@ -368,7 +382,7 @@ class BackgroundWidget(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        if self._web_view is None and WEB_ENGINE_AVAILABLE:
+        if self._web_view is None and (not _low_power_ui_enabled() or os.environ.get("BRAHMA_EXPERIMENTAL_HOLO_RENDER") == "1"):
             self._init_web_engine()
         elif self._web_view and self.width() > 0 and self.height() > 0:
             self._web_view.setGeometry(self.rect())
@@ -376,7 +390,7 @@ class BackgroundWidget(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if self._web_view is None and WEB_ENGINE_AVAILABLE:
+        if self._web_view is None and (not _low_power_ui_enabled() or os.environ.get("BRAHMA_EXPERIMENTAL_HOLO_RENDER") == "1"):
             self._init_web_engine()
         elif self._web_view and self.width() > 0 and self.height() > 0:
             self._web_view.setGeometry(self.rect())
@@ -8089,7 +8103,8 @@ class FloatingLauncher(QWidget):
 
         self._anim_timer = QTimer(self)
         self._anim_timer.timeout.connect(self._anim_tick)
-        self._anim_timer.start(25)  # 40fps
+        if not _low_power_ui_enabled():
+            self._anim_timer.start(25)
 
         self._single_timer = QTimer(self)
         self._single_timer.setSingleShot(True)
@@ -8139,8 +8154,12 @@ class FloatingLauncher(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        if hasattr(self, "_anim_timer") and not self._anim_timer.isActive():
-            self._anim_timer.start(25)
+        if (
+            hasattr(self, "_anim_timer")
+            and not self._anim_timer.isActive()
+            and (not _low_power_ui_enabled() or self._state in {"listening", "thinking", "speaking", "executing", "processing", "working"})
+        ):
+            self._anim_timer.start(33 if _low_power_ui_enabled() else 25)
 
     def _anim_tick(self):
         if not self.isVisible():
@@ -8314,6 +8333,14 @@ class FloatingLauncher(QWidget):
         old_state = self._state
         self._state = (state or "idle").strip().lower()
         self._status_line = (detail or self._default_status()).strip() or self._default_status()
+        if hasattr(self, "_anim_timer"):
+            active = self._state in {"listening", "thinking", "speaking", "executing", "processing", "working"}
+            if active or not _low_power_ui_enabled():
+                if not self._anim_timer.isActive():
+                    self._anim_timer.start(33 if _low_power_ui_enabled() else 25)
+            elif self._anim_timer.isActive():
+                self._anim_timer.stop()
+                self.update()
         self._apply_state_style()
 
         # Acoustic cyber cues on state changes
@@ -10768,6 +10795,16 @@ class SystemConnectivityPage(QWidget):
     def _ctrl(self):
         return self._controller
 
+    def _toggle_low_power_mode(self, enabled: bool):
+        settings = self._load_app_settings()
+        settings["low_power_mode"] = bool(enabled)
+        self._save_app_settings(settings)
+        if self._ctrl() and hasattr(self._ctrl(), "write_log"):
+            self._ctrl().write_log(
+                "SYS: Low Power Mode %s. Some always-on background features require a restart to change state."
+                % ("enabled" if enabled else "disabled")
+            )
+
     def _card(self, title: str, subtitle: str = "") -> QFrame:
         frame = QFrame()
         frame.setObjectName("SettingsCard")
@@ -11245,6 +11282,7 @@ class SystemConnectivityPage(QWidget):
             "background: rgba(255, 255, 255, 0.1); border-radius: 4px; padding: 5px;"
         )
         btn_refresh.clicked.connect(self._refresh_local_models_async)
+        self._local_status_lbl.setText("⚪ Local Engine check available on demand")
         model_row.addWidget(btn_refresh)
         local_lay.addLayout(model_row)
 
@@ -11279,8 +11317,6 @@ class SystemConnectivityPage(QWidget):
         self._default_provider.currentTextChanged.connect(
             lambda t: self._local_ai_widget.setVisible(t == "Local")
         )
-        self._refresh_local_models_async()
-
         
         self._auto_switch_btn = self._mk_toggle("Automatically switch if a provider fails", bool(self._load_app_settings().get("auto_provider_switch", True)), self._toggle_auto_provider_switch)
         lay1.addWidget(self._auto_switch_btn)
@@ -11293,6 +11329,13 @@ class SystemConnectivityPage(QWidget):
             self._toggle_offline_mode
         )
         lay1.addWidget(self._offline_mode_btn)
+        power_btn = self._mk_toggle(
+            "Low Power Mode (minimize idle CPU, GPU, network and background watchers)",
+            bool(self._load_app_settings().get("low_power_mode", True)),
+            self._toggle_low_power_mode,
+        )
+        lay1.addWidget(power_btn)
+
         lay.addWidget(card)
 
         # Mobile connect
