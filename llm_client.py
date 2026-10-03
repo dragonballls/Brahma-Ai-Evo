@@ -1,4 +1,5 @@
 from core.runtime_paths import APP_SETTINGS_PATH
+from core.provider_policy import normalize_provider, is_local
 import json
 import logging
 import requests
@@ -25,13 +26,13 @@ class UnifiedAIClient:
         self.reload_settings()
 
     def _is_local_provider(self) -> bool:
-        return str(self._provider or "").strip().casefold() == "local"
+        return is_local(self._provider)
 
     def reload_settings(self):
         try:
             with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            self._provider = str(data.get("default_ai_provider", "OpenRouter") or "OpenRouter").strip()
+            self._provider = normalize_provider(data.get("default_ai_provider", "OpenRouter"), "OpenRouter")
             self._local_url = data.get("local_ai_url", "http://localhost:11434/v1").rstrip("/")
             self._local_model = data.get("local_ai_model", "llama3.2")
         except Exception as e:
