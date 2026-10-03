@@ -2964,6 +2964,9 @@ class ChatBubble(QFrame):
         self._browser.setOpenExternalLinks(True)
         self._browser.setWordWrap(True)
         self._browser.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        self._browser.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._browser.customContextMenuRequested.connect(self._show_context_menu)
+        self._browser.setToolTip("Right-click to copy this message")
         self._browser.setStyleSheet("QLabel { background: transparent; border: none; color: #f4f6f8; padding: 0; margin: 0; }")
         self._render_text(text or "")
 
@@ -2977,6 +2980,27 @@ class ChatBubble(QFrame):
 
         if animate and role == "assistant":
             self._start_typing_animation()
+
+    def _show_context_menu(self, pos):
+        menu = QMenu(self)
+        copy_action = menu.addAction("Copy message")
+        copy_selected = None
+        try:
+            if self._browser.hasSelectedText():
+                copy_selected = menu.addAction("Copy selected text")
+        except Exception:
+            pass
+        chosen = menu.exec(self._browser.mapToGlobal(pos))
+        if chosen is copy_selected:
+            try:
+                QApplication.clipboard().setText(self._browser.selectedText())
+            except Exception:
+                pass
+        elif chosen is copy_action:
+            try:
+                QApplication.clipboard().setText(self._full_text)
+            except Exception:
+                pass
 
     def _render_text(self, text: str, final: bool = True):
         self._browser.setText(_markdown_to_html(text or "", self._role))
@@ -8606,6 +8630,7 @@ class MainWindow(QMainWindow):
         self.on_text_command  = None
         self.on_attention_action = None
         self.on_chat_event = None
+        self._clipboard_ai_handler = None
         self.on_remote_clicked = None
         self._muted           = False
         self._wakeword_listening = False
@@ -9345,6 +9370,17 @@ class MainWindow(QMainWindow):
         if not txt:
             return
         self._chat_source_queue.append(source or "local")
+        # Persist the user message directly instead of reconstructing it from
+        # a log line. This prevents source mismatches and duplicate chat bubbles.
+        if self.on_chat_event:
+            try:
+                self.on_chat_event({
+                    "role": "user",
+                    "text": txt,
+                    "source": source or "local",
+                })
+            except Exception:
+                pass
         if hasattr(self, "_command_card"):
             preview = txt[:60] + ("…" if len(txt) > 60 else "")
             self._command_card.set_body(preview)
@@ -9361,14 +9397,6 @@ class MainWindow(QMainWindow):
         self._log.append_log(text)
         raw = (text or "").strip()
         low = raw.lower()
-        if hasattr(self, "_result_card") and low.startswith("you:"):
-            user_msg = raw.split(":", 1)[1].strip()
-            source = self._chat_source_queue[0] if self._chat_source_queue else "local"
-            if self.on_chat_event and user_msg:
-                try:
-                    self.on_chat_event({"role": "user", "text": user_msg, "source": source})
-                except Exception:
-                    pass
         if hasattr(self, "_result_card") and low.startswith("brahma evo:"):
             reply = raw.split(":", 1)[1].strip()
             self._result_card.set_body(reply[:80] + ("…" if len(reply) > 80 else ""))
@@ -14694,6 +14722,17 @@ class BrahmaUI:
             "text": f"💡 {label}",
             "source": "clipboard",
         })
+        handler = getattr(self, "_clipboard_ai_handler", None)
+        if handler:
+            try:
+                threading.Thread(
+                    target=handler,
+                    args=(category, content),
+                    daemon=True,
+                    name="clipboard-ai-comment",
+                ).start()
+            except Exception:
+                pass
 
     def _toggle_command_bar(self):
         if self._command_bar.isVisible():
@@ -14828,16 +14867,25 @@ class BrahmaUI:
             threading.Thread(target=apply_update_and_restart, daemon=True).start()
 
     def _on_chat_event(self, event: dict):
+        # Keep the two visible chat surfaces on one canonical conversation ID.
+        # They share the same SQLite store but previously kept separate local
+        # active IDs, which could split one conversation between panels.
+        evt = dict(event or {})
         try:
-            self._discord_service.mirror_chat_event(event or {})
+            self._workspace_sidebar.record_chat_event(evt)
+            canonical_id = getattr(self._workspace_sidebar, "_active_conversation_id", None)
+            if canonical_id:
+                evt["conversation_id"] = canonical_id
         except Exception:
             pass
+
         try:
-            self._workspace_sidebar.record_chat_event(event or {})
+            self._win._inline_workspace.record_chat_event(evt)
         except Exception:
             pass
+
         try:
-            self._win._inline_workspace.record_chat_event(event or {})
+            self._discord_service.mirror_chat_event(evt)
         except Exception:
             pass
 
@@ -15012,6 +15060,18 @@ class BrahmaUI:
 
     def write_log(self, text: str):
         self._win._log_sig.emit(text)
+
+    def record_chat_event(self, event: dict):
+        """Persist/render a conversation event through the single UI callback."""
+        try:
+            callback = self._win.on_chat_event
+            if callback:
+                callback(dict(event or {}))
+        except Exception:
+            pass
+
+    def set_clipboard_ai_handler(self, handler):
+        self._clipboard_ai_handler = handler
 
     def show_confirm(self, title: str, detail: str = ""):
         self.w.show_confirm(title, detail)

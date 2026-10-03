@@ -92,6 +92,7 @@ from smart_home.service import SmartHomeService
 from plugin_manager import PluginManager
 from updater import restart_application, update_from_github
 from core.single_instance import SingleInstance
+from core.voice_guard import VoiceCommandGate, VoiceToolExecutionGate
 
 try:
     from dashboard.server import DashboardServer
@@ -535,22 +536,17 @@ def _looks_like_daily_briefing_request(text: str) -> bool:
 
 def _wakeword_detected(text: str) -> bool:
     t = re.sub(r"[^a-z0-9\s]+", " ", (text or "").lower())
-    words = [w for w in t.split() if w]
-    if not words:
+    compact = re.sub(r"\s+", " ", t).strip()
+    if not compact:
         return False
+    # Generic "hey/hi/hello" must never wake Brahma from ambient conversation.
     phrases = (
         "brahma evo",
         "hey brahma evo",
         "hi brahma evo",
         "hello brahma evo",
-        "hey",
-        "hi",
-        "hello",
     )
-    compact = " ".join(words)
-    if compact in phrases or any(p in compact for p in phrases):
-        return True
-    return any(word in {"brahma evo", "hey", "hi", "hello"} for word in words)
+    return any(compact == phrase or compact.startswith(phrase + " ") for phrase in phrases)
 
 
 def _build_task_plan(text: str) -> list[str]:
@@ -2051,6 +2047,8 @@ class BrahmaLive:
         self._is_speaking   = False
         self._speaking_lock = threading.Lock()
         self._use_openrouter_first = False
+        self._voice_command_gate = VoiceCommandGate()
+        self._voice_tool_gate = VoiceToolExecutionGate()
         self._pending_attention: dict | None = None
         self._pending_reply_event: dict | None = None
         self._reply_mode = False
@@ -2199,6 +2197,11 @@ class BrahmaLive:
         text = (text or "").strip()
         if not text:
             return
+        if (source or "local").strip().lower() == "mic":
+            if not self._voice_command_gate.accept(text):
+                self.ui.write_log("SYS: Duplicate/noise voice command ignored.")
+                self.ui.set_state("LISTENING")
+                return
         if len(text) > 4:
             threading.Thread(
                 target=_update_memory_async,
@@ -2649,7 +2652,12 @@ class BrahmaLive:
             return
 
         # Autonomous Self-Healing & Continuous Learning Fast-Path
-        is_trigger_bug = any(p in lower_cmd for p in ("trigger test bug", "simulate bug", "test bug", "create bug", "simulate error", "trigger error", "break test"))
+        is_trigger_bug = bool(
+            re.fullmatch(
+                r"(?:brahma(?: evo)?[ ,:]*)?(?:please )?(?:(?:trigger|simulate)(?: a)? test bug|run test action)[.!]?",
+                lower_cmd,
+            )
+        )
         is_heal_cmd = any(p in lower_cmd for p in ("fix that bug", "fix the bug", "heal yourself", "auto heal", "patch yourself", "fix error", "fix this error"))
         is_rollback_cmd = any(p in lower_cmd for p in ("undo last patch", "rollback patch", "revert patch", "undo patch"))
         is_patch_history = any(p in lower_cmd for p in ("patch history", "patch log", "show patches", "auto heal status"))
@@ -4082,9 +4090,10 @@ class BrahmaLive:
             parts.append(mem_str)
         parts.append(sys_prompt)
         parts.append(
-            "Wake-word mode: if the microphone is muted, still listen for the words 'Brahma Evo', 'hey', 'hi', and 'hello'. "
-            "When you hear one of these activation cues, keep the session friendly and concise, "
-            "and wait for the user's next command. "
+            "Wake-word mode: if the microphone is muted, only an explicit 'Brahma Evo' phrase "
+            "(optionally preceded by 'hey', 'hi', or 'hello') can activate the assistant. Never wake "
+            "on a generic 'hey', 'hi', or 'hello' by itself. After activation, wait for the actual "
+            "user command and never execute a tool from the wake phrase alone. "
             "IMPORTANT: Do NOT speak an unprompted generic greeting (like 'Thank you, how can I help you?') upon connecting. "
             "Remain completely silent until the user speaks to you or asks a question."
         )
@@ -4894,6 +4903,16 @@ class BrahmaLive:
         speech_buffer = bytearray()
         silence_chunks = 0
 
+        # Local/Offline voice previously duplicated the same microphone input:
+        # one path used local speech recognition while another streamed it to
+        # Gemini Live. Cache the mode once per stream and give ownership to one
+        # recognizer only.
+        app_cfg = config_manager.load_settings()
+        local_voice_mode = (
+            app_cfg.get("default_ai_provider") == "Local"
+            or bool(app_cfg.get("offline_mode_enabled", False))
+        )
+
         def callback(indata, frames, time_info, status):
             nonlocal silence_chunks
             with self._speaking_lock:
@@ -4912,10 +4931,8 @@ class BrahmaLive:
             if not self.ui.muted or getattr(self.ui, "_wakeword_listening", False):
                 lvl = float(np.sqrt(np.mean(np.square(indata, dtype=np.float32))))
                 
-                # Handle Local AI voice input when in Local or Offline mode
-                app_cfg = config_manager.load_settings()
-                if app_cfg.get("default_ai_provider") == "Local" or app_cfg.get("offline_mode_enabled", False):
-                    if not brahma_speaking and not self.ui.muted:
+                if local_voice_mode:
+                    if not brahma_speaking and not self.ui.muted and not getattr(self.ui, "_wakeword_listening", False):
                         if lvl > 22.0:
                             speech_buffer.extend(indata.tobytes())
                             silence_chunks = 0
@@ -4939,6 +4956,15 @@ class BrahmaLive:
                                         except Exception:
                                             pass
                                     threading.Thread(target=_process_local_speech, args=(captured,), daemon=True).start()
+
+                    # Local/Offline mode owns microphone recognition; do not send
+                    # the same speech to the separate Gemini Live session.
+                    data = np.zeros_like(indata).tobytes()
+                    loop.call_soon_threadsafe(
+                        self.out_queue.put_nowait,
+                        {"data": data, "mime_type": "audio/pcm"}
+                    )
+                    return
 
                 if brahma_speaking:
                     if self._echo.is_user_speech(indata, SEND_SAMPLE_RATE, lvl) and lvl > 28.0:
@@ -5008,6 +5034,7 @@ class BrahmaLive:
                         if sc.input_transcription and sc.input_transcription.text:
                             txt = sc.input_transcription.text.strip()
                             if txt:
+                                self._voice_tool_gate.add_input_fragment(txt)
                                 try:
                                     from actions.attention_monitor import stop_native_speech
                                     stop_native_speech()
@@ -5027,10 +5054,20 @@ class BrahmaLive:
                             full_in = " ".join(in_buf).strip()
                             if full_in:
                                 self.ui.write_log(f"You: {full_in}")
+                                try:
+                                    self.ui.record_chat_event({
+                                        "role": "user",
+                                        "text": full_in,
+                                        "source": "mic",
+                                    })
+                                except Exception:
+                                    pass
                             in_buf = []
 
                             full_out = " ".join(out_buf).strip()
                             if full_out:
+                                # The UI's assistant-log path persists this message;
+                                # do not also insert it directly or the bubble doubles.
                                 self.ui.write_log(f"Brahma Evo: {full_out}")
                             out_buf = []
 
@@ -5040,11 +5077,26 @@ class BrahmaLive:
                                     args=(full_in, full_out),
                                     daemon=True
                                 ).start()
+                            self._voice_tool_gate.finish_turn()
 
                     if response.tool_call:
                         self.ui.set_state("EXECUTING")
                         fn_responses = []
                         for fc in response.tool_call.function_calls:
+                            args = dict(fc.args or {})
+                            allowed, reason = self._voice_tool_gate.allow(fc.name, args)
+                            if not allowed:
+                                msg = f"Voice action blocked: {reason}."
+                                print(f"[BRAHMA EVO] 🛡️ {msg} Tool={fc.name} Args={args}")
+                                self.ui.write_log(f"SYS: {msg}")
+                                fn_responses.append(
+                                    types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": msg},
+                                    )
+                                )
+                                continue
                             print(f"[BRAHMA EVO] 📞 {fc.name}")
                             fr = await self._execute_tool(fc)
                             fn_responses.append(fr)
@@ -5457,37 +5509,23 @@ def _main_impl():
         except Exception as e:
             print(f"[Brahma Evo] Email daemon initialization notice: {e}")
 
-        # Clipboard auto-commenting is opt-in. The lightweight ClipboardSentry
-        # remains available without sending copied text to an LLM by default.
-        if config_manager.get_setting("clipboard_auto_comment_enabled", False):
-            def _clipboard_monitor():
-                try:
-                    last_clip = pyperclip.paste()
-                except Exception:
-                    last_clip = ""
+        # ClipboardSentry is the single clipboard watcher. Optional AI comments
+        # are attached to that watcher instead of starting another polling loop.
+        def _clipboard_ai_handler(category: str, content: str):
+            if not config_manager.get_setting("clipboard_auto_comment_enabled", False):
+                return
+            try:
+                reply = _clipboard_gemini_reply((content or "")[:1000])
+                if reply:
+                    ui.write_log(f"Brahma Evo (Clipboard): {reply}")
+                    brahma_evo.speak(reply)
+            except Exception as exc:
+                ui.write_log(f"ERR: Clipboard assistant failed: {exc}")
 
-                while True:
-                    if getattr(ui, "_deep_idle", False):
-                        time.sleep(15.0)
-                        continue
-                    time.sleep(2.5)
-                    try:
-                        curr_clip = pyperclip.paste()
-                        if curr_clip != last_clip:
-                            last_clip = curr_clip
-                            text = (curr_clip or "").strip()
-                            if len(text) >= 15:
-                                reply = _clipboard_gemini_reply(text[:1000])
-                                ui.write_log(f"Brahma Evo (Clipboard): {reply}")
-                                brahma_evo.speak(reply)
-                    except Exception:
-                        pass
-
-            threading.Thread(
-                target=_clipboard_monitor,
-                daemon=True,
-                name="clipboard-ai-comment",
-            ).start()
+        try:
+            ui.set_clipboard_ai_handler(_clipboard_ai_handler)
+        except Exception as exc:
+            ui.write_log(f"ERR: Clipboard assistant wiring failed: {exc}")
 
         try:
             asyncio.run(brahma_evo.run())

@@ -20,3 +20,5 @@ jobs:
         run: python -m compileall -q actions core features memory plugins smart_home main.py ui.py
       - name: Run low-power guards
         run: python tests/test_low_power_guards.py
+      - name: Run voice safety regressions
+        run: python tests/test_voice_guards.py
