@@ -41,6 +41,18 @@
       "allow_disruptive": {
         "type": "BOOLEAN",
         "description": "Permit process termination or long Windows integrity repair commands. Default false."
+      },
+      "deep": {
+        "type": "BOOLEAN",
+        "description": "Run expensive DISM/SFC integrity verification during diagnosis. Default false."
+      },
+      "sample_seconds": {
+        "type": "INTEGER",
+        "description": "Seconds between memory-leak samples; default 15, clamped to 5-120."
+      },
+      "samples": {
+        "type": "INTEGER",
+        "description": "Number of memory-leak samples; default 3, clamped to 3-8."
       }
     }
   }
