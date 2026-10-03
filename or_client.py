@@ -243,14 +243,17 @@ class OpenRouterClient:
         temperature: float = DEFAULT_TEMPERATURE,
         response_format: Optional[dict] = None,
     ) -> str:
-        if model and not self._is_rate_limited(model):
+        # OmniRoute routing aliases are local-gateway names, not valid direct
+        # OpenRouter model IDs. Never send them to the direct fallback pool.
+        direct_model = model if model and not model.startswith("auto") else None
+        if direct_model and not self._is_rate_limited(direct_model):
             try:
-                result = self._call(model, messages, max_tokens, temperature, response_format)
+                result = self._call(direct_model, messages, max_tokens, temperature, response_format)
                 if result:
                     return result
                 logger.info(
                     f"[OpenRouter] Requested model failed, "
-                    f"falling back to pool: {model}"
+                    f"falling back to pool: {direct_model}"
                 )
             except PermissionError:
                 raise
