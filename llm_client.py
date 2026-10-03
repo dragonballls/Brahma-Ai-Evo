@@ -1,4 +1,3 @@
-from core.runtime_paths import APP_SETTINGS_PATH
 from core.provider_policy import GEMINI, normalize_provider, is_local
 from core.local_brain import DEFAULT_ENDPOINT as LOCAL_DEFAULT_ENDPOINT, DEFAULT_MODEL as LOCAL_DEFAULT_MODEL
 import json
@@ -17,7 +16,6 @@ def _get_base_dir() -> Path:
     return Path(__file__).resolve().parent
 
 BASE_DIR = _get_base_dir()
-SETTINGS_PATH = APP_SETTINGS_PATH
 
 class UnifiedAIClient:
     def __init__(self):
