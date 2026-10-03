@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 from typing import Dict, Any, List
 
+from core.runtime_paths import IDENTITY_PATH
+
 def get_base_dir() -> Path:
     import sys
     if getattr(sys, "frozen", False):
@@ -11,7 +13,9 @@ def get_base_dir() -> Path:
 
 class IdentityService:
     def __init__(self):
-        self.config_file = get_base_dir() / "config" / "identity.json"
+        # Identity is mutable runtime state, so packaged installs keep it in user data.
+        self.config_file = IDENTITY_PATH
+        self.bundled_config_file = get_base_dir() / "config" / "identity.json"
         self.data: Dict[str, Any] = {
             "owner": {
                 "name": "",
@@ -38,20 +42,26 @@ class IdentityService:
         self.load()
 
     def load(self):
-        if self.config_file.exists():
+        # Seed from a bundled identity template when present, then overlay persisted
+        # user state. Saving always targets the writable user-data copy.
+        sources = [self.bundled_config_file, self.config_file]
+        loaded_any = False
+        for source in sources:
+            if not source.exists():
+                continue
             try:
-                with open(self.config_file, "r", encoding="utf-8") as f:
-                    loaded_data = json.load(f)
-                    
-                    # Deep merge to preserve defaults for missing keys
-                    for section, values in loaded_data.items():
-                        if section in self.data and isinstance(values, dict):
-                            self.data[section].update(values)
-                        else:
-                            self.data[section] = values
+                loaded_data = json.loads(source.read_text(encoding="utf-8"))
+                if not isinstance(loaded_data, dict):
+                    continue
+                loaded_any = True
+                for section, values in loaded_data.items():
+                    if section in self.data and isinstance(values, dict):
+                        self.data[section].update(values)
+                    else:
+                        self.data[section] = values
             except Exception as e:
                 print(f"Error loading identity config: {e}")
-        else:
+        if not self.config_file.exists() and not loaded_any:
             self.save()
 
     def save(self):
