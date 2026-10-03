@@ -5515,37 +5515,23 @@ def _main_impl():
         except Exception as e:
             print(f"[Brahma Evo] Email daemon initialization notice: {e}")
 
-        # Clipboard auto-commenting is opt-in. The lightweight ClipboardSentry
-        # remains available without sending copied text to an LLM by default.
-        if config_manager.get_setting("clipboard_auto_comment_enabled", False):
-            def _clipboard_monitor():
-                try:
-                    last_clip = pyperclip.paste()
-                except Exception:
-                    last_clip = ""
+        # ClipboardSentry is the single clipboard watcher. Optional AI comments
+        # are attached to that watcher instead of starting another polling loop.
+        def _clipboard_ai_handler(category: str, content: str):
+            if not config_manager.get_setting("clipboard_auto_comment_enabled", False):
+                return
+            try:
+                reply = _clipboard_gemini_reply((content or "")[:1000])
+                if reply:
+                    ui.write_log(f"Brahma Evo (Clipboard): {reply}")
+                    brahma_evo.speak(reply)
+            except Exception as exc:
+                ui.write_log(f"ERR: Clipboard assistant failed: {exc}")
 
-                while True:
-                    if getattr(ui, "_deep_idle", False):
-                        time.sleep(15.0)
-                        continue
-                    time.sleep(2.5)
-                    try:
-                        curr_clip = pyperclip.paste()
-                        if curr_clip != last_clip:
-                            last_clip = curr_clip
-                            text = (curr_clip or "").strip()
-                            if len(text) >= 15:
-                                reply = _clipboard_gemini_reply(text[:1000])
-                                ui.write_log(f"Brahma Evo (Clipboard): {reply}")
-                                brahma_evo.speak(reply)
-                    except Exception:
-                        pass
-
-            threading.Thread(
-                target=_clipboard_monitor,
-                daemon=True,
-                name="clipboard-ai-comment",
-            ).start()
+        try:
+            ui.set_clipboard_ai_handler(_clipboard_ai_handler)
+        except Exception as exc:
+            ui.write_log(f"ERR: Clipboard assistant wiring failed: {exc}")
 
         try:
             asyncio.run(brahma_evo.run())
