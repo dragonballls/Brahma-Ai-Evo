@@ -42,3 +42,5 @@ speedtest-cli
 pywin32>=306
 bleak>=3.0.0
 websocket-client>=1.8,<2
+google-api-python-client>=2.0,<3
+google-auth-oauthlib>=1.2,<2
