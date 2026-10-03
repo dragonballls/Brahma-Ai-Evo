@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import atexit
 import json
 import threading
 import time
 from pathlib import Path
 from typing import Any
 
-from core.user_paths import get_user_data_dir
 from core.runtime_paths import API_CONFIG_PATH, OMNIROUTE_DEFAULT_BASE_URL
 from .omniroute_setup import OmniRouteProvisioner, default_data_dir
 
@@ -157,8 +157,18 @@ class OmniRouteGateway:
             "message": "Provider test passed" if result.returncode == 0 else "Provider test failed",
         }
 
+    def stop(self) -> None:
+        """Stop OmniRoute if this application launched the process."""
+        with self._lock:
+            self.provisioner.stop()
+            self._ready = False
+            self._credentials_synced = False
+            self._last_check_at = 0.0
+            self._retry_after = 0.0
+
 
 _gateway = OmniRouteGateway()
+atexit.register(_gateway.stop)
 
 
 def gateway() -> OmniRouteGateway:
