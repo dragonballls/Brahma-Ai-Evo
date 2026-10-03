@@ -233,6 +233,8 @@ class OpenRouterClient:
                     f"[OpenRouter] {model} → Timeout "
                     f"(attempt {attempt}/{MAX_RETRIES_PER_MODEL})"
                 )
+            except PermissionError:
+                raise
             except Exception as e:
                 logger.error(f"[OpenRouter] {model} → Unexpected error: {e}")
 
