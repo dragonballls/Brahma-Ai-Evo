@@ -228,3 +228,12 @@ class WindowGeometryTests(TestCase):
             result = host.control("resize", "Example", width=1200, height=700)
         self.assertTrue(result["ok"])
         setter.assert_called_once_with(42, 10, 20, 1200, 700)
+
+class DesktopWorkspaceGeometryGuardTests(TestCase):
+    def test_controller_records_real_geometry_and_has_restore_guardrails(self):
+        source = (Path(__file__).resolve().parents[1] / "core" / "desktop" / "controller.py").read_text(encoding="utf-8")
+        self.assertIn("WindowManager.get_rect(foreground.hwnd)", source)
+        self.assertIn("WindowManager.is_fullscreen_or_borderless(foreground.hwnd)", source)
+        self.assertIn("def restore_workspace_geometry(self)", source)
+        self.assertIn("len(matches) != 1", source)
+        self.assertIn("and not is_game_window(window)", source)
