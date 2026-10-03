@@ -95,6 +95,24 @@
     let targetPulseMod = 1.0;
     let currentPulseMod = 1.0;
 
+    // Adaptive render scheduling keeps the visual responsive while avoiding
+    // an uncapped render loop that continuously burns CPU/GPU power at idle.
+    let renderTimer = null;
+    let lastRenderMs = 0.0;
+
+    function targetFrameDelayMs() {
+      if (document.visibilityState !== "visible") return 1000;
+      let fps = 8;
+      if (currentState === "LISTENING") fps = 15;
+      else if (currentState === "SPEAKING") fps = 24;
+      else if (currentState === "THINKING") fps = 30;
+      else if (currentState === "EXECUTING" || currentState === "WORKING") fps = 24;
+      else if (currentState === "SCANNING") fps = 18;
+      if (!document.hasFocus() && (currentState === "IDLE" || currentState === "ONLINE")) fps = 2;
+      if (isCompactMode) fps = Math.min(fps, 10);
+      return 1000 / fps;
+    }
+
     // Reactivity & Audio
     let currentAudioLevel = 0.0;
     let targetAudioLevel = 0.0;
@@ -179,11 +197,11 @@
       camera.position.set(0, 0, 46);
 
       renderer = new THREE.WebGLRenderer({
-        antialias: true,
-        powerPreference: 'high-performance'
+        antialias: false,
+        powerPreference: 'low-power',
       });
       renderer.setSize(w, h);
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25));
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       renderer.toneMappingExposure = 1.05;
       container.appendChild(renderer.domElement);
@@ -197,7 +215,7 @@
 
       const renderPass = new THREE.RenderPass(scene, camera);
       bloomPass = new THREE.UnrealBloomPass(
-        new THREE.Vector2(w, h),
+        new THREE.Vector2(Math.max(1, Math.floor(w * 0.65)), Math.max(1, Math.floor(h * 0.65))),
         BLOOM_STRENGTH,
         BLOOM_RADIUS,
         BLOOM_THRESHOLD
@@ -703,13 +721,16 @@
     }
 
     function renderLoop() {
-      requestAnimationFrame(renderLoop);
-      const dt = Math.min(clock.getDelta(), 0.05);
-      
-      updateSimulation(dt);
-
-      controls.update();
-      composer.render();
+      const now = performance.now();
+      const frameDelay = targetFrameDelayMs();
+      if (now - lastRenderMs >= frameDelay) {
+        const dt = Math.min(clock.getDelta(), 0.05);
+        updateSimulation(dt);
+        controls.update();
+        composer.render();
+        lastRenderMs = now;
+      }
+      renderTimer = window.setTimeout(renderLoop, Math.max(50, frameDelay));
     }
 
     function onWindowResize() {
@@ -725,7 +746,10 @@
         renderer.setSize(w, h);
         composer.setSize(w, h);
         if (bloomPass && bloomPass.resolution) {
-          bloomPass.resolution.set(w, h);
+          bloomPass.resolution.set(
+            Math.max(1, Math.floor(w * 0.65)),
+            Math.max(1, Math.floor(h * 0.65))
+          );
         }
       }
     }
@@ -903,6 +927,10 @@
       if (window._hasBooted) return;
       window._hasBooted = true;
       initScene();
+      if (renderTimer !== null) {
+        window.clearTimeout(renderTimer);
+      }
+      lastRenderMs = performance.now();
       renderLoop();
       // Ensure layout sync after DOM updates
       setTimeout(onWindowResize, 30);
