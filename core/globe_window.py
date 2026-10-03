@@ -9,7 +9,7 @@ import threading
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
-# Hardware acceleration & WebGL flags for smooth 180fps+ rendering in Chromium
+# Efficient GPU/WebGL configuration for the on-demand globe view.
 os.environ.setdefault(
     "QTWEBENGINE_CHROMIUM_FLAGS",
     "--enable-gpu-rasterization --enable-zero-copy --enable-accelerated-2d-canvas --enable-webgl --use-angle=d3d11 --num-raster-threads=2"
