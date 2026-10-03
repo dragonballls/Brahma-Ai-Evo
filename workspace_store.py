@@ -245,10 +245,10 @@ class WorkspaceStore:
         def _do_summary():
             try:
                 from google import genai
-                base_dir = Path(__file__).resolve().parent
-                key_path = get_user_data_dir() / "config" / "api_keys.json"
-                with open(key_path, "r", encoding="utf-8") as f:
-                    api_key = json.load(f)["gemini_api_key"]
+                from config import get_api_key
+                api_key = get_api_key("Gemini")
+                if not api_key:
+                    return
                 
                 client = genai.Client(api_key=api_key, http_options={"api_version": "v1beta"})
                 prompt = (
