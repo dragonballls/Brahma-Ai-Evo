@@ -385,7 +385,7 @@ def _handle_playlist(parameters: dict, player) -> str:
     url = query if _is_valid_youtube_url(query) else _scrape_first_playlist_url(query)
     if not url:
         return f"I couldn't find a YouTube playlist for '{query}', sir."
-    _open_url(url)
+    browser_control({"action": "go_to", "url": url}, None, player, None)
     if player:
         player.write_log(f"[YouTube] Playlist: {url}")
     return f"Playing the YouTube playlist '{query}'."
@@ -396,7 +396,7 @@ def _handle_control(parameters: dict, player) -> str:
     if url:
         if not _is_valid_youtube_url(url):
             return "That is not a valid YouTube URL, sir."
-        _open_url(url)
+        browser_control({"action": "go_to", "url": url}, None, player, None)
         time.sleep(1.5)
     current = _current_video_url()
     if not current:
@@ -420,7 +420,7 @@ def _handle_watch(parameters: dict, player, speak) -> str:
             if not _is_valid_youtube_url(url):
                 return "Please provide a public YouTube URL, sir."
             if parameters.get("play", False):
-                _open_url(url)
+                browser_control({"action": "go_to", "url": url}, None, player, None)
             result = analyze_youtube(
                 url,
                 question=question,
@@ -458,7 +458,7 @@ def _handle_play(parameters: dict, player) -> str:
         return "Please tell me what you'd like to watch, sir."
 
     if _is_valid_youtube_url(query):
-        _open_url(query)
+        browser_control({"action": "go_to", "url": query}, None, player, None)
         if player:
             player.write_log(f"[YouTube] Opening URL: {query}")
         return f"Playing that YouTube video, sir."
