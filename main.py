@@ -2432,6 +2432,8 @@ class BrahmaLive:
         except Exception:
             pass
         self._last_activity = time.monotonic()
+        self._idle_stop_event = threading.Event()
+        self._shutdown_event = threading.Event()
         self._idle_prompts = [
             "Hey, you there?",
             "Yo, get alive.",
@@ -2441,6 +2443,19 @@ class BrahmaLive:
         ]
         self._idle_speech_thread = threading.Thread(target=self._idle_speech_loop, daemon=True)
         self._idle_speech_thread.start()
+
+    def stop_background_services(self) -> None:
+        """Stop Brahma-owned passive workers and local input hooks during application exit."""
+        self._shutdown_event.set()
+        self._idle_stop_event.set()
+        try:
+            self.set_push_to_talk(False)
+        except Exception:
+            pass
+        try:
+            self._attention_monitor.stop()
+        except Exception:
+            pass
 
     def set_push_to_talk(self, enabled: bool) -> str:
         self._ptt_enabled = bool(enabled)
@@ -2517,8 +2532,9 @@ class BrahmaLive:
         except ImportError:
             engine = None
 
-        while True:
-            time.sleep(60.0)
+        while not self._idle_stop_event.wait(60.0):
+            if self._shutdown_event.is_set():
+                break
             if getattr(self.ui, "_deep_idle", False) or not engine:
                 continue
             
@@ -6281,7 +6297,7 @@ class BrahmaLive:
             http_options={"api_version": "v1beta"}
         )
 
-        while True:
+        while not self._shutdown_event.is_set():
             try:
                 live_model = LIVE_MODEL_CANDIDATES[
                     self._live_model_index % len(LIVE_MODEL_CANDIDATES)
@@ -6383,6 +6399,8 @@ class BrahmaLive:
                 "[LIVE] reconnecting in 5s with "
                 f"{LIVE_MODEL_CANDIDATES[self._live_model_index]}"
             )
+            if self._shutdown_event.wait(timeout=0):
+                break
             await asyncio.sleep(5)
 
 def _main_impl():
@@ -6564,6 +6582,12 @@ def _main_impl():
             dashboard_started=dashboard is not None,
             enable_dashboard=dashboard_enabled,
         )
+        try:
+            app_instance = QApplication.instance()
+            if app_instance is not None:
+                app_instance.aboutToQuit.connect(brahma_evo.stop_background_services)
+        except Exception as exc:
+            _startup_log(f"voice shutdown hook wiring skipped: {exc}")
 
         # Deep idle suspends nonessential polling/rendering without disconnecting
         # the live microphone/AI path that preserves hands-free wake behavior.
