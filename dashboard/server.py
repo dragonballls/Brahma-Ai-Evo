@@ -82,9 +82,8 @@ def _quiet_run(*args, **kwargs):
 
 def _get_gemini_key() -> str | None:
     try:
-        import json as _json
-        with open(get_user_data_dir() / "config" / "api_keys.json", "r", encoding="utf-8") as f:
-            return _json.load(f).get("gemini_api_key")
+        from config import get_api_key
+        return get_api_key("Gemini") or None
     except Exception:
         return None
 
