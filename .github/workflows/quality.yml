@@ -60,3 +60,5 @@ jobs:
         run: python -m unittest tests.test_device_manager -v
       - name: Run media control and video understanding regressions
         run: python -m unittest tests.test_media_control -v
+      - name: Run conversational settings regressions
+        run: python -m unittest tests.test_settings_agent -v
