@@ -93,6 +93,8 @@ from plugin_manager import PluginManager
 from updater import restart_application, update_from_github
 from core.single_instance import SingleInstance
 from core.voice_guard import VoiceCommandGate, VoiceToolExecutionGate
+from core.duplex_voice import BargeInGate, PlaybackGeneration
+from core.prosody import profile_for_text, profile_prompt_block
 
 try:
     from dashboard.server import DashboardServer
@@ -127,7 +129,7 @@ LIVE_MODEL          = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 CHANNELS            = 1
 SEND_SAMPLE_RATE    = 16000
 RECEIVE_SAMPLE_RATE = 24000
-CHUNK_SIZE          = 1024
+CHUNK_SIZE          = 640  # 40 ms input / 26.7 ms output at the active sample rates
 LIVE_CONNECT_TIMEOUT = 12
 
 _SINGLE_INSTANCE_GUARD = None
@@ -263,6 +265,12 @@ def _load_system_prompt() -> str:
         except Exception as e_rules:
             print(f"[LearnedRules] Error injecting rules into prompt: {e_rules}")
 
+        try:
+            from core.language_policy import prompt_block as language_prompt_block
+            base_prompt = base_prompt.rstrip() + "\n\n" + language_prompt_block()
+        except Exception:
+            pass
+
         return identity_str + base_prompt
     except Exception as e:
         print(f"Error injecting identity: {e}")
@@ -316,6 +324,11 @@ def _gemini_text_reply(prompt: str) -> str:
         "You are Brahma Evo, a concise, helpful desktop assistant. "
         "Reply naturally and briefly. Do not mention internal implementation details."
     )
+    try:
+        from core.language_policy import prompt_block as language_prompt_block
+        system_prompt += "\n\n" + language_prompt_block()
+    except Exception:
+        pass
     # OmniRoute-backed cloud path is preferred. Direct Gemini remains the
     # compatibility fallback if the local gateway cannot be started.
     try:
@@ -345,6 +358,11 @@ def _ig_gemini_reply(username: str, text: str) -> str:
         "Reply naturally, briefly, and conversationally to the incoming message. "
         "Do not sound like a bot. Keep your replies under 2 sentences."
     )
+    try:
+        from core.language_policy import prompt_block as language_prompt_block
+        system_prompt += "\n\n" + language_prompt_block()
+    except Exception:
+        pass
     prompt = f"Instagram DM from {username}: {text}"
     
     try:
@@ -378,6 +396,11 @@ def _clipboard_gemini_reply(text: str) -> str:
         "Make a very short, interesting, or helpful 1-sentence comment or question about it. "
         "Do not offer to 'help' or ask 'how can I help'. Just make a standalone witty observation or summary."
     )
+    try:
+        from core.language_policy import prompt_block as language_prompt_block
+        system_prompt += "\n\n" + language_prompt_block()
+    except Exception:
+        pass
     prompt = text
     try:
         client = genai.Client(
@@ -2221,6 +2244,8 @@ class BrahmaLive:
         self._use_openrouter_first = False
         self._voice_command_gate = VoiceCommandGate()
         self._voice_tool_gate = VoiceToolExecutionGate()
+        self._barge_in_gate = BargeInGate(required_blocks=2, minimum_level=40.0)
+        self._playback_generation = PlaybackGeneration()
         self._pending_attention: dict | None = None
         self._pending_reply_event: dict | None = None
         self._reply_mode = False
@@ -4095,8 +4120,15 @@ class BrahmaLive:
                     if not prompt_txt:
                         prompt_txt = "You are Brahma Evo, the autonomous desktop operating system."
 
+                    emotional_prompt = ""
+                    try:
+                        from core.emotional_controller import emotional_controller
+                        emotional_prompt = emotional_controller.prompt_block(request_text)
+                    except Exception:
+                        pass
                     system_prompt = (
                         f"{prompt_txt}\n\n"
+                        f"{emotional_prompt}\n"
                         "CRITICAL OPERATING SYSTEM DIRECTIVE:\n"
                         "- You have FULL DIRECT ACCESS and authority over this Windows PC via your tools.\n"
                         "- NEVER state that you are a text-based AI, that you cannot perform automations, or that you lack real-time access.\n"
@@ -4237,9 +4269,10 @@ class BrahmaLive:
     def trigger_barge_in(self):
         """Immediately interrupts AI speech playback and switches state to LISTENING."""
         with self._speaking_lock:
-            if not self._is_speaking:
-                return
             self._is_speaking = False
+
+        self._barge_in_gate.reset()
+        self._playback_generation.bump()
 
         try:
             from actions.attention_monitor import stop_native_speech
@@ -4271,12 +4304,29 @@ class BrahmaLive:
         if not text:
             return
 
+        try:
+            from core.emotional_controller import emotional_controller
+            state = emotional_controller.assess(text)
+        except Exception:
+            state = None
+
+        profile = profile_for_text(
+            text,
+            state=state.name if state is not None else "neutral",
+            intensity=state.intensity if state is not None else 0.5,
+        )
+
         if self.session and self._loop:
-            # Route text through Gemini Live API for the unified native Charon voice
+            # Route text through Gemini Live API for the unified native Charon voice.
             import asyncio
             async def _send():
                 try:
-                    prompt = f"System Alert / Context: {text}\n\nPlease relay this information to me naturally now."
+                    prompt = (
+                        f"[LIVE DELIVERY]\n{profile.prompt_directive()} "
+                        "Vary cadence naturally within the utterance; do not read the delivery labels aloud.\n\n"
+                        f"System Alert / Context: {text}\n\n"
+                        "Please relay this information naturally now."
+                    )
                     await self.session.send(input=prompt, end_of_turn=True)
                 except Exception as e:
                     print(f"[BRAHMA EVO] Unified Speak (Charon) err: {e}")
@@ -4284,7 +4334,12 @@ class BrahmaLive:
                         try:
                             self.set_speaking(True)
                             from actions.attention_monitor import _speak_edge_native
-                            _speak_edge_native(text)
+                            _speak_edge_native(
+                                text,
+                                rate=profile.edge_rate,
+                                pitch=profile.edge_pitch,
+                                sapi_rate=profile.sapi_rate,
+                            )
                         except Exception as exc:
                             print(f"[Brahma Speak] Fallback TTS failed: {exc}")
                         finally:
@@ -4292,12 +4347,17 @@ class BrahmaLive:
                     threading.Thread(target=_fallback, daemon=True).start()
             asyncio.run_coroutine_threadsafe(_send(), self._loop)
         else:
-            # Fallback when Gemini Live is disconnected or in offline mode
+            # Fallback when Gemini Live is disconnected or in offline mode.
             def _speak_thread():
                 try:
                     self.set_speaking(True)
                     from actions.attention_monitor import _speak_edge_native
-                    _speak_edge_native(text)
+                    _speak_edge_native(
+                        text,
+                        rate=profile.edge_rate,
+                        pitch=profile.edge_pitch,
+                        sapi_rate=profile.sapi_rate,
+                    )
                 except Exception as exc:
                     print(f"[Brahma Speak] Unified TTS failed: {exc}")
                 finally:
@@ -4427,6 +4487,32 @@ class BrahmaLive:
             "Remain completely silent until the user speaks to you or asks a question."
         )
 
+        try:
+            from core.emotional_controller import emotional_controller
+            parts.append(emotional_controller.prompt_block())
+            parts.append(profile_prompt_block())
+            from core.language_policy import prompt_block as language_prompt_block
+            parts.append(language_prompt_block())
+            parts.append(
+                "Re-evaluate emotional state and speech prosody from every new user turn. "
+                "The baseline shown above is not a fixed emotion; pace and tone should change naturally with context.\n"
+            )
+        except Exception:
+            pass
+
+        parts.append(
+            "VOICE INTERACTION MODE:\n"
+            "- Operate as a continuous hands-free, full-duplex conversational assistant. The microphone remains available while you are speaking.\n"
+            "- Treat detected user speech as an immediate interruption: stop the current response, listen to the new utterance, and do not finish the old sentence.\n"
+            "- Prefer natural turn-taking over rigid AI-talks-then-user-talks alternation. Brief overlaps are acceptable; prioritize the current speaker.\n"
+            "- Use natural pauses, pacing, sentence rhythm, emphasis, intonation, and subtle emotional variation rather than flat text-to-speech reading.\n"
+            "- Sound calm, intelligent, polished, articulate, confident, subtle, and futuristic, with an understated sophisticated delivery.\n"
+            "- Adapt delivery to context: professional for information, conversational for normal dialogue, warmer for acknowledgement, curious for exploration, focused for urgency, and lightly playful for appropriate humor.\n"
+            "- Use occasional natural backchannels such as \"mm-hmm\", \"uh-huh\", \"yeah\", or \"right\" only when contextually appropriate. Do not insert them mechanically or repeatedly.\n"
+            "- Avoid repetitive filler, canned acknowledgements, exaggerated emotion, monotone reading, and verbal descriptions of punctuation.\n"
+            "- When the user begins speaking over you, yield immediately. Their new speech takes priority over unfinished output.\n"
+        )
+
         tool_declarations = list(TOOL_DECLARATIONS)
         declared_names = {tool.get("name") for tool in tool_declarations}
         try:
@@ -4440,8 +4526,20 @@ class BrahmaLive:
 
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
+            enable_affective_dialog=True,
             output_audio_transcription={},
             input_audio_transcription={},
+            # Automatic VAD supplies continuous activity detection and server-side
+            # barge-in. 100 ms prefix padding avoids clipping speech onset; 650 ms
+            # silence keeps normal conversational pauses intact.
+            realtime_input_config={
+                "automatic_activity_detection": {
+                    "disabled": False,
+                    "prefix_padding_ms": 100,
+                    "silence_duration_ms": 650,
+                },
+                "activity_handling": "START_OF_ACTIVITY_INTERRUPTS",
+            },
             system_instruction="\n".join(parts),
             tools=[{"function_declarations": tool_declarations}],
             session_resumption=types.SessionResumptionConfig(handle=getattr(self, '_resume_handle', None)),
@@ -5619,11 +5717,19 @@ class BrahmaLive:
                     return
 
                 if brahma_speaking:
-                    if self._echo.is_user_speech(indata, SEND_SAMPLE_RATE, lvl) and lvl > 28.0:
+                    # The microphone remains live while Brahma speaks. Our own
+                    # output is filtered locally; user speech is streamed so
+                    # Gemini Live can interrupt the current generation.
+                    user_voice = self._echo.is_user_speech(
+                        indata, SEND_SAMPLE_RATE, lvl, fast=True
+                    )
+                    interrupt = self._barge_in_gate.observe(
+                        is_user_speech=user_voice,
+                        level=lvl,
+                    )
+                    if interrupt:
                         loop.call_soon_threadsafe(self.trigger_barge_in)
-                        data = indata.tobytes()
-                    else:
-                        data = np.zeros_like(indata).tobytes()
+                    data = indata.tobytes() if user_voice else np.zeros_like(indata).tobytes()
                 else:
                     if not self.ui.muted:
                         try:
@@ -5672,10 +5778,18 @@ class BrahmaLive:
 
                     if response.data:
                         self.set_speaking(True)
-                        self.audio_in_queue.put_nowait(response.data)
+                        self.audio_in_queue.put_nowait(
+                            (self._playback_generation.current(), response.data)
+                        )
 
                     if response.server_content:
                         sc = response.server_content
+
+                        if getattr(sc, "interrupted", False):
+                            # Server VAD is authoritative. Drop all buffered
+                            # output from the interrupted generation immediately.
+                            self.trigger_barge_in()
+                            self.ui.set_state("LISTENING")
 
                         if sc.output_transcription and sc.output_transcription.text:
                             self.set_speaking(True)
@@ -5730,6 +5844,7 @@ class BrahmaLive:
                                     daemon=True
                                 ).start()
                             self._voice_tool_gate.finish_turn()
+                            self._barge_in_gate.reset()
 
                     if response.tool_call:
                         self.ui.set_state("EXECUTING")
@@ -5780,7 +5895,13 @@ class BrahmaLive:
         stream.start()
         try:
             while True:
-                chunk = await self.audio_in_queue.get()
+                item = await self.audio_in_queue.get()
+                if isinstance(item, tuple) and len(item) == 2:
+                    generation, chunk = item
+                    if generation != self._playback_generation.current():
+                        continue
+                else:
+                    chunk = item
                 try:
                     pcm = np.frombuffer(chunk, dtype=np.int16)
                     lvl = float(np.sqrt(np.mean(np.square(pcm, dtype=np.float32))))
@@ -5872,7 +5993,7 @@ class BrahmaLive:
                         except Exception:
                             pass
                         self.ui.set_state("LISTENING")
-                        self.ui.write_log("SYS: Brahma Evo online.")
+                        self.ui.write_log("SYS: Brahma Evo online — continuous hands-free duplex voice active.")
 
                         tg.create_task(self._send_realtime())
                         tg.create_task(self._listen_audio())
