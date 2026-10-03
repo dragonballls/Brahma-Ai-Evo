@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import tempfile
 import time
 from pathlib import Path
@@ -8,20 +7,14 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
 
-
-def _load(relative_path: str, name: str):
-    path = Path(__file__).resolve().parents[1] / relative_path
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise ImportError(relative_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
+from core.desktop.app_host import ApplicationHost
+from core.desktop.performance import AdaptivePerformanceEngine, PerformanceSnapshot
+from core.desktop.window_manager import WindowInfo, WindowManager, is_game_window
+from core.desktop.workspace import WorkspaceStore
 
 class WorkspaceStoreTests(TestCase):
     def test_workspace_store_is_crash_safe_and_persistent(self):
-        module = _load("core/desktop/workspace.py", "desktop_workspace_test")
+        module = __import__("core.desktop.workspace", fromlist=["WorkspaceStore"])
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "workspace.json"
             store = module.WorkspaceStore(path)
@@ -36,7 +29,7 @@ class WorkspaceStoreTests(TestCase):
             self.assertEqual(len(loaded["workspaces"]["main"]["windows"]), 1)
 
     def test_remove_window_is_idempotent(self):
-        module = _load("core/desktop/workspace.py", "desktop_workspace_remove")
+        module = __import__("core.desktop.workspace", fromlist=["WorkspaceStore"])
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "workspace.json"
             store = module.WorkspaceStore(path)
@@ -47,7 +40,7 @@ class WorkspaceStoreTests(TestCase):
 
 class PerformancePolicyTests(TestCase):
     def test_game_foreground_reduces_background_and_prioritizes_game(self):
-        module = _load("core/desktop/performance.py", "desktop_performance_policy")
+        module = __import__("core.desktop.performance", fromlist=["AdaptivePerformanceEngine"])
         engine = module.AdaptivePerformanceEngine()
         snapshot = module.PerformanceSnapshot(
             timestamp=time.time(),
@@ -66,7 +59,7 @@ class PerformancePolicyTests(TestCase):
         self.assertTrue(decision.reduce_background_work)
 
     def test_adaptive_policy_does_not_mutate_on_normal_pressure(self):
-        module = _load("core/desktop/performance.py", "desktop_performance_normal")
+        module = __import__("core.desktop.performance", fromlist=["AdaptivePerformanceEngine"])
         engine = module.AdaptivePerformanceEngine()
         snapshot = module.PerformanceSnapshot(
             timestamp=time.time(),
@@ -85,13 +78,13 @@ class PerformancePolicyTests(TestCase):
         self.assertFalse(decision.trim_background_memory)
 
     def test_invalid_profile_is_rejected(self):
-        module = _load("core/desktop/performance.py", "desktop_performance_profile")
+        module = __import__("core.desktop.performance", fromlist=["AdaptivePerformanceEngine"])
         engine = module.AdaptivePerformanceEngine()
         with self.assertRaises(ValueError):
             engine.set_profile("dangerous")
 
     def test_priority_changes_are_restorable_by_pid_and_create_time(self):
-        module = _load("core/desktop/performance.py", "desktop_performance_restore")
+        module = __import__("core.desktop.performance", fromlist=["AdaptivePerformanceEngine"])
         fake = SimpleNamespace(pid=321, create_time=lambda: 100.0, nice=lambda *args: 8)
         engine = module.AdaptivePerformanceEngine()
         engine._original_priority[(321, 100.0)] = 8
@@ -105,25 +98,25 @@ class PerformancePolicyTests(TestCase):
 
 class WindowPolicyTests(TestCase):
     def test_game_window_detection_is_title_and_executable_based(self):
-        module = _load("core/desktop/window_manager.py", "desktop_window_policy")
+        module = __import__("core.desktop.window_manager", fromlist=["is_game_window"])
         self.assertTrue(module.is_game_window(module.WindowInfo(1, 2, "Minecraft 1.21", "javaw.exe", False, True)))
         self.assertTrue(module.is_game_window(module.WindowInfo(1, 2, "Roblox", "RobloxPlayerBeta.exe", False, True)))
         self.assertFalse(module.is_game_window(module.WindowInfo(1, 2, "Google", "chrome.exe", False, True)))
 
     def test_windows_protected_processes_are_never_candidates(self):
-        module = _load("core/desktop/window_manager.py", "desktop_window_policy_protected")
+        module = __import__("core.desktop.window_manager", fromlist=["WindowManager"])
         protected = SimpleNamespace(name=lambda: "explorer.exe")
         self.assertTrue(module.WindowManager.is_protected_process(protected))
 
 
 class ApplicationHostTests(TestCase):
     def test_empty_target_is_rejected_without_touching_windows(self):
-        module = _load("core/desktop/app_host.py", "desktop_app_host_empty")
+        module = __import__("core.desktop.app_host", fromlist=["ApplicationHost"])
         result = module.ApplicationHost().open("")
         self.assertFalse(result["ok"])
 
     def test_window_lookup_requires_a_real_match(self):
-        module = _load("core/desktop/app_host.py", "desktop_app_host_lookup")
+        module = __import__("core.desktop.app_host", fromlist=["ApplicationHost"])
         host = module.ApplicationHost()
         with patch.object(module.WindowManager, "enumerate_windows", return_value=[]):
             self.assertIsNone(host._find("definitely-not-a-window"))
