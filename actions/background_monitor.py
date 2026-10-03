@@ -15,20 +15,42 @@ from actions.system_manager import get_system_health
 _monitors = {}
 _monitor_lock = threading.Lock()
 _speech_sink = None
+_monitor_thread = None
+_monitor_stop = threading.Event()
 
 def set_monitor_speech_sink(sink_fn):
     global _speech_sink
     _speech_sink = sink_fn
 
 def _monitor_loop():
-    while True:
-        time.sleep(10)
+    while not _monitor_stop.wait(10):
         with _monitor_lock:
             current_time = time.time()
-            for m_id, m in list(_monitors.items()):
+            active = list(_monitors.items())
+        for m_id, m in active:
+            try:
                 if current_time - m['last_check'] >= m['interval']:
-                    m['last_check'] = current_time
+                    with _monitor_lock:
+                        current = _monitors.get(m_id)
+                        if current is None:
+                            continue
+                        current['last_check'] = current_time
                     _run_check(m_id, m)
+            except Exception as e:
+                print(f"[Monitor] Scheduler error checking {m_id}: {e}")
+
+def _ensure_monitor_worker():
+    global _monitor_thread
+    with _monitor_lock:
+        if _monitor_thread and _monitor_thread.is_alive():
+            return
+        _monitor_stop.clear()
+        _monitor_thread = threading.Thread(
+            target=_monitor_loop,
+            daemon=True,
+            name="background-monitor",
+        )
+        _monitor_thread.start()
 
 def _run_check(m_id, m):
     try:
@@ -69,9 +91,6 @@ def _run_check(m_id, m):
             
     except Exception as e:
         print(f"[Monitor] Error checking {m_id}: {e}")
-
-# Start the daemon loop
-threading.Thread(target=_monitor_loop, daemon=True).start()
 
 def add_monitor(monitor_type: str, target: str, threshold: float, condition: str = "above", interval_sec: int = 60) -> str:
     m_id = f"{monitor_type}_{target}_{int(time.time())}"
