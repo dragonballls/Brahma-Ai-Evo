@@ -5713,6 +5713,19 @@ def _main_impl():
     ui.show_main()
     _startup_log("ui shown")
 
+    # Restore any durable autonomous missions whose worker was lost during a
+    # Brahma restart or Windows reboot. The worker itself remains external.
+    try:
+        from features.autonomous_mission.skill import recover_active_missions
+        recovery = recover_active_missions()
+        launched = recovery.get("launched") or []
+        if launched:
+            ui.write_log(
+                f"[Missions] Recovered {len(launched)} autonomous mission worker(s) outside Brahma."
+            )
+    except Exception as exc:
+        _startup_log(f"autonomous mission recovery skipped: {exc}")
+
     # Start Brahma Passive Sensorium Engine (v2)
     try:
         def _on_sensorium_alert(alert_type: str, meta: dict):
@@ -5924,6 +5937,21 @@ if __name__ == "__main__":
     import sys
     import os
     import traceback
+
+    # Mission worker/recovery modes are separate OS processes. They intentionally
+    # bypass the GUI and Brahma live session so autonomous work is not owned by
+    # the main Brahma process and can be resumed after a reboot.
+    if len(sys.argv) >= 2 and sys.argv[1] == "--mission-worker":
+        if len(sys.argv) < 3:
+            sys.exit(2)
+        from features.autonomous_mission.skill import run_worker
+        sys.exit(int(run_worker(sys.argv[2])))
+
+    if len(sys.argv) >= 2 and sys.argv[1] == "--mission-supervisor-once":
+        from features.autonomous_mission.supervisor import run_once
+        result = run_once()
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(0)
 
     # Intercept subprocess calls when running as PyInstaller .exe
     if len(sys.argv) >= 2:

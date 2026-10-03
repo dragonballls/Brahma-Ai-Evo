@@ -232,8 +232,197 @@ def _network_check() -> dict[str, Any]:
     }
 
 
-def diagnose(deep: bool = False) -> dict[str, Any]:
-    """Collects evidence locally without changing system state. Deep mode adds expensive Windows integrity checks."""
+def _powershell_json(command: str, timeout: int = 60) -> dict[str, Any]:
+    result = _powershell(command, timeout=timeout)
+    payload: dict[str, Any] = {
+        "supported": os.name == "nt",
+        "success": result["returncode"] == 0,
+        "returncode": result["returncode"],
+        "data": None,
+    }
+    if result["stdout"]:
+        try:
+            payload["data"] = json.loads(result["stdout"])
+        except json.JSONDecodeError:
+            payload["raw"] = result["stdout"][-5000:]
+    if result["stderr"]:
+        payload["stderr"] = result["stderr"][-2000:]
+    return payload
+
+
+def _hardware_summary() -> dict[str, Any]:
+    if os.name != "nt":
+        return {
+            "supported": False,
+            "reason": "Windows hardware inventory providers are unavailable on this OS.",
+            "bios": None,
+            "computer": None,
+            "cpu": None,
+            "gpu": [],
+        }
+
+    checks = {
+        "computer": _powershell_json(
+            "Get-CimInstance Win32_ComputerSystem | "
+            "Select-Object Manufacturer,Model,TotalPhysicalMemory | "
+            "ConvertTo-Json -Compress"
+        ),
+        "bios": _powershell_json(
+            "Get-CimInstance Win32_BIOS | "
+            "Select-Object Manufacturer,SMBIOSBIOSVersion,ReleaseDate,Version | "
+            "ConvertTo-Json -Compress"
+        ),
+        "cpu": _powershell_json(
+            "Get-CimInstance Win32_Processor | "
+            "Select-Object Name,NumberOfCores,NumberOfLogicalProcessors,MaxClockSpeed | "
+            "ConvertTo-Json -Compress"
+        ),
+        "gpu": _powershell_json(
+            "Get-CimInstance Win32_VideoController | "
+            "Select-Object Name,DriverVersion,AdapterRAM,Status | "
+            "ConvertTo-Json -Depth 3 -Compress"
+        ),
+        "secure_boot": _powershell_json(
+            "try { $v = Confirm-SecureBootUEFI } catch { $v = $null }; "
+            "[PSCustomObject]@{secure_boot=$v} | ConvertTo-Json -Compress"
+        ),
+    }
+    return checks
+
+
+def _problem_devices() -> list[dict[str, Any]]:
+    if os.name != "nt":
+        return []
+    result = _powershell_json(
+        "@(Get-PnpDevice -PresentOnly | "
+        "Where-Object { $_.Status -ne 'OK' } | "
+        "Select-Object Class,FriendlyName,Status,ProblemCode,InstanceId) | "
+        "ConvertTo-Json -Depth 4 -Compress",
+        timeout=90,
+    )
+    data = result.get("data")
+    if isinstance(data, dict):
+        return [data]
+    return data if isinstance(data, list) else []
+
+
+def _driver_health() -> list[dict[str, Any]]:
+    if os.name != "nt":
+        return []
+    result = _powershell_json(
+        "@(Get-CimInstance Win32_PnPSignedDriver | "
+        "Where-Object { $_.ConfigManagerErrorCode -ne $null -and $_.ConfigManagerErrorCode -ne 0 } | "
+        "Select-Object DeviceName,DriverVersion,DriverProviderName,ConfigManagerErrorCode,InfName) | "
+        "ConvertTo-Json -Depth 4 -Compress",
+        timeout=120,
+    )
+    data = result.get("data")
+    if isinstance(data, dict):
+        return [data]
+    return data if isinstance(data, list) else []
+
+
+def _physical_disk_health() -> list[dict[str, Any]]:
+    if os.name != "nt":
+        return []
+    result = _powershell_json(
+        "@(Get-PhysicalDisk | "
+        "Select-Object FriendlyName,MediaType,HealthStatus,OperationalStatus,Size) | "
+        "ConvertTo-Json -Depth 4 -Compress",
+        timeout=60,
+    )
+    data = result.get("data")
+    if isinstance(data, dict):
+        return [data]
+    return data if isinstance(data, list) else []
+
+
+def _defender_status() -> dict[str, Any]:
+    if os.name != "nt":
+        return {"supported": False, "reason": "Microsoft Defender status is Windows-only."}
+    return _powershell_json(
+        "Get-MpComputerStatus | "
+        "Select-Object AMServiceEnabled,AntivirusEnabled,AntispywareEnabled,"
+        "RealTimeProtectionEnabled,AntivirusSignatureVersion,AntivirusSignatureLastUpdated | "
+        "ConvertTo-Json -Compress",
+        timeout=45,
+    )
+
+
+def _defender_threats(limit: int = 20) -> list[dict[str, Any]]:
+    if os.name != "nt":
+        return []
+    result = _powershell_json(
+        f"@(Get-MpThreatDetection | Select-Object -First {max(1, min(int(limit), 50))} "
+        "InitialDetectionTime,ThreatID,ActionSuccess,Resources) | "
+        "ConvertTo-Json -Depth 5 -Compress",
+        timeout=60,
+    )
+    data = result.get("data")
+    if isinstance(data, dict):
+        return [data]
+    return data if isinstance(data, list) else []
+
+
+def _coverage_report(*, deep: bool, security_scan: bool = False) -> dict[str, Any]:
+    return {
+        "verified_by_software_when_available": [
+            "OS/platform, uptime, CPU utilization, memory and swap pressure",
+            "Process resource consumption and sustained RSS growth patterns",
+            "Mounted storage capacity and free-space pressure",
+            "Recent critical/error Windows event-log entries",
+            "Local DNS/network reachability",
+            "Windows BIOS/UEFI metadata exposed by WMI/PowerShell",
+            "Present Plug-and-Play devices reporting non-OK status",
+            "Signed-driver error codes exposed by Windows device configuration",
+            "Physical-disk health/operational state exposed by Windows Storage Management",
+            "Microsoft Defender protection status and recently recorded threat detections",
+            "DISM/SFC system-file integrity evidence when deep=true",
+        ],
+        "not_verifiable_or_not_guaranteed": [
+            "Physical damage to boards, connectors, cables, displays, fans, batteries, or ports",
+            "Intermittent hardware faults that never surface through operating-system telemetry",
+            "Every vendor-specific BIOS/UEFI or firmware defect and every safe firmware update path",
+            "A guarantee that a device is malware-free solely from local software checks",
+            "Undocumented hardware failures, sensor faults, or proprietary vendor diagnostics unavailable to Windows",
+        ],
+        "requires_external_or_elevated_action": [
+            "Some DISM/SFC repairs require an elevated session",
+            "Driver replacement/update may require Windows Update or the hardware/OEM vendor",
+            "BIOS/firmware updates require a vendor-supported package and recovery procedure",
+            "Physical faults require inspection or manufacturer/service diagnostics",
+        ],
+        "security_scan_requested": bool(security_scan),
+        "deep_integrity_requested": bool(deep),
+    }
+
+
+def _repair_driver_scan() -> dict[str, Any]:
+    if os.name != "nt":
+        return {"success": False, "message": "PnP device rescan is Windows-only."}
+    result = _run(["pnputil.exe", "/scan-devices"], timeout=180)
+    return {
+        "success": result["returncode"] == 0,
+        "tool": "PnP device rescan",
+        "returncode": result["returncode"],
+        "output": result["stdout"][-2500:] or result["stderr"][-2500:],
+    }
+
+
+def _repair_security_quick_scan() -> dict[str, Any]:
+    if os.name != "nt":
+        return {"success": False, "message": "Microsoft Defender quick scan is Windows-only."}
+    result = _powershell("Start-MpScan -ScanType QuickScan", timeout=1200)
+    return {
+        "success": result["returncode"] == 0,
+        "tool": "Microsoft Defender Quick Scan",
+        "returncode": result["returncode"],
+        "output": result["stdout"][-2500:] or result["stderr"][-2500:],
+    }
+
+
+def diagnose(deep: bool = False, security_scan: bool = False) -> dict[str, Any]:
+    """Collect software-visible evidence and report exactly which fault classes remain outside software verification."""
     vm = _memory_summary()
     processes = _snapshot_processes()
     storage = _storage_summary()
@@ -243,7 +432,15 @@ def diagnose(deep: bool = False) -> dict[str, Any]:
     cpu_percent = round(psutil.cpu_percent(interval=0.2), 1)
     process_count = len(psutil.pids())
 
+    hardware = _hardware_summary()
+    problem_devices = _problem_devices()
+    driver_errors = _driver_health()
+    disk_health = _physical_disk_health()
+    defender = _defender_status()
+    defender_threats = _defender_threats()
+
     findings: list[dict[str, Any]] = []
+
     if vm["percent"] >= 90:
         findings.append({
             "severity": "high",
@@ -285,11 +482,57 @@ def diagnose(deep: bool = False) -> dict[str, Any]:
             "evidence": {"cpu_percent": cpu_percent},
         })
 
+    for device in problem_devices[:20]:
+        findings.append({
+            "severity": "high" if str(device.get("Status", "")).lower() in {"error", "unknown"} else "medium",
+            "category": "device_health",
+            "summary": f"Windows reports a non-OK device: {device.get('FriendlyName') or device.get('InstanceId') or 'Unknown device'}.",
+            "evidence": device,
+        })
+
+    for driver in driver_errors[:20]:
+        findings.append({
+            "severity": "high",
+            "category": "driver_error",
+            "summary": f"A Windows Plug-and-Play driver reports configuration error code {driver.get('ConfigManagerErrorCode')}.",
+            "evidence": driver,
+        })
+
+    for disk in disk_health:
+        health = str(disk.get("HealthStatus") or "").lower()
+        operational = str(disk.get("OperationalStatus") or "").lower()
+        if health and health not in {"healthy", "ok"} or operational and "ok" not in operational and "online" not in operational:
+            findings.append({
+                "severity": "high",
+                "category": "disk_health",
+                "summary": f"Physical disk health is not fully healthy for {disk.get('FriendlyName') or 'a storage device'}.",
+                "evidence": disk,
+            })
+
+    if defender_threats:
+        findings.append({
+            "severity": "high",
+            "category": "security_detection",
+            "summary": f"Microsoft Defender has {len(defender_threats)} recorded threat detection(s) in the sampled history.",
+            "evidence": {"threats": defender_threats},
+        })
+
+    if isinstance(defender.get("data"), dict):
+        realtime = defender["data"].get("RealTimeProtectionEnabled")
+        antivirus = defender["data"].get("AntivirusEnabled")
+        if antivirus is False or realtime is False:
+            findings.append({
+                "severity": "high",
+                "category": "security_visibility",
+                "summary": "Microsoft Defender reports antivirus or real-time protection disabled.",
+                "evidence": defender["data"],
+            })
+
     integrity = {"supported": False, "skipped": True, "reason": "Deep integrity verification was not requested."}
     if deep:
         integrity = _windows_integrity_check()
         if integrity.get("supported") and (
-            integrity["dism"]["returncode"] not in (0,) or integrity["sfc"]["returncode"] not in (0,)
+            integrity["dism"]["returncode"] != 0 or integrity["sfc"]["returncode"] != 0
         ):
             findings.append({
                 "severity": "high",
@@ -319,6 +562,13 @@ def diagnose(deep: bool = False) -> dict[str, Any]:
             "evidence": {"events": events},
         })
 
+    coverage = _coverage_report(deep=deep, security_scan=security_scan)
+
+    if security_scan:
+        security_scan_result = _repair_security_quick_scan()
+    else:
+        security_scan_result = {"requested": False, "message": "No active malware scan was requested; Defender status and recent detections were inspected."}
+
     return {
         "timestamp": time.time(),
         "platform": platform.platform(),
@@ -331,6 +581,14 @@ def diagnose(deep: bool = False) -> dict[str, Any]:
         "integrity": integrity,
         "network": network,
         "event_errors": events,
+        "hardware": hardware,
+        "problem_devices": problem_devices,
+        "driver_errors": driver_errors,
+        "physical_disk_health": disk_health,
+        "defender": defender,
+        "defender_threats": defender_threats,
+        "security_scan": security_scan_result,
+        "coverage": coverage,
         "findings": findings,
     }
 
@@ -460,9 +718,13 @@ def _repair_network() -> dict[str, Any]:
 
 
 def repair(target: str = "auto", allow_disruptive: bool = False) -> dict[str, Any]:
-    """Runs only conservative, evidence-backed fixes. Destructive registry/driver changes are not attempted."""
+    """Run evidence-backed repairs and explicitly refuse guarantees outside software control."""
     target = str(target or "auto").strip().lower()
-    findings = diagnose(deep=(target == "system_files" or allow_disruptive)).get("findings", [])
+    baseline = diagnose(
+        deep=(target == "system_files" or allow_disruptive),
+        security_scan=False,
+    )
+    findings = baseline.get("findings", [])
     actions: list[Any] = []
 
     if target in ("auto", "memory"):
@@ -492,11 +754,11 @@ def repair(target: str = "auto", allow_disruptive: bool = False) -> dict[str, An
                 actions.extend(_repair_system_files())
 
     if target in ("auto", "disk"):
-        if any(f["category"] == "storage_pressure" for f in findings):
+        if any(f["category"] in {"storage_pressure", "disk_health"} for f in findings):
             actions.append({
                 "success": False,
                 "category": "disk",
-                "message": "Low disk space was detected. Brahma will not delete user files automatically; run the disk cleanup workflow explicitly.",
+                "message": "Storage health/space needs attention. Brahma will not delete user files automatically.",
             })
         elif target == "disk":
             actions.append(_repair_disk())
@@ -505,20 +767,57 @@ def repair(target: str = "auto", allow_disruptive: bool = False) -> dict[str, An
         if any(f["category"] == "network" for f in findings) or target == "network":
             actions.append(_repair_network())
 
-    if target not in {"auto", "memory", "system_files", "disk", "network"}:
+    if target in ("auto", "drivers", "driver_scan", "pnp"):
+        if any(f["category"] in {"device_health", "driver_error"} for f in findings) or target != "auto":
+            actions.append(_repair_driver_scan())
+
+    if target in {"security", "malware", "defender"}:
+        if not allow_disruptive:
+            actions.append({
+                "success": False,
+                "category": "security",
+                "message": "A Defender Quick Scan is available but requires allow_disruptive=true because it can consume significant CPU/disk resources.",
+            })
+        else:
+            actions.append(_repair_security_quick_scan())
+
+    if target in {"bios", "firmware", "hardware"}:
+        actions.append({
+            "success": False,
+            "category": target,
+            "message": (
+                "Brahma can inspect software-visible BIOS/firmware/hardware evidence, but it will not "
+                "blindly flash firmware or claim to repair a physical fault. Vendor-specific firmware "
+                "packages, recovery procedures, or physical inspection are required."
+            ),
+        })
+
+    if target not in {
+        "auto", "memory", "system_files", "disk", "network",
+        "drivers", "driver_scan", "pnp", "security", "malware", "defender",
+        "bios", "firmware", "hardware"
+    }:
         try:
             pid = int(target)
             if allow_disruptive:
                 actions.append(_terminate_process(pid, force=False))
             else:
-                actions.append({"success": False, "message": f"PID {pid} was identified as a repair target; set allow_disruptive=true to terminate it."})
+                actions.append({
+                    "success": False,
+                    "message": f"PID {pid} was identified as a repair target; set allow_disruptive=true to terminate it.",
+                })
         except ValueError:
             actions.append({"success": False, "message": f"Unknown repair target '{target}'."})
 
+    success = (
+        all(bool(a.get("success")) for a in actions if isinstance(a, dict) and a.get("success") is not None)
+        if actions else True
+    )
     return {
-        "success": any(bool(a.get("success")) for a in actions if isinstance(a, dict)) if actions else True,
+        "success": success,
         "findings": findings,
         "actions": actions,
+        "coverage": baseline.get("coverage", {}),
         "timestamp": time.time(),
     }
 
@@ -640,11 +939,28 @@ def _format_duration(seconds: float | None) -> str:
 
 def execute(**kwargs: Any) -> dict[str, Any]:
     action = str(kwargs.get("action", "diagnose")).strip().lower()
+
     if action in {"diagnose", "scan", "full"}:
-        result = diagnose(deep=bool(kwargs.get("deep", False)))
+        result = diagnose(
+            deep=bool(kwargs.get("deep", False)),
+            security_scan=bool(kwargs.get("security_scan", False)),
+        )
         return {
-            "summary": f"PC diagnosis complete: {len(result['findings'])} findings, RAM {result['memory']['percent']}%, CPU {result['cpu_percent']}%.",
+            "summary": (
+                f"PC diagnosis complete: {len(result['findings'])} findings, "
+                f"RAM {result['memory']['percent']}%, CPU {result['cpu_percent']}%. "
+                "Coverage boundaries are included in the report."
+            ),
             "output": result,
+        }
+
+    if action in {"capabilities", "coverage"}:
+        return {
+            "summary": "PC Health Guardian software-verification coverage and hard limits.",
+            "coverage": _coverage_report(
+                deep=bool(kwargs.get("deep", False)),
+                security_scan=bool(kwargs.get("security_scan", False)),
+            ),
         }
 
     if action in {"memory_leak", "memory", "leak"}:
@@ -657,7 +973,7 @@ def execute(**kwargs: Any) -> dict[str, Any]:
 
     if action == "repair":
         return {
-            "summary": "PC repair pass complete.",
+            "summary": "PC repair pass complete; each attempted action reports its own success and evidence.",
             "output": repair(
                 target=str(kwargs.get("target", "auto")),
                 allow_disruptive=bool(kwargs.get("allow_disruptive", False)),
@@ -681,3 +997,4 @@ def execute(**kwargs: Any) -> dict[str, Any]:
         return {"summary": "PC Health Guardian status.", "status": get_status()}
 
     return {"summary": f"Unknown PC Health Guardian action: {action}"}
+

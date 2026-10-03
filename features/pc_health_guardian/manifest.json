@@ -1,8 +1,8 @@
 {
   "name": "pc_health_guardian",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "active": true,
-  "description": "Deep local Windows/desktop health diagnosis and conservative repair for RAM pressure, persistent process memory growth, CPU pressure, storage problems, network issues, Windows system-file integrity, and recent critical event-log failures. Uses evidence first and protects Brahma and critical system processes.",
+  "description": "Broad local Windows/desktop health diagnosis and conservative repair for resource pressure, process memory growth, storage, networking, Windows system-file integrity, event logs, BIOS/UEFI metadata, Plug-and-Play device faults, signed-driver configuration errors, physical-disk health, and Microsoft Defender protection status. Reports software-verification boundaries instead of claiming it can guarantee detection or repair of every physical, firmware, BIOS, driver, or malware failure.",
   "triggers": [
     "diagnose my pc",
     "check my pc health",
@@ -24,7 +24,7 @@
     "properties": {
       "action": {
         "type": "STRING",
-        "description": "Action: diagnose, memory_leak, repair, monitor, status, stop. diagnose collects a broad local health report; memory_leak samples process growth; repair applies only approved conservative repairs; monitor watches for persistent memory growth."
+        "description": "Action: diagnose, capabilities, memory_leak, repair, monitor, status, stop. Diagnose collects broad local evidence; capabilities explains verified coverage and hard limits; repair applies only evidence-backed repairs; monitor watches for persistent memory growth."
       },
       "duration": {
         "type": "STRING",
@@ -36,11 +36,11 @@
       },
       "target": {
         "type": "STRING",
-        "description": "Repair target: auto, memory, system_files, disk, network, or a specific application process name/PID."
+        "description": "Repair target: auto, memory, system_files, disk, network, drivers, driver_scan, pnp, security, malware, defender, bios, firmware, hardware, or a specific application process name/PID."
       },
       "allow_disruptive": {
         "type": "BOOLEAN",
-        "description": "Permit process termination or long Windows integrity repair commands. Default false."
+        "description": "Permit process termination, long Windows integrity repair, or an on-demand Defender Quick Scan. Default false."
       },
       "deep": {
         "type": "BOOLEAN",
@@ -53,6 +53,10 @@
       "samples": {
         "type": "INTEGER",
         "description": "Number of memory-leak samples; default 3, clamped to 3-8."
+      },
+      "security_scan": {
+        "type": "BOOLEAN",
+        "description": "Run an explicit Microsoft Defender Quick Scan during diagnose. This can consume significant CPU/disk resources; default false."
       }
     }
   }
