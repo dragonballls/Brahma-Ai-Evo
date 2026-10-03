@@ -11211,7 +11211,15 @@ class OmniRouteEmbeddedPage(QWidget):
     def _reload(self):
         self._ensure_view()
         if self._web is not None:
-            self._web.load(QUrl("http://127.0.0.1:20128/"))
+            try:
+                from urllib.parse import urlsplit
+                from core.omniroute import gateway
+                parsed = urlsplit(gateway().base_url)
+                scheme = parsed.scheme or "http"
+                authority = parsed.netloc or "127.0.0.1:20128"
+                self._web.load(QUrl(f"{scheme}://{authority}/"))
+            except Exception:
+                self._web.load(QUrl("http://127.0.0.1:20128/"))
 
     def _start_gateway(self):
         self._ensure_view()
