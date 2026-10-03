@@ -1190,7 +1190,7 @@
                 mapDiv.style.display = 'block';
 
                 init2DMap();
-                if (godsEyeData) renderGodsEye2D();
+                if (godsEyeData) godsEyeRender2D();
                 setTimeout(() => { if (map2D) map2D.invalidateSize(); }, 50);
 
                 if (mode === "STREET") {
