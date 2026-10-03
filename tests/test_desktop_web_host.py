@@ -9,6 +9,7 @@ class WebHostNormalizationTests(TestCase):
         self.assertEqual(normalize_web_url("https://google.com"), "https://google.com")
         self.assertEqual(normalize_web_url("google.com"), "https://google.com")
         self.assertEqual(normalize_web_url("www.google.com"), "https://www.google.com")
+        self.assertEqual(normalize_web_url("file:///C:/Brahma/index.html"), "file:///C:/Brahma/index.html")
 
     def test_qt_window_helper_uses_same_normalizer(self):
         from core.desktop.web_host import WebApplicationWindow
