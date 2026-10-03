@@ -86,7 +86,16 @@ class BrowserInstagramWorker(threading.Thread):
         self.service = service
         self.q: queue.Queue = queue.Queue(maxsize=32)
         self.running = True
+        self._stop_event = threading.Event()
         self._last_processed_msgs: Dict[str, str] = {}
+
+    def stop(self) -> None:
+        self.running = False
+        self._stop_event.set()
+        try:
+            self.q.put_nowait(None)
+        except queue.Full:
+            pass
 
     def execute(self, fn, *args, timeout: float = 35.0):
         fut = Future()
@@ -134,13 +143,12 @@ class BrowserInstagramWorker(threading.Thread):
                     pass
                 return
 
-            last_poll_time = 0
             POLL_INTERVAL = 35
 
-            while self.running:
-                # 1. Process pending action requests from the queue
+            while not self._stop_event.is_set():
+                # 1. Process pending action requests from the queue.
                 try:
-                    task = self.q.get(timeout=2.0)
+                    task = self.q.get(timeout=0.5)
                     if task is None:
                         break
                     fn, args, fut = task
@@ -151,17 +159,20 @@ class BrowserInstagramWorker(threading.Thread):
                         fut.set_exception(ex)
                     self.q.task_done()
                 except queue.Empty:
-                    pass
+                    # Waiting on the stop event is interruptible, so shutdown
+                    # never has to wait out the full polling interval.
+                    if self._stop_event.wait(timeout=POLL_INTERVAL):
+                        break
 
-                # 2. Check if it's time for background polling
-                now = time.time()
-                if now - last_poll_time >= POLL_INTERVAL and self.running:
-                    last_poll_time = now
-                    try:
-                        if self.is_browser_logged_in(ctx):
-                            self._poll_inbox(ctx)
-                    except Exception as e:
-                        ig_log(f"Browser inbox polling notice: {e}")
+                if self._stop_event.is_set():
+                    break
+
+                # 2. Poll the inbox after each interruptible interval.
+                try:
+                    if self.is_browser_logged_in(ctx):
+                        self._poll_inbox(ctx)
+                except Exception as e:
+                    ig_log(f"Browser inbox polling notice: {e}")
 
             try:
                 ctx.close()
@@ -715,11 +726,7 @@ class InstagramService:
             worker = self._browser_worker
             self._browser_worker = None
         if worker is not None:
-            worker.running = False
-            try:
-                worker.q.put_nowait(None)
-            except (queue.Full, Exception):
-                pass
+            worker.stop()
             if worker.is_alive() and worker is not threading.current_thread():
                 worker.join(timeout=2.0)
 

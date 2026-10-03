@@ -6456,12 +6456,6 @@ def _main_impl():
     global _SINGLE_INSTANCE_GUARD
     _startup_log("main entered")
     try:
-        from core.boot_sentry import check_and_recover_on_boot
-        if check_and_recover_on_boot():
-            _startup_log("BootSentry recovered the previous patched state before startup.")
-    except Exception as exc:
-        _startup_log(f"BootSentry recovery check skipped: {exc}")
-    try:
         # Respect the persisted startup-update preference. Default remains enabled,
         # preserving the existing auto-update behavior for normal installations.
         startup_updates_enabled = True
@@ -6892,6 +6886,12 @@ def main():
         return
 
     _SINGLE_INSTANCE_GUARD = guard
+    try:
+        from core.boot_sentry import check_and_recover_on_boot
+        if check_and_recover_on_boot():
+            _startup_log("BootSentry recovered the previous patched state before startup.")
+    except Exception as exc:
+        _startup_log(f"BootSentry recovery check skipped: {exc}")
     try:
         _main_impl()
     finally:

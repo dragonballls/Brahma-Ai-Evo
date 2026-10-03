@@ -42,7 +42,7 @@ class UnifiedAIClient:
             self._local_model = str(
                 data.get("local_ai_model", LOCAL_DEFAULT_MODEL)
                 or LOCAL_DEFAULT_MODEL
-            ).strip() or "llama3.2"
+            ).strip() or LOCAL_DEFAULT_MODEL
         except Exception as e:
             logger.error(f"[LLM Client] Failed to load settings: {e}")
 

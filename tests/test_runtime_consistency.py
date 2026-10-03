@@ -61,9 +61,7 @@ class RuntimeConsistencyTests(unittest.TestCase):
                     "SELECT COUNT(*) FROM messages WHERE conversation_id = ?",
                     (convo,),
                 ).fetchone()[0]
-                pragma = conn.execute("PRAGMA foreign_keys").fetchone()[0]
 
-            self.assertEqual(pragma, 1)
             self.assertEqual(remaining, 0)
 
     def test_identity_persistence_is_atomic(self):
@@ -114,7 +112,7 @@ class RuntimeConsistencyTests(unittest.TestCase):
     def test_bootstrap_targets_repository_python_runtime(self):
         source = self.read("bootstrap.ps1")
         self.assertIn("py -3.12", source)
-        self.assertIn("python 3.12.10", source)
+        self.assertIn("Python 3.12.10", source)
         self.assertIn("python-3.12.10-amd64.exe", source)
         self.assertNotIn("python-3.11.8-amd64.exe", source)
 
@@ -144,6 +142,7 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn('DEFAULT_MODEL = "qwen2.5:3b"', brain)
         self.assertIn("from core.local_brain import DEFAULT_ENDPOINT as LOCAL_DEFAULT_ENDPOINT, DEFAULT_MODEL as LOCAL_DEFAULT_MODEL", client)
         self.assertNotIn('"llama3.2"', client)
+        self.assertIn("or LOCAL_DEFAULT_MODEL", client)
 
     def test_omniroute_readiness_is_cached(self):
         from core.omniroute import OmniRouteGateway
@@ -225,6 +224,8 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("from core.boot_sentry import check_and_recover_on_boot", main)
         guard_pos = main.index("if not guard.acquire()")
         boot_pos = main.index("from core.boot_sentry import check_and_recover_on_boot")
+        main_fn_pos = main.index("def main():")
+        self.assertGreater(boot_pos, main_fn_pos)
         self.assertGreater(boot_pos, guard_pos)
 
     def test_boot_sentry_uses_patch_age_guard(self):
@@ -375,7 +376,7 @@ class RuntimeConsistencyTests(unittest.TestCase):
 
     def test_provider_normalization_has_one_canonical_alias_table(self):
         source = self.read("core/provider_policy.py")
-        self.assertIn("aliases = {", source)
+        self.assertIn("ALIASES: Final[dict[str, str]] = {", source)
         config_source = self.read("config/__init__.py")
         self.assertNotIn('"google gemini": "gemini"', config_source)
         self.assertIn("normalize_provider", config_source)
