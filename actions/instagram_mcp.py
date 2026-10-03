@@ -739,7 +739,8 @@ class InstagramService:
                                 except Exception as e:
                                     ig_log(f"Voice alert notice: {e}")
 
-                            time.sleep(2)
+                            if self._stop_event.wait(timeout=2):
+                                break
 
                 # Check and approve message requests
                 try:
@@ -763,7 +764,8 @@ class InstagramService:
                 elif "login_required" in err_str:
                     ig_log("Session expired (login_required). Resetting auth flag for refresh...")
                     self._authenticated = False
-                    time.sleep(30)
+                    if self._stop_event.wait(timeout=30):
+                        break
 
             if self._stop_event.wait(timeout=POLL_INTERVAL):
                 break
