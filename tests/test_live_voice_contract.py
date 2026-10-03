@@ -46,6 +46,13 @@ class LiveVoiceContractTests(unittest.TestCase):
         self.assertIn("Rotating to the next verified voice model.", self.main_text)
         self.assertIn("chunk_size > 8", self.main_text)
 
+    def test_audio_device_failure_falls_back_to_system_device(self):
+        self.assertIn("falling back to the Windows system microphone", self.main_text)
+        self.assertIn("falling back to the Windows system speaker", self.main_text)
+        self.assertIn('device=None', self.main_text)
+        self.assertIn("Microphone stream failed", self.main_text)
+        self.assertIn("Speaker stream failed", self.main_text)
+
     def test_language_lock_is_present_in_voice_and_system_prompt(self):
         self.assertIn("language_policy import prompt_block", self.main_text)
         self.assertIn("language_prompt_block()", self.main_text)
