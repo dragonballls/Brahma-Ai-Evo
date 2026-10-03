@@ -399,6 +399,7 @@ class DiscordBotService:
 
         if gemini_key:
             try:
+                from google import genai
                 client = genai.Client(
                     api_key=gemini_key,
                     http_options={"api_version": "v1beta"},
