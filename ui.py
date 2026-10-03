@@ -10644,15 +10644,13 @@ class MainWindow(QMainWindow):
         try:
             os.makedirs(CONFIG_DIR, exist_ok=True)
             existing = self._load_api_defaults()
-            API_FILE.write_text(
-                json.dumps({
-                    "gemini_api_key":    key,
-                    "openrouter_api_key": or_key,
-                    "anthropic_api_key": existing.get("anthropic_api_key", ""),
-                    "os_system":         os_name,
-                }, indent=4),
-                encoding="utf-8",
-            )
+            from config import save_config
+            save_config({
+                "gemini_api_key": key,
+                "openrouter_api_key": or_key,
+                "anthropic_api_key": existing.get("anthropic_api_key", ""),
+                "os_system": os_name,
+            })
             self._ready = True
             self._api_ready = True
             if self._overlay:
@@ -13343,7 +13341,8 @@ class SystemConnectivityPage(QWidget):
         data[field] = key
         try:
             os.makedirs(CONFIG_DIR, exist_ok=True)
-            API_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+            from config import save_config
+            save_config(data)
             status_lbl.setText("Saved locally")
             status_lbl.setStyleSheet(f"color: {C.GREEN if key else C.TEXT_DIM}; font-size: 10px;")
             # Mark the running gateway stale so the newly saved provider is picked up
