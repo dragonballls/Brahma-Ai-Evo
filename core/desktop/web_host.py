@@ -125,10 +125,48 @@ if _QT_AVAILABLE:
             self._web.urlChanged.connect(self._on_url_changed)
             layout.addWidget(self._web, 1)
             self._web.setUrl(QUrl(self._url))
+            self._web.visibilityChanged.connect(self._sync_lifecycle) if hasattr(self._web, "visibilityChanged") else None
 
         @staticmethod
         def _normalize_url(url: str) -> str:
             return normalize_web_url(url)
+
+        def _set_lifecycle(self, state_name: str) -> bool:
+            try:
+                page = self._web.page()
+                lifecycle = getattr(page, "LifecycleState", None)
+                setter = getattr(page, "setLifecycleState", None)
+                if lifecycle is None or setter is None:
+                    return False
+                state = getattr(lifecycle, state_name, None)
+                if state is None:
+                    return False
+                setter(state)
+                return True
+            except Exception:
+                return False
+
+        def _sync_lifecycle(self) -> None:
+            # Visible pages must remain Active in Qt WebEngine. Minimized/hidden
+            # panels may safely be Frozen; Discarded is reserved for explicit
+            # deep-idle cleanup because returning from it reloads the page.
+            try:
+                if self.isVisible() and not self.isMinimized():
+                    self._set_lifecycle("Active")
+                else:
+                    self._set_lifecycle("Frozen")
+            except Exception:
+                pass
+
+        def set_deep_idle(self, enabled: bool, *, discard: bool = False) -> bool:
+            try:
+                if enabled:
+                    if self.isVisible() and not self.isMinimized():
+                        return False
+                    return self._set_lifecycle("Discarded" if discard else "Frozen")
+                return self._set_lifecycle("Active")
+            except Exception:
+                return False
 
         def _on_url_changed(self, qurl: QUrl):
             self._url = qurl.toString()
@@ -219,6 +257,36 @@ class WebApplicationHost:
         window.raise_()
         window.activateWindow()
         return {"ok": True, "type": "web", "embedded": True, "url": target}
+
+    def set_low_power(self, enabled: bool, *, discard: bool = False) -> int:
+        changed = 0
+        for window in list(self._windows):
+            try:
+                if window.set_deep_idle(bool(enabled), discard=discard):
+                    changed += 1
+            except RuntimeError:
+                continue
+        return changed
+
+    def lifecycle_status(self) -> list[dict]:
+        result = []
+        for window in list(self._windows):
+            try:
+                state = "unknown"
+                page = window._web.page()
+                current = getattr(page, "lifecycleState", None)
+                if callable(current):
+                    current = current()
+                state = getattr(current, "name", str(current))
+                result.append({
+                    "url": window._url,
+                    "visible": window.isVisible(),
+                    "minimized": window.isMinimized(),
+                    "lifecycle": state,
+                })
+            except Exception:
+                continue
+        return result
 
     def _on_closed(self, widget: WebApplicationWindow):
         self._windows = [w for w in self._windows if w is not widget]
