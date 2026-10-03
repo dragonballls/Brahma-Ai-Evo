@@ -9028,6 +9028,16 @@ class MainWindow(QMainWindow):
         self._right_panel = self._build_right_panel_modern()
         body.addWidget(self._right_panel, stretch=0)
 
+        # Unified wireless device workspace. It remains optional and lazy; if an
+        # adapter is unavailable the core Brahma UI continues normally.
+        try:
+            from core.desktop.device_manager import device_manager as _device_manager
+            self._device_manager = _device_manager
+            self._device_network_workspace = DeviceNetworkWorkspace(self, _device_manager)
+        except Exception as exc:
+            self._device_manager = None
+            self._device_network_workspace = None
+
         self._btn_dashboard.clicked.connect(self._on_nav_dashboard)
         self._btn_chat.clicked.connect(self._toggle_right_sidebar)
         self._btn_settings.clicked.connect(self._on_nav_settings)
@@ -9096,6 +9106,48 @@ class MainWindow(QMainWindow):
         sc_left.activated.connect(self._toggle_left_sidebar)
         sc_right = QShortcut(QKeySequence("Ctrl+]"), self)
         sc_right.activated.connect(self._toggle_right_sidebar)
+
+    def show_device_network_workspace(self):
+        workspace = getattr(self, "_device_network_workspace", None)
+        if workspace is None:
+            return {"ok": False, "error": "Device Network workspace is unavailable."}
+        workspace.show_workspace()
+        return {"ok": True}
+
+    def show_device_network_panel(self, device_id: str, **geometry):
+        workspace = getattr(self, "_device_network_workspace", None)
+        if workspace is None:
+            return {"ok": False, "error": "Device Network workspace is unavailable."}
+        result = workspace.show_device(
+            str(device_id),
+            x=geometry.get("x"),
+            y=geometry.get("y"),
+            width=geometry.get("width"),
+            height=geometry.get("height"),
+        )
+        return result
+
+    def background_device_network_panel(self, device_id: str):
+        workspace = getattr(self, "_device_network_workspace", None)
+        if workspace is not None:
+            workspace.background_device(str(device_id))
+
+    def place_device_network_panel(self, device_id: str, **geometry):
+        workspace = getattr(self, "_device_network_workspace", None)
+        if workspace is None:
+            return {"ok": False, "error": "Device Network workspace is unavailable."}
+        return workspace.place_device(
+            str(device_id),
+            x=geometry.get("x"),
+            y=geometry.get("y"),
+            width=geometry.get("width"),
+            height=geometry.get("height"),
+        )
+
+    def disconnect_device_network_panel(self, device_id: str):
+        workspace = getattr(self, "_device_network_workspace", None)
+        if workspace is not None:
+            return workspace.disconnect_device(str(device_id))
 
     def _toggle_fullscreen(self):
         if self.isFullScreen():
@@ -9510,6 +9562,8 @@ class MainWindow(QMainWindow):
         if self._overlay and self._overlay.isVisible() and self.centralWidget():
             cw = self.centralWidget()
             self._overlay.setGeometry(0, 0, cw.width(), cw.height())
+        if getattr(self, "_device_network_workspace", None) is not None and self._device_network_workspace.isVisible():
+            self._device_network_workspace.setGeometry(8, 8, max(1, self.width() - 16), max(1, self.height() - 16))
         if hasattr(self, '_floating_gesture_card') and self.centralWidget():
             cw = self.centralWidget()
             rw = self._right_panel.width() if hasattr(self, '_right_panel') and self._right_panel.isVisible() and not getattr(self, '_right_collapsed', False) else 0
@@ -14584,7 +14638,7 @@ class DeviceNetworkWorkspace(QFrame):
         self._panels: dict[str, tuple[_DeviceSubWindow, _DevicePanel]] = {}
 
         self.setObjectName("DeviceNetworkWorkspace")
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
 
         root = QVBoxLayout(self)
@@ -14915,6 +14969,26 @@ class BrahmaConnectDevicesPage(QFrame):
         """)
         self._add_btn.clicked.connect(self._trigger_add_device)
         top_row.addWidget(self._add_btn)
+
+        self._network_btn = QPushButton("Holographic Network")
+        self._network_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._network_btn.setFixedHeight(34)
+        self._network_btn.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        self._network_btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(255,255,255,0.05);
+                color: #ffffff;
+                border: 1px solid rgba(255,255,255,0.10);
+                border-radius: 12px;
+                padding: 0 12px;
+            }
+            QPushButton:hover {
+                background: rgba(0,229,255,0.10);
+                border-color: rgba(0,229,255,0.32);
+            }
+        """)
+        self._network_btn.clicked.connect(self._open_holographic_network)
+        top_row.addWidget(self._network_btn)
         status_wrap.addLayout(top_row)
         self._gateway_meta = QLabel("Port: 8765  ┬╖  Devices: 0")
         self._gateway_meta.setAlignment(Qt.AlignmentFlag.AlignRight)
@@ -15232,6 +15306,14 @@ class BrahmaConnectDevicesPage(QFrame):
         self._onboarding_timer.timeout.connect(self._tick_onboarding)
         self._onboarding_offer = {}
         self._onboarding_pulse = 0
+
+    def _open_holographic_network(self):
+        parent = self.parentWidget()
+        if parent is not None and hasattr(parent, "show_device_network_workspace"):
+            try:
+                parent.show_device_network_workspace()
+            except Exception:
+                pass
 
     def _service_obj(self):
         return self._service or getattr(self.parentWidget(), "_brahma_connect", None)
