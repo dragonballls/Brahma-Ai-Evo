@@ -6,6 +6,7 @@ import tempfile
 import threading
 import types
 from pathlib import Path
+import time
 from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
