@@ -6449,13 +6449,24 @@ def _main_impl():
     global _SINGLE_INSTANCE_GUARD
     _startup_log("main entered")
     try:
-        if update_from_github(BASE_DIR):
+        # Respect the persisted startup-update preference. Default remains enabled,
+        # preserving the existing auto-update behavior for normal installations.
+        startup_updates_enabled = True
+        try:
+            startup_settings = config_manager.load_settings()
+            startup_updates_enabled = bool(startup_settings.get("check_updates_on_startup", True))
+        except Exception:
+            pass
+
+        if startup_updates_enabled and update_from_github(BASE_DIR):
             _startup_log("updated from GitHub; restarting")
             if _SINGLE_INSTANCE_GUARD is not None:
                 _SINGLE_INSTANCE_GUARD.release()
                 _SINGLE_INSTANCE_GUARD = None
             restart_application(BASE_DIR)
             return
+        if not startup_updates_enabled:
+            _startup_log("GitHub startup update check disabled by user setting")
     except Exception as exc:
         _startup_log(f"GitHub update skipped: {exc}")
     _ensure_desktop_shortcut()
