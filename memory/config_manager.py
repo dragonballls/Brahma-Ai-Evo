@@ -54,6 +54,7 @@ def save_settings(data: Dict[str, Any]) -> None:
             except Exception:
                 pass
             print(f"[CONFIG] Error saving settings: {e}")
+            raise
 
 
 def get_setting(key: str, default: Any = None) -> Any:
