@@ -53,6 +53,7 @@ class AdaptivePerformanceEngine:
         self._lock = threading.RLock()
         self.profile = "adaptive"
         self._original_priority: dict[tuple[int, float], object] = {}
+        self._managed_target: dict[tuple[int, float], object] = {}
         self._last_adjustment: dict[int, float] = {}
         self._last_trim: dict[tuple[int, float], float] = {}
         self._min_adjustment_interval = 20.0
@@ -215,6 +216,7 @@ class AdaptivePerformanceEngine:
                 if WindowManager.is_user_process(proc) and WindowManager.set_priority(proc, priority):
                     with self._lock:
                         self._original_priority.pop((pid, created), None)
+                        self._managed_target.pop((pid, created), None)
             except Exception:
                 continue
 
@@ -253,6 +255,25 @@ class AdaptivePerformanceEngine:
         except Exception:
             return None
 
+    def _restore_demoted_foreground(self, proc: object) -> bool:
+        if psutil is None:
+            return False
+        try:
+            key = (int(proc.pid), float(proc.create_time()))
+            with self._lock:
+                original = self._original_priority.get(key)
+                target = self._managed_target.get(key)
+            if original is None or target != getattr(psutil, "BELOW_NORMAL_PRIORITY_CLASS", None):
+                return False
+            if not WindowManager.set_priority(proc, original):
+                return False
+            with self._lock:
+                self._original_priority.pop(key, None)
+                self._managed_target.pop(key, None)
+            return True
+        except Exception:
+            return False
+
     def _set_foreground_priority(self, snapshot: PerformanceSnapshot, decision: PerformanceDecision) -> None:
         if psutil is None or not snapshot.foreground_pid:
             return
@@ -260,6 +281,7 @@ class AdaptivePerformanceEngine:
             proc = psutil.Process(snapshot.foreground_pid)
             if not WindowManager.is_user_process(proc):
                 return
+            self._restore_demoted_foreground(proc)
             key = self._remember_priority(proc)
             if key is None:
                 return
@@ -268,6 +290,8 @@ class AdaptivePerformanceEngine:
             if now - self._last_adjustment.get(snapshot.foreground_pid, 0.0) < self._min_adjustment_interval:
                 return
             if WindowManager.set_priority(proc, target):
+                with self._lock:
+                    self._managed_target[key] = target
                 self._last_adjustment[snapshot.foreground_pid] = now
                 self.action_count += 1
         except Exception:
@@ -302,6 +326,8 @@ class AdaptivePerformanceEngine:
                 # BELOW_NORMAL is deliberately used instead of IDLE: background
                 # applications still make progress and can recover quickly.
                 if WindowManager.set_priority(proc, psutil.BELOW_NORMAL_PRIORITY_CLASS):
+                    with self._lock:
+                        self._managed_target[key] = psutil.BELOW_NORMAL_PRIORITY_CLASS
                     self._last_adjustment[pid] = now
                     self.action_count += 1
 
@@ -316,10 +342,13 @@ class AdaptivePerformanceEngine:
     def tick(self) -> dict[str, Any]:
         snap = self.snapshot()
         decision = self.decide(snap)
+        if snap.foreground_pid and psutil is not None:
+            try:
+                self._restore_demoted_foreground(psutil.Process(snap.foreground_pid))
+            except Exception:
+                pass
         if decision.prioritize_foreground or decision.mode == "game":
             self._set_foreground_priority(snap, decision)
-        elif snap.foreground_pid:
-            self._restore_managed_process(snap.foreground_pid)
         self._demote_background(snap, decision)
         self._restore_background_when_normal(decision)
         return self.status()
@@ -331,6 +360,7 @@ class AdaptivePerformanceEngine:
         with self._lock:
             original = dict(self._original_priority)
             self._original_priority.clear()
+            self._managed_target.clear()
         for (pid, created), priority in original.items():
             try:
                 proc = psutil.Process(pid)
