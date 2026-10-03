@@ -5034,6 +5034,7 @@ class BrahmaLive:
                         if sc.input_transcription and sc.input_transcription.text:
                             txt = sc.input_transcription.text.strip()
                             if txt:
+                                self._voice_tool_gate.add_input_fragment(txt)
                                 try:
                                     from actions.attention_monitor import stop_native_speech
                                     stop_native_speech()
@@ -5053,11 +5054,27 @@ class BrahmaLive:
                             full_in = " ".join(in_buf).strip()
                             if full_in:
                                 self.ui.write_log(f"You: {full_in}")
+                                try:
+                                    self.ui.record_chat_event({
+                                        "role": "user",
+                                        "text": full_in,
+                                        "source": "mic",
+                                    })
+                                except Exception:
+                                    pass
                             in_buf = []
 
                             full_out = " ".join(out_buf).strip()
                             if full_out:
                                 self.ui.write_log(f"Brahma Evo: {full_out}")
+                                try:
+                                    self.ui.record_chat_event({
+                                        "role": "assistant",
+                                        "text": full_out,
+                                        "source": "mic",
+                                    })
+                                except Exception:
+                                    pass
                             out_buf = []
 
                             if full_in and len(full_in) > 5:
@@ -5066,11 +5083,26 @@ class BrahmaLive:
                                     args=(full_in, full_out),
                                     daemon=True
                                 ).start()
+                            self._voice_tool_gate.finish_turn()
 
                     if response.tool_call:
                         self.ui.set_state("EXECUTING")
                         fn_responses = []
                         for fc in response.tool_call.function_calls:
+                            args = dict(fc.args or {})
+                            allowed, reason = self._voice_tool_gate.allow(fc.name, args)
+                            if not allowed:
+                                msg = f"Voice action blocked: {reason}."
+                                print(f"[BRAHMA EVO] 🛡️ {msg} Tool={fc.name} Args={args}")
+                                self.ui.write_log(f"SYS: {msg}")
+                                fn_responses.append(
+                                    types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": msg},
+                                    )
+                                )
+                                continue
                             print(f"[BRAHMA EVO] 📞 {fc.name}")
                             fr = await self._execute_tool(fc)
                             fn_responses.append(fr)
