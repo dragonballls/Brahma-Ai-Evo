@@ -62,6 +62,27 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
         self.assertIn("main changed after approval; refusing to undo unrelated work", source)
         self.assertIn("BRAHMA_SELF_CODING_REPO", source)
 
+    def test_runtime_wiring_contracts(self):
+        import inspect
+        from core.omniroute import OmniRouteGateway
+        from core.self_coding import SelfCodingAgent
+
+        or_source = inspect.getsource(__import__("or_client").OpenRouterClient)
+        main_source = Path(ROOT / "main.py").read_text(encoding="utf-8")
+        dev_source = Path(ROOT / "actions" / "brahma_dev_agent.py").read_text(encoding="utf-8")
+
+        self.assertIn("_call_omniroute", or_source)
+        self.assertIn("auto/coding", dev_source)
+        self.assertIn('"name": "omniroute"', main_source)
+        self.assertIn('"name": "self_coding"', main_source)
+        self.assertIn("checkpoint", main_source)
+        self.assertIn("approve", main_source)
+        self.assertIn("undo", main_source)
+        self.assertIn("build_vendor/omniroute_runtime", Path(ROOT / "installer" / "BrahmaEvo.spec").read_text(encoding="utf-8"))
+        self.assertIn("prepare_omniroute_runtime.py", Path(ROOT / "build_all.ps1").read_text(encoding="utf-8"))
+        self.assertTrue(hasattr(OmniRouteGateway, "ensure_ready"))
+        self.assertTrue(hasattr(SelfCodingAgent, "preview"))
+
     def test_omniroute_is_local_and_lazy(self):
         from core.omniroute import OmniRouteGateway
 
