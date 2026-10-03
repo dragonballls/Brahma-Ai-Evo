@@ -4559,7 +4559,10 @@ class BrahmaLive:
                 target = str(args.get("app_name") or args.get("target") or "").strip()
                 desktop_controller = self._desktop_controller or getattr(self.ui, "_desktop_controller", None)
                 if desktop_controller is not None and getattr(desktop_controller, "enabled", False) and target:
-                    embed = bool(args.get("embed", False))
+                    # Desktop Mode defaults to a Brahma-hosted workspace for native
+                    # apps; callers can explicitly set embed=false to keep a
+                    # compatibility-sensitive application fully native.
+                    embed = bool(args["embed"]) if "embed" in args else True
                     r = await loop.run_in_executor(
                         None,
                         lambda: desktop_controller.open(target, embed=embed),
