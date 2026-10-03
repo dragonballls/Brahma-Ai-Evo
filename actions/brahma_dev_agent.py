@@ -216,7 +216,8 @@ class NativeTools:
         self._notify(f"Reading GitHub source: {repository}/{path}")
         try:
             result = self.github.read_file(repository, path, ref=ref)
-            self._on_github_source_read(repository)
+            if not result.lstrip().lower().startswith("error:") and "GitHub read error:" not in result:
+                self._on_github_source_read(repository)
             return result
         except Exception as exc:
             return f"GitHub read error: {exc}"
