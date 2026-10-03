@@ -1,0 +1,57 @@
+{
+  "name": "autonomous_mission",
+  "version": "1.0.0",
+  "active": true,
+  "description": "Runs a Brahma Evo goal autonomously in the background for an exact duration or until a verifiable completion condition is met. Supports cancellation and persistent mission status while using low-power waits between iterations.",
+  "triggers": [
+    "work on this for 24 hours",
+    "keep working for 5 minutes",
+    "run this for 15 minutes",
+    "keep working until completed",
+    "work until it is finished"
+  ],
+  "aliases": [
+    "long running task",
+    "autonomous task",
+    "background mission",
+    "keep working",
+    "continue working"
+  ],
+  "parameters": {
+    "type": "OBJECT",
+    "properties": {
+      "action": {
+        "type": "STRING",
+        "description": "Action: start, list, status, cancel."
+      },
+      "goal": {
+        "type": "STRING",
+        "description": "The full task Brahma should work on."
+      },
+      "duration": {
+        "type": "STRING",
+        "description": "Maximum runtime such as 15 seconds, 5 minutes, 24 hours, or 24h 5m. Maximum 30 days."
+      },
+      "until": {
+        "type": "STRING",
+        "description": "Optional natural-language completion condition, for example 'the bug is fixed and tests pass'."
+      },
+      "completion_type": {
+        "type": "STRING",
+        "description": "Optional completion strategy: agent_success, phrase, file_exists, regex, process_gone, memory_below."
+      },
+      "completion_target": {
+        "type": "STRING",
+        "description": "Target for the selected completion strategy, such as a file path, regex, process name/PID, or memory percentage."
+      },
+      "interval_seconds": {
+        "type": "INTEGER",
+        "description": "Low-power wait between autonomous iterations; default 30 seconds."
+      },
+      "keep_working": {
+        "type": "BOOLEAN",
+        "description": "When true, continue iterating after an apparently successful attempt until the duration or completion condition is reached."
+      }
+    }
+  }
+}
