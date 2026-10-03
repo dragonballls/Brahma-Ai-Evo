@@ -6439,16 +6439,9 @@ def _main_impl():
     except Exception as exc:
         _startup_log(f"sensorium start failed: {exc}")
 
-    try:
-        from core.globe_window import GlobeWindow
-        GlobeWindow.get_instance(parent=None)
-        _startup_log("globe window initialized")
-    except Exception as exc:
-        _startup_log(f"globe window initialization failed: {exc}")
-        try:
-            ui.write_log(f"ERR: Globe window initialization failed: {exc}")
-        except Exception:
-            pass
+    # The 3D globe uses a full Qt WebEngine surface. Keep it lazy so the
+    # normal assistant startup does not pay the memory/GPU cost unless the
+    # user actually requests a map/globe capability.
 
     # Initialize plugin manager and load any plugins from ./plugins
     try:
@@ -6689,6 +6682,11 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        with open("FATAL_CRASH.log", "w") as f:
-            traceback.print_exc(file=f)
+        fatal_path = STARTUP_LOG.parent / "FATAL_CRASH.log"
+        try:
+            fatal_path.parent.mkdir(parents=True, exist_ok=True)
+            with fatal_path.open("w", encoding="utf-8") as f:
+                traceback.print_exc(file=f)
+        except Exception:
+            traceback.print_exc()
         raise
