@@ -103,6 +103,7 @@ def add_monitor(monitor_type: str, target: str, threshold: float, condition: str
             "interval": interval_sec,
             "last_check": time.time()
         }
+    _ensure_monitor_worker()
     return f"Started monitoring {monitor_type} ({target}) every {interval_sec} seconds."
 
 def get_monitors() -> str:
