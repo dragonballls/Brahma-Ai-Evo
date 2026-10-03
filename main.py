@@ -5066,15 +5066,9 @@ class BrahmaLive:
 
                             full_out = " ".join(out_buf).strip()
                             if full_out:
+                                # The UI's assistant-log path persists this message;
+                                # do not also insert it directly or the bubble doubles.
                                 self.ui.write_log(f"Brahma Evo: {full_out}")
-                                try:
-                                    self.ui.record_chat_event({
-                                        "role": "assistant",
-                                        "text": full_out,
-                                        "source": "mic",
-                                    })
-                                except Exception:
-                                    pass
                             out_buf = []
 
                             if full_in and len(full_in) > 5:
