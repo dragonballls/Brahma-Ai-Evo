@@ -9074,8 +9074,7 @@ class MainWindow(QMainWindow):
         self._update_nav_styles()
 
     def _on_nav_settings(self):
-        if hasattr(self, "_center_stack"):
-            self._center_stack.setCurrentIndex(4)
+        self._navigate_center_index(4)
         self._update_nav_styles()
 
     def _update_nav_styles(self):
@@ -9102,7 +9101,7 @@ class MainWindow(QMainWindow):
 
     def set_settings_bridge(self, bridge):
         self._settings_bridge = bridge
-        if hasattr(self, "_settings_page") and hasattr(self._settings_page, "set_controller"):
+        if self._settings_page is not None and hasattr(self._settings_page, "set_controller"):
             self._settings_page.set_controller(bridge)
         if hasattr(self, "_settings_sidebar") and hasattr(self._settings_sidebar, "set_controller"):
             self._settings_sidebar.set_controller(bridge)
@@ -9112,13 +9111,19 @@ class MainWindow(QMainWindow):
         self._current_page = page
         if hasattr(self, "_center_stack") and isinstance(self._center_stack, QStackedWidget):
             index = {"dashboard": 0, "home": 1, "devices": 2, "settings": 3}.get(page, 0)
+            if index == 1:
+                self._ensure_home_page()
+            elif index == 2:
+                self._ensure_devices_page()
+            elif index == 3:
+                self._ensure_settings_page()
             self._center_stack.setCurrentIndex(index)
-        if page == "devices" and hasattr(self, "_devices_page"):
+        if page == "devices" and self._devices_page is not None:
             try:
                 self._devices_page.refresh()
             except Exception:
                 pass
-        if page == "home" and hasattr(self, "_home_page"):
+        if page == "home" and self._home_page is not None:
             try:
                 self._home_page.refresh()
             except Exception:
@@ -9141,7 +9146,7 @@ class MainWindow(QMainWindow):
                 self._settings_bridge.set_dashboard_page(page == "dashboard")
             except Exception:
                 pass
-        if page == "settings" and hasattr(self, "_settings_page"):
+        if page == "settings" and self._settings_page is not None:
             try:
                 self._settings_page.refresh()
             except Exception:
@@ -9154,7 +9159,8 @@ class MainWindow(QMainWindow):
 
     def set_brahma_connect_service(self, service):
         self._brahma_connect = service
-        if hasattr(self, "_devices_page"):
+        self._pending_brahma_connect_service = service
+        if self._devices_page is not None:
             self._devices_page.set_service(service)
             if service is not None:
                 self._devices_page.refresh(force=True)
@@ -10217,21 +10223,79 @@ class MainWindow(QMainWindow):
         cmd_lay.addLayout(self._build_command_row())
         stage.addWidget(self._command_panel)
 
-        self._home_page = BrahmaHomePage()
-        self._devices_page = BrahmaConnectDevicesPage(self)
+        # Keep large feature pages out of the process until the user opens them.
+        # This preserves the full feature set while substantially reducing idle RAM.
+        self._home_page = None
+        self._devices_page = None
+        self._settings_page = None
+        self._pending_brahma_connect_service = None
         self._center_stack = QStackedWidget()
         self._center_stack.setStyleSheet("background: transparent; border: none;")
         self._center_stack.addWidget(w)
-        self._center_stack.addWidget(self._home_page)
-        self._center_stack.addWidget(self._devices_page)
-        self._settings_page = SystemConnectivityPage()
-        self._center_stack.addWidget(self._settings_page)
-        
-        self._settings_hub_page = SettingsHubPage(lambda idx: self._center_stack.setCurrentIndex(idx))
+        self._center_stack.addWidget(self._make_lazy_page("HOME"))
+        self._center_stack.addWidget(self._make_lazy_page("DEVICES"))
+        self._center_stack.addWidget(self._make_lazy_page("SETTINGS"))
+        self._settings_hub_page = SettingsHubPage(self._navigate_center_index)
         self._center_stack.addWidget(self._settings_hub_page)
 
         self._center_stack.setCurrentIndex(0)
         return self._center_stack
+
+    def _make_lazy_page(self, title: str) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 24, 24, 24)
+        label = QLabel(f"{title} — ready on demand")
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setStyleSheet(f"color: {C.TEXT_DIM};")
+        layout.addWidget(label, 1)
+        return page
+
+    def _navigate_center_index(self, index: int):
+        if index == 1:
+            self._ensure_home_page()
+        elif index == 2:
+            self._ensure_devices_page()
+        elif index == 3:
+            self._ensure_settings_page()
+        self._center_stack.setCurrentIndex(index)
+
+    def _ensure_home_page(self):
+        if self._home_page is not None:
+            return self._home_page
+        page = BrahmaHomePage()
+        placeholder = self._center_stack.widget(1)
+        self._center_stack.removeWidget(placeholder)
+        placeholder.deleteLater()
+        self._center_stack.insertWidget(1, page)
+        self._home_page = page
+        return page
+
+    def _ensure_devices_page(self):
+        if self._devices_page is not None:
+            return self._devices_page
+        page = BrahmaConnectDevicesPage(self)
+        if self._pending_brahma_connect_service is not None:
+            page.set_service(self._pending_brahma_connect_service)
+        placeholder = self._center_stack.widget(2)
+        self._center_stack.removeWidget(placeholder)
+        placeholder.deleteLater()
+        self._center_stack.insertWidget(2, page)
+        self._devices_page = page
+        return page
+
+    def _ensure_settings_page(self):
+        if self._settings_page is not None:
+            return self._settings_page
+        page = SystemConnectivityPage()
+        if getattr(self, "_settings_bridge", None) is not None:
+            page.set_controller(self._settings_bridge)
+        placeholder = self._center_stack.widget(3)
+        self._center_stack.removeWidget(placeholder)
+        placeholder.deleteLater()
+        self._center_stack.insertWidget(3, page)
+        self._settings_page = page
+        return page
 
     def _build_right_panel_modern(self) -> QWidget:
         w = QWidget()
