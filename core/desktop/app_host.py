@@ -151,16 +151,45 @@ class ApplicationHost:
             return {"ok": bool(fn(window.hwnd)), "hwnd": window.hwnd, "action": action}
 
         if action in {"move", "resize", "dock"}:
-            if x is None or y is None:
-                return {"ok": False, "error": "move/resize/dock require x and y."}
-            current_width = width or 900
-            current_height = height or 650
+            rect = WindowManager.get_rect(window.hwnd)
+            if rect is None:
+                return {"ok": False, "error": "The window geometry could not be read safely."}
+            left, top, right, bottom = rect
+            current_width = max(1, right - left)
+            current_height = max(1, bottom - top)
+
+            if action == "move":
+                if x is None or y is None:
+                    return {"ok": False, "error": "move requires x and y."}
+                target_x, target_y = int(x), int(y)
+                target_width, target_height = current_width, current_height
+            elif action == "resize":
+                if width is None or height is None:
+                    return {"ok": False, "error": "resize requires width and height."}
+                target_x, target_y = left, top
+                target_width, target_height = max(120, int(width)), max(120, int(height))
+            else:
+                target_x = left if x is None else int(x)
+                target_y = top if y is None else int(y)
+                target_width = current_width if width is None else max(120, int(width))
+                target_height = current_height if height is None else max(120, int(height))
+
             return {
                 "ok": WindowManager.set_position(
-                    window.hwnd, x, y, current_width, current_height
+                    window.hwnd,
+                    target_x,
+                    target_y,
+                    target_width,
+                    target_height,
                 ),
                 "hwnd": window.hwnd,
                 "action": action,
+                "geometry": {
+                    "x": target_x,
+                    "y": target_y,
+                    "width": target_width,
+                    "height": target_height,
+                },
             }
 
         return {"ok": False, "error": f"Unsupported window action: {action}."}
