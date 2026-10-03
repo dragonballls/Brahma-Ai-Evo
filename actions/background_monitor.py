@@ -26,22 +26,28 @@ def set_monitor_speech_sink(sink_fn):
 def _monitor_loop():
     global _monitor_running
     while _monitor_running:
-        _monitor_wakeup.wait(timeout=30.0)
-        _monitor_wakeup.clear()
-        if not _monitor_running:
-            break
-
         with _monitor_lock:
-            due = []
+            if not _monitors:
+                _monitor_running = False
+                break
+
             current_time = time.time()
+            due = []
+            next_wait = 30.0
             for m_id, m in list(_monitors.items()):
-                if current_time - m['last_check'] >= m['interval']:
-                    m['last_check'] = current_time
+                remaining = max(0.0, float(m["interval"]) - (current_time - m["last_check"]))
+                next_wait = min(next_wait, remaining)
+                if remaining <= 0.0:
+                    m["last_check"] = current_time
                     due.append((m_id, dict(m)))
 
         # Never hold the shared lock during network/system work.
         for m_id, monitor in due:
             _run_check(m_id, monitor)
+
+        if not due:
+            _monitor_wakeup.wait(timeout=max(0.25, min(next_wait, 30.0)))
+            _monitor_wakeup.clear()
 
     _monitor_running = False
 
