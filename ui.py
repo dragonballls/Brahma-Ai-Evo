@@ -2524,6 +2524,8 @@ class TaskCard(QFrame):
         self._mission_id = None
         self._mission_finished_seen_at = None
         self._mission_state_path = get_user_data_dir() / "missions" / "missions.json"
+        self._mission_note_ui_state_path = get_user_data_dir() / "missions" / "mission_note_ui.json"
+        self._mission_note_hidden = False
         self._mission_tmr = QTimer(self)
         self._mission_tmr.setInterval(1000)
         self._mission_tmr.timeout.connect(self._refresh_autonomous_mission)
@@ -2559,6 +2561,18 @@ class TaskCard(QFrame):
         row.addWidget(self._title)
         row.addStretch()
         row.addWidget(self._pct)
+        self._mission_hide_btn = QPushButton("×")
+        self._mission_hide_btn.setToolTip("Hide mission note (the mission keeps running)")
+        self._mission_hide_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._mission_hide_btn.setFixedSize(28, 28)
+        self._mission_hide_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        self._mission_hide_btn.setStyleSheet(
+            f"QPushButton {{ background: rgba(255,255,255,0.05); color: {C.TEXT_MED}; border: 1px solid rgba(255,255,255,0.10); border-radius: 14px; padding: 0; }}"
+            f"QPushButton:hover {{ background: rgba(255,255,255,0.10); color: {C.WHITE}; border: 1px solid {C.BORDER_B}; }}"
+        )
+        self._mission_hide_btn.clicked.connect(self._hide_mission_note)
+        self._mission_hide_btn.setVisible(False)
+        row.addWidget(self._mission_hide_btn)
         lay.addLayout(row)
 
         self._command_lbl = QLabel("Command: waiting for input")
@@ -2635,6 +2649,46 @@ class TaskCard(QFrame):
             return f"{days}d {hours:02d}:{minutes:02d}:{secs:02d}"
         return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
+    def _mission_note_is_hidden(self, mission_id: str | None = None) -> bool:
+        try:
+            state = json.loads(self._mission_note_ui_state_path.read_text(encoding="utf-8"))
+            if not isinstance(state, dict) or not state.get("hidden"):
+                return False
+            stored_id = str(state.get("mission_id") or "")
+            return bool(mission_id) and stored_id == str(mission_id)
+        except Exception:
+            return False
+
+    def _set_mission_note_hidden(self, hidden: bool, mission_id: str | None = None) -> None:
+        try:
+            self._mission_note_ui_state_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "hidden": bool(hidden),
+                "mission_id": str(mission_id or self._mission_id or ""),
+                "updated_at": time.time(),
+            }
+            self._mission_note_ui_state_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+        self._mission_note_hidden = bool(hidden)
+
+    def _hide_mission_note(self) -> bool:
+        if not self._mission_mode or not self._mission_id:
+            return False
+        self._set_mission_note_hidden(True, self._mission_id)
+        self._mission_hide_btn.setVisible(False)
+        self.hide()
+        return True
+
+    def reopen_mission_note(self) -> bool:
+        mission = self._load_latest_mission()
+        if not mission:
+            return False
+        self._set_mission_note_hidden(False, mission.get("mission_id"))
+        self._mission_finished_seen_at = None
+        self._show_mission_note(mission)
+        return True
+
     def _load_latest_mission(self) -> dict | None:
         try:
             if not self._mission_state_path.exists():
@@ -2656,6 +2710,11 @@ class TaskCard(QFrame):
         self._mission_id = mission.get("mission_id")
         self._active = True
         self._workspace_locked = False
+        self._mission_note_hidden = self._mission_note_is_hidden(self._mission_id)
+        self._mission_hide_btn.setVisible(not self._mission_note_hidden)
+        if self._mission_note_hidden:
+            self.hide()
+            return
 
         status = str(mission.get("status") or "pending").replace("_", " ").title()
         goal = str(mission.get("goal") or "Autonomous mission")
@@ -2732,6 +2791,8 @@ class TaskCard(QFrame):
         self._mission_mode = False
         self._mission_id = None
         self._mission_finished_seen_at = None
+        self._mission_note_hidden = False
+        self._mission_hide_btn.setVisible(False)
         self._bar.setRange(0, 100)
         self._bar.setValue(0)
         self._elapsed_lbl.setText("Elapsed: 00:00")
@@ -4194,6 +4255,10 @@ class WorkspaceSidebar(QWidget):
             QTimer.singleShot(4000, self._task_card.hide)
         elif action == "clear":
             self._task_card.clear_workspace()
+        elif action == "hide_mission_note":
+            self._task_card._hide_mission_note()
+        elif action == "reopen_mission_note":
+            self._task_card.reopen_mission_note()
 
     def _send(self):
         text = self._input.text().strip()
@@ -4613,6 +4678,10 @@ class InlineChatWorkspace(QFrame):
             QTimer.singleShot(4000, self._task_card.hide)
         elif action == "clear":
             self._task_card.clear_workspace()
+        elif action == "hide_mission_note":
+            self._task_card._hide_mission_note()
+        elif action == "reopen_mission_note":
+            self._task_card.reopen_mission_note()
 
     def _send(self):
         text = self._input.text().strip() if hasattr(self, "_input") else ""
@@ -9536,9 +9605,67 @@ class MainWindow(QMainWindow):
             return
         self.submit_command(txt)
 
+    def _handle_mission_note_command(self, txt: str) -> bool:
+        low = re.sub(r"\s+", " ", (txt or "").strip().lower())
+        hide_tokens = (
+            "hide mission note", "close mission note", "dismiss mission note",
+            "hide my mission note", "close my mission note", "dismiss my mission note",
+        )
+        reopen_tokens = (
+            "reopen mission note", "show mission note", "open mission note",
+            "bring back mission note", "reopen my mission note", "show my mission note",
+            "open my mission note", "bring back my mission note",
+        )
+        if any(token in low for token in hide_tokens):
+            return self._set_mission_note_visibility(False)
+        if any(token in low for token in reopen_tokens):
+            return self._set_mission_note_visibility(True)
+        return False
+
+    def _set_mission_note_visibility(self, visible: bool) -> bool:
+        card = getattr(self, "_task_card", None)
+        mission_available = False
+        if card is not None:
+            try:
+                mission_available = card._load_latest_mission() is not None
+            except Exception:
+                pass
+        if not mission_available:
+            inline = getattr(self, "_inline_workspace", None)
+            inline_card = getattr(inline, "_task_card", None)
+            if inline_card is not None:
+                try:
+                    mission_available = inline_card._load_latest_mission() is not None
+                except Exception:
+                    pass
+        if not mission_available:
+            self._log_sig.emit("SYS: No autonomous mission is currently available for the mission note.")
+            return False
+        action = "reopen_mission_note" if visible else "hide_mission_note"
+        if card is not None:
+            try:
+                if visible:
+                    card.reopen_mission_note()
+                else:
+                    card._hide_mission_note()
+            except Exception:
+                pass
+        try:
+            self._task_workspace_sig.emit({"action": action})
+        except Exception:
+            pass
+        self._log_sig.emit(
+            "SYS: Mission note reopened; autonomous work continues."
+            if visible else
+            "SYS: Mission note hidden; autonomous work continues."
+        )
+        return True
+
     def submit_command(self, txt: str, source: str = "local"):
         txt = (txt or "").strip()
         if not txt:
+            return
+        if self._handle_mission_note_command(txt):
             return
         self._chat_source_queue.append(source or "local")
         # Persist the user message directly instead of reconstructing it from
@@ -10160,6 +10287,10 @@ class MainWindow(QMainWindow):
             )
         elif action == "clear":
             target.clear_workspace()
+        elif action == "hide_mission_note":
+            target._hide_mission_note()
+        elif action == "reopen_mission_note":
+            target.reopen_mission_note()
 
     def _on_discord_status_update(self, message: str):
         if not message:
