@@ -681,19 +681,29 @@ class InstagramService:
             return
 
         self._stop_event.clear()
-        self._running = True
 
-        # If browser engine is available, launch dedicated browser worker
+        # Prefer the browser worker when an authenticated profile exists.
         if self.is_browser_ready():
-            self.get_browser_worker()
+            worker = self.get_browser_worker()
+            if worker is None or not worker.is_alive():
+                self._running = False
+                ig_log("Instagram BrowserEngine failed to start.")
+                return
+            self._running = True
             ig_log("Instagram BrowserEngine daemon started.")
             return
 
         if not INSTAGRAPI_AVAILABLE:
+            self._running = False
             ig_log("instagrapi not installed and browser profile not found. Background listener skipped.")
             return
 
-        self._thread = threading.Thread(target=self._daemon_loop, daemon=True)
+        self._running = True
+        self._thread = threading.Thread(
+            target=self._daemon_loop,
+            name="InstagramDaemon",
+            daemon=True,
+        )
         self._thread.start()
         ig_log("Instagram Instagrapi background daemon started.")
 
