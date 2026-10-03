@@ -18,9 +18,10 @@ class LowPowerGuardTests(unittest.TestCase):
         for source in (main, ui, globe):
             self.assertNotIn("--disable-frame-rate-limit", source)
             self.assertNotIn("--disable-gpu-vsync", source)
-        self.assertNotIn("fmt.setSwapInterval(0)", source)
+            self.assertNotIn("fmt.setSwapInterval(0)", source)
             self.assertIn("--num-raster-threads=2", source)
         self.assertIn("fmt.setSwapInterval(1)", main)
+        self.assertIn("fmt.setSwapInterval(1)", globe)
         self.assertIn("powerPreference: 'low-power'", html)
         self.assertIn("Math.min(window.devicePixelRatio || 1, 1.25)", html)
         self.assertNotIn("requestAnimationFrame(renderLoop)", html)
