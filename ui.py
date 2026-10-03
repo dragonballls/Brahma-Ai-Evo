@@ -61,7 +61,7 @@ from smart_home_page_new import BrahmaHomePage, _DeviceTile
 from core.local_brain import local_brain
 from workspace_store import store as workspace_store
 from core.identity import identity
-from core.provider_policy import display_name, normalize_provider, SUPPORTED_PROVIDERS
+from core.provider_policy import display_name, normalize_provider, is_local, is_openrouter
 from sound_manager import sound_mgr
 
 def _base_dir() -> Path:
@@ -13451,37 +13451,22 @@ class SystemConnectivityPage(QWidget):
             self._ctrl()._win._refresh_startup_animation_button()
 
     def _set_default_provider(self, text: str):
-        raw = (text or "").strip().lower()
-        if raw.startswith("google") or raw == "gemini":
-            provider = "Gemini"
-            self._set_setting("offline_mode_enabled", False)
-            if hasattr(self, "_offline_mode_btn"):
-                self._offline_mode_btn.blockSignals(True)
-                self._offline_mode_btn.setChecked(False)
-                self._offline_mode_btn.blockSignals(False)
-            if hasattr(self, "_local_ai_widget"):
-                self._local_ai_widget.setVisible(False)
+        provider = normalize_provider(text)
+        offline = is_local(provider)
+        self._set_setting("offline_mode_enabled", offline)
+        if hasattr(self, "_offline_mode_btn"):
+            self._offline_mode_btn.blockSignals(True)
+            self._offline_mode_btn.setChecked(offline)
+            self._offline_mode_btn.blockSignals(False)
+        if hasattr(self, "_local_ai_widget"):
+            self._local_ai_widget.setVisible(offline)
+
+        if provider == "Gemini":
             msg = "SYS: Default AI provider set to Google Gemini. Cloud connectivity active."
-        elif raw == "local":
-            provider = "Local"
-            self._set_setting("offline_mode_enabled", True)
-            if hasattr(self, "_offline_mode_btn"):
-                self._offline_mode_btn.blockSignals(True)
-                self._offline_mode_btn.setChecked(True)
-                self._offline_mode_btn.blockSignals(False)
-            if hasattr(self, "_local_ai_widget"):
-                self._local_ai_widget.setVisible(True)
-            msg = "SYS: Default AI provider set to Local AI (Ollama). Offline Mode active."
-        else:
-            provider = "OpenRouter"
-            self._set_setting("offline_mode_enabled", False)
-            if hasattr(self, "_offline_mode_btn"):
-                self._offline_mode_btn.blockSignals(True)
-                self._offline_mode_btn.setChecked(False)
-                self._offline_mode_btn.blockSignals(False)
-            if hasattr(self, "_local_ai_widget"):
-                self._local_ai_widget.setVisible(False)
+        elif is_openrouter(provider):
             msg = "SYS: Default AI provider set to OpenRouter. Cloud connectivity active."
+        else:
+            msg = "SYS: Default AI provider set to Local AI (Ollama). Offline Mode active."
         self._set_setting("default_ai_provider", provider)
         if hasattr(self, "_sys_provider"):
             self._sys_provider.setText(provider)
@@ -13630,20 +13615,15 @@ class SystemConnectivityPage(QWidget):
             self._gemini_key.setText(self._provider_key_preview(api.get("gemini_api_key", "")))
             self._or_key.setText(self._provider_key_preview(api.get("openrouter_api_key", "")))
             
-            prov = app.get("default_ai_provider", "Gemini")
-            is_offline = bool(app.get("offline_mode_enabled", False))
-            if prov == "Local" or is_offline:
-                disp_prov = "Local"
-            elif prov == "OpenRouter":
-                disp_prov = "OpenRouter"
-            else:
-                disp_prov = "Google Gemini"
+            prov = normalize_provider(app.get("default_ai_provider", "Gemini"))
+            is_offline = bool(app.get("offline_mode_enabled", False)) or is_local(prov)
+            disp_prov = display_name(prov)
             if hasattr(self, "_default_provider"):
                 self._default_provider.setCurrentText(disp_prov)
             if hasattr(self, "_offline_mode_btn"):
-                self._offline_mode_btn.setChecked(is_offline or prov == "Local")
+                self._offline_mode_btn.setChecked(is_offline)
             if hasattr(self, "_local_ai_widget"):
-                self._local_ai_widget.setVisible(is_offline or prov == "Local")
+                self._local_ai_widget.setVisible(is_offline)
 
             self._auto_switch_btn.setChecked(bool(app.get("auto_provider_switch", True)))
             self._attention_message_btn.setChecked(bool(app.get("attention_message_prompts", True)))
