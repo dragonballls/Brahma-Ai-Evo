@@ -4263,19 +4263,23 @@ class BrahmaLive:
             except Exception:
                 pass
             reply = ""
-            gemini_first = not self._use_openrouter_first
             request_text = f"{memory_ctx}\n\nCurrent User Request:\n{text}" if memory_ctx else text
 
             app_settings = config_manager.load_settings()
             configured_provider = app_settings.get("default_ai_provider", "Gemini")
             local_model_target = app_settings.get("local_ai_model", "qwen2.5:3b")
-            is_offline_mode = app_settings.get("offline_mode_enabled", False)
+            is_offline_mode = bool(app_settings.get("offline_mode_enabled", False))
+            auto_provider_switch = bool(app_settings.get("auto_provider_switch", True))
 
-            is_cloud_gemini = configured_provider in ("Gemini", "Google Gemini")
-            is_cloud_openrouter = configured_provider == "OpenRouter"
+            is_cloud_gemini = str(configured_provider).strip().casefold() in ("gemini", "google gemini")
+            is_cloud_openrouter = str(configured_provider).strip().casefold() == "openrouter"
+            primary_provider = "OpenRouter" if (
+                self._use_openrouter_first and is_cloud_gemini and not is_offline_mode
+            ) else ("Gemini" if is_cloud_gemini else "OpenRouter" if is_cloud_openrouter else str(configured_provider))
 
-            # 1. If user explicitly selected Google Gemini, run Gemini FIRST
-            if is_cloud_gemini and not is_offline_mode:
+            # Run the configured cloud provider first, unless provider rotation
+            # has explicitly moved OpenRouter ahead.
+            if primary_provider == "Gemini" and not is_offline_mode:
                 try:
                     self.ui.update_task_workspace(
                         status="Thinking (Gemini)",
@@ -4289,8 +4293,8 @@ class BrahmaLive:
                     if _is_gemini_limit_error(e_gem):
                         self._use_openrouter_first = True
 
-            # 2. If user explicitly selected OpenRouter, run OpenRouter FIRST
-            elif is_cloud_openrouter and not is_offline_mode:
+            # OpenRouter is the configured/rotated cloud provider.
+            elif primary_provider == "OpenRouter" and not is_offline_mode:
                 try:
                     self.ui.update_task_workspace(
                         status="Thinking (OpenRouter)",
@@ -4402,20 +4406,38 @@ class BrahmaLive:
                 except Exception as e_loc:
                     print(f"[BRAHMA EVO] ⚠️ Local Brain failed: {e_loc}")
 
-            # 4. Fallback cascading: if primary cloud choice failed, try secondary cloud choice
-            if not reply and not is_offline_mode:
-                if is_cloud_gemini and self._use_openrouter_first:
+            # Secondary cloud routing is controlled by the user's explicit
+            # auto-switch setting. This must happen before the Local safety net.
+            if not reply and not is_offline_mode and auto_provider_switch:
+                if primary_provider == "Gemini":
                     try:
-                        reply = openrouter_client.chat(request_text)
-                    except Exception:
-                        pass
-                elif is_cloud_openrouter:
+                        self.ui.update_task_workspace(
+                            status="Thinking (OpenRouter fallback)",
+                            output="Gemini failed; trying the configured cloud fallback.",
+                            percent=60,
+                        )
+                        reply = openrouter_client.intelligent_chat(
+                            request_text,
+                            system=(
+                                "You are Brahma Evo, a concise, helpful desktop assistant. "
+                                "Reply naturally and briefly. Do not mention internal implementation details."
+                            ),
+                            context=memory_ctx,
+                        )
+                    except Exception as exc:
+                        print(f"[BRAHMA EVO] OpenRouter fallback failed: {exc}")
+                elif primary_provider == "OpenRouter":
                     try:
+                        self.ui.update_task_workspace(
+                            status="Thinking (Gemini fallback)",
+                            output="OpenRouter failed; trying Google Gemini as the cloud fallback.",
+                            percent=60,
+                        )
                         reply = _gemini_text_reply(request_text)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        print(f"[BRAHMA EVO] Gemini fallback failed: {exc}")
 
-            # 4. Ultimate offline safety net: Local Brain fallback
+            # 5. Ultimate offline safety net: Local Brain fallback
             if not reply and local_brain.is_available():
                 try:
                     res = local_brain.chat_complete([
