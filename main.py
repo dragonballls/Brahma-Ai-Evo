@@ -65,7 +65,7 @@ from actions.weather_report    import weather_action
 from actions.send_message      import send_message
 from actions.reminder          import reminder
 from actions.computer_settings import computer_settings
-from actions.screen_processor  import screen_process
+from actions.screen_processor  import screen_process, stop_screen_processor
 from actions.meeting_assistant import MeetingAssistant
 from actions.youtube_video     import youtube_video
 from actions.creator_studio  import creator_control
@@ -6647,6 +6647,10 @@ def _main_impl():
         try:
             if hasattr(ui, "stop_background_metrics"):
                 ui.stop_background_metrics()
+        except Exception:
+            pass
+        try:
+            stop_screen_processor()
         except Exception:
             pass
         try:
