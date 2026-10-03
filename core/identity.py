@@ -141,7 +141,16 @@ class IdentityService:
 
     def get_custom_instructions(self) -> str:
         val = self.data["behavior"].get("custom_instructions", "")
-        return val if val is not None else ""
+        base = val if val is not None else ""
+        # Inject the single self-awareness model at the existing system-prompt
+        # boundary. This keeps identity grounding consistent without creating
+        # another prompt pipeline or background worker.
+        try:
+            from core.self_model import self_awareness
+            awareness = self_awareness.prompt_block()
+            return (base + "\n\n" + awareness).strip() if awareness else base
+        except Exception:
+            return base
         
     def set_custom_instructions(self, instructions: str):
         self.data["behavior"]["custom_instructions"] = instructions
