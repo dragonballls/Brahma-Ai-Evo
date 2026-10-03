@@ -22,3 +22,5 @@ jobs:
         run: python tests/test_low_power_guards.py
       - name: Run voice safety regressions
         run: python tests/test_voice_guards.py
+      - name: Run OmniRoute and self-coding regressions
+        run: python tests/test_omniroute_self_coding.py
