@@ -5,7 +5,6 @@ import asyncio
 import json
 import logging
 from collections import deque
-import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -16,22 +15,11 @@ def _load_discord_module():
         import discord as mod
         return mod
     except Exception:
-        try:
-            subprocess.run(
-                [sys.executable, "-m", "pip", "install", "discord.py"],
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            import discord as mod
-            return mod
-        except Exception:
-            return None
+        return None
 
 
-discord = _load_discord_module()
-
-from google import genai
+# Do not import Discord or its transitive dependencies until the bot is explicitly started.
+discord = None
 
 from llm_client import client as openrouter_client
 
@@ -196,8 +184,11 @@ class DiscordBotService:
         token = (token or "").strip()
         if not token:
             raise ValueError("Discord bot token is missing.")
+        global discord
         if discord is None:
-            raise RuntimeError("discord.py is not installed. Add it to requirements and install dependencies.")
+            discord = _load_discord_module()
+        if discord is None:
+            raise RuntimeError("discord.py is not installed. Add it to requirements and install it before starting the Discord bot.")
 
         if self.is_running():
             if token == self._token:
