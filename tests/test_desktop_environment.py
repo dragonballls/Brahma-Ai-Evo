@@ -120,3 +120,20 @@ class ApplicationHostTests(TestCase):
         host = module.ApplicationHost()
         with patch.object(module.WindowManager, "enumerate_windows", return_value=[]):
             self.assertIsNone(host._find("definitely-not-a-window"))
+
+
+class WindowsBackendTests(TestCase):
+    def test_workerw_backend_is_not_attached_by_default(self):
+        module = __import__("core.desktop.windows_desktop", fromlist=["WindowsDesktopHost"])
+        host = module.WindowsDesktopHost()
+        self.assertFalse(host.attached)
+        self.assertEqual(host.status()["backend"], "bottommost-window")
+
+    def test_windows_folder_process_is_not_user_process(self):
+        module = __import__("core.desktop.window_manager", fromlist=["WindowManager"])
+        fake = SimpleNamespace(
+            name=lambda: "test-system.exe",
+            exe=lambda: r"C:\Windows\System32\test-system.exe",
+        )
+        with patch.dict(module.os.environ, {"WINDIR": r"C:\Windows"}, clear=False):
+            self.assertFalse(module.WindowManager.is_user_process(fake))
