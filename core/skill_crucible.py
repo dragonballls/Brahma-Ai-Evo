@@ -1,11 +1,15 @@
 """
-Skill Crucible: Multi-Tiered Safety Sandbox & Verification Engine
+Skill Crucible: Restricted verification engine for generated skills.
 Part of Project Ultron for Brahma AI.
 
 Performs:
-1. Static AST Safety Analysis (blocks destructive OS actions).
-2. Dependency Auto-Resolution (installs required packages in .venv).
-3. Sandboxed Subprocess Test Execution (validates against test cases with timeouts).
+1. Static AST safety analysis that blocks high-risk OS primitives.
+2. Dependency presence checks without mutating the environment.
+3. Child-process verification with timeouts and a sanitized environment.
+
+Note: the child process is an execution boundary for verification, not a
+complete OS-level security sandbox. Generated code must still pass the static
+checks before it reaches this runner.
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ import ast
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
