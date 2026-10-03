@@ -42,7 +42,8 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertTrue(config.get_os())
         self.assertIn("API_CONFIG_PATH", self.read("config/__init__.py"))
         self.assertNotIn('Path(__file__).parent / "api_keys.json"', self.read("config/__init__.py"))
-        self.assertTrue(str(API_CONFIG_PATH).endswith("config/api_keys.json"))
+        self.assertEqual(API_CONFIG_PATH.name, "api_keys.json")
+        self.assertEqual(API_CONFIG_PATH.parent.name, "config")
 
     def test_local_provider_matching_is_case_insensitive(self):
         source = self.read("llm_client.py")
