@@ -186,6 +186,73 @@ class WindowManager:
             return False
 
     @staticmethod
+    def get_memory_priority(pid: int) -> int | None:
+        if _OS != "Windows" or not pid:
+            return None
+        try:
+            import ctypes
+            class MEMORY_PRIORITY_INFORMATION(ctypes.Structure):
+                _fields_ = [("MemoryPriority", ctypes.c_ulong)]
+            GetProcessInformation = ctypes.windll.kernel32.GetProcessInformation
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            ProcessMemoryPriority = 0
+            handle = ctypes.windll.kernel32.OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION,
+                False,
+                int(pid),
+            )
+            if not handle:
+                return None
+            try:
+                info = MEMORY_PRIORITY_INFORMATION()
+                ok = GetProcessInformation(
+                    handle,
+                    ProcessMemoryPriority,
+                    ctypes.byref(info),
+                    ctypes.sizeof(info),
+                )
+                return int(info.MemoryPriority) if ok else None
+            finally:
+                ctypes.windll.kernel32.CloseHandle(handle)
+        except Exception:
+            return None
+
+    @staticmethod
+    def set_memory_priority(pid: int, priority: int) -> bool:
+        if _OS != "Windows" or not pid:
+            return False
+        try:
+            import ctypes
+            class MEMORY_PRIORITY_INFORMATION(ctypes.Structure):
+                _fields_ = [("MemoryPriority", ctypes.c_ulong)]
+            SetProcessInformation = ctypes.windll.kernel32.SetProcessInformation
+            PROCESS_SET_INFORMATION = 0x0200
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            ProcessMemoryPriority = 0
+            value = max(1, min(5, int(priority)))
+            handle = ctypes.windll.kernel32.OpenProcess(
+                PROCESS_SET_INFORMATION | PROCESS_QUERY_LIMITED_INFORMATION,
+                False,
+                int(pid),
+            )
+            if not handle:
+                return False
+            try:
+                info = MEMORY_PRIORITY_INFORMATION(value)
+                return bool(
+                    SetProcessInformation(
+                        handle,
+                        ProcessMemoryPriority,
+                        ctypes.byref(info),
+                        ctypes.sizeof(info),
+                    )
+                )
+            finally:
+                ctypes.windll.kernel32.CloseHandle(handle)
+        except Exception:
+            return False
+
+    @staticmethod
     def trim_working_set(pid: int) -> bool:
         """Best-effort working-set trim; never raises and never terminates a process."""
         if _OS != "Windows" or not pid:
