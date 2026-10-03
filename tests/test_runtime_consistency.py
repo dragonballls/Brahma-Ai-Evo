@@ -197,6 +197,13 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("self._stop_event.wait", source)
         self.assertNotIn("time.sleep(sleep_for)", source)
 
+    def test_omniroute_setup_imports_central_constants(self):
+        setup = self.read("core/omniroute_setup.py")
+        runtime = self.read("core/runtime_paths.py")
+        self.assertIn("OMNIROUTE_DEFAULT_PORT", setup)
+        self.assertIn("from core.runtime_paths import API_CONFIG_PATH, OMNIROUTE_DEFAULT_BASE_URL, OMNIROUTE_DEFAULT_PORT", setup)
+        self.assertIn("OMNIROUTE_DEFAULT_PORT = 20128", runtime)
+
     def test_boot_sentry_runs_after_singleton_import_boundary(self):
         main = self.read("main.py")
         self.assertNotIn("import core.boot_sentry", main)
