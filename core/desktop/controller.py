@@ -32,6 +32,8 @@ class DesktopModeController:
         self.enabled = False
         self.last_error = ""
         self._show_overlay = False
+        self._last_workspace_identity = ""
+        self._last_workspace_persist_at = 0.0
 
     def _ensure_layer(self) -> DesktopLayer:
         if self.layer is None:
@@ -170,13 +172,18 @@ class DesktopModeController:
         if not foreground:
             return
         identity = f"{foreground.exe}:{foreground.title}".strip(":")
+        now = time.time()
+        # Avoid turning the adaptive governor into a disk writer. Persist only
+        # when the focused application changes or after a long heartbeat.
+        if identity == self._last_workspace_identity and now - self._last_workspace_persist_at < 30.0:
+            return
         self.workspace.upsert_window(
             "main",
             {
                 "identity": identity,
                 "title": foreground.title,
                 "exe": foreground.exe,
-                "last_seen": time.time(),
+                "last_seen": now,
                 "game": is_game_window(foreground),
                 "x": None,
                 "y": None,
@@ -184,6 +191,8 @@ class DesktopModeController:
                 "height": None,
             },
         )
+        self._last_workspace_identity = identity
+        self._last_workspace_persist_at = now
 
     def open(self, target: str) -> dict[str, Any]:
         return application_host.open(target)
