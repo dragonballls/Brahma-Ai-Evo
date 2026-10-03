@@ -158,6 +158,12 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("gateway().base_url", source)
         self.assertIn("gateway().ensure_ready(force=True)", source)
 
+    def test_discord_explicit_off_state_is_not_overridden_by_token(self):
+        source = self.read("ui.py")
+        self.assertIn('if "enabled" not in data and str(data.get("bot_token") or "").strip():', source)
+        self.assertIn('enabled = bool(settings.get("enabled", False))', source)
+        self.assertNotIn('enabled = bool(settings.get("enabled", False) or (settings.get("bot_token") or "").strip())', source)
+
     def test_mobile_command_queue_is_bounded(self):
         source = self.read("dashboard/server.py")
         self.assertIn("asyncio.Queue(maxsize=64)", source)
