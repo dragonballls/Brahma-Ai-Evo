@@ -68,6 +68,25 @@ def _normalize_mac(mac: str) -> str:
     return ":".join(compact[i:i + 2] for i in range(0, 12, 2)).upper()
 
 
+def _bluetooth_kind(name: str) -> str:
+    lower = str(name or "").lower()
+    if any(token in lower for token in ("keyboard", "keypad")):
+        return "keyboard"
+    if any(token in lower for token in ("mouse", "trackpad", "touchpad")):
+        return "mouse"
+    if any(token in lower for token in ("headset", "headphone", "earbud", "buds", "speaker")):
+        return "audio"
+    if "gamepad" in lower or "controller" in lower:
+        return "controller"
+    if "phone" in lower or "iphone" in lower or "pixel" in lower:
+        return "phone"
+    if "tablet" in lower or "ipad" in lower:
+        return "tablet"
+    if "tv" in lower or "television" in lower:
+        return "tv"
+    return "device"
+
+
 def _is_ip_endpoint(value: str) -> bool:
     text = str(value or "").strip()
     if not text:
@@ -259,7 +278,51 @@ class DeviceManager:
             discovered.append(record)
         return discovered
 
-    def scan(self, *, include_android: bool = True, include_appletv: bool = True) -> list[dict[str, Any]]:
+    def _merge_bluetooth(self, devices: list[dict[str, Any]]) -> list[DeviceRecord]:
+        discovered: list[DeviceRecord] = []
+        for item in devices:
+            address = str(item.get("address") or "").strip()
+            if not address:
+                continue
+            device_id = f"bluetooth:{_safe_id(address)}"
+            existing = self._devices.get(device_id)
+            name = str(item.get("name") or item.get("local_name") or "Bluetooth LE Device").strip()
+            service_uuids = sorted({
+                str(value).strip().lower()
+                for value in (item.get("service_uuids") or [])
+                if str(value).strip()
+            })
+            capabilities = sorted(set(
+                (existing.capabilities if existing else [])
+                + ["bluetooth_le", "gatt", "pairing"]
+            ))
+            record = DeviceRecord(
+                device_id=device_id,
+                name=existing.name if existing else name,
+                device_type=existing.device_type if existing else _bluetooth_kind(name),
+                backend="bluetooth_le",
+                status="Standby",
+                address=address,
+                serial=address,
+                mac=existing.mac if existing else _normalize_mac(address),
+                control_url=existing.control_url if existing else "",
+                wake_method=existing.wake_method if existing else "",
+                mode=existing.mode if existing else "background",
+                auto_reconnect=False,
+                capabilities=capabilities,
+                metadata={
+                    **(existing.metadata if existing else {}),
+                    "bluetooth": dict(item),
+                    "paired": bool((existing.metadata if existing else {}).get("paired", False)),
+                },
+                last_seen=_now(),
+                added_at=existing.added_at if existing else _now(),
+            )
+            self._devices[device_id] = record
+            discovered.append(record)
+        return discovered
+
+    def scan(self, *, include_android: bool = True, include_appletv: bool = True, include_bluetooth: bool = True) -> list[dict[str, Any]]:
         self._ensure_loaded()
         if include_android:
             try:
@@ -269,6 +332,11 @@ class DeviceManager:
         if include_appletv:
             try:
                 self._merge_appletv(integrations.apple_tv_scan())
+            except Exception:
+                pass
+        if include_bluetooth:
+            try:
+                self._merge_bluetooth(integrations.bluetooth_devices())
             except Exception:
                 pass
 
@@ -421,6 +489,54 @@ class DeviceManager:
         result["device"] = record.to_dict()
         return result
 
+    # ---------- Bluetooth LE ----------
+    def pair_bluetooth(self, address: str, name: str = "") -> dict[str, Any]:
+        addr = str(address or "").strip()
+        if not addr:
+            raise ValueError("Bluetooth address is required.")
+        result = integrations.bluetooth_pair(addr)
+        if not result.get("ok"):
+            return result
+
+        discovered = integrations.bluetooth_devices(timeout=5.0)
+        found = next(
+            (
+                item for item in discovered
+                if str(item.get("address") or "").lower() == addr.lower()
+            ),
+            None,
+        )
+        if found:
+            merged = self._merge_bluetooth([found])
+            record = merged[0] if merged else None
+        else:
+            record = self.get(f"bluetooth:{_safe_id(addr)}")
+
+        if record is None:
+            record = DeviceRecord(
+                device_id=f"bluetooth:{_safe_id(addr)}",
+                name=str(name or result.get("name") or "Bluetooth LE Device"),
+                device_type=_bluetooth_kind(str(name or result.get("name") or "")),
+                backend="bluetooth_le",
+                status="Standby",
+                address=addr,
+                serial=addr,
+                auto_reconnect=False,
+                capabilities=["bluetooth_le", "gatt", "pairing"],
+                metadata={"paired": True},
+                last_seen=_now(),
+            )
+            self._upsert(record, save=False)
+        else:
+            record.metadata = {**record.metadata, "paired": True}
+            record.status = "Standby"
+            record.last_seen = _now()
+            if name:
+                record.name = str(name).strip()[:120] or record.name
+            self._upsert(record, save=False)
+        self._save()
+        return {"ok": True, "device": record.to_dict()}
+
     # ---------- Android ----------
     def pair_android(self, address: str, pairing_code: str = "") -> dict[str, Any]:
         addr = str(address or "").strip()
@@ -491,6 +607,24 @@ class DeviceManager:
                 self._save()
                 return {"ok": True, "device": self.get(device_id).to_dict()}
 
+        elif record.backend == "bluetooth_le":
+            result = integrations.bluetooth_services(record.address)
+            if result.get("ok"):
+                services = list(result.get("services") or [])
+                char_uuids = [
+                    str(characteristic.get("uuid") or "")
+                    for service in services
+                    for characteristic in (service.get("characteristics") or [])
+                    if characteristic.get("uuid")
+                ]
+                record.capabilities = sorted(set(record.capabilities + ["gatt_read", "gatt_write"] if char_uuids else record.capabilities))
+                record.metadata = {**record.metadata, "gatt_services": services, "paired": bool(record.metadata.get("paired", False))}
+                record.status = "Standby"
+                record.last_seen = _now()
+                self._save()
+                return {"ok": True, "connection": "on-demand", "services": services, "device": record.to_dict()}
+            return result
+
         elif record.control_url:
             record.status = "Connected"
             record.last_seen = _now()
@@ -549,6 +683,9 @@ class DeviceManager:
         if record.backend == "pyatv":
             return self._appletv_command(record, action, payload)
 
+        if record.backend == "bluetooth_le":
+            return self._bluetooth_command(record, action, payload)
+
         if action in {"open", "show"}:
             return self.show_spec(device_id)
         if action in {"background", "hide"}:
@@ -559,6 +696,69 @@ class DeviceManager:
             "ok": False,
             "device": record.to_dict(),
             "error": f"Command '{action}' is not supported by backend '{record.backend}'.",
+        }
+
+    def _bluetooth_command(self, record: DeviceRecord, action: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if action in {"services", "capabilities"}:
+            result = integrations.bluetooth_services(record.address)
+            if result.get("ok"):
+                services = list(result.get("services") or [])
+                record.metadata = {**record.metadata, "gatt_services": services, "paired": bool(record.metadata.get("paired", False))}
+                record.capabilities = sorted(set(record.capabilities + ["gatt_read", "gatt_write"]))
+                record.last_seen = _now()
+                record.status = "Standby"
+                self._save()
+            return result
+
+        if action == "pair":
+            return self.pair_bluetooth(record.address, record.name)
+
+        if action == "unpair":
+            result = integrations.bluetooth_unpair(record.address)
+            if result.get("ok"):
+                record.metadata = {**record.metadata, "paired": False}
+                record.status = "Standby"
+                record.last_seen = _now()
+                self._save()
+            return result
+
+        if action in {"read", "write"}:
+            characteristic_uuid = str(
+                payload.get("characteristic_uuid")
+                or payload.get("characteristic")
+                or ""
+            ).strip()
+            result = integrations.bluetooth_gatt_command(
+                record.address,
+                action,
+                characteristic_uuid,
+                data=str(payload.get("data") or ""),
+                hex_data=bool(payload.get("hex_data", False)),
+                response=bool(payload.get("response", False)),
+            )
+            if result.get("ok"):
+                record.status = "Standby"
+                record.last_seen = _now()
+                self._save()
+            return result
+
+        if action in {"connect", "probe"}:
+            return self.connect(record.device_id)
+
+        if action in {"disconnect", "background", "hide"}:
+            record.status = "Standby" if record.metadata.get("paired") else "Offline"
+            record.mode = "background"
+            record.last_seen = _now() if record.metadata.get("paired") else 0.0
+            self._save()
+            return {"ok": True, "device": record.to_dict(), "connection": "on-demand"}
+
+        return {
+            "ok": False,
+            "device": record.to_dict(),
+            "error": (
+                "Bluetooth LE supports services, pair, unpair, read, write, connect/probe, "
+                "and background/disconnect commands."
+            ),
         }
 
     def _android_command(self, record: DeviceRecord, action: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -747,6 +947,15 @@ class DeviceManager:
                 "pyatv": bool(data["integrations"]["pyatv"]["python_module"]),
                 "screen_embedding": False,
                 "remote_control": True,
+            },
+            "bluetooth": {
+                "bleak": bool(data["integrations"]["bluetooth"]["python_module"]),
+                "windows_ble": os.name == "nt",
+                "discovery": True,
+                "pairing": True,
+                "gatt": True,
+                "screen_embedding": False,
+                "transport": "Bluetooth Low Energy (BLE)",
             },
             "matter": {
                 "chip_tool": bool(data["integrations"]["matter"]["installed"]),
