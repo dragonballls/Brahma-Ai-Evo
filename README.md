@@ -6,7 +6,7 @@
 
 ### *The Self-Evolving, Multimodal Personal AI Desktop Environment*
 
-[![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12-blue?logo=python&logoColor=white)](https://python.org)
+[![Python](https://img.shields.io/badge/Python-3.12-blue?logo=python&logoColor=white)](https://python.org)
 [![PyQt6](https://img.shields.io/badge/GUI-PyQt6%20%2B%20WebEngine-darkgreen?logo=qt&logoColor=white)](https://riverbankcomputing.com/software/pyqt/)
 [![Gemini 2.5](https://img.shields.io/badge/Model-Gemini%202.5%20Flash%20Native%20Audio-orange?logo=google&logoColor=white)](https://ai.google.dev/)
 [![MCP](https://img.shields.io/badge/Protocol-Model%20Context%20Protocol-purple)](https://modelcontextprotocol.io/)
@@ -103,7 +103,7 @@
 
 ### Prerequisites
 - **Windows 10 / 11** (64-bit)
-- **Python 3.11** or **Python 3.12**
+- **Python 3.12**
 - **Git**
 - Working Microphone & Speakers (Webcam optional for vision)
 - **Google Gemini API Key** (Get from [Google AI Studio](https://aistudio.google.com/))
