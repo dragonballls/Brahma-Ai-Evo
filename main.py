@@ -93,6 +93,7 @@ from plugin_manager import PluginManager
 from updater import restart_application, update_from_github
 from core.single_instance import SingleInstance
 from core.voice_guard import VoiceCommandGate, VoiceToolExecutionGate
+from core.duplex_voice import BargeInGate, PlaybackGeneration
 
 try:
     from dashboard.server import DashboardServer
@@ -127,7 +128,7 @@ LIVE_MODEL          = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 CHANNELS            = 1
 SEND_SAMPLE_RATE    = 16000
 RECEIVE_SAMPLE_RATE = 24000
-CHUNK_SIZE          = 1024
+CHUNK_SIZE          = 640  # 40 ms input / 26.7 ms output at the active sample rates
 LIVE_CONNECT_TIMEOUT = 12
 
 _SINGLE_INSTANCE_GUARD = None
@@ -2139,6 +2140,8 @@ class BrahmaLive:
         self._use_openrouter_first = False
         self._voice_command_gate = VoiceCommandGate()
         self._voice_tool_gate = VoiceToolExecutionGate()
+        self._barge_in_gate = BargeInGate(required_blocks=2, minimum_level=40.0)
+        self._playback_generation = PlaybackGeneration()
         self._pending_attention: dict | None = None
         self._pending_reply_event: dict | None = None
         self._reply_mode = False
@@ -5329,11 +5332,19 @@ class BrahmaLive:
                     return
 
                 if brahma_speaking:
-                    if self._echo.is_user_speech(indata, SEND_SAMPLE_RATE, lvl) and lvl > 28.0:
+                    # The microphone remains live while Brahma speaks. Our own
+                    # output is filtered locally; user speech is streamed so
+                    # Gemini Live can interrupt the current generation.
+                    user_voice = self._echo.is_user_speech(
+                        indata, SEND_SAMPLE_RATE, lvl, fast=True
+                    )
+                    interrupt = self._barge_in_gate.observe(
+                        is_user_speech=user_voice,
+                        level=lvl,
+                    )
+                    if interrupt:
                         loop.call_soon_threadsafe(self.trigger_barge_in)
-                        data = indata.tobytes()
-                    else:
-                        data = np.zeros_like(indata).tobytes()
+                    data = indata.tobytes() if user_voice else np.zeros_like(indata).tobytes()
                 else:
                     if not self.ui.muted:
                         try:
