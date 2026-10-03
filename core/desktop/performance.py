@@ -183,24 +183,6 @@ class AdaptivePerformanceEngine:
         self.last_decision = decision
         return decision
 
-    def _restore_managed_process(self, pid: int) -> bool:
-        if psutil is None:
-            return False
-        try:
-            proc = psutil.Process(pid)
-            key = (int(proc.pid), float(proc.create_time()))
-            with self._lock:
-                original = self._original_priority.get(key)
-            if original is None:
-                return False
-            restored = WindowManager.set_priority(proc, original)
-            if restored:
-                with self._lock:
-                    self._original_priority.pop(key, None)
-            return restored
-        except Exception:
-            return False
-
     def _restore_background_when_normal(self, decision: PerformanceDecision) -> None:
         if decision.pressure != "normal" or decision.mode not in {"adaptive", "balanced", "efficiency"}:
             return
