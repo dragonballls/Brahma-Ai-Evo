@@ -12,7 +12,7 @@ try:
     from PyQt6.QtGui import QSurfaceFormat
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
     fmt = QSurfaceFormat.defaultFormat()
-    fmt.setSwapInterval(0)
+    fmt.setSwapInterval(1)
     QSurfaceFormat.setDefaultFormat(fmt)
 except Exception:
     pass
