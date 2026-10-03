@@ -138,7 +138,64 @@ class AdaptivePerformanceEngine:
             game_active=is_game_window(foreground),
         )
         self.last_snapshot = snap
+        self._observe_visible_processes(snap.foreground_pid)
         return snap
+
+    def _observe_visible_processes(self, foreground_pid: int | None) -> None:
+        if psutil is None:
+            return
+        now = time.monotonic()
+        if now - self._last_process_observation < self._observation_interval:
+            return
+        self._last_process_observation = now
+
+        windows = {
+            window.pid: window
+            for window in WindowManager.enumerate_windows()
+            if window.visible and window.title
+        }
+        for pid, window in list(windows.items())[:24]:
+            try:
+                proc = psutil.Process(pid)
+                if not WindowManager.is_user_process(proc):
+                    continue
+                with proc.oneshot():
+                    cpu = float(proc.cpu_percent(interval=None))
+                    rss = float(proc.memory_info().rss) / (1024 * 1024)
+                    read_total = write_total = 0
+                    try:
+                        io = proc.io_counters()
+                        read_total = int(getattr(io, "read_bytes", 0) or 0)
+                        write_total = int(getattr(io, "write_bytes", 0) or 0)
+                    except Exception:
+                        pass
+                read_mb_s = write_mb_s = 0.0
+                previous = self._io_cache.get(pid)
+                if previous is not None:
+                    previous_t, previous_read, previous_write = previous
+                    delta_t = now - previous_t
+                    if delta_t > 0.25:
+                        read_mb_s = max(0.0, (read_total - previous_read) / (1024 * 1024) / delta_t)
+                        write_mb_s = max(0.0, (write_total - previous_write) / (1024 * 1024) / delta_t)
+                self._io_cache[pid] = (now, read_total, write_total)
+                brain.observe_process(
+                    exe=window.exe,
+                    title=window.title,
+                    cpu=cpu,
+                    memory_mb=rss,
+                    read_mb_s=read_mb_s,
+                    write_mb_s=write_mb_s,
+                    foreground=(pid == foreground_pid),
+                )
+            except Exception:
+                continue
+
+        if len(self._io_cache) > 256:
+            self._io_cache = {
+                pid: value
+                for pid, value in self._io_cache.items()
+                if now - value[0] < 300.0
+            }
 
     def decide(self, snapshot: PerformanceSnapshot) -> PerformanceDecision:
         if self.profile == "game" or snapshot.game_active:
@@ -300,7 +357,19 @@ class AdaptivePerformanceEngine:
         ranked.sort(key=lambda item: item[0], reverse=True)
 
         for cpu, proc, window in ranked[:4]:
-            if cpu < 2.0 and not window.minimized:
+            try:
+                memory_mb = float(proc.memory_info().rss) / (1024 * 1024)
+            except Exception:
+                memory_mb = 0.0
+            recommendation = brain.recommend_background_action(
+                brain.profile_for(window.exe),
+                cpu=cpu,
+                memory_mb=memory_mb,
+                minimized=window.minimized,
+                system_memory_percent=snapshot.memory_percent,
+                game_active=snapshot.game_active,
+            )
+            if recommendation["action"] == "observe" or recommendation.get("confidence", 0.0) < 0.25:
                 continue
             try:
                 key = self._remember_priority(proc)
@@ -367,4 +436,5 @@ class AdaptivePerformanceEngine:
             "decision": asdict(decision) if decision else None,
             "tracked_processes": len(self._original_priority),
             "actions_applied": self.action_count,
+            "learning": brain.status(),
         }
