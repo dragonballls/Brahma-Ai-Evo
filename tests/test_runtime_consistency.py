@@ -321,6 +321,34 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn('"last_cloud_provider"', source)
         self.assertIn('restore_provider = normalize_provider', source)
 
+    def test_identity_persistence_is_atomic_and_thread_safe(self):
+        source = self.read("core/identity.py")
+        self.assertIn("self._lock = threading.RLock()", source)
+        self.assertIn("def _set_value(", source)
+        self.assertIn("temp.replace(self.config_file)", source)
+        self.assertIn("raise", source)
+        self.assertIn("with self._lock:", source)
+
+    def test_identity_state_writes_use_shared_mutation_helper(self):
+        source = self.read("core/identity.py")
+        for method in (
+            "set_assistant_name",
+            "set_application_name",
+            "set_assistant_title",
+            "set_owner_role",
+            "set_owner_location",
+            "set_owner_interests",
+            "set_owner_about",
+            "set_behavior_mode",
+            "set_custom_instructions",
+            "set_proactive",
+            "set_shared_computer",
+        ):
+            start = source.index(f"def {method}")
+            next_def = source.find("\n    def ", start + 5)
+            block = source[start: next_def if next_def >= 0 else len(source)]
+            self.assertIn("_set_value(", block, method)
+
     def test_requirements_do_not_duplicate_package_names(self):
         names = []
         for line in self.read("requirements.txt").splitlines():
