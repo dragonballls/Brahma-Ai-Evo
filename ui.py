@@ -14867,16 +14867,25 @@ class BrahmaUI:
             threading.Thread(target=apply_update_and_restart, daemon=True).start()
 
     def _on_chat_event(self, event: dict):
+        # Keep the two visible chat surfaces on one canonical conversation ID.
+        # They share the same SQLite store but previously kept separate local
+        # active IDs, which could split one conversation between panels.
+        evt = dict(event or {})
         try:
-            self._discord_service.mirror_chat_event(event or {})
+            self._workspace_sidebar.record_chat_event(evt)
+            canonical_id = getattr(self._workspace_sidebar, "_active_conversation_id", None)
+            if canonical_id:
+                evt["conversation_id"] = canonical_id
         except Exception:
             pass
+
         try:
-            self._workspace_sidebar.record_chat_event(event or {})
+            self._win._inline_workspace.record_chat_event(evt)
         except Exception:
             pass
+
         try:
-            self._win._inline_workspace.record_chat_event(event or {})
+            self._discord_service.mirror_chat_event(evt)
         except Exception:
             pass
 
