@@ -22,8 +22,8 @@ jobs:
           python-version: "3.12"
       - name: Install lightweight test dependency
         run: python -m pip install requests psutil pywin32 bleak
-      - name: Compile Python sources
-        run: python -m compileall -q actions core features memory plugins smart_home scripts main.py ui.py
+      - name: Compile all Python sources
+        run: python -m compileall -q .
       - name: Run low-power guards
         run: python -m unittest tests.test_low_power_guards -v
       - name: Run voice safety regressions
