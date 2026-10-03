@@ -142,3 +142,45 @@ def test_desktop_generated_code_blocks_dangerous_operations():
         "Path.home().joinpath('x').unlink()"
     )
     assert "blocked by the desktop safety policy" in blocked_delete
+
+
+def test_lazy_proxy_forwards_attribute_assignment(monkeypatch):
+    import core.lazy_import as lazy_import
+
+    class Target:
+        enabled = False
+
+    class FakeModule:
+        target = Target()
+
+    monkeypatch.setattr(lazy_import.importlib, "import_module", lambda name: FakeModule)
+    proxy = lazy_import.lazy_attr("fake_module", "target")
+    proxy.enabled = True
+    assert proxy.enabled is True
+    assert FakeModule.target.enabled is True
+
+
+def test_local_low_power_ollama_payload_releases_model(monkeypatch):
+    import llm_client
+
+    calls = []
+
+    class Response:
+        status_code = 200
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        return Response()
+
+    monkeypatch.setattr(llm_client.requests, "post", fake_post)
+    monkeypatch.setattr(llm_client.config_manager, "get_setting", lambda key, default=None: True if key == "low_power_mode" else default)
+
+    client = llm_client.UnifiedAIClient()
+    client._local_url = "http://localhost:11434/v1"
+    client._local_model = "qwen2.5:3b"
+    result = client._local_chat_completion([{"role": "user", "content": "ping"}])
+
+    assert result == "ok"
+    assert calls[0][1]["json"]["keep_alive"] == 0
