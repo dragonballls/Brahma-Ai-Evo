@@ -98,6 +98,7 @@ from core.single_instance import SingleInstance
 from core.voice_guard import VoiceCommandGate, VoiceToolExecutionGate
 from core.duplex_voice import BargeInGate, PlaybackGeneration
 from core.prosody import profile_for_text, profile_prompt_block
+from core.provider_policy import normalize_provider, is_local, is_gemini, is_openrouter
 
 try:
     from dashboard.server import DashboardServer
@@ -3390,11 +3391,11 @@ class BrahmaLive:
             return
         # Route directly to Local Brain if preferred by user in settings or in air-gapped offline mode
         app_settings = config_manager.load_settings()
-        configured_provider = app_settings.get("default_ai_provider", "Gemini")
+        configured_provider = normalize_provider(app_settings.get("default_ai_provider", "Gemini"))
         is_offline_mode = bool(app_settings.get("offline_mode_enabled", False))
 
         # If offline mode or Local provider selected, route directly to Local Brain
-        if is_offline_mode or configured_provider == "Local":
+        if is_offline_mode or is_local(configured_provider):
             is_local_preferred = True
         else:
             is_local_preferred = False
@@ -4266,13 +4267,13 @@ class BrahmaLive:
             request_text = f"{memory_ctx}\n\nCurrent User Request:\n{text}" if memory_ctx else text
 
             app_settings = config_manager.load_settings()
-            configured_provider = app_settings.get("default_ai_provider", "Gemini")
+            configured_provider = normalize_provider(app_settings.get("default_ai_provider", "Gemini"))
             local_model_target = app_settings.get("local_ai_model", "qwen2.5:3b")
             is_offline_mode = bool(app_settings.get("offline_mode_enabled", False))
             auto_provider_switch = bool(app_settings.get("auto_provider_switch", True))
 
-            is_cloud_gemini = str(configured_provider).strip().casefold() in ("gemini", "google gemini")
-            is_cloud_openrouter = str(configured_provider).strip().casefold() == "openrouter"
+            is_cloud_gemini = is_gemini(configured_provider)
+            is_cloud_openrouter = is_openrouter(configured_provider)
             primary_provider = "OpenRouter" if (
                 self._use_openrouter_first and is_cloud_gemini and not is_offline_mode
             ) else ("Gemini" if is_cloud_gemini else "OpenRouter" if is_cloud_openrouter else str(configured_provider))
@@ -4314,7 +4315,7 @@ class BrahmaLive:
                     print(f"[BRAHMA EVO] ⚠️ OpenRouter failed: {e_or}")
 
             # 3. If user explicitly configured Local AI, is in Offline Mode, or cloud provider failed: run Local Brain
-            if not reply and (configured_provider == "Local" or is_offline_mode or not (is_cloud_gemini or is_cloud_openrouter)) and local_brain.is_available():
+            if not reply and (is_local(configured_provider) or is_offline_mode or not (is_cloud_gemini or is_cloud_openrouter)) and local_brain.is_available():
                 try:
                     self.ui.update_task_workspace(
                         status="Thinking (Local AI)",
@@ -5931,7 +5932,7 @@ class BrahmaLive:
         # recognizer only.
         app_cfg = config_manager.load_settings()
         local_voice_mode = (
-            app_cfg.get("default_ai_provider") == "Local"
+            is_local(app_cfg.get("default_ai_provider"))
             or bool(app_cfg.get("offline_mode_enabled", False))
         )
 
