@@ -1006,17 +1006,15 @@ def launch_browser_login():
                     except Exception:
                         pass
 
-                    cfg = {}
-                    if CONFIG_PATH.exists():
-                        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                            cfg = json.load(f)
+                    from config import save_config
+                    updates = {
+                        "instagram_sessionid": sid,
+                        "instagram_user_id": uid,
+                        "instagram_browser_authenticated": True,
+                    }
                     if detected_username:
-                        cfg["instagram_username"] = detected_username
-                    cfg["instagram_sessionid"] = sid
-                    cfg["instagram_user_id"] = uid
-                    cfg["instagram_browser_authenticated"] = True
-                    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-                        json.dump(cfg, f, indent=4)
+                        updates["instagram_username"] = detected_username
+                    save_config(updates)
                     print(f"\n[SUCCESS] Instagram connected as @{detected_username or 'user'}!")
                     break
             except Exception:
