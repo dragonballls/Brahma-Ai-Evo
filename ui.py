@@ -224,10 +224,9 @@ class _ActivityFilter(QObject):
 
 
 try:
-    if APP_SETTINGS_FILE.exists():
-        with open(APP_SETTINGS_FILE, "r", encoding="utf-8") as f:
-            _global_settings = json.load(f)
-            C.load_theme(_global_settings.get("app_theme", "#ffffff"))
+    from memory.config_manager import load_settings
+    _global_settings = load_settings()
+    C.load_theme(_global_settings.get("app_theme", "#ffffff"))
 except Exception:
     pass
 
@@ -6972,15 +6971,10 @@ class SetupOverlay(QWidget):
             hex_col = color.name()
             self._setup_color_btn.setStyleSheet(f"QPushButton {{ background: {hex_col}; color: #ffffff; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 12px; }}")
             try:
-                settings = {}
-                if APP_SETTINGS_FILE.exists():
-                    with open(APP_SETTINGS_FILE, "r", encoding="utf-8") as f:
-                        settings = json.load(f)
-                settings["app_theme"] = hex_col
-                with open(APP_SETTINGS_FILE, "w", encoding="utf-8") as f:
-                    json.dump(settings, f, indent=4)
+                from memory.config_manager import set_setting
+                set_setting("app_theme", hex_col)
                 C.load_theme(hex_col)
-            except:
+            except Exception:
                 pass
                 
     def _finish_color_stage(self):
@@ -12180,14 +12174,7 @@ class SystemConnectivityPage(QWidget):
         self._pick_theme_btn = QPushButton("Pick Color Palette")
         self._pick_theme_btn.clicked.connect(self._pick_theme_color)
         
-        current_theme = "Gold"
-        try:
-            if APP_SETTINGS_FILE.exists():
-                with open(APP_SETTINGS_FILE, "r", encoding="utf-8") as f:
-                    _d = json.load(f)
-                    current_theme = _d.get("app_theme", "Gold")
-        except:
-            pass
+        current_theme = str(self._load_app_settings().get("app_theme", "Gold") or "Gold")
             
         if current_theme.startswith("#"):
             self._pick_theme_btn.setStyleSheet(f"background: {current_theme}; color: #ffffff;")
@@ -13247,27 +13234,27 @@ class SystemConnectivityPage(QWidget):
             self._change_theme(color.name())
 
     def _change_theme(self, new_theme: str):
-        settings = {}
-        try:
-            if APP_SETTINGS_FILE.exists():
-                with open(APP_SETTINGS_FILE, "r", encoding="utf-8") as f:
-                    settings = json.load(f)
-        except Exception:
-            pass
-        old_theme = settings.get("app_theme", "Gold")
+        old_theme = str(self._load_app_settings().get("app_theme", "Gold") or "Gold")
         if new_theme.lower() == old_theme.lower():
             return
-        settings["app_theme"] = new_theme
         try:
-            with open(APP_SETTINGS_FILE, "w", encoding="utf-8") as f:
-                json.dump(settings, f, indent=4)
+            from memory.config_manager import set_setting
+            set_setting("app_theme", new_theme)
+            C.load_theme(new_theme)
         except Exception as e:
             print(f"Error saving theme: {e}")
-        import subprocess
-        import sys
-        QMessageBox.information(self, "Restart Required", "The application will now restart to apply the new theme.")
-        subprocess.Popen([sys.executable, "main.py"])
-        QApplication.quit()
+            return
+        QMessageBox.information(
+            self,
+            "Restart Required",
+            "The application will now restart to apply the new theme.",
+        )
+        try:
+            from updater import restart_application
+            restart_application(BASE_DIR)
+        except Exception as exc:
+            print(f"Error restarting Brahma Evo: {exc}")
+            QApplication.quit()
 
     def _build_summary_card(self):
         card = self._card("")
@@ -15775,17 +15762,11 @@ class BrahmaConnectDevicesPage(QFrame):
         pin, ok = QInputDialog.getText(self, "Set Device PIN", "Enter device PIN:", QLineEdit.EchoMode.Password)
         if ok and pin.strip():
             try:
-                settings = {}
-                if APP_SETTINGS_FILE.exists():
-                    with open(APP_SETTINGS_FILE, "r", encoding="utf-8") as f:
-                        settings = json.load(f)
-                
-                device_pins = settings.get("device_pins", {})
+                from memory.config_manager import load_settings, save_settings
+                settings = load_settings()
+                device_pins = dict(settings.get("device_pins") or {})
                 device_pins[device_id] = pin.strip()
-                settings["device_pins"] = device_pins
-                
-                with open(APP_SETTINGS_FILE, "w", encoding="utf-8") as f:
-                    json.dump(settings, f, indent=4)
+                save_settings({"device_pins": device_pins})
             except Exception as e:
                 print(f"Error saving pin: {e}")
 
