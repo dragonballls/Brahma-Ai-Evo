@@ -161,3 +161,12 @@ class MainLifecycleTests(TestCase):
         source = main_path.read_text(encoding="utf-8")
         self.assertIn("from PyQt6.QtWidgets import QApplication", source)
         self.assertIn("aboutToQuit.connect(desktop_controller.shutdown)", source)
+
+
+class MemoryPrioritySafetyTests(TestCase):
+    def test_memory_priority_capture_fails_closed(self):
+        module = __import__("core.desktop.performance", fromlist=["AdaptivePerformanceEngine"])
+        engine = module.AdaptivePerformanceEngine()
+        proc = SimpleNamespace(pid=77, create_time=lambda: 123.0)
+        with patch.object(module.WindowManager, "get_memory_priority", return_value=None):
+            self.assertIsNone(engine._remember_memory_priority(proc))
