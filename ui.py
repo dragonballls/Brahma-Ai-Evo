@@ -1550,6 +1550,7 @@ class _SysMetrics:
         self._running = True
         self._paused = False
         self._resume_event = threading.Event()
+        self._stop_event = threading.Event()
         t = threading.Thread(target=self._loop, daemon=True, name="brahma-sys-metrics")
         t.start()
 
@@ -1560,18 +1561,24 @@ class _SysMetrics:
         self._paused = False
         self._resume_event.set()
 
+    def stop(self):
+        self._running = False
+        self._stop_event.set()
+        self._resume_event.set()
+
     def _loop(self):
         while self._running:
             if self._paused:
-                self._resume_event.wait()
-                self._resume_event.clear()
+                if self._stop_event.wait():
+                    break
+                self._stop_event.clear()
                 continue
             try:
                 self._update()
             except Exception:
                 pass
-            self._resume_event.wait(5.0)
-            self._resume_event.clear()
+            if self._stop_event.wait(5.0):
+                break
 
     def _update(self):
         cpu = psutil.cpu_percent(interval=None)
