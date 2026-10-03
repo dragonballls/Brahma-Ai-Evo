@@ -108,6 +108,28 @@ class LowPowerGuardTests(unittest.TestCase):
         self.assertIn("await self._run_impl()", main)
         self.assertIn("_VOICE_SESSION_GUARD.release()", main)
 
+    def test_jev_hands_integration_contract(self):
+        jev = self.read("core/jev_hands.py")
+        computer = self.read("actions/computer_control.py")
+        main = self.read("main.py")
+        self.assertIn('DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"', jev)
+        self.assertIn('DEFAULT_MODEL = "typesafe/jev-1.13"', jev)
+        self.assertIn('"type": "choice"', jev)
+        self.assertIn('"visible_controls"', jev)
+        self.assertIn("def try_click(", jev)
+        self.assertIn("def run_task(", jev)
+        self.assertIn("pyautogui.PAUSE    = 0.01", computer)
+        self.assertIn("duration: float = 0.06", computer)
+        self.assertIn("duration: float = 0.14", computer)
+        self.assertIn("from core.jev_hands import try_click", computer)
+        self.assertIn("jev_result = try_click", computer)
+        self.assertIn("JEV Hands", main)
+
+    def test_jev_contract_validator_rejects_unknown_choice(self):
+        source = self.read("core/jev_hands.py")
+        self.assertIn("if choice not in criteria:", source)
+        self.assertIn("if set(probabilities) != set(criteria):", source)
+
     def test_updater_targets_this_repository(self):
         root_updater = self.read("updater.py")
         core_updater = self.read("core/updater.py")

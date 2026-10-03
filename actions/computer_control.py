@@ -140,7 +140,7 @@ def _user_profile() -> dict:
         pass
     return {}
 
-def _type(text: str, interval: float = 0.03) -> str:
+def _type(text: str, interval: float = 0.015) -> str:
     _require_pyautogui()
     time.sleep(0.3)
     pyautogui.typewrite(text, interval=interval)
@@ -159,7 +159,7 @@ def _smart_type(text: str, clear_first: bool = True) -> str:
         pyautogui.hotkey("ctrl", "v")
         return f"Smart-typed (clipboard): {text[:60]}{'…' if len(text) > 60 else ''}"
 
-    pyautogui.typewrite(text, interval=0.04)
+    pyautogui.typewrite(text, interval=0.015)
     return f"Smart-typed: {text[:60]}{'…' if len(text) > 60 else ''}"
 
 
@@ -440,7 +440,15 @@ def computer_control(
             return f"{coords[0]},{coords[1]}" if coords else "NOT_FOUND"
 
         if action == "screen_click":
-            desc   = params.get("description", "")
+            desc = params.get("description", "")
+            if desc:
+                try:
+                    from core.jev_hands import try_click
+                    jev_result = try_click(f"Click the UI element described as: {desc}", player=player)
+                    if jev_result:
+                        return jev_result
+                except Exception:
+                    pass
             coords = _screen_find(desc)
             if coords:
                 time.sleep(0.2)

@@ -201,6 +201,35 @@ def _execute(action: UIAction) -> str:
         raise RuntimeError(f"JEV action execution failed: {exc}") from exc
 
 
+def try_click(goal: str, player=None) -> str | None:
+    """Fast single-click JEV path. Returns None when the structured UI path cannot run."""
+    goal = (goal or "").strip()
+    if not goal or not _openrouter_key():
+        return None
+    try:
+        window, actions = _visible_window_state()
+        if not actions:
+            return None
+        active_title = (window.window_text() if window else "") or ""
+        decision = _decide(goal, active_title.strip(), actions, [])
+        choice = decision["choice"]
+        if choice in {"DONE", "BLOCKED"}:
+            return None
+        selected = next((a for a in actions if a.action_id == choice), None)
+        if selected is None:
+            return None
+        result = _execute(selected)
+        if player:
+            player.write_log(
+                f"[JEV Hands] {selected.label} "
+                f"({decision.get('latency_ms', 0)} ms, confidence {decision.get('confidence', 0.0):.2f})"
+            )
+        return result
+    except Exception as exc:
+        logger.debug("JEV fast click unavailable: %s", exc)
+        return None
+
+
 def run_task(goal: str, player=None, max_steps: int = MAX_STEPS) -> str:
     goal = (goal or "").strip()
     if not goal:
