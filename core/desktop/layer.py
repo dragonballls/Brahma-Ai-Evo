@@ -20,9 +20,10 @@ else:
 class DesktopLayer(QMainWindow):
     """A non-activating, click-through Brahma desktop surface."""
 
-    def __init__(self, base_dir: Path, parent=None):
+    def __init__(self, base_dir: Path, parent=None, *, use_workerw: bool = False):
         super().__init__(parent)
         self._base_dir = Path(base_dir)
+        self._use_workerw = bool(use_workerw)
         self._desktop_host = WindowsDesktopHost()
         self.setWindowTitle("Brahma Evo Desktop")
         self.setWindowFlags(
@@ -113,14 +114,15 @@ class DesktopLayer(QMainWindow):
 
     def _apply_geometry(self):
         if self._desktop_host.attached:
-            self.setGeometry(0, 0, self._desktop_host._client_size(self._desktop_host._workerw)[0], self._desktop_host._client_size(self._desktop_host._workerw)[1])
+            width, height = self._desktop_host.client_size(self._desktop_host._workerw)
+            self.setGeometry(0, 0, width, height)
             return
         self.setGeometry(self._virtual_geometry())
 
     def _prepare_desktop_backend(self):
         try:
             virtual = self._virtual_geometry()
-            attached = self._desktop_host.attach(
+            attached = self._use_workerw and self._desktop_host.attach(
                 int(self.winId()),
                 int(virtual.width()),
                 int(virtual.height()),
@@ -144,6 +146,9 @@ class DesktopLayer(QMainWindow):
                 WindowManager.set_desktop_layer_style(int(self.winId()))
         except Exception:
             pass
+
+    def desktop_backend(self) -> str:
+        return self._desktop_host.status().get("backend", "bottommost-window")
 
     def set_performance_status(self, profile: str, cpu: float | None, memory: float | None,
                                game_active: bool, visible: bool = False):
