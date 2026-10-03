@@ -12599,7 +12599,7 @@ class SystemConnectivityPage(QWidget):
                             raise
                 
                 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-                cl.dump_settings("config/ig_session.json")
+                cl.dump_settings(str(CONFIG_DIR / "ig_session.json"))
                 from actions.instagram_mcp import stop_daemon, start_daemon
                 stop_daemon()
                 start_daemon()
