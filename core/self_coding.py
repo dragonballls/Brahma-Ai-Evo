@@ -210,10 +210,15 @@ Implement the goal directly in the current repository and leave the working tree
         commands = (
             (sys.executable, "-m", "compileall", "-q", "actions", "core", "features", "memory", "plugins", "smart_home", "main.py", "ui.py"),
             (sys.executable, "tests/test_low_power_guards.py"),
+            (sys.executable, "tests/test_runtime_consistency.py"),
         )
-        optional_voice = self.repo / "tests" / "test_voice_guards.py"
-        if optional_voice.is_file():
-            commands += ((sys.executable, str(optional_voice)),)
+        optional_tests = (
+            self.repo / "tests" / "test_voice_guards.py",
+            self.repo / "tests" / "test_language_lock.py",
+        )
+        for test_path in optional_tests:
+            if test_path.is_file():
+                commands += ((sys.executable, str(test_path)),)
         for command in commands:
             result = self._run(command, timeout=900)
             if result.returncode != 0:
