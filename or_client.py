@@ -148,7 +148,7 @@ class OpenRouterClient:
         self._headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type":  "application/json",
-            "HTTP-Referer":  "https://github.com/brahma-ai",
+            "HTTP-Referer":  "https://github.com/dragonballls/Brahma-Ai-Evo",
             "X-Title":       "Brahma Evo",
         }
 
@@ -202,9 +202,14 @@ class OpenRouterClient:
 
         catalog = self._get_model_catalog()
         live_ids = set(catalog)
-        pool = [model for model in static_pool if not live_ids or model in live_ids]
 
-        if FREE_ROUTER_MODEL in live_ids:
+        if live_ids:
+            pool = [model for model in static_pool if model in live_ids]
+        else:
+            # Catalog outages must not remove the resilient router fallback.
+            pool = list(static_pool)
+
+        if FREE_ROUTER_MODEL in live_ids or not live_ids:
             pool.insert(0, FREE_ROUTER_MODEL)
         elif not pool:
             pool = [FREE_ROUTER_MODEL]
