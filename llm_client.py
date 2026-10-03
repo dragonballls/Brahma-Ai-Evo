@@ -1,5 +1,6 @@
 from core.runtime_paths import APP_SETTINGS_PATH
 from core.provider_policy import GEMINI, normalize_provider, is_local
+from core.local_brain import DEFAULT_ENDPOINT as LOCAL_DEFAULT_ENDPOINT, DEFAULT_MODEL as LOCAL_DEFAULT_MODEL
 import json
 import logging
 import requests
@@ -21,8 +22,8 @@ SETTINGS_PATH = APP_SETTINGS_PATH
 class UnifiedAIClient:
     def __init__(self):
         self._provider = GEMINI
-        self._local_url = "http://localhost:11434/v1"
-        self._local_model = "llama3.2"
+        self._local_url = LOCAL_DEFAULT_ENDPOINT
+        self._local_model = LOCAL_DEFAULT_MODEL
         self.reload_settings()
 
     def _is_local_provider(self) -> bool:
@@ -37,12 +38,12 @@ class UnifiedAIClient:
                 GEMINI,
             )
             self._local_url = str(
-                data.get("local_ai_url", "http://localhost:11434/v1")
-                or "http://localhost:11434/v1"
+                data.get("local_ai_url", LOCAL_DEFAULT_ENDPOINT)
+                or LOCAL_DEFAULT_ENDPOINT
             ).rstrip("/")
             self._local_model = str(
-                data.get("local_ai_model", "llama3.2")
-                or "llama3.2"
+                data.get("local_ai_model", LOCAL_DEFAULT_MODEL)
+                or LOCAL_DEFAULT_MODEL
             ).strip() or "llama3.2"
         except Exception as e:
             logger.error(f"[LLM Client] Failed to load settings: {e}")
