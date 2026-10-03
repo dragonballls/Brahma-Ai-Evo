@@ -113,7 +113,7 @@ class RuntimeConsistencyTests(unittest.TestCase):
 
     def test_local_discovery_uses_configured_endpoint(self):
         source = self.read("core/local_brain.py")
-        self.assertIn("f"{self.endpoint}/models"", source)
+        self.assertIn('f"{self.endpoint}/models"', source)
         self.assertIn("DEFAULT_ENDPOINT.rstrip", source)
         self.assertIn('"data"', source)
 
