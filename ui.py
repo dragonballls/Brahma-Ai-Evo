@@ -14323,7 +14323,12 @@ class SmartDevicesSection(QFrame):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._poll_tmr.start(2500)
         self.refresh(force=True)
+
+    def hideEvent(self, event):
+        self._poll_tmr.stop()
+        super().hideEvent(event)
 
     def _position_panel(self):
         panel_w = min(330, max(270, int(self.width() * 0.28)))
@@ -14842,8 +14847,15 @@ class DeviceNetworkWorkspace(QFrame):
         self._reconnect_timer = QTimer(self)
         self._reconnect_timer.setInterval(15000)
         self._reconnect_timer.timeout.connect(self._tick_background)
-        self._reconnect_timer.start()
         self.hide()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._reconnect_timer.start()
+
+    def hideEvent(self, event):
+        self._reconnect_timer.stop()
+        super().hideEvent(event)
 
     def show_workspace(self):
         geometry = self._main_window.frameGeometry()
