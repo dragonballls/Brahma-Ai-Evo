@@ -9124,12 +9124,13 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         if page == "dashboard" and hasattr(self, "_smart_devices_section"):
-            try:
-                self._smart_devices_section.refresh(
-                    force=not _low_power_ui_enabled()
-                )
-            except Exception:
-                pass
+            # Low-power mode keeps smart-home network discovery dormant. The
+            # section can still be refreshed explicitly by the user.
+            if not _low_power_ui_enabled():
+                try:
+                    self._smart_devices_section.refresh(force=True)
+                except Exception:
+                    pass
         if hasattr(self, "_right_panel"):
             self._right_panel.setVisible(page == "dashboard")
         if hasattr(self, "_right_stack") and isinstance(self._right_stack, QStackedWidget):
@@ -13445,7 +13446,8 @@ class SmartDevicesSection(QFrame):
 
         self._poll_tmr = QTimer(self)
         self._poll_tmr.timeout.connect(lambda: self.refresh(force=False))
-        self._poll_tmr.start(30000 if _low_power_ui_enabled() else 2500)
+        if not _low_power_ui_enabled():
+            self._poll_tmr.start(2500)
 
         # In low-power mode, do not perform a network/device scan during UI
         # construction. The existing refresh button and page activation still
@@ -13488,7 +13490,13 @@ class SmartDevicesSection(QFrame):
         return json.dumps(payload, ensure_ascii=True, sort_keys=False)
 
     def refresh(self, force: bool = False):
-        devices = self._service.list_devices()
+        service = self._service_obj()
+        if service is None:
+            self._empty_card.setVisible(True)
+            self._scroll.setVisible(False)
+            self._count_chip.setText("0 devices")
+            return
+        devices = service.list_devices()
         snapshot = self._snapshot_devices(devices)
         if not force and snapshot == self._snapshot:
             return
