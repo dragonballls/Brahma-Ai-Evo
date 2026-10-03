@@ -1,7 +1,7 @@
 from core.user_paths import get_user_data_dir
 import os
 
-# Hardware acceleration & WebGL flags for smooth 180fps+ rendering in Chromium
+# Efficient GPU/WebGL configuration; the visualizer controls its own adaptive frame rate.
 os.environ.setdefault(
     "QTWEBENGINE_CHROMIUM_FLAGS",
     "--enable-gpu-rasterization --enable-zero-copy --enable-accelerated-2d-canvas --enable-webgl --use-angle=d3d11 --num-raster-threads=2"
