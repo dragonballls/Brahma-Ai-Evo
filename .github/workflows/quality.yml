@@ -38,3 +38,7 @@ jobs:
         run: python -m unittest tests.test_self_awareness -v
       - name: Run Live duplex voice regressions
         run: python -m unittest tests.test_live_voice_contract -v
+      - name: Run emotional delivery regressions
+        run: python -m unittest tests.test_emotional_controller -v
+      - name: Run emotional feature regressions
+        run: python -m unittest tests.test_emotional_feature -v
