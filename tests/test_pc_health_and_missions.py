@@ -165,7 +165,7 @@ class AutonomousMissionEdgeCaseTests(TestCase):
 
     def test_completion_strategies(self):
         mod = _load_skill_module("autonomous_mission_skill_edge_completion", "features/autonomous_mission/skill.py")
-        self.assertTrue(mod._check_completion({"completion_type": "regex", "completion_target": r"all\\s+tests\\s+pass"}, "ALL tests pass"))
+        self.assertTrue(mod._check_completion({"completion_type": "regex", "completion_target": r"all\s+tests\s+pass"}, "ALL tests pass"))
         with __import__("tempfile").TemporaryDirectory() as td:
             path = str(Path(td) / "done.txt")
             Path(path).write_text("done", encoding="utf-8")
