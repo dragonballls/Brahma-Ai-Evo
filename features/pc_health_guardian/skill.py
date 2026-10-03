@@ -56,6 +56,26 @@ _WATCH_STATUS: dict[str, Any] = {
 }
 
 
+def _load_persisted_status() -> None:
+    try:
+        if not _STATE_FILE.exists():
+            return
+        saved = json.loads(_STATE_FILE.read_text(encoding="utf-8"))
+        if not isinstance(saved, dict):
+            return
+        for key in _WATCH_STATUS:
+            if key in saved:
+                _WATCH_STATUS[key] = saved[key]
+        # Worker threads do not survive an application restart, so a persisted
+        # running flag is never treated as an active watcher after restart.
+        _WATCH_STATUS["running"] = False
+    except Exception as exc:
+        logger.debug("guardian state load failed: %s", exc)
+
+
+_load_persisted_status()
+
+
 def _hidden_kwargs() -> dict[str, Any]:
     if os.name == "nt":
         return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
