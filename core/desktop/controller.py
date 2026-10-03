@@ -42,7 +42,11 @@ class DesktopModeController:
 
     def configure(self, profile: str | None = None, show_overlay: bool | None = None) -> dict[str, Any]:
         if profile is not None:
-            self.performance.set_profile(profile)
+            try:
+                self.performance.set_profile(profile)
+            except ValueError:
+                self.performance.set_profile("adaptive")
+                self.last_error = f"Unknown performance profile '{profile}'; using adaptive."
         if show_overlay is not None:
             self._show_overlay = bool(show_overlay)
         self.workspace.set(
@@ -153,8 +157,10 @@ class DesktopModeController:
             status = self.performance.tick()
             snapshot = status.get("snapshot") or {}
             game_active = bool(snapshot.get("game_active"))
+            decision = status.get("decision") or {}
+            game_mode = game_active or str(decision.get("mode") or "").lower() == "game"
             if self.layer:
-                self.layer.set_low_power(game_active)
+                self.layer.set_low_power(game_mode)
                 self.layer.set_performance_status(
                     self.performance.profile,
                     snapshot.get("cpu_percent"),
@@ -162,7 +168,7 @@ class DesktopModeController:
                     game_active,
                     visible=self._show_overlay,
                 )
-                self.layer._keep_bottom()
+                self.layer.restack()
             self._reconcile_workspace(snapshot)
             return self.status()
 
