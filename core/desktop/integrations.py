@@ -122,6 +122,8 @@ class ThirdPartyIntegrationHub:
         self._cache: dict[str, IntegrationInfo] = {}
         self._last_presentmon_at = 0.0
         self._last_presentmon: dict[str, Any] | None = None
+        self._last_lhm_at = 0.0
+        self._last_lhm: dict[str, float] = {}
 
     def _discover(self) -> dict[str, IntegrationInfo]:
         procgov = _windows_executable(["ProcGovernor.exe", "ProcGovernor"])
@@ -221,44 +223,51 @@ class ThirdPartyIntegrationHub:
     ) -> dict[str, Any]:
         """Collect external performance data only when it has a clear payoff."""
         result: dict[str, Any] = {}
+        now = time.monotonic()
 
-        lhm_data = _http_json("http://127.0.0.1:8085/data.json")
-        if isinstance(lhm_data, dict):
-            sensors = _walk_sensors(lhm_data)
+        lhm_info = self.info("librehardwaremonitor")
+        lhm_url = str(os.environ.get("BRAHMA_LHM_URL") or "").strip()
+        if not lhm_url and lhm_info.installed:
+            lhm_url = "http://127.0.0.1:8085/data.json"
+        if lhm_url and now - self._last_lhm_at >= 10.0:
+            data = _http_json(lhm_url)
+            cached: dict[str, float] = {}
+            if isinstance(data, dict):
+                sensors = _walk_sensors(data)
 
-            def sensor_match(predicate):
-                matches = [
-                    item for item in sensors
-                    if predicate(
-                        str(item.get("Type") or "").lower(),
-                        str(item.get("Text") or item.get("Name") or "").lower(),
-                        str(item.get("Identifier") or item.get("SensorId") or "").lower(),
-                    )
-                ]
-                values = []
-                for item in matches:
-                    try:
-                        value = float(item.get("Value"))
-                    except (TypeError, ValueError):
-                        continue
-                    values.append(value)
-                return values
+                def sensor_values(predicate):
+                    values: list[float] = []
+                    for item in sensors:
+                        if not predicate(
+                            str(item.get("Type") or "").lower(),
+                            str(item.get("Text") or item.get("Name") or "").lower(),
+                            str(item.get("Identifier") or item.get("SensorId") or "").lower(),
+                        ):
+                            continue
+                        try:
+                            values.append(float(item.get("Value")))
+                        except (TypeError, ValueError):
+                            continue
+                    return values
 
-            cpu_temp = sensor_match(
-                lambda typ, name, ident: typ in {"temperature", "temperature sensor"}
-                and ("cpu" in name or "cpu" in ident or "package" in name)
-            )
-            gpu_temp = sensor_match(
-                lambda typ, name, ident: typ in {"temperature", "temperature sensor"}
-                and ("gpu" in name or "gpu" in ident or "nvidia" in name or "amd" in name)
-            )
-            if cpu_temp:
-                result["cpu_temperature_c"] = max(cpu_temp)
-            if gpu_temp:
-                result["gpu_temperature_c_lhm"] = max(gpu_temp)
+                cpu_temp = sensor_values(
+                    lambda typ, name, ident: typ in {"temperature", "temperature sensor"}
+                    and ("cpu" in name or "cpu" in ident or "package" in name)
+                )
+                gpu_temp = sensor_values(
+                    lambda typ, name, ident: typ in {"temperature", "temperature sensor"}
+                    and ("gpu" in name or "gpu" in ident or "nvidia" in name or "amd" in name)
+                )
+                if cpu_temp:
+                    cached["cpu_temperature_c"] = max(cpu_temp)
+                if gpu_temp:
+                    cached["gpu_temperature_c_lhm"] = max(gpu_temp)
+            self._last_lhm = cached
+            self._last_lhm_at = now
+        if self._last_lhm:
+            result.update(self._last_lhm)
 
         presentmon = self.info("presentmon")
-        now = time.monotonic()
         if (
             game_active
             and foreground_pid
@@ -267,7 +276,8 @@ class ThirdPartyIntegrationHub:
         ):
             sampled = self._sample_presentmon(presentmon.path, int(foreground_pid))
             self._last_presentmon_at = now
-            self._last_presentmon = sampled
+            if sampled:
+                self._last_presentmon = sampled
         if self._last_presentmon:
             result.update(self._last_presentmon)
         return result
@@ -409,18 +419,14 @@ class ThirdPartyIntegrationHub:
         if importlib.util.find_spec("pyatv") is None:
             return []
         try:
-            module = __import__("pyatv")
-            atvs = asyncio.run(module.scan(asyncio.get_running_loop()))
+            import pyatv
+
+            async def _scan():
+                return await pyatv.scan(asyncio.get_running_loop())
+
+            atvs = asyncio.run(_scan())
         except RuntimeError:
-            try:
-                import pyatv
-                loop = asyncio.new_event_loop()
-                try:
-                    atvs = loop.run_until_complete(pyatv.scan(loop))
-                finally:
-                    loop.close()
-            except Exception:
-                return []
+            return []
         except Exception:
             return []
         results = []
@@ -450,9 +456,14 @@ class ThirdPartyIntegrationHub:
 
     def procgovernor_validate(self, config_path: str) -> dict[str, Any]:
         info = self.info("procgovernor")
+        config_path = str(config_path or "").strip()
+        if not config_path:
+            return {"ok": False, "error": "No ProcGovernor config path supplied."}
         if not info.installed or not info.path:
             return {"ok": False, "error": "ProcGovernor is not installed."}
         path = str(Path(config_path).expanduser())
+        if not Path(path).is_file():
+            return {"ok": False, "error": f"ProcGovernor config not found: {path}"}
         completed = _run_command(
             [info.path, "-validate", "-config", path],
             timeout=8.0,
@@ -467,9 +478,14 @@ class ThirdPartyIntegrationHub:
 
     def winsw_status(self, config_path: str) -> dict[str, Any]:
         info = self.info("winsw")
+        config_path = str(config_path or "").strip()
+        if not config_path:
+            return {"ok": False, "error": "No WinSW XML path supplied."}
         if not info.installed or not info.path:
             return {"ok": False, "error": "WinSW is not installed."}
         path = str(Path(config_path).expanduser())
+        if not Path(path).is_file():
+            return {"ok": False, "error": f"WinSW config not found: {path}"}
         completed = _run_command([info.path, "status", path], timeout=5.0)
         return {
             "ok": bool(completed and completed.returncode == 0),
