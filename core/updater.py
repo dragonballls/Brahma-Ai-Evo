@@ -9,7 +9,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 class UpdateChecker(QObject):
     update_available_sig = pyqtSignal(str)
 
-    def __init__(self, repo_owner="titechprabhasolutions", repo_name="Brahma---personal", branch="main"):
+    def __init__(self, repo_owner="dragonballls", repo_name="Brahma-Ai-Evo", branch="main")
         super().__init__()
         self.repo_owner = repo_owner
         self.repo_name = repo_name
@@ -55,11 +55,8 @@ class UpdateChecker(QObject):
                 self.update_available_sig.emit(remote_hash)
                 break # Stop checking once an update is detected
 
-            # Check every hour
-            for _ in range(3600):
-                if self._stop_event.is_set():
-                    break
-                time.sleep(1)
+            # Poll every 6 hours and sleep in one interruptible wait.
+            self._stop_event.wait(timeout=21600)
 
 def apply_update_and_restart():
     print("[Updater] Applying update...")
