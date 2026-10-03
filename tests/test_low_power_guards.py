@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import os
+import tempfile
 import unittest
 from pathlib import Path
+
+from core.single_instance import SingleInstance
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -64,6 +68,21 @@ class LowPowerGuardTests(unittest.TestCase):
         self.assertIn("if (isDeepIdle)", html)
         self.assertIn("renderTimer = null;", html)
 
+    def test_single_instance_runtime_exclusion(self):
+        token = f"test-{os.getpid()}"
+        lock_path = Path(tempfile.gettempdir()) / f"brahma-singleton-{token}.lock"
+        first = SingleInstance(f"Brahma-Evo-Test-{token}", lock_path=lock_path)
+        second = SingleInstance(f"Brahma-Evo-Test-{token}", lock_path=lock_path)
+        try:
+            self.assertTrue(first.acquire())
+            self.assertFalse(second.acquire())
+        finally:
+            first.release()
+            second.release()
+
+        self.assertTrue(second.acquire())
+        second.release()
+
     def test_single_instance_guard_is_real_and_main_enforced(self):
         guard = self.read("core/single_instance.py")
         main = self.read("main.py")
@@ -71,7 +90,7 @@ class LowPowerGuardTests(unittest.TestCase):
         self.assertIn("CreateMutexW", guard)
         self.assertIn("ERROR_ALREADY_EXISTS = 183", guard)
         self.assertIn("def release(self)", guard)
-        self.assertIn('SingleInstance("Local\\Brahma-Ai-Evo.Singleton.v1")', main)
+        self.assertIn('SingleInstance("Local\\\\Brahma-Ai-Evo.Singleton.v1")', main)
         self.assertIn("if not guard.acquire()", main)
         self.assertIn("duplicate launch ignored", main)
         self.assertIn("guard.release()", main)
