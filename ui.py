@@ -9258,13 +9258,13 @@ class MainWindow(QMainWindow):
             return dict(self._app_settings_cache)
 
         settings = _default_app_settings()
-        if APP_SETTINGS_FILE.exists():
-            try:
-                data = json.loads(APP_SETTINGS_FILE.read_text(encoding="utf-8"))
-                if isinstance(data, dict):
-                    settings.update(data)
-            except Exception:
-                pass
+        try:
+            from memory.config_manager import load_settings
+            data = load_settings()
+            if isinstance(data, dict):
+                settings.update(data)
+        except Exception:
+            pass
         self._app_settings_cache = dict(settings)
         self._app_settings_mtime_ns = mtime_ns
         return dict(settings)
@@ -16023,10 +16023,12 @@ class BrahmaUI:
         return dict(settings)
 
     def _save_app_settings(self, settings: dict):
-        os.makedirs(CONFIG_DIR, exist_ok=True)
-        temp = APP_SETTINGS_FILE.with_suffix(".json.tmp")
-        temp.write_text(json.dumps(settings, indent=4), encoding="utf-8")
-        os.replace(temp, APP_SETTINGS_FILE)
+        try:
+            from memory.config_manager import save_settings
+            save_settings(dict(settings))
+        except Exception as exc:
+            self._log.append_log("ERR: app settings save failed: %s" % exc)
+            raise
         self._app_settings_cache = dict(settings)
         try:
             self._app_settings_mtime_ns = APP_SETTINGS_FILE.stat().st_mtime_ns
