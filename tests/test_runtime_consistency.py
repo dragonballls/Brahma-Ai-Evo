@@ -254,6 +254,44 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertNotIn('"http://127.0.0.1:20128/"', source)
         self.assertIn("OMNIROUTE_DEFAULT_BASE_URL", source)
 
+    def test_provider_normalization_has_one_canonical_alias_table(self):
+        source = self.read("core/provider_policy.py")
+        self.assertIn("aliases = {", source)
+        config_source = self.read("config/__init__.py")
+        self.assertNotIn('"google gemini": "gemini"', config_source)
+        self.assertIn("normalize_provider", config_source)
+
+    def test_omniroute_packaging_reuses_runtime_version_pin(self):
+        source = self.read("scripts/prepare_omniroute_runtime.py")
+        self.assertIn("from core.omniroute_setup import OMNIROUTE_VERSION", source)
+        self.assertNotIn('OMNIROUTE_VERSION = "3.8.50"', source)
+        self.assertNotIn('OMNIROUTE_VERSION = "3.8.51"', source)
+
+    def test_omniroute_dashboard_retries_gateway_startup(self):
+        source = self.read("ui.py")
+        self.assertIn("def _retry_gateway_and_reload(self)", source)
+        self.assertIn("gateway().ensure_ready()", source)
+        self.assertIn("self._gateway_retry_inflight", source)
+
+    def test_navigation_back_to_settings_uses_central_controller(self):
+        source = self.read("ui.py")
+        self.assertIn('win._set_page("settings")', source)
+        self.assertIn('win._set_page("omniroute")', source)
+
+    def test_instagram_browser_login_uses_shared_config_writer(self):
+        source = self.read("actions/instagram_mcp.py")
+        self.assertIn("from config import save_config", source)
+        self.assertNotIn('open(CONFIG_PATH, "w"', source)
+
+    def test_shortcut_creation_uses_hidden_powershell(self):
+        source = self.read("main.py")
+        self.assertIn('creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)', source)
+
+    def test_offline_mode_restores_previous_cloud_provider(self):
+        source = self.read("ui.py")
+        self.assertIn('"last_cloud_provider"', source)
+        self.assertIn('restore_provider = normalize_provider', source)
+
     def test_requirements_do_not_duplicate_package_names(self):
         names = []
         for line in self.read("requirements.txt").splitlines():
