@@ -40,3 +40,4 @@ edge-tts
 matplotlib
 speedtest-cli
 pywin32>=306
+bleak>=3.0.0
