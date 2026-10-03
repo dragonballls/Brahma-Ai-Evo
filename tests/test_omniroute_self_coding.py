@@ -63,15 +63,14 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
         self.assertIn("BRAHMA_SELF_CODING_REPO", source)
 
     def test_runtime_wiring_contracts(self):
-        import inspect
         from core.omniroute import OmniRouteGateway
         from core.self_coding import SelfCodingAgent
 
-        or_source = inspect.getsource(__import__("or_client").OpenRouterClient)
+        or_source = Path(ROOT / "or_client.py").read_text(encoding="utf-8")
         main_source = Path(ROOT / "main.py").read_text(encoding="utf-8")
         dev_source = Path(ROOT / "actions" / "brahma_dev_agent.py").read_text(encoding="utf-8")
 
-        self.assertIn("_call_omniroute", or_source)
+        self.assertIn("def _call_omniroute", or_source)
         self.assertIn("auto/coding", dev_source)
         self.assertIn('"name": "omniroute"', main_source)
         self.assertIn('"name": "self_coding"', main_source)
