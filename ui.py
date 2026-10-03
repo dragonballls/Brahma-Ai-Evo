@@ -16591,6 +16591,13 @@ class BrahmaUI:
         except Exception:
             pass
 
+    def stop_background_metrics(self):
+        """Stop the process-wide metrics worker during application shutdown."""
+        try:
+            _metrics.stop()
+        except Exception:
+            pass
+
     def _set_deep_idle(self, enabled):
         enabled = bool(enabled)
         if enabled == self._deep_idle:
