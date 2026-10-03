@@ -18,11 +18,14 @@ def creator_control(parameters: dict[str, Any] | None = None, player=None, speak
             refresh_creator_metadata,
             creator_script,
             creator_rights_review,
+            produce_creator_project,
         )
         if action == "tools":
             return json.dumps(creator_tools(), ensure_ascii=False)
         if action in {"create", "plan"}:
             return json.dumps(create_creator_project(args), ensure_ascii=False)
+        if action == "produce":
+            return json.dumps(produce_creator_project(args), ensure_ascii=False)
         if action == "render":
             return json.dumps(render_creator_project(str(args.get("project") or "")), ensure_ascii=False)
         if action == "publish":
@@ -46,11 +49,23 @@ def creator_control(parameters: dict[str, Any] | None = None, player=None, speak
             )
         if action == "rights_review":
             return json.dumps(creator_rights_review(str(args.get("project") or "")), ensure_ascii=False)
+        if action == "music_search":
+            from core.creator_audio import recommend_music
+            return recommend_music(
+                str(args.get("query") or args.get("mood") or ""),
+                str(args.get("mood") or ""),
+                player=player,
+            )
+        if action == "record_audio":
+            from core.creator_audio import record_microphone
+            output = str(args.get("output") or (Path.home() / "Desktop" / "brahma_creator_recording.wav"))
+            duration = float(args.get("duration_seconds") or args.get("duration") or 30)
+            return record_microphone(output, duration)
         if action == "status":
             return json.dumps(load_creator_project(str(args.get("project") or ""))[1], ensure_ascii=False)
         if action in {"record_start", "record_stop"}:
             from actions.obs_control import obs_control
             return obs_control({"action": action}, player=player, speak=speak)
-        return "Creator Studio supports tools, create, render, publish, metadata, script, rights_review, status, record_start, and record_stop."
+        return "Creator Studio supports tools, create/plan, produce, render, publish, metadata, script, rights_review, music_search, record_audio, status, record_start, and record_stop."
     except Exception as exc:
         return f"Creator Studio failed: {exc}"
