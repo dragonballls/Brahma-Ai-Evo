@@ -20,7 +20,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from core.runtime_contract import NODE_VERSION, OMNIROUTE_VERSION
+from core.runtime_contract import OMNIROUTE_VERSION
 from core.runtime_paths import API_CONFIG_PATH, OMNIROUTE_DEFAULT_BASE_URL, OMNIROUTE_DEFAULT_PORT
 
 
@@ -127,10 +127,13 @@ class OmniRouteProvisioner:
         return (str(node), str(entry))
 
     def _local_install_command(self) -> tuple[str, ...] | None:
-        binary = self.data_dir / "node_modules" / ".bin" / (
-            "omniroute.cmd" if _is_windows() else "omniroute"
-        )
-        return (str(binary),) if binary.is_file() else None
+        entry = self.data_dir / "node_modules" / "omniroute" / "bin" / "omniroute.mjs"
+        node = os.environ.get("BRAHMA_NODE_COMMAND") or shutil.which("node")
+        if entry.is_file() and node:
+            # Invoke the Node entrypoint directly. This avoids depending on
+            # Windows .cmd shims, which are not reliable with direct Popen().
+            return (str(node), str(entry))
+        return None
 
     def _system_command(self) -> tuple[str, ...] | None:
         configured = os.environ.get("BRAHMA_OMNIROUTE_COMMAND", "").strip()
