@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from core import settings_agent
+from memory import config_manager
 
 
 class ConversationalSettingsTests(unittest.TestCase):
@@ -13,8 +14,8 @@ class ConversationalSettingsTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.config_dir = Path(self.tmp.name)
         self.settings_file = self.config_dir / "app_settings.json"
-        self.patcher_dir = patch.object(settings_agent, "CONFIG_DIR", self.config_dir)
-        self.patcher_file = patch.object(settings_agent, "APP_SETTINGS_FILE", self.settings_file)
+        self.patcher_dir = patch.object(config_manager, "CONFIG_DIR", self.config_dir)
+        self.patcher_file = patch.object(config_manager, "SETTINGS_FILE", self.settings_file)
         self.patcher_dir.start()
         self.patcher_file.start()
 
