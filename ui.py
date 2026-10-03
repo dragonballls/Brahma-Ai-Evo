@@ -11402,6 +11402,8 @@ class SettingsHubPage(QWidget):
         lay.addStretch(2)
 
 class SystemConnectivityPage(QWidget):
+    local_model_pull_update = pyqtSignal(object)
+
     def __init__(self, controller=None, parent=None):
         super().__init__(parent)
         self._controller = controller
@@ -12059,6 +12061,7 @@ class SystemConnectivityPage(QWidget):
 
         _populate_models()
         self._local_model_combo.currentTextChanged.connect(lambda t: self._set_setting("local_ai_model", t))
+        self.local_model_pull_update.connect(_handle_model_pull_update)
         model_row.addWidget(self._local_model_combo, 1)
 
         btn_refresh = QPushButton("🔄 Refresh")
@@ -12068,14 +12071,30 @@ class SystemConnectivityPage(QWidget):
         model_row.addWidget(btn_refresh)
         local_lay.addLayout(model_row)
 
+        def _handle_model_pull_update(update):
+            if isinstance(update, dict) and update.get("error"):
+                btn_pull.setEnabled(True)
+                btn_pull.setText("📥 Pull Qwen 2.5 (3B)")
+                return
+            if isinstance(update, dict) and update.get("status") == "success":
+                _populate_models()
+                btn_pull.setEnabled(True)
+                btn_pull.setText("📥 Pull Qwen 2.5 (3B)")
+
         # 1-Click Model Download Helper Button
         action_row = QHBoxLayout()
         btn_pull = QPushButton("📥 Pull Qwen 2.5 (3B)")
         btn_pull.setStyleSheet("background: rgba(0, 255, 170, 0.15); color: #00ffaa; border: 1px solid #00ffaa; border-radius: 4px; padding: 6px;")
+        def _on_download_progress(chunk):
+            if isinstance(chunk, dict) and (
+                chunk.get("error") or chunk.get("status") == "success"
+            ):
+                self.local_model_pull_update.emit(chunk)
+
         def _on_download_click():
             btn_pull.setText("⏳ Downloading model in background...")
             btn_pull.setEnabled(False)
-            local_brain.pull_model_async("qwen2.5:3b", lambda chunk: _populate_models())
+            local_brain.pull_model_async("qwen2.5:3b", _on_download_progress)
         btn_pull.clicked.connect(_on_download_click)
         action_row.addWidget(btn_pull)
         local_lay.addLayout(action_row)
