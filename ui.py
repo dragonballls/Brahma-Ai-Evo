@@ -9369,6 +9369,17 @@ class MainWindow(QMainWindow):
         if not txt:
             return
         self._chat_source_queue.append(source or "local")
+        # Persist the user message directly instead of reconstructing it from
+        # a log line. This prevents source mismatches and duplicate chat bubbles.
+        if self.on_chat_event:
+            try:
+                self.on_chat_event({
+                    "role": "user",
+                    "text": txt,
+                    "source": source or "local",
+                })
+            except Exception:
+                pass
         if hasattr(self, "_command_card"):
             preview = txt[:60] + ("…" if len(txt) > 60 else "")
             self._command_card.set_body(preview)
@@ -9385,14 +9396,6 @@ class MainWindow(QMainWindow):
         self._log.append_log(text)
         raw = (text or "").strip()
         low = raw.lower()
-        if hasattr(self, "_result_card") and low.startswith("you:"):
-            user_msg = raw.split(":", 1)[1].strip()
-            source = self._chat_source_queue[0] if self._chat_source_queue else "local"
-            if self.on_chat_event and user_msg:
-                try:
-                    self.on_chat_event({"role": "user", "text": user_msg, "source": source})
-                except Exception:
-                    pass
         if hasattr(self, "_result_card") and low.startswith("brahma evo:"):
             reply = raw.split(":", 1)[1].strip()
             self._result_card.set_body(reply[:80] + ("…" if len(reply) > 80 else ""))
