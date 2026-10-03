@@ -40,10 +40,12 @@ def prepare_sources(sources: list[str], destination: str) -> str:
     for i, path in enumerate(paths):
         cmd += ["-i", str(path)]
         filters.append(f"[{i}:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1[v{i}]")
-        has_audio, duration = _probe(path)\n        if has_audio:
+        has_audio, duration = _probe(path)
+        if has_audio:
             filters.append(f"[{i}:a]aresample=48000,aformat=sample_rates=48000:channel_layouts=stereo[a{i}]")
         else:
-            duration = max(0.05, duration)\n            filters.append(f"anullsrc=r=48000:cl=stereo,atrim=duration={duration}[a{i}]")
+            duration = max(0.05, duration)
+            filters.append(f"anullsrc=r=48000:cl=stereo,atrim=duration={duration}[a{i}]")
         pairs.append(f"[v{i}][a{i}]")
     filters.append("".join(pairs) + f"concat=n={len(paths)}:v=1:a=1[vout][aout]")
     cmd += ["-filter_complex", ";".join(filters), "-map", "[vout]", "-map", "[aout]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(dest)]
