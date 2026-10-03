@@ -11217,8 +11217,12 @@ class OmniRouteEmbeddedPage(QWidget):
             )
             label.setWordWrap(True)
             label.setStyleSheet(f"color: {C.RED};")
-            self._content_layout.replaceWidget(self._content_layout.itemAt(0).widget(), label)
-            self._content_layout.addWidget(label)
+            placeholder = self._content_layout.itemAt(0).widget()
+            if placeholder is not None:
+                self._content_layout.replaceWidget(placeholder, label)
+                placeholder.deleteLater()
+            else:
+                self._content_layout.addWidget(label)
             return
 
         placeholder = self._content_layout.itemAt(0).widget()
