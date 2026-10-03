@@ -342,12 +342,15 @@ class AdaptivePerformanceEngine:
     def _remember_memory_priority(self, proc: object) -> tuple[int, float] | None:
         try:
             key = (int(proc.pid), float(proc.create_time()))
+            original = None
             with self._lock:
                 if key not in self._original_memory_priority:
                     original = WindowManager.get_memory_priority(key[0])
                     if original is not None:
                         self._original_memory_priority[key] = original
-            return key
+                else:
+                    original = self._original_memory_priority[key]
+            return key if original is not None else None
         except Exception:
             return None
 
