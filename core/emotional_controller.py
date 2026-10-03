@@ -44,7 +44,12 @@ class EmotionalController:
     def assess(self, text: str, *, task_failed: bool = False, user_requested_toughness: bool = False) -> EmotionalState:
         t = self._normalize(text)
 
-        if task_failed or any(p in t for p in (
+        if any(p in t for p in (
+            "worried", "i'm scared", "im scared", "i messed up", "i made a mistake",
+            "i feel bad", "i'm stuck", "im stuck",
+        )):
+            state = EmotionalState("concerned", 0.65, "the user signals difficulty or distress")
+        elif task_failed or any(p in t for p in (
             "this is broken", "it failed", "failure", "crash", "error", "bug", "doesn't work", "didn't work",
         )):
             state = EmotionalState("frustrated", 0.7, "a task or system problem needs attention")
@@ -59,11 +64,6 @@ class EmotionalController:
             "don't go easy", "dont go easy",
         )):
             state = EmotionalState("stern", 0.8, "the user requested direct accountability")
-        elif any(p in t for p in (
-            "worried", "i'm scared", "im scared", "i messed up", "i made a mistake",
-            "i feel bad", "i'm stuck", "im stuck",
-        )):
-            state = EmotionalState("concerned", 0.65, "the user signals difficulty or distress")
         elif any(p in t for p in ("why", "how does", "what if", "curious", "interesting")):
             state = EmotionalState("curious", 0.45, "the conversation is exploratory")
         elif any(p in t for p in ("lol", "haha", "funny", "joke")):
