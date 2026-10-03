@@ -1,5 +1,5 @@
 from __future__ import annotations
-from core.user_paths import get_user_data_dir
+from core.runtime_paths import CONFIG_DIR
 
 import json
 import os
@@ -17,7 +17,6 @@ def _base_dir() -> Path:
 
 
 BASE_DIR = _base_dir()
-CONFIG_DIR = get_user_data_dir() / "config"
 STORE_FILE = CONFIG_DIR / "workspace_store.sqlite3"
 
 
