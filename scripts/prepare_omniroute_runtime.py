@@ -17,6 +17,8 @@ import subprocess
 import sys
 import tempfile
 from urllib.request import urlopen
+
+from core.omniroute_setup import OMNIROUTE_VERSION
 from zipfile import ZipFile
 
 
@@ -24,8 +26,11 @@ NODE_VERSION = "24.21.0"
 NODE_ZIP_NAME = f"node-v{NODE_VERSION}-win-x64.zip"
 NODE_URL = f"https://nodejs.org/dist/v{NODE_VERSION}/{NODE_ZIP_NAME}"
 NODE_SHA256 = "158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541"
-OMNIROUTE_VERSION = "3.8.50"
-OMNIROUTE_COMMIT = "5458026c216f77a3da68ea49152dc33470cfe2cb"
+# The runtime version is owned by core.omniroute_setup so packaging cannot drift.
+# The npm registry's exact version + tarball integrity are authoritative for the
+# published package; an independent git commit pin would create a second source
+# of truth and can reject a valid republished package.
+OMNIROUTE_COMMIT = ""
 OMNIROUTE_METADATA_URL = f"https://registry.npmjs.org/omniroute/{OMNIROUTE_VERSION}"
 CACHE_SCHEMA = "1"
 
@@ -131,7 +136,7 @@ def prepare(destination: Path) -> None:
         if str(registry.get("version") or "") != OMNIROUTE_VERSION:
             raise RuntimeError("OmniRoute registry version did not match the pinned release.")
         git_head = str(registry.get("gitHead") or "")
-        if git_head and git_head != OMNIROUTE_COMMIT:
+        if OMNIROUTE_COMMIT and git_head and git_head != OMNIROUTE_COMMIT:
             raise RuntimeError(f"OmniRoute gitHead mismatch: {git_head} != {OMNIROUTE_COMMIT}")
         dist = registry.get("dist") or {}
         tarball_url = str(dist.get("tarball") or "")
