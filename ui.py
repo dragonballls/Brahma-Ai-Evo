@@ -13317,13 +13317,8 @@ class SystemConnectivityPage(QWidget):
             self._ctrl()._win._save_app_settings(settings)
         else:
             try:
-                data = {}
-                if APP_SETTINGS_FILE.exists():
-                    with open(APP_SETTINGS_FILE, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                data[key] = value
-                with open(APP_SETTINGS_FILE, "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=4)
+                from memory.config_manager import set_setting
+                set_setting(key, value)
             except Exception:
                 pass
 
