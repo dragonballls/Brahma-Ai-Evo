@@ -2,6 +2,7 @@ from core.user_paths import get_user_data_dir
 import json
 import re
 import sys
+import os
 from pathlib import Path
 from enum import Enum
 
@@ -51,8 +52,16 @@ Return ONLY valid JSON:
 
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    """Load the Gemini key from user config, then the environment."""
+    try:
+        with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        key = str(data.get("gemini_api_key", "") or "").strip()
+        if key:
+            return key
+    except (OSError, json.JSONDecodeError, TypeError):
+        pass
+    return str(os.environ.get("GEMINI_API_KEY", "") or "").strip()
 
 
 def analyze_error(
@@ -94,7 +103,18 @@ def analyze_error(
             "user_message":  "Trying a different approach, sir."
         }
 
-    genai.configure(api_key=_get_api_key())
+    api_key = _get_api_key()
+    if not api_key:
+        print("[ErrorHandler] ⚠️ Gemini credentials unavailable — defaulting to replan")
+        return {
+            "decision":       ErrorDecision.REPLAN,
+            "reason":         f"No Gemini credentials available: {error[:100]}",
+            "fix_suggestion": "Try an alternative approach",
+            "max_retries":    1,
+            "user_message":   "I can't analyze the failure remotely, so I'll try another approach, sir."
+        }
+
+    genai.configure(api_key=api_key)
     model = genai.GenerativeModel(
         model_name="gemini-3.1-flash-lite",
         system_instruction=ERROR_ANALYST_PROMPT
