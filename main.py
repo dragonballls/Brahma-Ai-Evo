@@ -1122,17 +1122,27 @@ TOOL_DECLARATIONS = [
     {
         "name": "youtube_video",
         "description": (
-            "Controls YouTube. Use for: playing videos, summarizing a video's content, "
-            "getting video info, or showing trending videos."
+            "Controls YouTube and video playback. Use for playing videos and playlists, "
+            "play/pause/seek/volume/mute/fullscreen, setting playback speed (including 1.70x), "
+            "and watching/analyzing a video or a specific time range for dialogue, visuals, on-screen text, "
+            "symbols, codes, or other details."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "action": {"type": "STRING", "description": "play | summarize | get_info | trending (default: play)"},
-                "query":  {"type": "STRING", "description": "Search query for play action"},
-                "save":   {"type": "BOOLEAN", "description": "Save summary to Notepad (summarize only)"},
-                "region": {"type": "STRING", "description": "Country code for trending e.g. TR, US"},
-                "url":    {"type": "STRING", "description": "Video URL for get_info action"},
+                "action": {"type": "STRING", "description": "play | playlist | play_playlist | control | watch | analyze | analyze_section | summarize | get_info | trending"},
+                "query":  {"type": "STRING", "description": "YouTube search query, playlist name, or video URL"},
+                "save":   {"type": "BOOLEAN", "description": "Save summary to Desktop text file (summarize only)"},
+                "region": {"type": "STRING", "description": "Country code for trending e.g. US"},
+                "url":    {"type": "STRING", "description": "YouTube video/playlist URL when known"},
+                "command": {"type": "STRING", "description": "Video control: play | pause | toggle | speed | seek | volume | mute | unmute | fullscreen | status"},
+                "speed": {"type": "NUMBER", "description": "Video playback rate, e.g. 1.70"},
+                "position": {"type": "STRING", "description": "Seek position in seconds or mm:ss / hh:mm:ss"},
+                "volume": {"type": "NUMBER", "description": "HTML5 video volume from 0 to 100"},
+                "question": {"type": "STRING", "description": "Question or task to answer while watching/analyzing the video"},
+                "start_time": {"type": "STRING", "description": "Optional analysis start timestamp"},
+                "end_time": {"type": "STRING", "description": "Optional analysis end timestamp"},
+                "file_path": {"type": "STRING", "description": "Optional local video file to analyze"} 
             },
             "required": []
         }
@@ -1755,18 +1765,17 @@ TOOL_DECLARATIONS = [
     {
         "name": "spotify_controller",
         "description": (
-            "Plays and controls music via Spotify, Spotify MCP, and Google Chrome. "
-            "ALWAYS use this tool whenever the user asks to play any song, music, track, or artist "
-            "(e.g. 'play Starboy', 'play music on Spotify'), or control playback "
-            "('pause the music', 'resume', 'skip song', 'next track', 'volume up', 'volume down', 'mute'). "
-            "Do NOT use open_app for playing songs."
+            "Plays and controls Spotify and Spotify Connect. ALWAYS use this tool whenever the user asks "
+            "to play a song, album, artist, playlist, or control Spotify playback. It supports playlist-name "
+            "resolution, play/pause/resume, next/previous, volume, queue, now-playing, and Spotify device selection. "
+            "Do NOT use open_app for playing songs or playlists."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
                 "action": {
                     "type": "STRING",
-                    "description": "search_play | play | pause | toggle | next | previous | volume_up | volume_down | set_volume | get_now_playing | get_playlists | get_queue | get_devices | auth | mute | open_spotify (default: search_play)"
+                    "description": "search_play | play_playlist | play | pause | toggle | next | previous | volume_up | volume_down | set_volume | get_now_playing | get_playlists | get_queue | get_devices | auth | mute | open_spotify (default: search_play)"
                 },
                 "query": {
                     "type": "STRING",
