@@ -116,10 +116,15 @@ class RuntimeConsistencyTests(unittest.TestCase):
 
     def test_bootstrap_targets_repository_python_runtime(self):
         source = self.read("bootstrap.ps1")
-        self.assertIn("py -3.12", source)
-        self.assertIn("Python 3.12.10", source)
-        self.assertIn("python-3.12.10-amd64.exe", source)
-        self.assertNotIn("python-3.11.8-amd64.exe", source)
+        contract = self.read("core/runtime_contract.py")
+        self.assertIn('PYTHON_MAJOR_MINOR = "3.12"', contract)
+        self.assertIn('PYTHON_BOOTSTRAP_VERSION = "3.12.10"', contract)
+        self.assertIn('NODE_VERSION = "24.21.0"', contract)
+        self.assertIn('$PythonMajorMinor = Get-RuntimeContractValue "PYTHON_MAJOR_MINOR"', source)
+        self.assertIn('$PythonBootstrapVersion = Get-RuntimeContractValue "PYTHON_BOOTSTRAP_VERSION"', source)
+        self.assertIn('$NodeVersion = Get-RuntimeContractValue "NODE_VERSION"', source)
+        self.assertNotIn("py -3.12", source)
+        self.assertNotIn("python-3.12.10-amd64.exe", source)
 
     def test_brahma_connect_service_has_synchronized_lifecycle(self):
         source = self.read("brahma_connect/service.py")
