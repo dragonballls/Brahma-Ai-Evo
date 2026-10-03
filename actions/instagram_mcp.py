@@ -336,6 +336,7 @@ class InstagramService:
     def __init__(self):
         self._client: Optional[Client] = None
         self._running = False
+        self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._reply_callback = None
         self._auto_threads: set[str] = set()
@@ -672,6 +673,7 @@ class InstagramService:
             ig_log("Instagram daemon already running.")
             return
 
+        self._stop_event.clear()
         self._running = True
 
         # If browser engine is available, launch dedicated browser worker
@@ -691,6 +693,7 @@ class InstagramService:
     def stop_daemon(self):
         """Stops the background DM listener."""
         self._running = False
+        self._stop_event.set()
         with self._lock:
             if self._browser_worker:
                 self._browser_worker.running = False
@@ -745,7 +748,8 @@ class InstagramService:
                         sender_name = t.users[0].username if t.users else "Unknown"
                         ig_log(f"Auto-approving incoming request from @{sender_name}")
                         cl.direct_pending_approve(t.id)
-                        time.sleep(1)
+                        if self._stop_event.wait(timeout=1):
+                            break
                 except Exception:
                     pass
 
@@ -754,13 +758,15 @@ class InstagramService:
                 ig_log(f"Polling cycle error: {e}")
                 if "429" in err_str or "too many requests" in err_str:
                     ig_log("Instagram rate limit (429) hit. Pausing for 60s cooldown...")
-                    time.sleep(60)
+                    if self._stop_event.wait(timeout=60):
+                        break
                 elif "login_required" in err_str:
                     ig_log("Session expired (login_required). Resetting auth flag for refresh...")
                     self._authenticated = False
                     time.sleep(30)
 
-            time.sleep(POLL_INTERVAL)
+            if self._stop_event.wait(timeout=POLL_INTERVAL):
+                break
 
 
 # --- Global Helpers matching legacy interface ---
