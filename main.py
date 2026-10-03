@@ -137,6 +137,7 @@ _LIVE_FALLBACK_MODELS = tuple(
     if model.strip()
 )
 LIVE_MODEL_CANDIDATES = tuple(dict.fromkeys((LIVE_MODEL, *_LIVE_FALLBACK_MODELS)))
+BRAHMA_EVO_TEST_MODE = os.environ.get("BRAHMA_EVO_TEST_MODE", "").strip() == "1"
 CHANNELS            = 1
 SEND_SAMPLE_RATE    = 16000
 RECEIVE_SAMPLE_RATE = 24000
@@ -6156,6 +6157,13 @@ class BrahmaLive:
             pass
 
         self._attention_monitor.start()
+        if BRAHMA_EVO_TEST_MODE:
+            self.ui.write_log(
+                "SYS: Packaged smoke-test mode active; Live network/audio session bypassed."
+            )
+            self.ui.set_state("LISTENING")
+            _startup_log("[LIVE] packaged smoke-test mode complete")
+            return
         try:
             self.ui.boot_set_step_status("Start attention monitor", "done")
             self.ui.boot_set_progress(12, "Attention monitor online")
@@ -6451,9 +6459,12 @@ def _main_impl():
         plugin_manager = None
 
     def runner():
-        _startup_log("runner waiting api key")
-        ui.wait_for_api_key()
-        _startup_log("runner api key ready")
+        if BRAHMA_EVO_TEST_MODE:
+            _startup_log("runner test mode bypassing api key")
+        else:
+            _startup_log("runner waiting api key")
+            ui.wait_for_api_key()
+            _startup_log("runner api key ready")
         brahma_evo = BrahmaLive(
             ui,
             dashboard=dashboard,
