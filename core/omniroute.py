@@ -107,8 +107,13 @@ class OmniRouteGateway:
         return data
 
     def configure_provider(self, provider: str, api_key: str) -> dict[str, object]:
-        self.provisioner.ensure_running(wait_seconds=15.0)
-        return self.provisioner.configure_provider(provider, api_key)
+        if not self.provisioner.ensure_running(wait_seconds=15.0):
+            raise RuntimeError("OmniRoute is not ready; provider configuration was not applied.")
+        result = self.provisioner.configure_provider(provider, api_key)
+        self._credentials_synced = False
+        self._ready = True
+        self._last_check_at = time.monotonic()
+        return result
 
     def sync_credentials(self) -> dict[str, object]:
         """Re-sync the current user provider-key file into the running gateway."""
