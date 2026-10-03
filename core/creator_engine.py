@@ -209,10 +209,23 @@ def read_manifest(project: str) -> tuple[Path, dict[str, Any]]:
     return path.parent, json.loads(path.read_text(encoding="utf-8"))
 
 def create_creator_project(args: dict[str, Any]) -> dict[str, Any]:
-    source = find_video(args.get("source") or args.get("video_path"))
+    requested = args.get("source_paths") or args.get("sources")
+    if isinstance(requested, str):
+        requested = [x.strip() for x in requested.split("|") if x.strip()]
+    source_list = [str(x) for x in requested] if isinstance(requested, list) else []
+    if not source_list:
+        source_list = [str(find_video(args.get("source") or args.get("video_path")))]
     goal = str(args.get("goal") or args.get("request") or "Create a polished YouTube video")
     platform = str(args.get("platform") or "youtube").lower()
-    directory = project_dir(args.get("project") or source.stem)
+    project_name = str(args.get("project") or Path(source_list[0]).stem)
+    directory = project_dir(project_name)
+    if len(source_list) > 1:
+        from core.creator_ingest import prepare_sources
+        source = Path(prepare_sources(source_list, str(directory / "ingested.mp4")))
+    else:
+        source = Path(source_list[0]).expanduser().resolve()
+        if not source.is_file():
+            raise FileNotFoundError(f"Video file not found: {source}")
     analysis = analyze_source(str(source), goal)
     plan = plan_edit(goal, analysis, platform, str(args.get("target_length") or ""))
     data = metadata(goal, analysis, plan, platform)
