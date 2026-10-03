@@ -522,6 +522,8 @@ class BrahmaGateway:
     async def serve(self) -> None:
         if not self.config.enabled:
             return
+        # A gateway instance may be restarted after a clean stop.
+        self._shutdown.clear()
         self._running = True
         advertised = False
         if self.config.advertise:
