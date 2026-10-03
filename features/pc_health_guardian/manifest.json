@@ -1,0 +1,47 @@
+{
+  "name": "pc_health_guardian",
+  "version": "1.0.0",
+  "active": true,
+  "description": "Deep local Windows/desktop health diagnosis and conservative repair for RAM pressure, persistent process memory growth, CPU pressure, storage problems, network issues, Windows system-file integrity, and recent critical event-log failures. Uses evidence first and protects Brahma and critical system processes.",
+  "triggers": [
+    "diagnose my pc",
+    "check my pc health",
+    "find my memory leak",
+    "fix my memory leak",
+    "repair my pc",
+    "deep system diagnosis",
+    "scan my computer for problems"
+  ],
+  "aliases": [
+    "pc health",
+    "pc diagnostics",
+    "memory leak diagnosis",
+    "system repair",
+    "computer health"
+  ],
+  "parameters": {
+    "type": "OBJECT",
+    "properties": {
+      "action": {
+        "type": "STRING",
+        "description": "Action: diagnose, memory_leak, repair, monitor, status, stop. diagnose collects a broad local health report; memory_leak samples process growth; repair applies only approved conservative repairs; monitor watches for persistent memory growth."
+      },
+      "duration": {
+        "type": "STRING",
+        "description": "Optional monitoring duration such as 15 seconds, 5 minutes, 24 hours, or 24h 5m."
+      },
+      "interval_seconds": {
+        "type": "INTEGER",
+        "description": "Seconds between low-power monitor samples; default 60."
+      },
+      "target": {
+        "type": "STRING",
+        "description": "Repair target: auto, memory, system_files, disk, network, or a specific application process name/PID."
+      },
+      "allow_disruptive": {
+        "type": "BOOLEAN",
+        "description": "Permit process termination or long Windows integrity repair commands. Default false."
+      }
+    }
+  }
+}
