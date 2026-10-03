@@ -9,6 +9,7 @@ from typing import Optional
 
 import requests
 from core.omniroute import gateway as _omniroute_gateway
+from core.runtime_paths import API_CONFIG_PATH
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("openrouter_client")
@@ -160,6 +161,11 @@ class OpenRouterClient:
             logger.warning(f"[OmniRoute] request failed; using direct provider fallback: {exc}")
             return None
 
+    def _refresh_credentials(self) -> None:
+        """Reload runtime credentials so UI changes take effect without a restart."""
+        self.api_key = _load_api_key()
+        self._headers["Authorization"] = f"Bearer {self.api_key}" if self.api_key else ""
+
     def _call(
         self,
         model: str,
@@ -177,9 +183,10 @@ class OpenRouterClient:
         if response_format:
             payload["response_format"] = response_format
 
+        self._refresh_credentials()
         if not self.api_key:
             raise PermissionError(
-                "[OpenRouter] API key is missing. Add a valid sk-or- key in config/api_keys.json."
+                f"[OpenRouter] API key is missing. Add a valid sk-or- key in {API_CONFIG_PATH}."
             )
 
         for attempt in range(1, MAX_RETRIES_PER_MODEL + 1):
