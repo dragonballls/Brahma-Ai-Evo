@@ -52,6 +52,17 @@ class PCHealthGuardianTests(TestCase):
         self.assertIn("allow_disruptive", result["actions"][0]["message"])
 
 
+class MissionNoteUiTests(TestCase):
+    def test_mission_note_has_live_progress_and_timing_contract(self):
+        source = __import__("pathlib").Path(__file__).resolve().parents[1].joinpath("ui.py").read_text(encoding="utf-8")
+        self.assertIn('QProgressBar()', source)
+        self.assertIn('self._mission_tmr.setInterval(1000)', source)
+        self.assertIn('self._elapsed_lbl = QLabel("Elapsed: 00:00")', source)
+        self.assertIn('self._eta_lbl = QLabel("ETA: —")', source)
+        self.assertIn('self._title.setText("AUTONOMOUS MISSION NOTE")', source)
+        self.assertIn('self._bar.setRange(0, 0)', source)
+        self.assertIn('self._eta_lbl.setText("ETA: estimating…")', source)
+
 class AutonomousMissionTests(TestCase):
     def test_duration_parser(self):
         mod = importlib.import_module("features.autonomous_mission.skill")
