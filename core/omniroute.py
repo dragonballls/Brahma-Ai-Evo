@@ -126,7 +126,7 @@ class OmniRouteGateway:
         self._credentials_synced = False
         try:
             result = self.provisioner.sync_existing_provider_keys(
-                get_user_data_dir() / "config" / "api_keys.json"
+                API_CONFIG_PATH
             )
         except Exception as exc:
             return {"ok": False, "synced": False, "error": str(exc)}
