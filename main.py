@@ -6650,6 +6650,12 @@ def _main_impl():
         except Exception:
             pass
         try:
+            updater = getattr(ui, "_updater", None)
+            if updater is not None:
+                updater.stop()
+        except Exception:
+            pass
+        try:
             stop_screen_processor()
         except Exception:
             pass
