@@ -111,6 +111,14 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("base_url: str = OMNIROUTE_DEFAULT_BASE_URL", setup)
         self.assertNotIn("DEFAULT_PORT = 20128", setup)
 
+    def test_brahma_connect_service_has_synchronized_lifecycle(self):
+        source = self.read("brahma_connect/service.py")
+        self.assertIn("_lock: threading.RLock", source)
+        self.assertIn("with self._lock:", source)
+        self.assertIn("self._thread = None", source)
+        self.assertIn("requested = Path(base_dir).expanduser().resolve()", source)
+        self.assertIn("elif _SERVICE.base_dir != requested:", source)
+
     def test_local_discovery_uses_configured_endpoint(self):
         source = self.read("core/local_brain.py")
         self.assertIn('f"{self.endpoint}/models"', source)
