@@ -398,8 +398,9 @@ class RuntimeConsistencyTests(unittest.TestCase):
 
     def test_omniroute_packaging_reuses_runtime_version_pin(self):
         source = self.read("scripts/prepare_omniroute_runtime.py")
-        self.assertIn("from core.omniroute_setup import OMNIROUTE_VERSION", source)
+        self.assertIn("from core.runtime_contract import NODE_VERSION, OMNIROUTE_COMMIT, OMNIROUTE_VERSION", source)
         self.assertNotIn("\nOMNIROUTE_VERSION = ", source)
+        self.assertNotIn("\nOMNIROUTE_COMMIT = ", source)
 
     def test_omniroute_dashboard_retries_gateway_startup(self):
         source = self.read("ui.py")
