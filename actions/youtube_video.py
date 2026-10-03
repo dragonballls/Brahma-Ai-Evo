@@ -304,7 +304,7 @@ def _current_video_url() -> str:
     try:
         raw = browser_control({"action": "evaluate", "expression": "window.location.href"}, None, None, None)
         value = str(raw or "").strip().strip('"').strip("'")
-        return value if _is_valid_youtube_url(value) else ""
+        return value if re.match(r"^(?:https?|file)://", value, re.I) else ""
     except Exception:
         return ""
 
@@ -400,7 +400,7 @@ def _handle_control(parameters: dict, player) -> str:
         time.sleep(1.5)
     current = _current_video_url()
     if not current:
-        return "I don't currently have a YouTube video open in the JARVIS browser, sir."
+        return "I don't currently have a browser video open in JARVIS, sir."
     return _control_video(parameters)
 
 
@@ -506,15 +506,22 @@ def _handle_summarize(parameters: dict, player, speak) -> str:
 
     transcript = _get_transcript(video_id)
     if not transcript:
-        return "I couldn't retrieve a transcript for that video, sir."
-
-    if speak:
-        speak("Transcript retrieved. Generating summary now.")
-
-    try:
-        summary = _summarize_with_gemini(transcript, url)
-    except Exception as e:
-        return f"Summary generation failed, sir: {e}"
+        try:
+            summary = analyze_youtube(
+                url,
+                question="Summarize this video clearly. Include the main idea, key events or arguments, and important visual/on-screen details.",
+                start_time=str(parameters.get("start_time") or parameters.get("start") or ""),
+                end_time=str(parameters.get("end_time") or parameters.get("end") or ""),
+            )
+        except Exception as e:
+            return f"I couldn't retrieve a transcript or perform video understanding, sir: {e}"
+    else:
+        if speak:
+            speak("Transcript retrieved. Generating summary now.")
+        try:
+            summary = _summarize_with_gemini(transcript, url)
+        except Exception as e:
+            return f"Summary generation failed, sir: {e}"
 
     if speak:
         speak(summary)
