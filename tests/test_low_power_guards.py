@@ -40,6 +40,16 @@ class LowPowerGuardTests(unittest.TestCase):
         self.assertIn("def add_monitor(", source)
         self.assertIn("if not _monitors:", source)
 
+    def test_runtime_configuration_is_not_bundled_from_repo_state(self):
+        spec = self.read("installer/BrahmaEvo.spec")
+        self.assertNotIn("(os.path.join(cwd, 'config'), 'config')", spec)
+        self.assertIn("(os.path.join(cwd, 'config', 'models'), 'config', 'models')", spec)
+        self.assertIn("(os.path.join(cwd, 'config', 'intelligence.json'), 'config', 'intelligence.json')", spec)
+        ui = self.read("ui.py")
+        self.assertIn('CONFIG_DIR = get_user_data_dir() / "config"', ui)
+        self.assertNotIn('Path("config/api_keys.json")', ui)
+        self.assertNotIn('Path("config/ig_session.json")', ui)
+
     def test_passive_watchers_back_off(self):
         sensorium = self.read("core/sensorium.py")
         attention = self.read("actions/attention_monitor.py")
