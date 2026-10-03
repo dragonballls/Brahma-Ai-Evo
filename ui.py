@@ -10805,6 +10805,16 @@ class SystemConnectivityPage(QWidget):
                 % ("enabled" if enabled else "disabled")
             )
 
+    def _toggle_voice_always_on(self, enabled: bool):
+        settings = self._load_app_settings()
+        settings["voice_always_on"] = bool(enabled)
+        self._save_app_settings(settings)
+        if self._ctrl() and hasattr(self._ctrl(), "write_log"):
+            self._ctrl().write_log(
+                "SYS: Always-on Gemini Live voice %s. Restart Brahma Evo to apply."
+                % ("enabled" if enabled else "disabled")
+            )
+
     def _card(self, title: str, subtitle: str = "") -> QFrame:
         frame = QFrame()
         frame.setObjectName("SettingsCard")
@@ -11335,6 +11345,13 @@ class SystemConnectivityPage(QWidget):
             self._toggle_low_power_mode,
         )
         lay1.addWidget(power_btn)
+
+        voice_btn = self._mk_toggle(
+            "Keep Gemini Live voice always on (uses more CPU/network)",
+            bool(self._load_app_settings().get("voice_always_on", False)),
+            self._toggle_voice_always_on,
+        )
+        lay1.addWidget(voice_btn)
 
         lay.addWidget(card)
 
