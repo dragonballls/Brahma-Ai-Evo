@@ -1492,6 +1492,10 @@ def _default_app_settings() -> dict:
         "show_workspace_on_startup": False,
         "launcher_pos": None,
         "launch_minimized": False,
+        "desktop_mode_enabled": False,
+        "desktop_performance_profile": "adaptive",
+        "show_desktop_performance_overlay": False,
+        "desktop_workerw_backend_enabled": False,
         "check_updates_on_startup": True,
         "default_ai_provider": "Gemini",
         "auto_provider_switch": True,
@@ -4713,6 +4717,11 @@ class LauncherControlPanel(QDialog):
                  on_open_app=None,
                  on_show_icon=None,
                  on_open_dev=None,
+                 desktop_enabled: bool = False,
+                 on_toggle_desktop=None,
+                 on_desktop_status=None,
+                 desktop_profile: str = "adaptive",
+                 on_set_desktop_profile=None,
                  parent=None):
         super().__init__(parent)
         self._on_open = on_open
@@ -4724,6 +4733,11 @@ class LauncherControlPanel(QDialog):
         self._on_open_app = on_open_app
         self._on_show_icon = on_show_icon
         self._on_open_dev = on_open_dev
+        self._on_toggle_desktop = on_toggle_desktop
+        self._on_desktop_status = on_desktop_status
+        self._on_set_desktop_profile = on_set_desktop_profile
+        self._desktop_enabled = bool(desktop_enabled)
+        self._desktop_profile = str(desktop_profile or "adaptive").lower()
 
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -4797,6 +4811,38 @@ class LauncherControlPanel(QDialog):
         self._quit_btn = mk_btn("Quit Brahma Evo")
         self._open_app_btn = mk_btn("Open App")
         self._open_dev_btn = mk_btn("Open Developer Mode")
+        self._desktop_btn = mk_btn(
+            "Desktop Mode: ON" if self._desktop_enabled else "Desktop Mode: OFF",
+            checkable=True,
+            checked=self._desktop_enabled,
+        )
+
+        profile_row = QHBoxLayout()
+        profile_label = QLabel("Performance")
+        profile_label.setStyleSheet("color: rgba(255,255,255,0.64); background: transparent; font: 600 9pt 'Segoe UI';")
+        self._desktop_profile_combo = QComboBox()
+        self._desktop_profile_combo.addItems(["adaptive", "balanced", "performance", "game", "efficiency"])
+        index = max(0, self._desktop_profile_combo.findText(self._desktop_profile))
+        self._desktop_profile_combo.setCurrentIndex(index)
+        self._desktop_profile_combo.setMinimumHeight(34)
+        self._desktop_profile_combo.setStyleSheet("""
+            QComboBox {
+                background: rgba(255,255,255,0.05);
+                color: #FFFFFF;
+                border: 1px solid rgba(255,255,255,0.09);
+                border-radius: 10px;
+                padding: 4px 10px;
+            }
+            QComboBox::drop-down { border: none; width: 24px; }
+            QComboBox QAbstractItemView {
+                background: #0f1117;
+                color: #FFFFFF;
+                selection-background-color: rgba(0,191,255,0.24);
+            }
+        """)
+        self._desktop_profile_combo.currentTextChanged.connect(self._set_desktop_profile)
+        profile_row.addWidget(profile_label)
+        profile_row.addWidget(self._desktop_profile_combo, 1)
 
         self._open_btn.clicked.connect(lambda: self._invoke(self._on_open))
         self._close_btn.clicked.connect(lambda: self._invoke(self._on_close))
@@ -4807,6 +4853,12 @@ class LauncherControlPanel(QDialog):
         self._quit_btn.clicked.connect(lambda: self._invoke(self._on_quit))
         self._open_app_btn.clicked.connect(lambda: self._invoke(self._on_open_app))
         self._open_dev_btn.clicked.connect(lambda: self._invoke(self._on_open_dev))
+        self._desktop_btn.clicked.connect(self._toggle_desktop)
+
+        lay.addWidget(QLabel("DESKTOP ENVIRONMENT"))
+        lay.itemAt(lay.count() - 1).widget().setStyleSheet("color: rgba(255,255,255,0.58); background: transparent; font: 700 8pt 'Courier New'; letter-spacing: 1px;")
+        lay.addWidget(self._desktop_btn)
+        lay.addLayout(profile_row)
 
         for btn in (
             self._open_app_btn, self._open_btn, self._close_btn, self._startup_btn,
@@ -4816,6 +4868,38 @@ class LauncherControlPanel(QDialog):
             lay.addWidget(btn)
 
         self.adjustSize()
+
+    def _set_desktop_profile(self, profile: str):
+        profile = str(profile or "adaptive").strip().lower()
+        if not self._on_set_desktop_profile:
+            return
+        try:
+            result = self._on_set_desktop_profile(profile)
+            self._desktop_profile = profile
+            if self._on_desktop_status:
+                self._on_desktop_status(result)
+        except Exception:
+            pass
+
+    def _toggle_desktop(self):
+        enabled = self._desktop_btn.isChecked()
+        if self._on_toggle_desktop:
+            try:
+                result = self._on_toggle_desktop(enabled)
+                actual = bool((result or {}).get("enabled")) if isinstance(result, dict) else enabled
+                self._desktop_enabled = actual
+                self._desktop_btn.blockSignals(True)
+                self._desktop_btn.setChecked(actual)
+                self._desktop_btn.setText("Desktop Mode: ON" if actual else "Desktop Mode: OFF")
+                self._desktop_btn.blockSignals(False)
+                if self._on_desktop_status:
+                    self._on_desktop_status(result)
+            except Exception:
+                self._desktop_btn.blockSignals(True)
+                self._desktop_btn.setChecked(self._desktop_enabled)
+                self._desktop_btn.setText("Desktop Mode: ON" if self._desktop_enabled else "Desktop Mode: OFF")
+                self._desktop_btn.blockSignals(False)
+        self.close()
 
     def _invoke(self, fn, *args):
         if fn:
@@ -9018,6 +9102,24 @@ class MainWindow(QMainWindow):
             self.showNormal()
         else:
             self.showFullScreen()
+
+    def set_desktop_render_suspended(self, suspended: bool) -> None:
+        """Release the hidden MainWindow renderer while DesktopLayer owns the scene."""
+        suspended = bool(suspended)
+        bg = getattr(self, "_bg_widget", None)
+        if bg is None:
+            return
+        try:
+            bg.set_deep_idle(suspended)
+        except Exception:
+            pass
+        try:
+            web = getattr(bg, "_web_view", None)
+            if web is not None:
+                web.setUpdatesEnabled(not suspended)
+                web.setVisible(not suspended and bg.isVisible())
+        except Exception:
+            pass
 
     def _load_app_settings(self) -> dict:
         if self._app_settings_cache is not None:
@@ -14888,6 +14990,7 @@ class BrahmaUI:
         self._workspace_sidebar = WorkspaceSidebar()
         self._control_panel: LauncherControlPanel | None = None
         self._boot_overlay: BootSequenceOverlay | None = None
+        self._desktop_controller = None
         self._app_settings_cache: dict | None = None
         self._launcher.single_clicked.connect(self._toggle_workspace_sidebar)
         self._launcher.double_clicked.connect(self._on_launcher_double_clicked)
@@ -14981,6 +15084,42 @@ class BrahmaUI:
         self._command_bar.hide()
         self._launcher.hide()
         self._win.hide()
+
+    def set_desktop_environment_controller(self, controller) -> None:
+        """Attach the optional desktop-layer controller without coupling UI to it."""
+        self._desktop_controller = controller
+
+    def enter_desktop_mode(self) -> None:
+        """Hide only Brahma's normal window and expose the launcher over the desktop."""
+        try:
+            self._command_bar.hide()
+            self._workspace_sidebar.hide_workspace(animate=False)
+        except Exception:
+            pass
+        try:
+            if hasattr(self._win, "set_desktop_render_suspended"):
+                self._win.set_desktop_render_suspended(True)
+            self._win.hide()
+        except Exception:
+            pass
+        try:
+            self._show_floating_icon()
+            self._launcher.raise_()
+        except Exception:
+            pass
+
+    def exit_desktop_mode(self) -> None:
+        """Return Brahma to its normal application presentation."""
+        try:
+            self._launcher.hide()
+            if hasattr(self._win, "set_desktop_render_suspended"):
+                self._win.set_desktop_render_suspended(False)
+            self.show_main()
+        except Exception:
+            try:
+                self._win.show()
+            except Exception:
+                pass
 
     def _load_app_settings(self) -> dict:
         if self._app_settings_cache is not None:
@@ -15355,12 +15494,48 @@ class BrahmaUI:
             on_open_app=self.show_main,
             on_show_icon=self._show_floating_icon,
             on_open_dev=self._open_developer_mode_dialog,
+            desktop_enabled=bool(getattr(self._desktop_controller, "enabled", False)),
+            desktop_profile=str(getattr(getattr(self._desktop_controller, "performance", None), "profile", "adaptive")),
+            on_toggle_desktop=self._set_desktop_mode_from_ui,
+            on_desktop_status=self._log_desktop_status,
+            on_set_desktop_profile=self._set_desktop_profile_from_ui,
         )
         self._control_panel = panel
         self._position_control_panel(panel)
         panel.show()
         panel.raise_()
         panel.activateWindow()
+
+    def _set_desktop_mode_from_ui(self, enabled: bool):
+        controller = getattr(self, "_desktop_controller", None)
+        if controller is None:
+            return {"enabled": False, "last_error": "Desktop environment is not available."}
+        try:
+            return controller.enable() if bool(enabled) else controller.disable()
+        except Exception as exc:
+            self._win.write_log(f"ERR: Desktop mode change failed: {exc}")
+            return {"enabled": bool(getattr(controller, "enabled", False)), "last_error": str(exc)}
+
+    def _set_desktop_profile_from_ui(self, profile: str):
+        controller = getattr(self, "_desktop_controller", None)
+        if controller is None:
+            return {"ok": False, "error": "Desktop environment is not available."}
+        try:
+            result = controller.configure(profile=profile)
+            self._win.write_log(f"SYS: Desktop performance profile set to {controller.performance.profile}.")
+            return result
+        except Exception as exc:
+            self._win.write_log(f"ERR: Desktop performance profile failed: {exc}")
+            return {"ok": False, "error": str(exc)}
+
+    def _log_desktop_status(self, result):
+        try:
+            if isinstance(result, dict):
+                state = "enabled" if result.get("enabled") else "disabled"
+                profile = result.get("profile") or "adaptive"
+                self._win.write_log(f"SYS: Desktop mode {state} • performance profile: {profile}.")
+        except Exception:
+            pass
 
     def _position_control_panel(self, panel: LauncherControlPanel):
         try:

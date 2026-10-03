@@ -8,7 +8,7 @@ os.environ.setdefault(
 )
 
 try:
-    from PyQt6.QtCore import QCoreApplication, Qt
+    from PyQt6.QtCore import QCoreApplication, Qt, QTimer
     from PyQt6.QtGui import QSurfaceFormat
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
     fmt = QSurfaceFormat.defaultFormat()
@@ -1020,16 +1020,21 @@ TOOL_DECLARATIONS = [
     {
         "name": "open_app",
         "description": (
-            "Opens any application on the Windows computer. "
-            "Use this whenever the user asks to open, launch, or start any app, "
-            "website, or program. Always call this tool — never just say you opened it."
+            "Opens any application, website, or program on the Windows computer. "
+            "When Brahma Desktop Mode is active and the user explicitly asks to put the "
+            "application inside Brahma, set embed=true. If native embedding is incompatible, "
+            "Brahma safely keeps the real application running as a managed Windows window."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
                 "app_name": {
                     "type": "STRING",
-                    "description": "Exact name of the application (e.g. 'WhatsApp', 'Chrome', 'Spotify')"
+                    "description": "Exact name of the application (e.g. 'WhatsApp', 'Chrome', 'Spotify', 'Minecraft', 'Roblox')"
+                },
+                "embed": {
+                    "type": "BOOLEAN",
+                    "description": "When Desktop Mode is active, attempt to host the real application inside a Brahma workspace panel."
                 }
             },
             "required": ["app_name"]
@@ -1914,6 +1919,40 @@ TOOL_DECLARATIONS = [
         }
     },
     {
+        "name": "desktop_environment",
+        "description": (
+            "Controls Brahma's optional Windows desktop environment and adaptive performance engine. "
+            "Desktop mode keeps Windows Explorer, the taskbar, UAC, and native applications intact while "
+            "placing Brahma's holographic environment behind them. Use for desktop mode status/enable/disable/toggle, "
+            "opening applications or URLs, listing native windows, controlling a native window, and choosing the "
+            "adaptive/performance/game/balanced/efficiency profile. It prefers reversible resource adjustments "
+            "and never blindly terminates processes."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "status | enable | disable | toggle | open | host_window | list_windows | control_window | set_profile | integration_status | apply_layout | android_list | android_open | appletv_scan | matter_help | procgovernor_validate | winsw_status"
+                },
+                "target": {"type": "STRING", "description": "Application, URL, window title, PID/HWND, or executable target."},
+                "window_action": {"type": "STRING", "description": "focus | minimize | maximize | restore | close | move | resize | dock"},
+                "profile": {"type": "STRING", "description": "adaptive | balanced | performance | game | efficiency"},
+                "overlay": {"type": "BOOLEAN", "description": "Show the optional desktop performance HUD."},
+                "use_workerw": {"type": "BOOLEAN", "description": "Advanced Windows-only WorkerW wallpaper backend; disabled by default for DPI safety."},
+                "embed": {"type": "BOOLEAN", "description": "For open: host the native application inside a Brahma workspace when safe."},
+                "x": {"type": "INTEGER", "description": "Window X coordinate for move/resize/dock."},
+                "y": {"type": "INTEGER", "description": "Window Y coordinate for move/resize/dock."},
+                "width": {"type": "INTEGER", "description": "Window width for resize/dock."},
+                "height": {"type": "INTEGER", "description": "Window height for resize/dock."},
+                "layout": {"type": "STRING", "description": "Optional PowerToys FancyZones layout name or UUID."},
+                "serial": {"type": "STRING", "description": "Android device serial for scrcpy."},
+                "config_path": {"type": "STRING", "description": "Configuration/XML path for ProcGovernor or WinSW validation/status."}
+            },
+            "required": ["action"]
+        }
+    },
+    {
         "name": "auto_heal",
         "description": (
             "Autonomous Self-Healing and Continuous Self-Improvement System. "
@@ -2129,6 +2168,7 @@ class BrahmaLive:
     def __init__(self, ui: BrahmaUI, dashboard=None, dashboard_started: bool = False, enable_dashboard: bool = True):
         self.ui             = ui
         self._smart_home    = SmartHomeService()
+        self._desktop_controller = getattr(ui, "_desktop_controller", None)
         self.session        = None
         self.audio_in_queue = None
         self.out_queue      = None
@@ -4519,8 +4559,21 @@ class BrahmaLive:
                 result = r or "Done."
 
             elif name == "open_app":
-                r = await loop.run_in_executor(None, lambda: open_app(parameters=args, response=None, player=self.ui))
-                result = r or f"Opened {args.get('app_name')}."
+                target = str(args.get("app_name") or args.get("target") or "").strip()
+                desktop_controller = self._desktop_controller or getattr(self.ui, "_desktop_controller", None)
+                if desktop_controller is not None and getattr(desktop_controller, "enabled", False) and target:
+                    # Desktop Mode defaults to a Brahma-hosted workspace for native
+                    # apps; callers can explicitly set embed=false to keep a
+                    # compatibility-sensitive application fully native.
+                    embed = bool(args["embed"]) if "embed" in args else True
+                    r = await loop.run_in_executor(
+                        None,
+                        lambda: desktop_controller.open(target, embed=embed),
+                    )
+                    result = json.dumps(r, ensure_ascii=False) if isinstance(r, dict) else (r or f"Opened {target}.")
+                else:
+                    r = await loop.run_in_executor(None, lambda: open_app(parameters=args, response=None, player=self.ui))
+                    result = r or f"Opened {target or args.get('app_name')}."
                 
             elif name == "check_instagram_messages":
                 self.ui.write_log("SYS: Checking Instagram messages...")
@@ -5081,6 +5134,104 @@ class BrahmaLive:
                         p.setdefault("action", parts[2])
                 r = await loop.run_in_executor(None, lambda: google_workspace(parameters=p, player=self.ui, speak=self.speak))
                 result = r or "Google Workspace task completed."
+            elif name == "desktop_environment":
+                controller = self._desktop_controller or getattr(self.ui, "_desktop_controller", None)
+                action = (args.get("action") or "status").strip().lower()
+                if controller is None:
+                    result = "Desktop environment is unavailable; Brahma remains in normal Windows mode."
+                elif action == "status":
+                    result = json.dumps(controller.status(), ensure_ascii=False)
+                elif action == "enable":
+                    result = json.dumps(controller.configure(
+                        profile=args.get("profile"),
+                        show_overlay=args.get("overlay") if "overlay" in args else None,
+                        use_workerw=args.get("use_workerw") if "use_workerw" in args else None,
+                    ), ensure_ascii=False)
+                    if not controller.enabled:
+                        result = json.dumps(controller.enable(), ensure_ascii=False)
+                elif action == "disable":
+                    result = json.dumps(controller.disable(), ensure_ascii=False)
+                elif action == "toggle":
+                    result = json.dumps(controller.toggle(), ensure_ascii=False)
+                elif action == "open":
+                    result = json.dumps(
+                        controller.open(
+                            str(args.get("target") or ""),
+                            embed=bool(args.get("embed", False)),
+                        ),
+                        ensure_ascii=False,
+                    )
+                elif action == "host_window":
+                    result = json.dumps(
+                        controller.host_native(str(args.get("target") or "")),
+                        ensure_ascii=False,
+                    )
+                elif action == "list_windows":
+                    result = json.dumps(controller.windows(), ensure_ascii=False)
+                elif action == "control_window":
+                    result = json.dumps(
+                        controller.control_window(
+                            str(args.get("window_action") or "").strip(),
+                            str(args.get("target") or "").strip(),
+                            x=args.get("x"), y=args.get("y"),
+                            width=args.get("width"), height=args.get("height"),
+                        ),
+                        ensure_ascii=False,
+                    )
+                elif action == "set_profile":
+                    profile = str(args.get("profile") or "adaptive").strip().lower()
+                    result = json.dumps(
+                        controller.configure(
+                            profile=profile,
+                            use_workerw=args.get("use_workerw") if "use_workerw" in args else None,
+                        ),
+                        ensure_ascii=False,
+                    )
+                elif action == "integration_status":
+                    from core.desktop.integrations import integrations
+                    result = json.dumps(integrations.status(), ensure_ascii=False)
+                elif action == "apply_layout":
+                    from core.desktop.integrations import integrations
+                    monitor = args.get("monitor")
+                    monitor_value = int(monitor) if str(monitor or "").strip().lstrip("-").isdigit() else None
+                    result = json.dumps(
+                        integrations.apply_fancyzones_layout(
+                            str(args.get("layout") or "columns").strip(),
+                            monitor=monitor_value,
+                        ),
+                        ensure_ascii=False,
+                    )
+                elif action == "android_list":
+                    from core.desktop.integrations import integrations
+                    result = json.dumps(integrations.android_devices(), ensure_ascii=False)
+                elif action == "android_open":
+                    from core.desktop.integrations import integrations
+                    serial = str(args.get("serial") or args.get("target") or "").strip()
+                    result = json.dumps(
+                        integrations.open_android(serial, title=f"Brahma • {serial}" if serial else None),
+                        ensure_ascii=False,
+                    )
+                elif action == "appletv_scan":
+                    from core.desktop.integrations import integrations
+                    result = json.dumps(integrations.apple_tv_scan(), ensure_ascii=False)
+                elif action == "matter_help":
+                    from core.desktop.integrations import integrations
+                    result = json.dumps(integrations.matter_help(), ensure_ascii=False)
+                elif action == "procgovernor_validate":
+                    from core.desktop.integrations import integrations
+                    result = json.dumps(
+                        integrations.procgovernor_validate(str(args.get("config_path") or args.get("target") or "")),
+                        ensure_ascii=False,
+                    )
+                elif action == "winsw_status":
+                    from core.desktop.integrations import integrations
+                    result = json.dumps(
+                        integrations.winsw_status(str(args.get("config_path") or args.get("target") or "")),
+                        ensure_ascii=False,
+                    )
+                else:
+                    result = "Choose status, enable, disable, toggle, open, list_windows, control_window, set_profile, integration_status, apply_layout, android_list, android_open, appletv_scan, matter_help, procgovernor_validate, or winsw_status."
+
             elif name in ("system_diagnostics", "diagnostics", "os_hardware", "hardware_control", "ram_hogs", "kill_process", "brightness_control"):
                 from actions.system_diagnostics_mcp import system_diagnostics
                 p = dict(args or {})
@@ -5641,6 +5792,28 @@ def _main_impl():
         _startup_log(f"GitHub update skipped: {exc}")
     _ensure_desktop_shortcut()
     ui = BrahmaUI(str(BASE_DIR / "assets" / "Brahma_Lite_Logo.png"), show_immediately=True)
+
+    # Optional desktop environment: initialized separately so a failure can never
+    # prevent the normal Brahma UI from starting.
+    desktop_controller = None
+    try:
+        from core.desktop.controller import DesktopModeController
+        desktop_controller = DesktopModeController(ui, BASE_DIR)
+        settings = ui._load_app_settings() if hasattr(ui, "_load_app_settings") else {}
+        desktop_controller.configure(
+            profile=str(settings.get("desktop_performance_profile") or "adaptive"),
+            show_overlay=bool(settings.get("show_desktop_performance_overlay", False)),
+            use_workerw=bool(settings.get("desktop_workerw_backend_enabled", False)),
+        )
+        ui.set_desktop_environment_controller(desktop_controller)
+        ui.write_log("SYS: Brahma desktop environment ready (Windows remains the safety layer).")
+    except Exception as exc:
+        _startup_log(f"desktop environment init skipped: {exc}")
+        try:
+            ui.write_log(f"SYS: Desktop environment unavailable; normal Brahma mode retained. ({exc})")
+        except Exception:
+            pass
+
     dashboard = None
     dashboard_enabled = DashboardServer is not None and not _is_port_in_use(8000)
     if DashboardServer is not None and not dashboard_enabled:
@@ -5712,6 +5885,25 @@ def _main_impl():
 
     ui.show_main()
     _startup_log("ui shown")
+
+    if desktop_controller is not None:
+        def _restore_desktop_mode():
+            try:
+                settings = ui._load_app_settings() if hasattr(ui, "_load_app_settings") else {}
+                if bool(settings.get("desktop_mode_enabled", False)):
+                    result = desktop_controller.enable()
+                    if result.get("enabled"):
+                        ui.write_log("SYS: Desktop mode restored from the last explicit setting.")
+            except Exception as exc:
+                _startup_log(f"desktop mode restore skipped: {exc}")
+        try:
+            overlay = getattr(ui, "_boot_overlay", None)
+            if overlay is not None and hasattr(overlay, "finished"):
+                overlay.finished.connect(_restore_desktop_mode)
+            else:
+                QTimer.singleShot(1200, _restore_desktop_mode)
+        except Exception:
+            pass
 
     # Restore any durable autonomous missions whose worker was lost during a
     # Brahma restart or Windows reboot. The worker itself remains external.
@@ -5911,7 +6103,20 @@ def _main_impl():
         threading.Thread(target=runner, daemon=True).start()
 
     start_runner()
-    ui.show_main()
+
+    if desktop_controller is not None:
+        try:
+            from PyQt6.QtWidgets import QApplication
+            app_instance = QApplication.instance()
+            if app_instance is not None:
+                app_instance.aboutToQuit.connect(desktop_controller.shutdown)
+        except Exception as exc:
+            _startup_log(f"desktop shutdown hook wiring skipped: {exc}")
+
+    # Desktop Mode owns the visible Brahma presentation when explicitly enabled.
+    # Do not resurrect the normal application window after its restoration hook.
+    if desktop_controller is None or not desktop_controller.enabled:
+        ui.show_main()
     ui.root.mainloop()
 
 
