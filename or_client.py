@@ -21,7 +21,7 @@ def _get_base_dir() -> Path:
 
 
 BASE_DIR     = _get_base_dir()
-API_KEY_PATH = get_user_data_dir() / "config" / "api_keys.json"
+API_KEY_PATH = API_CONFIG_PATH
 
 def _load_api_key() -> str:
     try:
