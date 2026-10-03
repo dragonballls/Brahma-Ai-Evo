@@ -190,3 +190,21 @@ class PressureHysteresisTests(TestCase):
         self.assertEqual(engine._stabilize_pressure("normal"), "high")
         engine._pressure_candidate_since -= 9.0
         self.assertEqual(engine._stabilize_pressure("normal"), "normal")
+
+
+class LaunchDiscoveryTests(TestCase):
+    def test_find_after_launch_prefers_new_matching_window(self):
+        module = __import__("core.desktop.app_host", fromlist=["ApplicationHost"])
+        host = module.ApplicationHost()
+        window = SimpleNamespace(pid=999, visible=True, title="Minecraft", exe="javaw.exe", hwnd=77)
+        with patch.object(module.WindowManager, "enumerate_windows", return_value=[window]):
+            result = host.find_after_launch("minecraft", baseline_pids={1}, timeout=0.5)
+        self.assertEqual(result, window)
+
+    def test_find_after_launch_ignores_hidden_windows(self):
+        module = __import__("core.desktop.app_host", fromlist=["ApplicationHost"])
+        host = module.ApplicationHost()
+        hidden = SimpleNamespace(pid=999, visible=False, title="Minecraft", exe="javaw.exe", hwnd=77)
+        with patch.object(module.WindowManager, "enumerate_windows", return_value=[hidden]):
+            result = host.find_after_launch("minecraft", baseline_pids=set(), timeout=0.5)
+        self.assertIsNone(result)
