@@ -4258,7 +4258,8 @@ class WorkspaceSidebar(QWidget):
         elif action == "hide_mission_note":
             self._task_card._hide_mission_note()
         elif action == "reopen_mission_note":
-            self._task_card.reopen_mission_note()
+            if self._task_card.reopen_mission_note():
+                self.show_workspace(animate=False)
 
     def _send(self):
         text = self._input.text().strip()
