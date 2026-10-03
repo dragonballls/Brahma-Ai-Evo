@@ -1,7 +1,7 @@
 """
 memory/config_manager.py - Centralized configuration access for Brahma AI.
 Handles persistent app settings, audio device selection, push-to-talk,
-and AI options. Backed by config/app_settings.json.
+and AI options. Backed by the user-scoped %LOCALAPPDATA%/BrahmaAI/config/app_settings.json.
 """
 
 from __future__ import annotations
