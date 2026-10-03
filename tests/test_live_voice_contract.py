@@ -17,6 +17,7 @@ class LiveVoiceContractTests(unittest.TestCase):
     def setUpClass(cls):
         cls.main_text = (ROOT / "main.py").read_text(encoding="utf-8")
         cls.echo_text = (ROOT / "core" / "echo.py").read_text(encoding="utf-8")
+        cls.language_policy_text = (ROOT / "core" / "language_policy.py").read_text(encoding="utf-8")
 
     def test_input_and_output_chunk_is_within_live_latency_range(self):
         tree = ast.parse(self.main_text)
@@ -35,7 +36,7 @@ class LiveVoiceContractTests(unittest.TestCase):
     def test_language_lock_is_present_in_voice_and_system_prompt(self):
         self.assertIn("language_policy import prompt_block", self.main_text)
         self.assertIn("language_prompt_block()", self.main_text)
-        self.assertIn("Change response language only when the user explicitly requests", self.main_text)
+        self.assertIn("Change response language only when the user explicitly requests", self.language_policy_text)
 
     def test_server_vad_and_start_of_activity_interrupts_are_configured(self):
         self.assertIn("realtime_input_config={", self.main_text)
