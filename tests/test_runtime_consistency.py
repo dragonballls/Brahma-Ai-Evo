@@ -279,6 +279,16 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertNotIn('"http://127.0.0.1:20128/"', source)
         self.assertIn("OMNIROUTE_DEFAULT_BASE_URL", source)
 
+    def test_llm_settings_use_canonical_store(self):
+        source = self.read("llm_client.py")
+        self.assertIn("from memory.config_manager import load_settings", source)
+        self.assertNotIn('open(SETTINGS_PATH, "r"', source)
+
+    def test_dashboard_credentials_use_canonical_config_accessor(self):
+        source = self.read("dashboard/server.py")
+        self.assertIn('get_api_key("Gemini")', source)
+        self.assertNotIn('api_keys.json', source)
+
     def test_main_ui_api_reads_use_canonical_config_accessor(self):
         source = self.read("ui.py")
         self.assertIn("from config import get_config", source)
