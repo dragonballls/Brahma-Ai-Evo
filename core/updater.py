@@ -27,6 +27,15 @@ class UpdateChecker(QObject):
         if self._check_thread:
             self._check_thread.join(timeout=1.0)
 
+    def check_now(self) -> str | None:
+        """Check GitHub once and emit when a newer commit is available."""
+        local_hash = self._get_local_hash()
+        remote_hash = self._get_remote_hash()
+        if local_hash and remote_hash and local_hash != remote_hash:
+            self.update_available_sig.emit(remote_hash)
+            return remote_hash
+        return None
+
     def _get_local_hash(self):
         try:
             output = subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL)
