@@ -6589,6 +6589,44 @@ def _main_impl():
     except Exception:
         plugin_manager = None
 
+    live_holder = {"instance": None}
+
+    def _cleanup_runtime_services() -> None:
+        """Single application-exit cleanup path for services started before/inside runner."""
+        live = live_holder.get("instance")
+        if live is not None:
+            try:
+                live.stop_background_services()
+            except Exception:
+                pass
+        try:
+            sensorium.stop()
+        except Exception:
+            pass
+        try:
+            clip_sentry = getattr(ui, "_clip_sentry", None)
+            if clip_sentry is not None:
+                clip_sentry.stop()
+        except Exception:
+            pass
+        try:
+            if dashboard is not None:
+                dashboard.stop()
+        except Exception:
+            pass
+        try:
+            if brahma_connect is not None:
+                brahma_connect.stop()
+        except Exception:
+            pass
+
+    try:
+        app_instance = QApplication.instance()
+        if app_instance is not None:
+            app_instance.aboutToQuit.connect(_cleanup_runtime_services)
+    except Exception as exc:
+        _startup_log(f"runtime shutdown hook wiring skipped: {exc}")
+
     def runner():
         if BRAHMA_EVO_TEST_MODE:
             _startup_log("runner test mode bypassing api key")
@@ -6602,12 +6640,7 @@ def _main_impl():
             dashboard_started=dashboard is not None,
             enable_dashboard=dashboard_enabled,
         )
-        try:
-            app_instance = QApplication.instance()
-            if app_instance is not None:
-                app_instance.aboutToQuit.connect(brahma_evo.stop_background_services)
-        except Exception as exc:
-            _startup_log(f"voice shutdown hook wiring skipped: {exc}")
+        live_holder["instance"] = brahma_evo
 
         # Deep idle suspends nonessential polling/rendering without disconnecting
         # the live microphone/AI path that preserves hands-free wake behavior.
