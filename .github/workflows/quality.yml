@@ -42,3 +42,5 @@ jobs:
         run: python -m unittest tests.test_emotional_controller -v
       - name: Run emotional feature regressions
         run: python -m unittest tests.test_emotional_feature -v
+      - name: Run speech prosody regressions
+        run: python -m unittest tests.test_prosody -v
