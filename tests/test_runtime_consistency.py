@@ -455,6 +455,13 @@ class RuntimeConsistencyTests(unittest.TestCase):
             block = source[start: next_def if next_def >= 0 else len(source)]
             self.assertIn("_set_value(", block, method)
 
+    def test_omniroute_gateway_has_one_canonical_owner(self):
+        setup = self.read("core/omniroute_setup.py")
+        gateway = self.read("core/omniroute.py")
+        self.assertNotIn("class OmniRouteGateway", setup)
+        self.assertIn("class OmniRouteGateway", gateway)
+        self.assertIn("_gateway = OmniRouteGateway()", gateway)
+
     def test_omniroute_has_application_owned_shutdown_cleanup(self):
         setup = self.read("core/omniroute_setup.py")
         gateway = self.read("core/omniroute.py")
