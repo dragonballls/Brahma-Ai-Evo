@@ -175,10 +175,16 @@ def _worker_alive(mission: dict[str, Any]) -> bool:
     return _process_matches(mission.get("worker_pid"), mission.get("worker_create_time"))
 
 
+def _runtime_root() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[2]
+
+
 def _main_command(*args: str) -> list[str]:
     if getattr(sys, "frozen", False):
         return [sys.executable, *args]
-    return [sys.executable, str(Path(__file__).resolve().parents[2] / "main.py"), *args]
+    return [sys.executable, str(_runtime_root() / "main.py"), *args]
 
 
 def _hidden_subprocess_kwargs() -> dict[str, Any]:
@@ -202,7 +208,7 @@ def _launch_worker_process(mission_id: str) -> tuple[bool, str | None, str]:
         with _worker_log_path().open("a", encoding="utf-8") as log:
             proc = subprocess.Popen(
                 command,
-                cwd=str(Path(__file__).resolve().parents[2]),
+                cwd=str(_runtime_root()),
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 **_hidden_subprocess_kwargs(),
@@ -230,9 +236,12 @@ def _ensure_recovery_tasks() -> dict[str, Any]:
             pythonw = interpreter_path.with_name("pythonw.exe")
             interpreter = str(pythonw if pythonw.exists() else interpreter_path)
 
-        command = subprocess.list2cmdline(
-            [interpreter, str(Path(__file__).resolve().parents[2] / "main.py"), "--mission-supervisor-once"]
+        supervisor_command = (
+            [interpreter, "--mission-supervisor-once"]
+            if getattr(sys, "frozen", False)
+            else [interpreter, str(_runtime_root() / "main.py"), "--mission-supervisor-once"]
         )
+        command = subprocess.list2cmdline(supervisor_command)
 
         results: dict[str, Any] = {"supported": True, "installed": True, "tasks": []}
         specs = [
