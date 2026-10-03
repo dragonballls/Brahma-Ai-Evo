@@ -208,6 +208,19 @@ class DesktopModeController:
             game_mode = game_active or str(decision.get("mode") or "").lower() == "game"
             if self.layer:
                 self.layer.set_low_power(game_mode)
+                pressure = str(decision.get("pressure") or "normal").lower()
+                if game_mode:
+                    quality = "low"
+                elif pressure == "high" or (
+                    snapshot.get("gpu_percent") is not None
+                    and float(snapshot.get("gpu_percent") or 0.0) >= 92.0
+                ):
+                    quality = "low"
+                elif pressure == "elevated":
+                    quality = "balanced"
+                else:
+                    quality = "full"
+                self.layer.set_render_quality(quality)
                 self.layer.set_performance_status(
                     self.performance.profile,
                     snapshot.get("cpu_percent"),
