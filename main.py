@@ -2650,7 +2650,7 @@ class BrahmaLive:
                 try:
                     from core.omniroute import gateway
                     result = gateway().provisioner.sync_existing_provider_keys(
-                        get_user_data_dir() / "config" / "api_keys.json"
+                        API_CONFIG_PATH
                     )
                     self.ui.write_log(f"[OmniRoute] Provider sync: {result}")
                     self.speak(
@@ -5348,10 +5348,9 @@ class BrahmaLive:
                 if action == "status":
                     result = json.dumps(omni.status(), ensure_ascii=False)
                 elif action == "sync_existing_keys":
-                    from core.user_paths import get_user_data_dir
                     result = json.dumps(
                         omni.provisioner.sync_existing_provider_keys(
-                            get_user_data_dir() / "config" / "api_keys.json"
+                            API_CONFIG_PATH
                         ),
                         ensure_ascii=False,
                     )
