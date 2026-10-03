@@ -1498,6 +1498,16 @@ def _default_app_settings() -> dict:
         "attention_call_prompts": True,
         "developer_mode_enabled": False,
         "developer_mode_workspace": "",
+        "low_power_mode": True,
+        "voice_always_on": False,
+        "background_sensorium": False,
+        "background_attention_monitor": False,
+        "background_social_watchers": False,
+        "clipboard_monitor_enabled": False,
+        "startup_briefing_enabled": False,
+        "background_mobile_connect": False,
+        "load_plugins_on_startup": False,
+        "background_updates_enabled": False,
     }
 
 
