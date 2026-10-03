@@ -15841,7 +15841,7 @@ class BrahmaUI:
         self._win = MainWindow(face_path)
         try:
             from core.updater import UpdateChecker
-            self._updater = UpdateChecker()
+            self._updater = UpdateChecker(base_dir=BASE_DIR)
             self._updater.update_available_sig.connect(self._show_update_prompt)
             self._updater.start()
         except Exception as e:
