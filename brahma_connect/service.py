@@ -21,8 +21,9 @@ class BrahmaConnectService:
     _started: bool = field(init=False, default=False)
 
     def __post_init__(self) -> None:
-        self.base_dir = Path(self.base_dir)
+        self.base_dir = Path(self.base_dir).expanduser().resolve()
         self.gateway = BrahmaGateway(self.base_dir, self.config)
+        self._lock = threading.RLock()
 
     @property
     def app(self):
@@ -37,6 +38,7 @@ class BrahmaConnectService:
         self.gateway.on_chat_message = cb
 
     _loop: asyncio.AbstractEventLoop | None = field(init=False, default=None)
+    _lock: threading.RLock = field(init=False, repr=False)
 
     def broadcast_chat_message(self, event: dict):
         from .gateway.protocol import ProtocolTypes, build_message
@@ -49,41 +51,47 @@ class BrahmaConnectService:
         )
 
     def start_background(self) -> None:
-        if self._thread and self._thread.is_alive():
-            return
+        with self._lock:
+            if self._thread and self._thread.is_alive():
+                return
 
-        def _runner():
-            loop = asyncio.new_event_loop()
-            self._loop = loop
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(self.gateway.serve())
-            finally:
+            def _runner():
+                loop = asyncio.new_event_loop()
+                with self._lock:
+                    self._loop = loop
+                    self._started = True
+                asyncio.set_event_loop(loop)
                 try:
-                    loop.run_until_complete(asyncio.sleep(0))
-                except Exception:
-                    pass
-                loop.close()
-                self._loop = None
-                self._started = False
+                    loop.run_until_complete(self.gateway.serve())
+                finally:
+                    try:
+                        loop.run_until_complete(asyncio.sleep(0))
+                    except Exception:
+                        pass
+                    loop.close()
+                    with self._lock:
+                        self._loop = None
+                        self._thread = None
+                        self._started = False
 
-        self._thread = threading.Thread(
-            target=_runner,
-            name="BrahmaConnectGateway",
-            daemon=True,
-        )
-        self._thread.start()
-        self._started = True
+            self._thread = threading.Thread(
+                target=_runner,
+                name="BrahmaConnectGateway",
+                daemon=True,
+            )
+            self._thread.start()
 
     def stop(self) -> None:
         self.gateway.request_shutdown()
-        thread = self._thread
+        with self._lock:
+            thread = self._thread
         if thread and thread.is_alive() and thread is not threading.current_thread():
             thread.join(timeout=2.0)
-        if thread and not thread.is_alive():
-            self._thread = None
-            self._loop = None
-        self._started = False
+        with self._lock:
+            if self._thread is thread and (thread is None or not thread.is_alive()):
+                self._thread = None
+                self._loop = None
+                self._started = False
 
     def is_running(self) -> bool:
         return self.gateway.is_running()
@@ -138,10 +146,16 @@ class BrahmaConnectService:
 
 
 _SERVICE: BrahmaConnectService | None = None
+_SERVICE_LOCK = threading.RLock()
 
 
 def get_service(base_dir: str | Path) -> BrahmaConnectService:
     global _SERVICE
-    if _SERVICE is None:
-        _SERVICE = BrahmaConnectService(Path(base_dir))
-    return _SERVICE
+    requested = Path(base_dir).expanduser().resolve()
+    with _SERVICE_LOCK:
+        if _SERVICE is None:
+            _SERVICE = BrahmaConnectService(requested)
+        elif _SERVICE.base_dir != requested:
+            _SERVICE.stop()
+            _SERVICE = BrahmaConnectService(requested)
+        return _SERVICE
