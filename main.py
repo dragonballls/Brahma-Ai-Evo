@@ -2003,7 +2003,7 @@ TOOL_DECLARATIONS = [
                 "wake_method": {"type": "STRING", "description": "wol when Wake-on-LAN is configured."},
                 "mode": {"type": "STRING", "description": "visible | background"},
                 "command": {"type": "STRING", "description": "Device command; Bluetooth LE supports services, pair, unpair, read, write, connect/probe."},
-                "command_payload": {"type": "OBJECT", "description": "Optional structured payload for device commands."},
+                "command_payload": {"type": "OBJECT", "description": "Optional structured payload; Bluetooth read/write uses characteristic_uuid, data, hex_data, and response."},
                 "pairing_code": {"type": "STRING", "description": "Android wireless-debugging pairing code when explicitly pairing."},
                 "capabilities": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "Optional device capability names."},
                 "metadata": {"type": "OBJECT", "description": "Optional adapter metadata, such as WOL broadcast address."},
