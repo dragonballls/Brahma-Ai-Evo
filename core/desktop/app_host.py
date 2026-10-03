@@ -106,6 +106,8 @@ class ApplicationHost:
             # Existing-window fallback: useful when the launcher correctly
             # focuses an already-running application instead of spawning a PID.
             for window in windows:
+                if not window.visible or not window.title:
+                    continue
                 text = f"{window.title} {window.exe}".lower()
                 if target_text and target_text in text:
                     return window
