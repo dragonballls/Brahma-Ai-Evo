@@ -146,5 +146,45 @@ class UnifiedAIClient:
         else:
             return openrouter_client.multi_turn(messages, model, max_tokens, temperature)
 
+    def intelligent_chat(
+        self,
+        prompt: str,
+        system: str = "You are Brahma Evo, a precise and helpful assistant.",
+        history: Optional[list[dict]] = None,
+        context: str = "",
+        profile: Optional[str] = None,
+    ) -> str:
+        """Use the cloud multi-model intelligence layer while preserving Local mode."""
+        self.reload_settings()
+        if self._provider == "Local" or bool(self._provider and self._provider.lower() == "local"):
+            return self.chat(prompt, system=system, history=history)
+        from core.intelligence_orchestrator import orchestrator
+        return orchestrator.respond(
+            prompt,
+            system=system,
+            history=history,
+            context=context,
+            profile=profile,
+        )
+
+    def intelligent_json(
+        self,
+        prompt: str,
+        system: str = "Return ONLY valid JSON.",
+        profile: str = "smart",
+        max_tokens: int = 8192,
+    ) -> dict:
+        """Use multi-model cloud reasoning for structured generation."""
+        self.reload_settings()
+        if self._provider == "Local" or bool(self._provider and self._provider.lower() == "local"):
+            return self.chat_json(prompt, system=system, max_tokens=max_tokens)
+        from core.intelligence_orchestrator import orchestrator
+        return orchestrator.respond_json(
+            prompt,
+            system=system,
+            profile=profile,
+            max_tokens=max_tokens,
+        )
+
 client = UnifiedAIClient()
 LLMClient = UnifiedAIClient
