@@ -12,6 +12,7 @@ import threading
 from typing import Any
 
 from core.runtime_paths import API_CONFIG_PATH
+from core.provider_policy import GEMINI, OPENROUTER, LOCAL, normalize_provider
 
 
 _CONFIG_LOCK = threading.RLock()
@@ -54,21 +55,16 @@ def save_config(updates: dict[str, Any]) -> None:
 
 
 def get_api_key(provider: str) -> str:
-    raw = str(provider or "").strip().casefold()
-    aliases = {
-        "gemini": "gemini",
-        "google gemini": "gemini",
-        "google-gemini": "gemini",
-        "google": "gemini",
-        "openrouter": "openrouter",
-        "open router": "openrouter",
-        "local": "local",
-        "local ai": "local",
-        "ollama": "local",
-    }
-    key_name = aliases.get(raw, raw)
-    if not key_name:
+    raw = str(provider or "").strip()
+    if not raw:
         return ""
+    normalized = normalize_provider(raw, default=raw)
+    storage_names = {
+        GEMINI: "gemini",
+        OPENROUTER: "openrouter",
+        LOCAL: "local",
+    }
+    key_name = storage_names.get(normalized, normalized.casefold().replace(" ", "_"))
     return str(get_config().get(f"{key_name}_api_key", "") or "").strip()
 
 
