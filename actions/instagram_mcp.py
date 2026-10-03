@@ -84,13 +84,16 @@ class BrowserInstagramWorker(threading.Thread):
     def __init__(self, service: "InstagramService"):
         super().__init__(name="IGBrowserWorker", daemon=True)
         self.service = service
-        self.q: queue.Queue = queue.Queue()
+        self.q: queue.Queue = queue.Queue(maxsize=32)
         self.running = True
         self._last_processed_msgs: Dict[str, str] = {}
 
     def execute(self, fn, *args, timeout: float = 35.0):
         fut = Future()
-        self.q.put((fn, args, fut))
+        try:
+            self.q.put((fn, args, fut), timeout=1.0)
+        except queue.Full as exc:
+            raise RuntimeError("Instagram browser worker is busy.") from exc
         return fut.result(timeout=timeout)
 
     def is_browser_logged_in(self, ctx) -> bool:
@@ -692,13 +695,26 @@ class InstagramService:
         ig_log("Instagram Instagrapi background daemon started.")
 
     def stop_daemon(self):
-        """Stops the background DM listener."""
+        """Stops the background DM listener and joins owned worker threads."""
         self._running = False
         self._stop_event.set()
         with self._lock:
-            if self._browser_worker:
-                self._browser_worker.running = False
-                self._browser_worker = None
+            worker = self._browser_worker
+            self._browser_worker = None
+        if worker is not None:
+            worker.running = False
+            try:
+                worker.q.put_nowait(None)
+            except (queue.Full, Exception):
+                pass
+            if worker.is_alive() and worker is not threading.current_thread():
+                worker.join(timeout=2.0)
+
+        thread = self._thread
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=2.0)
+        if thread and not thread.is_alive():
+            self._thread = None
         ig_log("Instagram background daemon stopped.")
 
     def _daemon_loop(self):
@@ -710,7 +726,8 @@ class InstagramService:
             return
 
         POLL_INTERVAL = 35
-        while self._running:
+        try:
+            while self._running:
             try:
                 threads = cl.direct_threads(amount=10)
                 my_user_id = str(cl.user_id) if hasattr(cl, "user_id") else ""
@@ -768,8 +785,12 @@ class InstagramService:
                     if self._stop_event.wait(timeout=30):
                         break
 
-            if self._stop_event.wait(timeout=POLL_INTERVAL):
-                break
+                if self._stop_event.wait(timeout=POLL_INTERVAL):
+                    break
+        finally:
+            self._running = False
+            if self._thread is threading.current_thread():
+                self._thread = None
 
 
 # --- Global Helpers matching legacy interface ---
