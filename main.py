@@ -1163,6 +1163,7 @@ TOOL_DECLARATIONS = [
                 "goal": {"type": "STRING", "description": "What the finished content should accomplish and feel like."},
                 "source": {"type": "STRING", "description": "Source video path; Brahma can also find a recent video automatically."},
                 "video_path": {"type": "STRING", "description": "Alias for source."},
+                "source_paths": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "Multiple source video paths to combine into one Creator project."},
                 "project": {"type": "STRING", "description": "Creator project name or project manifest path."},
                 "platform": {"type": "STRING", "description": "youtube | youtube_short | tiktok | instagram_reel or other target."},
                 "target_length": {"type": "STRING", "description": "Desired final duration, such as 8 minutes or 45 seconds."},
@@ -1172,6 +1173,9 @@ TOOL_DECLARATIONS = [
                 "mood": {"type": "STRING", "description": "Desired music/content mood."},
                 "output": {"type": "STRING", "description": "Output WAV path for record_audio."},
                 "duration_seconds": {"type": "NUMBER", "description": "Microphone recording duration."},
+                "voice": {"type": "STRING", "description": "Voice name for generated narration, when supported by the selected TTS engine."},
+                "rate": {"type": "STRING", "description": "Narration speaking rate such as +10% or -5%."},
+                "text": {"type": "STRING", "description": "Text to turn into generated narration audio."},
                 "privacy": {"type": "STRING", "description": "YouTube privacy: private | unlisted | public. Default private."},
                 "playlist_id": {"type": "STRING", "description": "Optional YouTube playlist ID."},
                 "length": {"type": "STRING", "description": "Requested script length."}
