@@ -36,6 +36,8 @@ DEFAULT_VALUE = ""
 
 _cache: dict[str, list[str]] | None = None
 _cache_lock = threading.Lock()
+_cache_generation = 0
+_prefetch_thread: threading.Thread | None = None
 
 # Which host API each direction settled on, so resolve() opens the same endpoint
 # the picker listed. Filled in by _query().
@@ -200,11 +202,12 @@ def configure(input_rate: int, output_rate: int) -> None:
 
     Drops any cached list: which devices are usable depends on the rate, so a
     list built under the old rates would be stale."""
-    global _cache
+    global _cache, _cache_generation
     _RATES["input"]  = int(input_rate)
     _RATES["output"] = int(output_rate)
     with _cache_lock:
         _cache = None
+        _cache_generation += 1
 
 
 def _usable(idx: int, kind: str) -> bool:
@@ -320,17 +323,43 @@ def _query() -> dict[str, list[str]]:
 
 
 def prefetch() -> None:
-    """Warm the cache on a background thread. Called once at startup so the
-    settings drawer never pays for enumeration on the Qt thread."""
-    def _work():
-        global _cache
-        result = _query()
-        with _cache_lock:
-            _cache = result
-        print(f"[Audio] {len(result['input'])} input / "
-              f"{len(result['output'])} output devices found")
-    threading.Thread(target=_work, daemon=True, name="audio-devices").start()
+    """Warm the cache once for the current sample-rate generation.
 
+    Multiple callers are allowed, but only one probe thread runs at a time and
+    an older probe can never overwrite a cache created for newer rates.
+    """
+    global _cache, _prefetch_thread
+
+    with _cache_lock:
+        if _cache is not None:
+            return
+        if _prefetch_thread is not None and _prefetch_thread.is_alive():
+            return
+        generation = _cache_generation
+
+    def _work():
+        global _cache, _prefetch_thread
+        try:
+            result = _query()
+            with _cache_lock:
+                if generation == _cache_generation:
+                    _cache = result
+            print(
+                f"[Audio] {len(result['input'])} input / "
+                f"{len(result['output'])} output devices found"
+            )
+        finally:
+            with _cache_lock:
+                _prefetch_thread = None
+
+    thread = threading.Thread(target=_work, daemon=True, name="audio-devices")
+    with _cache_lock:
+        if _cache is not None or (
+            _prefetch_thread is not None and _prefetch_thread.is_alive()
+        ):
+            return
+        _prefetch_thread = thread
+    thread.start()
 
 def list_devices(kind: str, refresh: bool = False) -> list[str]:
     """Device names for 'input' or 'output'. Falls back to a synchronous query
