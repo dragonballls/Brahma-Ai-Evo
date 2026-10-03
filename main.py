@@ -127,7 +127,16 @@ BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = get_user_data_dir() / "config" / "api_keys.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
 STARTUP_LOG     = Path(os.environ.get("LOCALAPPDATA", str(BASE_DIR))) / "Brahma Evo" / "startup.log"
-LIVE_MODEL          = os.environ.get("BRAHMA_LIVE_MODEL", "models/gemini-3.8-live")
+LIVE_MODEL = os.environ.get("BRAHMA_LIVE_MODEL", "models/gemini-3.8-live")
+_LIVE_FALLBACK_MODELS = tuple(
+    model.strip()
+    for model in os.environ.get(
+        "BRAHMA_LIVE_FALLBACK_MODELS",
+        "models/gemini-3.1-flash-live-preview,models/gemini-2.5-flash-native-audio-preview-12-2025",
+    ).split(",")
+    if model.strip()
+)
+LIVE_MODEL_CANDIDATES = tuple(dict.fromkeys((LIVE_MODEL, *_LIVE_FALLBACK_MODELS)))
 CHANNELS            = 1
 SEND_SAMPLE_RATE    = 16000
 RECEIVE_SAMPLE_RATE = 24000
@@ -2404,6 +2413,9 @@ class BrahmaLive:
         self.ui.on_remote_clicked = self._make_remote_key
         self._echo = EchoGuard()
         self._resume_handle = None
+        self._live_model_index = 0
+        self._live_model_failure_streak = 0
+        self._voice_audio_degraded = False
         self._ptt = None
         self._ptt_held = False
         try:
@@ -5939,6 +5951,9 @@ class BrahmaLive:
     async def _receive_audio(self):
         print("[BRAHMA EVO] 👂 Recv started")
         out_buf, in_buf = [], []
+        turn_audio_bytes = 0
+        tiny_audio_chunks = 0
+        output_transcript_seen = False
 
         try:
             while True:
@@ -5949,10 +5964,30 @@ class BrahmaLive:
                             self._resume_handle = _sru.new_handle
 
                     if response.data:
-                        self.set_speaking(True)
-                        self.audio_in_queue.put_nowait(
-                            (self._playback_generation.current(), response.data)
-                        )
+                        chunk_size = len(response.data)
+                        turn_audio_bytes += chunk_size
+                        if chunk_size <= 8:
+                            tiny_audio_chunks += 1
+                        else:
+                            tiny_audio_chunks = 0
+                        # Ignore effectively-empty audio chunks. Gemini 3.8 Live
+                        # has a reported failure mode where transcription arrives
+                        # but streamed audio chunks contain almost no PCM data.
+                        if chunk_size > 8:
+                            self.set_speaking(True)
+                            self.audio_in_queue.put_nowait(
+                                (self._playback_generation.current(), response.data)
+                            )
+                        if output_transcript_seen and tiny_audio_chunks >= 20 and turn_audio_bytes < 256:
+                            self._voice_audio_degraded = True
+                            msg = (
+                                "Live voice produced transcription without usable audio; "
+                                f"model={LIVE_MODEL_CANDIDATES[self._live_model_index]}. "
+                                "Rotating to the next verified voice model."
+                            )
+                            _startup_log("[LIVE] " + msg)
+                            self.ui.write_log("ERR: " + msg)
+                            raise RuntimeError(msg)
 
                     if response.server_content:
                         sc = response.server_content
@@ -5967,6 +6002,7 @@ class BrahmaLive:
                             self.set_speaking(True)
                             txt = sc.output_transcription.text.strip()
                             if txt:
+                                output_transcript_seen = True
                                 out_buf.append(txt)
 
                         if sc.input_transcription and sc.input_transcription.text:
@@ -5988,6 +6024,9 @@ class BrahmaLive:
 
                         if sc.turn_complete:
                             self.set_speaking(False)
+                            turn_audio_bytes = 0
+                            tiny_audio_chunks = 0
+                            output_transcript_seen = False
 
                             full_in = " ".join(in_buf).strip()
                             if full_in:
@@ -6145,11 +6184,14 @@ class BrahmaLive:
 
         while True:
             try:
-                print("[BRAHMA EVO] 🔌 Connecting...")
+                live_model = LIVE_MODEL_CANDIDATES[
+                    self._live_model_index % len(LIVE_MODEL_CANDIDATES)
+                ]
+                print(f"[BRAHMA EVO] 🔌 Connecting Live voice ({live_model})...")
                 self.ui.set_state("THINKING")
                 config = self._build_config()
 
-                connect_cm = client.aio.live.connect(model=LIVE_MODEL, config=config)
+                connect_cm = client.aio.live.connect(model=live_model, config=config)
                 session = await asyncio.wait_for(connect_cm.__aenter__(), timeout=LIVE_CONNECT_TIMEOUT)
                 try:
                     async with asyncio.TaskGroup() as tg:
@@ -6158,7 +6200,9 @@ class BrahmaLive:
                         self.audio_in_queue = asyncio.Queue()
                         self.out_queue      = asyncio.Queue()  # Fix: removed maxsize=10 to prevent dropping packets
                         
-                        print("[BRAHMA EVO] ✅ Connected.")
+                        self._live_model_failure_streak = 0
+                        self._voice_audio_degraded = False
+                        print(f"[BRAHMA EVO] ✅ Connected ({live_model}).")
                         try:
                             self.ui.boot_set_step_status("Connect AI backend", "done")
                             self.ui.boot_set_progress(75, "AI backend connected")
@@ -6213,14 +6257,31 @@ class BrahmaLive:
                     pass
                 if _is_gemini_limit_error(e):
                     self._use_openrouter_first = True
+                self._live_model_failure_streak += 1
+                if self._live_model_failure_streak >= 2 and len(LIVE_MODEL_CANDIDATES) > 1:
+                    self._live_model_index = (
+                        self._live_model_index + 1
+                    ) % len(LIVE_MODEL_CANDIDATES)
+                    self._live_model_failure_streak = 0
+                    _startup_log(
+                        f"[LIVE] rotating voice model after repeated failures -> "
+                        f"{LIVE_MODEL_CANDIDATES[self._live_model_index]}"
+                    )
                 self.session = None
                 self._loop = None
+                self._voice_audio_degraded = False
             self.set_speaking(False)
             # Do not present a false LISTENING state while the Live session is
             # actually disconnected/reconnecting.
             self.ui.set_state("THINKING")
-            print("[BRAHMA EVO] 🔄 Reconnecting in 5s...")
-            _startup_log("[LIVE] reconnecting in 5s")
+            print(
+                "[BRAHMA EVO] 🔄 Reconnecting in 5s with "
+                f"{LIVE_MODEL_CANDIDATES[self._live_model_index]}..."
+            )
+            _startup_log(
+                "[LIVE] reconnecting in 5s with "
+                f"{LIVE_MODEL_CANDIDATES[self._live_model_index]}"
+            )
             await asyncio.sleep(5)
 
 def _main_impl():
