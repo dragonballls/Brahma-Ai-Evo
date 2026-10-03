@@ -54,8 +54,22 @@ def save_config(updates: dict[str, Any]) -> None:
 
 
 def get_api_key(provider: str) -> str:
-    key = f"{str(provider or '').strip().lower()}_api_key"
-    return str(get_config().get(key, "") or "").strip()
+    raw = str(provider or "").strip().casefold()
+    aliases = {
+        "gemini": "gemini",
+        "google gemini": "gemini",
+        "google-gemini": "gemini",
+        "google": "gemini",
+        "openrouter": "openrouter",
+        "open router": "openrouter",
+        "local": "local",
+        "local ai": "local",
+        "ollama": "local",
+    }
+    key_name = aliases.get(raw, raw)
+    if not key_name:
+        return ""
+    return str(get_config().get(f"{key_name}_api_key", "") or "").strip()
 
 
 def get_os() -> str:
