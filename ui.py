@@ -11168,6 +11168,29 @@ class SystemConnectivityPage(QWidget):
         lay1.addWidget(self._gemini_row)
         lay1.addWidget(self._or_row)
 
+        # Open OmniRoute's actual dashboard inside Brahma. This uses the same
+        # local gateway Brahma talks to, so provider setup/testing is not a
+        # second, parallel implementation.
+        omni_btn = QPushButton("Open OmniRoute Dashboard Inside Brahma")
+        omni_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        omni_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(0, 229, 255, 0.10);
+                color: {C.ACC};
+                border: 1px solid rgba(0, 229, 255, 0.38);
+                border-radius: 12px;
+                padding: 11px 14px;
+                font-weight: 700;
+            }}
+            QPushButton:hover {{
+                background: rgba(0, 229, 255, 0.18);
+                border: 1px solid rgba(0, 229, 255, 0.62);
+            }}
+        """)
+        omni_btn.setToolTip("Open the real OmniRoute Providers / Endpoints / Combos dashboard inside Brahma Evo.")
+        omni_btn.clicked.connect(self._open_omniroute_dashboard)
+        lay1.addWidget(omni_btn)
+
         # Additional cloud providers used by OmniRoute's multi-model intelligence pool.
         provider_pool = self._card(
             "Advanced Cloud Intelligence Pool",
@@ -12617,6 +12640,108 @@ class SystemConnectivityPage(QWidget):
     def _open_api_keys(self):
         if self._ctrl() and hasattr(self._ctrl(), "_win"):
             self._ctrl()._win._show_setup(self._ctrl()._win._load_api_defaults())
+
+    def _open_omniroute_dashboard(self):
+        """Embed the real OmniRoute dashboard inside Brahma Evo."""
+        if not WEB_ENGINE_AVAILABLE:
+            if self._ctrl() and hasattr(self._ctrl(), "write_log"):
+                self._ctrl().write_log("ERR: Qt WebEngine is unavailable; cannot embed the OmniRoute dashboard.")
+            return
+
+        dialog = QDialog(self.window())
+        dialog.setWindowTitle("OmniRoute — Brahma Evo")
+        dialog.resize(1220, 820)
+        dialog.setMinimumSize(900, 620)
+        dialog.setStyleSheet(f"""
+            QDialog {{
+                background: {C.BG};
+                color: {C.WHITE};
+            }}
+            QLabel {{
+                color: {C.TEXT_MED};
+            }}
+            QPushButton {{
+                background: rgba(255,255,255,0.04);
+                color: {C.WHITE};
+                border: 1px solid rgba(255,255,255,0.10);
+                border-radius: 10px;
+                padding: 8px 12px;
+            }}
+            QPushButton:hover {{
+                background: rgba(0,229,255,0.10);
+                border: 1px solid rgba(0,229,255,0.35);
+            }}
+        """)
+
+        root = QVBoxLayout(dialog)
+        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(8)
+
+        header = QHBoxLayout()
+        status = QLabel("Starting OmniRoute…")
+        status.setStyleSheet(f"color: {C.ACC}; font-weight: 700;")
+        header.addWidget(status)
+        header.addStretch(1)
+
+        refresh_btn = QPushButton("Refresh Dashboard")
+        header.addWidget(refresh_btn)
+        close_btn = QPushButton("Close")
+        header.addWidget(close_btn)
+        root.addLayout(header)
+
+        web = QWebEngineView(dialog)
+        web.setStyleSheet("background: #020306; border: none;")
+        page_settings = web.settings()
+        try:
+            page_settings.setAttribute(page_settings.WebAttribute.JavascriptEnabled, True)
+            page_settings.setAttribute(page_settings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
+        except Exception:
+            pass
+        root.addWidget(web, 1)
+
+        url = QUrl("http://127.0.0.1:20128/")
+        web.loadStarted.connect(lambda: status.setText("Connecting to OmniRoute…"))
+        web.loadFinished.connect(
+            lambda ok: status.setText(
+                "OmniRoute dashboard connected" if ok else "OmniRoute is still starting — retrying…"
+            )
+        )
+        refresh_btn.clicked.connect(lambda: web.reload())
+        close_btn.clicked.connect(dialog.close)
+
+        # Keep the expensive startup/install work off the Qt UI thread.
+        def ensure_gateway():
+            try:
+                from core.omniroute import gateway
+                gateway().ensure_ready()
+            except Exception as exc:
+                logger = getattr(__import__("logging"), "getLogger")("BrahmaUI")
+                logger.warning("OmniRoute dashboard startup failed: %s", exc)
+
+        threading.Thread(
+            target=ensure_gateway,
+            name="brahma-omniroute-dashboard-start",
+            daemon=True,
+        ).start()
+
+        # The same dashboard URL is retried while the gateway becomes ready.
+        retry_timer = QTimer(dialog)
+        retry_timer.setInterval(1500)
+        retry_timer.timeout.connect(lambda: web.load(url))
+        retry_timer.start()
+
+        def stop_retry(*_args):
+            if retry_timer.isActive():
+                retry_timer.stop()
+
+        dialog.finished.connect(stop_retry)
+        QTimer.singleShot(300, lambda: web.load(url))
+
+        # Keep a reference on the page so the dialog is not garbage collected.
+        self._omniroute_dashboard_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _save_cloud_provider_key(self, provider: str, field: str, key: str, status_lbl):
         key = (key or "").strip()
