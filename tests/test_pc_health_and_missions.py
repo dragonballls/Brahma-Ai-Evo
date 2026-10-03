@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import importlib
-import time
+from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -24,7 +24,7 @@ class PCHealthGuardianTests(TestCase):
                 self.info = {
                     "pid": pid,
                     "name": name,
-                    "memory_info": psutil._common.pmem(rss, 0, 0, 0, 0),
+                    "memory_info": SimpleNamespace(rss=rss),
                 }
 
         snapshots = [
