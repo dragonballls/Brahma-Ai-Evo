@@ -39,3 +39,4 @@ PyQt6-WebEngine
 edge-tts
 matplotlib
 speedtest-cli
+pywin32>=306
