@@ -1495,6 +1495,7 @@ def _default_app_settings() -> dict:
         "desktop_mode_enabled": False,
         "desktop_performance_profile": "adaptive",
         "show_desktop_performance_overlay": False,
+        "desktop_workerw_backend_enabled": False,
         "check_updates_on_startup": True,
         "default_ai_provider": "Gemini",
         "auto_provider_switch": True,
