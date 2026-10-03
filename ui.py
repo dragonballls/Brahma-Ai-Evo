@@ -27,7 +27,7 @@ if platform.system() == "Windows":
     import winreg
 
 from PyQt6.QtCore import (
-    QEasingCurve, QEvent, QPoint, QPointF, QRectF, QSize, Qt,
+    QEasingCurve, QEvent, QObject, QPoint, QPointF, QRectF, QSize, Qt,
     QTimer, QUrl, QPropertyAnimation, pyqtSignal, QCoreApplication,
 )
 from PyQt6.QtGui import (
