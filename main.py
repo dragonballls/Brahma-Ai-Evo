@@ -5933,21 +5933,55 @@ class BrahmaLive:
                     {"data": data, "mime_type": "audio/pcm"}
                 )
 
+        stream = None
         try:
-            with sd.InputStream(
-                samplerate=SEND_SAMPLE_RATE,
-                channels=CHANNELS,
-                dtype="int16",
-                blocksize=CHUNK_SIZE,
-                device=_mic_dev,
-                callback=callback,
-            ):
-                print(f"[BRAHMA EVO] 🎤 Mic stream open ({_mic_name or 'Default'})")
-                while True:
-                    await asyncio.sleep(0.1)
+            try:
+                stream = sd.InputStream(
+                    samplerate=SEND_SAMPLE_RATE,
+                    channels=CHANNELS,
+                    dtype="int16",
+                    blocksize=CHUNK_SIZE,
+                    device=_mic_dev,
+                    callback=callback,
+                )
+                stream.start()
+            except Exception as first_error:
+                if _mic_dev is None:
+                    raise
+                self.ui.write_log(
+                    f"ERR: Saved microphone '{_mic_name}' could not be opened; "
+                    "falling back to the Windows system microphone."
+                )
+                _startup_log(f"[AUDIO] mic fallback: {first_error}")
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except Exception:
+                        pass
+                stream = sd.InputStream(
+                    samplerate=SEND_SAMPLE_RATE,
+                    channels=CHANNELS,
+                    dtype="int16",
+                    blocksize=CHUNK_SIZE,
+                    device=None,
+                    callback=callback,
+                )
+                stream.start()
+
+            print(f"[BRAHMA EVO] 🎤 Mic stream open ({_mic_name or 'Default'})")
+            while True:
+                await asyncio.sleep(0.1)
         except Exception as e:
             print(f"[BRAHMA EVO] ❌ Mic: {e}")
+            self.ui.write_log(f"ERR: Microphone stream failed — {e}")
             raise
+        finally:
+            if stream is not None:
+                try:
+                    stream.stop()
+                    stream.close()
+                except Exception:
+                    pass
 
     async def _receive_audio(self):
         print("[BRAHMA EVO] 👂 Recv started")
@@ -6097,15 +6131,38 @@ class BrahmaLive:
         _spk_name = config_manager.get_output_device()
         _spk_dev = audio_devices.resolve(_spk_name, "output") if _spk_name else None
 
-        stream = sd.RawOutputStream(
-            samplerate=RECEIVE_SAMPLE_RATE,
-            channels=CHANNELS,
-            dtype="int16",
-            blocksize=CHUNK_SIZE,
-            device=_spk_dev,
-        )
-        stream.start()
+        stream = None
         try:
+            try:
+                stream = sd.RawOutputStream(
+                    samplerate=RECEIVE_SAMPLE_RATE,
+                    channels=CHANNELS,
+                    dtype="int16",
+                    blocksize=CHUNK_SIZE,
+                    device=_spk_dev,
+                )
+                stream.start()
+            except Exception as first_error:
+                if _spk_dev is None:
+                    raise
+                self.ui.write_log(
+                    "ERR: Saved speaker could not be opened; falling back to the Windows system speaker."
+                )
+                _startup_log(f"[AUDIO] speaker fallback: {first_error}")
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except Exception:
+                        pass
+                stream = sd.RawOutputStream(
+                    samplerate=RECEIVE_SAMPLE_RATE,
+                    channels=CHANNELS,
+                    dtype="int16",
+                    blocksize=CHUNK_SIZE,
+                    device=None,
+                )
+                stream.start()
+
             while True:
                 item = await self.audio_in_queue.get()
                 if isinstance(item, tuple) and len(item) == 2:
@@ -6124,11 +6181,16 @@ class BrahmaLive:
                 await asyncio.to_thread(stream.write, chunk)
         except Exception as e:
             print(f"[BRAHMA EVO] ❌ Play: {e}")
+            self.ui.write_log(f"ERR: Speaker stream failed — {e}")
             raise
         finally:
             self.set_speaking(False)
-            stream.stop()
-            stream.close()
+            if stream is not None:
+                try:
+                    stream.stop()
+                    stream.close()
+                except Exception:
+                    pass
 
     async def run(self):
         if not _VOICE_SESSION_GUARD.acquire(blocking=False):
