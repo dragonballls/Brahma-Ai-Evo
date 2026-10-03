@@ -143,12 +143,19 @@ class PCHealthGuardianEdgeCaseTests(TestCase):
             patch.object(mod.psutil, "pids", return_value=[1, 2]),
             patch.object(mod, "_network_check", return_value={"healthy": True, "checks": {}}),
             patch.object(mod, "_event_errors", return_value=[]),
+            patch.object(mod, "_hardware_summary", return_value={"supported": True}),
+            patch.object(mod, "_problem_devices", return_value=[]),
+            patch.object(mod, "_driver_health", return_value=[]),
+            patch.object(mod, "_physical_disk_health", return_value=[]),
+            patch.object(mod, "_defender_status", return_value={"data": {}}),
+            patch.object(mod, "_defender_threats", return_value=[]),
             patch.object(mod, "_windows_integrity_check") as integrity,
         ):
             result = mod.diagnose(deep=False)
 
         integrity.assert_not_called()
         self.assertTrue(result["integrity"]["skipped"])
+        self.assertIn("not_verifiable_or_not_guaranteed", result["coverage"])
 
     def test_protected_process_cannot_be_terminated(self):
         mod = _load_skill_module("pc_health_guardian_skill_edge_protected", "features/pc_health_guardian/skill.py")
@@ -236,43 +243,40 @@ class AutonomousMissionEdgeCaseTests(TestCase):
             mod._STATE_DIR = td_path
             mod._STATE_FILE = td_path / "missions.json"
             mod._MISSIONS.clear()
-            mod._EVENTS.clear()
-            mod._THREADS.clear()
 
-            class FakeThread:
-                def __init__(self, target=None, args=None, daemon=None, name=None):
-                    self.target, self.args, self.daemon, self.name = target, args, daemon, name
-
-                def start(self):
-                    pass
-
-                def is_alive(self):
-                    return False
+            class FakeProcess:
+                pid = 4242
+                def create_time(self):
+                    return 123.0
 
             try:
-                with patch.object(mod.threading, "Thread", FakeThread):
+                with (
+                    patch.object(mod.subprocess, "Popen", return_value=FakeProcess()) as popen,
+                    patch.object(mod, "_ensure_recovery_tasks", return_value={"supported": True, "installed": True}),
+                ):
                     reply = mod.start_mission("verify the build", duration="5 minutes")
 
-                mission_id = reply.split("mission-", 1)[1].split(" for", 1)[0]
+                mission_id = reply.split("mission-", 1)[1].split(" ", 1)[0]
                 mission_id = "mission-" + mission_id
-                self.assertEqual(mod.status(mission_id)["status"], "pending")
-                self.assertEqual(mod.list_missions()[0]["mission_id"], mission_id)
+                saved = mod.status(mission_id)
+                self.assertEqual(saved["status"], "pending")
+                self.assertIsNotNone(saved["deadline"])
                 self.assertTrue(mod._STATE_FILE.exists())
+                args = popen.call_args.args[0]
+                self.assertIn("--mission-worker", args)
 
                 mod._MISSIONS.clear()
-                self.assertEqual(mod.list_missions()[0]["mission_id"], mission_id)
-                self.assertEqual(mod.status(mission_id)["status"], "interrupted")
+                reloaded = mod.status(mission_id)
+                self.assertEqual(reloaded["mission_id"], mission_id)
+                self.assertEqual(reloaded["status"], "pending")
+                self.assertNotEqual(reloaded["status"], "interrupted")
 
-                mod._MISSIONS[mission_id]["status"] = "running"
-                mod._EVENTS.setdefault(mission_id, threading.Event())
                 cancel_reply = mod.cancel(mission_id)
-                self.assertIn("Cancellation requested", cancel_reply)
-                self.assertEqual(mod.status(mission_id)["status"], "cancelling")
+                self.assertIn("cancelled", cancel_reply.lower())
+                self.assertEqual(mod.status(mission_id)["status"], "cancelled")
             finally:
                 mod._STATE_FILE, mod._STATE_DIR = old_file, old_dir
                 mod._MISSIONS.clear()
-                mod._EVENTS.clear()
-                mod._THREADS.clear()
 
     def test_cancellation_wins_over_a_successful_executor_result(self):
         mod = _load_skill_module("autonomous_mission_skill_edge_cancel", "features/autonomous_mission/skill.py")
@@ -282,35 +286,49 @@ class AutonomousMissionEdgeCaseTests(TestCase):
 
         class FakeExecutor:
             def execute(self, goal, cancel_flag=None, player=None):
-                cancel_flag.set()
+                def request_cancel(missions):
+                    item = missions["mission-cancel"]
+                    item["cancel_requested"] = True
+                    item["status"] = "cancelling"
+                mod._mutate_state(request_cancel)
                 return "Everything is done"
 
         executor_mod.AgentExecutor = FakeExecutor
         mod._MISSIONS.clear()
-        mod._EVENTS.clear()
-        mod._THREADS.clear()
-        mod._MISSIONS["mission-cancel"] = {
-            "mission_id": "mission-cancel",
-            "goal": "test cancellation",
-            "status": "running",
-            "created_at": 0,
-            "duration_seconds": None,
-            "until": None,
-            "completion_type": "agent_success",
-            "completion_target": None,
-            "interval_seconds": 5,
-            "keep_working": False,
-            "iterations": 0,
-            "last_result": "",
-            "error": "",
-        }
-        mod._EVENTS["mission-cancel"] = threading.Event()
-        with (
-            patch.dict(sys.modules, {"agent": agent_pkg, "agent.executor": executor_mod}),
-            patch.object(mod, "_save"),
-        ):
-            mod._mission_loop("mission-cancel")
-        self.assertEqual(mod.status("mission-cancel")["status"], "cancelled")
+        with tempfile.TemporaryDirectory() as td:
+            old_file, old_dir = mod._STATE_FILE, mod._STATE_DIR
+            mod._STATE_DIR = Path(td)
+            mod._STATE_FILE = Path(td) / "missions.json"
+            mod._MISSIONS["mission-cancel"] = {
+                "mission_id": "mission-cancel",
+                "goal": "test cancellation",
+                "status": "pending",
+                "created_at": 0,
+                "duration_seconds": None,
+                "deadline": None,
+                "until": None,
+                "completion_type": "agent_success",
+                "completion_target": None,
+                "interval_seconds": 5,
+                "keep_working": False,
+                "iterations": 0,
+                "last_result": "",
+                "error": "",
+                "worker_pid": None,
+                "worker_create_time": None,
+                "worker_boot_time": None,
+                "last_heartbeat_at": None,
+                "recovery_count": 0,
+                "cancel_requested": False,
+            }
+            mod._save()
+            try:
+                with patch.dict(sys.modules, {"agent": agent_pkg, "agent.executor": executor_mod}):
+                    mod.run_worker("mission-cancel")
+                self.assertEqual(mod.status("mission-cancel")["status"], "cancelled")
+            finally:
+                mod._STATE_FILE, mod._STATE_DIR = old_file, old_dir
+                mod._MISSIONS.clear()
 
     def test_deadline_preempts_executor_that_runs_past_time_limit(self):
         mod = _load_skill_module("autonomous_mission_skill_edge_deadline", "features/autonomous_mission/skill.py")
@@ -325,30 +343,142 @@ class AutonomousMissionEdgeCaseTests(TestCase):
 
         executor_mod.AgentExecutor = SlowExecutor
         mod._MISSIONS.clear()
-        mod._EVENTS.clear()
-        mod._THREADS.clear()
-        mod._MISSIONS["mission-deadline"] = {
-            "mission_id": "mission-deadline",
-            "goal": "test deadline",
-            "status": "pending",
-            "created_at": 0,
-            "duration_seconds": 0.01,
-            "until": None,
-            "completion_type": "agent_success",
-            "completion_target": None,
-            "interval_seconds": 5,
-            "keep_working": False,
-            "iterations": 0,
-            "last_result": "",
-            "error": "",
-        }
-        mod._EVENTS["mission-deadline"] = threading.Event()
+        with tempfile.TemporaryDirectory() as td:
+            old_file, old_dir = mod._STATE_FILE, mod._STATE_DIR
+            mod._STATE_DIR = Path(td)
+            mod._STATE_FILE = Path(td) / "missions.json"
+            mod._MISSIONS["mission-deadline"] = {
+                "mission_id": "mission-deadline",
+                "goal": "test deadline",
+                "status": "pending",
+                "created_at": 0,
+                "duration_seconds": 0.01,
+                "deadline": time.time() + 0.01,
+                "until": None,
+                "completion_type": "agent_success",
+                "completion_target": None,
+                "interval_seconds": 5,
+                "keep_working": False,
+                "iterations": 0,
+                "last_result": "",
+                "error": "",
+                "worker_pid": None,
+                "worker_create_time": None,
+                "worker_boot_time": None,
+                "last_heartbeat_at": None,
+                "recovery_count": 0,
+                "cancel_requested": False,
+            }
+            mod._save()
+            try:
+                with patch.dict(sys.modules, {"agent": agent_pkg, "agent.executor": executor_mod}):
+                    mod.run_worker("mission-deadline")
+                self.assertEqual(mod.status("mission-deadline")["status"], "timed_out")
+            finally:
+                mod._STATE_FILE, mod._STATE_DIR = old_file, old_dir
+                mod._MISSIONS.clear()
+
+
+class DurableMissionProcessTests(TestCase):
+    def test_start_mission_launches_a_separate_worker_process(self):
+        mod = _load_skill_module("autonomous_mission_skill_external_worker", "features/autonomous_mission/skill.py")
+        with tempfile.TemporaryDirectory() as td:
+            old_file, old_dir = mod._STATE_FILE, mod._STATE_DIR
+            mod._STATE_DIR = Path(td)
+            mod._STATE_FILE = Path(td) / "missions.json"
+
+            class FakeProcess:
+                pid = 9001
+                def create_time(self):
+                    return 500.0
+
+            try:
+                with (
+                    patch.object(mod.subprocess, "Popen", return_value=FakeProcess()) as popen,
+                    patch.object(mod, "_ensure_recovery_tasks", return_value={"supported": True, "installed": True}),
+                ):
+                    reply = mod.start_mission("continue the project", duration="10 minutes")
+                self.assertIn("external worker", reply.lower())
+                args = popen.call_args.args[0]
+                self.assertIn("--mission-worker", args)
+                self.assertTrue(args[-1].startswith("mission-"))
+            finally:
+                mod._STATE_FILE, mod._STATE_DIR = old_file, old_dir
+                mod._MISSIONS.clear()
+
+    def test_recovery_preserves_active_mission_and_relaunches_missing_worker(self):
+        mod = _load_skill_module("autonomous_mission_skill_recovery_state", "features/autonomous_mission/skill.py")
+        with tempfile.TemporaryDirectory() as td:
+            old_file, old_dir = mod._STATE_FILE, mod._STATE_DIR
+            mod._STATE_DIR = Path(td)
+            mod._STATE_FILE = Path(td) / "missions.json"
+            mod._MISSIONS.clear()
+            mod._MISSIONS["mission-recover"] = {
+                "mission_id": "mission-recover",
+                "goal": "resume after reboot",
+                "status": "running",
+                "created_at": time.time() - 20,
+                "duration_seconds": 3600,
+                "deadline": time.time() + 3580,
+                "until": None,
+                "completion_type": "agent_success",
+                "completion_target": None,
+                "interval_seconds": 30,
+                "keep_working": True,
+                "iterations": 2,
+                "worker_pid": 999999,
+                "worker_create_time": None,
+                "last_heartbeat_at": time.time() - 60,
+                "worker_boot_time": 1,
+                "recovery_count": 0,
+                "cancel_requested": False,
+                "last_result": "",
+                "error": "",
+            }
+            mod._save()
+            try:
+                with patch.object(mod, "launch_worker", return_value="External worker launched for mission mission-recover."):
+                    result = mod.recover_active_missions()
+                self.assertIn("mission-recover", result["launched"])
+                self.assertEqual(mod.status("mission-recover")["status"], "running")
+                self.assertNotEqual(mod.status("mission-recover")["status"], "interrupted")
+            finally:
+                mod._STATE_FILE, mod._STATE_DIR = old_file, old_dir
+                mod._MISSIONS.clear()
+
+
+class PCHealthGuardianCoverageTests(TestCase):
+    def test_capabilities_exposes_hard_software_boundary(self):
+        mod = _load_skill_module("pc_health_guardian_capabilities", "features/pc_health_guardian/skill.py")
+        result = mod.execute(action="capabilities")
+        boundaries = " ".join(result["coverage"]["not_verifiable_or_not_guaranteed"]).lower()
+        self.assertIn("physical", boundaries)
+        self.assertIn("malware", boundaries)
+        self.assertIn("firmware", boundaries)
+
+    def test_diagnose_surfaces_device_and_driver_errors(self):
+        mod = _load_skill_module("pc_health_guardian_device_findings", "features/pc_health_guardian/skill.py")
         with (
-            patch.dict(sys.modules, {"agent": agent_pkg, "agent.executor": executor_mod}),
-            patch.object(mod, "_save"),
+            patch.object(mod, "_memory_summary", return_value={"percent": 10, "used_gb": 1, "available_gb": 9, "total_gb": 10, "swap_percent": 0, "swap_used_gb": 0}),
+            patch.object(mod, "_snapshot_processes", return_value=[]),
+            patch.object(mod, "_storage_summary", return_value=[]),
+            patch.object(mod.psutil, "boot_time", return_value=0),
+            patch.object(mod.time, "time", return_value=3600),
+            patch.object(mod.psutil, "cpu_percent", return_value=5),
+            patch.object(mod.psutil, "pids", return_value=[1]),
+            patch.object(mod, "_network_check", return_value={"healthy": True, "checks": {}}),
+            patch.object(mod, "_event_errors", return_value=[]),
+            patch.object(mod, "_hardware_summary", return_value={"supported": True, "bios": {"data": {"SMBIOSBIOSVersion": "1.0"}}}),
+            patch.object(mod, "_problem_devices", return_value=[{"FriendlyName": "Example Device", "Status": "Error", "ProblemCode": 28}]),
+            patch.object(mod, "_driver_health", return_value=[{"DeviceName": "Example Device", "ConfigManagerErrorCode": 28}]),
+            patch.object(mod, "_physical_disk_health", return_value=[]),
+            patch.object(mod, "_defender_status", return_value={"data": {"AntivirusEnabled": True, "RealTimeProtectionEnabled": True}}),
+            patch.object(mod, "_defender_threats", return_value=[]),
         ):
-            mod._mission_loop("mission-deadline")
-        self.assertEqual(mod.status("mission-deadline")["status"], "timed_out")
+            result = mod.diagnose()
+        categories = {f["category"] for f in result["findings"]}
+        self.assertIn("device_health", categories)
+        self.assertIn("driver_error", categories)
 
 
 class PublicActionDispatchTests(TestCase):
