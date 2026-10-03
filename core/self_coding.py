@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import os
 import json
 from pathlib import Path
 import re
@@ -37,9 +38,31 @@ class Checkpoint:
 
 class SelfCodingAgent:
     def __init__(self, repo: Path | None = None) -> None:
-        self.repo = (repo or Path(__file__).resolve().parents[1]).resolve()
+        self.repo = self._resolve_repo(repo)
         if not self.repo.is_dir():
             raise SelfCodingError(f"Repository does not exist: {self.repo}")
+
+    @staticmethod
+    def _resolve_repo(repo: Path | None) -> Path:
+        if repo:
+            return Path(repo).expanduser().resolve()
+
+        env_repo = os.environ.get("BRAHMA_SELF_CODING_REPO", "").strip()
+        candidates: list[Path] = []
+        if env_repo:
+            candidates.append(Path(env_repo).expanduser())
+
+        here = Path(__file__).resolve()
+        candidates.extend([here.parent.parent, Path.cwd()])
+        for candidate in candidates:
+            for parent in (candidate, *candidate.parents):
+                if (parent / ".git").is_dir():
+                    return parent.resolve()
+
+        raise SelfCodingError(
+            "No real Git checkout was found. Set BRAHMA_SELF_CODING_REPO "
+            "to the Brahma-Ai-Evo working tree before using self-coding."
+        )
 
     @property
     def checkpoint_dir(self) -> Path:
@@ -176,6 +199,7 @@ Rules:
 - Prefer small, reversible changes.
 - Add or update tests for behavioral changes.
 - Run the relevant repository tests before reporting success.
+- Do NOT create Git commits, switch branches, push, or reset the repository; the outer checkpoint controller owns Git state.
 - Never claim success when verification fails.
 - Do not commit secrets or machine-specific configuration.
 - Keep the existing architecture coherent; reuse existing modules instead of making duplicate systems.
