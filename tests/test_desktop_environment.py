@@ -170,3 +170,23 @@ class MemoryPrioritySafetyTests(TestCase):
         proc = SimpleNamespace(pid=77, create_time=lambda: 123.0)
         with patch.object(module.WindowManager, "get_memory_priority", return_value=None):
             self.assertIsNone(engine._remember_memory_priority(proc))
+
+
+class PressureHysteresisTests(TestCase):
+    def test_pressure_hysteresis_rejects_brief_spikes(self):
+        module = __import__("core.desktop.performance", fromlist=["AdaptivePerformanceEngine"])
+        engine = module.AdaptivePerformanceEngine()
+        first = engine._stabilize_pressure("high")
+        self.assertEqual(first, "normal")
+        engine._pressure_candidate_since -= 6.0
+        self.assertEqual(engine._stabilize_pressure("high"), "high")
+
+    def test_pressure_clear_requires_a_longer_stable_window(self):
+        module = __import__("core.desktop.performance", fromlist=["AdaptivePerformanceEngine"])
+        engine = module.AdaptivePerformanceEngine()
+        engine._pressure_state = "high"
+        engine._pressure_candidate = "normal"
+        engine._pressure_candidate_since = time.monotonic()
+        self.assertEqual(engine._stabilize_pressure("normal"), "high")
+        engine._pressure_candidate_since -= 9.0
+        self.assertEqual(engine._stabilize_pressure("normal"), "normal")
