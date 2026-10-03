@@ -32,7 +32,6 @@ ABSOLUTE RULES:
 - Use pdf_document to create, compile, or generate PDF files (NEVER use file_controller for .pdf files).
 - Use word_document to create or generate Word (.docx) documents.
 - Use file_controller to save text/code files to disk.
-- Use cmd_control to open files or run system commands.
 - Max 5 steps. Use the minimum steps needed.
 
 AVAILABLE TOOLS AND THEIR PARAMETERS:
@@ -85,10 +84,6 @@ file_controller
   path: string — use "desktop" for Desktop folder
   name: string — filename
   content: string — file content (for write/create_file)
-
-cmd_control
-  task: string (required) — natural language description of what to do
-  visible: boolean (optional)
 
 computer_settings
   action: string (required)
