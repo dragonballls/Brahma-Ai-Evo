@@ -11,6 +11,7 @@ try:
 except Exception:  # pragma: no cover
     psutil = None
 
+from .performance_brain import brain
 from .window_manager import WindowManager, WindowInfo, is_game_window
 
 
@@ -52,6 +53,9 @@ class AdaptivePerformanceEngine:
     def __init__(self):
         self._lock = threading.RLock()
         self.profile = "adaptive"
+        self._last_process_observation = 0.0
+        self._observation_interval = 5.0
+        self._io_cache: dict[int, tuple[float, int, int]] = {}
         self._original_priority: dict[tuple[int, float], object] = {}
         self._managed_target: dict[tuple[int, float], object] = {}
         self._last_adjustment: dict[int, float] = {}
