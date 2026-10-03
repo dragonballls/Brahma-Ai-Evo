@@ -10428,11 +10428,20 @@ class MainWindow(QMainWindow):
                 self._result_card.set_body("Action completed")
 
     def _check_config(self) -> bool:
-        if not API_FILE.exists(): return False
+        """Return whether the selected runtime provider is configured enough to start Brahma."""
         try:
-            d = json.loads(API_FILE.read_text(encoding="utf-8"))
-            return (bool(d.get("gemini_api_key")) and
-                    bool(d.get("os_system")))
+            api = self._load_api_defaults()
+            app = self._load_app_settings()
+            if not str(api.get("os_system") or "").strip():
+                return False
+
+            provider = normalize_provider(app.get("default_ai_provider", "Gemini"))
+            offline = bool(app.get("offline_mode_enabled", False))
+            if offline or is_local(provider):
+                return True
+            if provider == "OpenRouter":
+                return bool(api.get("openrouter_api_key"))
+            return bool(api.get("gemini_api_key"))
         except Exception:
             return False
 
