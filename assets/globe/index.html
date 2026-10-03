@@ -2430,8 +2430,9 @@
             try {
                 if (window.qtBridge && window.qtBridge.requestGodsEyeRefresh) {
                     window.qtBridge.requestGodsEyeRefresh();
-                } else if (window.BrahmaGlobe && window.BrahmaGlobe.requestGodsEyeRefresh) {
-                    window.BrahmaGlobe.requestGodsEyeRefresh();
+                } else {
+                    const state = document.getElementById("gods-eye-state");
+                    if (state) state.innerText = "Refresh is available when the desktop bridge is connected";
                 }
             } catch (e) {
                 console.warn("God’s Eye refresh request unavailable", e);
