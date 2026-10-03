@@ -6055,6 +6055,15 @@ def _main_impl():
         threading.Thread(target=runner, daemon=True).start()
 
     start_runner()
+
+    if desktop_controller is not None:
+        try:
+            app_instance = QApplication.instance()
+            if app_instance is not None:
+                app_instance.aboutToQuit.connect(desktop_controller.shutdown)
+        except Exception as exc:
+            _startup_log(f"desktop shutdown hook wiring skipped: {exc}")
+
     # Desktop Mode owns the visible Brahma presentation when explicitly enabled.
     # Do not resurrect the normal application window after its restoration hook.
     if desktop_controller is None or not desktop_controller.enabled:
