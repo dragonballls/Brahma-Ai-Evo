@@ -7,17 +7,12 @@ receives credentials or gets arbitrary config-file access.
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
-from core.user_paths import get_user_data_dir
-
-
-CONFIG_DIR = get_user_data_dir() / "config"
-APP_SETTINGS_FILE = CONFIG_DIR / "app_settings.json"
+from memory.config_manager import load_settings as _load_settings
+from memory.config_manager import save_settings as _save_settings
 
 
 @dataclass(frozen=True)
@@ -67,23 +62,13 @@ _ALIAS_TO_KEY = {
 
 
 def load_settings() -> dict[str, Any]:
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    if not APP_SETTINGS_FILE.exists():
-        return {}
-    try:
-        data = json.loads(APP_SETTINGS_FILE.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
+    return _load_settings()
 
 
 def save_settings(updates: dict[str, Any]) -> None:
-    current = load_settings()
-    current.update(updates)
-    tmp = APP_SETTINGS_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(current, indent=4, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(APP_SETTINGS_FILE)
-
+    if not isinstance(updates, dict):
+        raise TypeError("settings update must be a dictionary")
+    _save_settings(dict(updates))
 
 def catalog() -> list[dict[str, Any]]:
     return [
