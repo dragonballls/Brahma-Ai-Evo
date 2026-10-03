@@ -40,3 +40,5 @@ jobs:
         run: python -m unittest tests.test_desktop_web_host -v
       - name: Run adaptive performance brain regressions
         run: python -m unittest tests.test_performance_brain -v
+      - name: Run external desktop integration regressions
+        run: python -m unittest tests.test_desktop_integrations -v
