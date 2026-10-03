@@ -33,6 +33,19 @@ class LiveVoiceContractTests(unittest.TestCase):
     def test_live_affective_dialog_is_enabled(self):
         self.assertIn("enable_affective_dialog=True", self.main_text)
 
+    def test_live_model_ladder_has_current_primary_and_fallbacks(self):
+        self.assertIn('models/gemini-3.8-live', self.main_text)
+        self.assertIn('models/gemini-3.1-flash-live-preview', self.main_text)
+        self.assertIn('models/gemini-2.5-flash-native-audio-preview-12-2025', self.main_text)
+        self.assertIn("LIVE_MODEL_CANDIDATES", self.main_text)
+        self.assertIn("_live_model_index", self.main_text)
+
+    def test_silent_audio_recovery_guard_exists(self):
+        self.assertIn("tiny_audio_chunks", self.main_text)
+        self.assertIn("turn_audio_bytes < 256", self.main_text)
+        self.assertIn("Rotating to the next verified voice model.", self.main_text)
+        self.assertIn("chunk_size > 8", self.main_text)
+
     def test_language_lock_is_present_in_voice_and_system_prompt(self):
         self.assertIn("language_policy import prompt_block", self.main_text)
         self.assertIn("language_prompt_block()", self.main_text)
