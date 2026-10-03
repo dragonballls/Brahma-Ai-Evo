@@ -30,8 +30,11 @@ class LiveVoiceContractTests(unittest.TestCase):
         self.assertEqual(found, 640)
         # 640 samples = 40 ms at 16 kHz input, and 26.7 ms at 24 kHz output.
 
-    def test_live_affective_dialog_is_enabled(self):
-        self.assertIn("enable_affective_dialog=True", self.main_text)
+    def test_live_affective_dialog_legacy_field_is_not_sent(self):
+        # Gemini Live removed enable_affective_dialog; sending the legacy field
+        # can reject the Live session during config validation.
+        self.assertNotIn("enable_affective_dialog=True", self.main_text)
+        self.assertNotIn("enable_affective_dialog=", self.main_text)
 
     def test_live_model_ladder_has_current_primary_and_fallbacks(self):
         self.assertIn('models/gemini-3.8-live', self.main_text)
