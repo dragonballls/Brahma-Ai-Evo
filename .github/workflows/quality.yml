@@ -34,3 +34,5 @@ jobs:
         run: python -m unittest tests.test_intelligence_orchestrator -v
       - name: Run selected advanced capability regressions
         run: python -m unittest tests.test_selected_advanced_capabilities -v
+      - name: Run functional self-awareness regressions
+        run: python -m unittest tests.test_self_awareness -v
