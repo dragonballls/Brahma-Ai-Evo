@@ -574,6 +574,8 @@ def _watch_loop(duration_seconds: float | None = None, interval_seconds: int = 6
 def start_monitor(duration: str | int | float = "24 hours", interval_seconds: int = 60, auto_repair: bool = False) -> str:
     global _WATCH_THREAD
     duration_seconds = _parse_duration(duration)
+    if duration is not None and duration_seconds is None:
+        return "PC Health Guardian could not parse the requested monitoring duration."
     with _WATCH_LOCK:
         if _WATCH_THREAD and _WATCH_THREAD.is_alive():
             return "PC health monitor is already running."
