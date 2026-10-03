@@ -365,7 +365,10 @@ def _control_video(parameters: dict) -> str:
     raw = str(result or "").strip()
     if raw.startswith("{") or raw.startswith('"'):
         try:
-            data = json.loads(raw.strip('"').replace("\\"", '"'))
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                data = json.loads(raw.strip('"').strip("'"))
             if not data.get("ok"):
                 return str(data.get("error") or "Video control failed.")
             if "rate" in data:
