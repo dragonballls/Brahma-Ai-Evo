@@ -69,10 +69,10 @@ def _base_dir() -> Path:
     return Path(__file__).resolve().parent
 
 BASE_DIR   = _base_dir()
-CONFIG_DIR = get_user_data_dir() / "config"
-API_FILE   = CONFIG_DIR / "api_keys.json"
-APP_SETTINGS_FILE = CONFIG_DIR / "app_settings.json"
-DISCORD_SETTINGS_FILE = CONFIG_DIR / "discord_bot.json"
+from core.runtime_paths import CONFIG_DIR, API_CONFIG_PATH, APP_SETTINGS_PATH, DISCORD_SETTINGS_PATH
+API_FILE   = API_CONFIG_PATH
+APP_SETTINGS_FILE = APP_SETTINGS_PATH
+DISCORD_SETTINGS_FILE = DISCORD_SETTINGS_PATH
 LOGO_FILE  = BASE_DIR / "assets" / "Brahma_Lite_Logo.png"
 LOGO_ICO   = BASE_DIR / "assets" / "Brahma_Lite_Logo.ico"
 BACKGROUND_IMAGE_FILE = BASE_DIR / "assets" / "background.png"
