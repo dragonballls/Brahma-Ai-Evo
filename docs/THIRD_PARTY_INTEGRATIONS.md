@@ -13,6 +13,8 @@ Brahma Evo uses a GitHub-first integration model for desktop capabilities. These
 | postlund/pyatv | Lazy Apple TV/AirPlay discovery and control | MIT |
 | project-chip/connectedhomeip | Optional chip-tool Matter controller bridge | Apache-2.0 |
 | winsw/winsw | Optional Windows-service deployment wrapper | MIT |
+| Android-Web-Control | Reference for optional browser/WebRTC/WebCodecs Android surfaces | MIT |
+| home-assistant/core | Reference architecture for normalized device/entity integration | Apache-2.0 |
 
 ## Safety and compatibility
 
@@ -33,3 +35,5 @@ The current Windows performance engine remains the source of truth for reversibl
 - https://github.com/postlund/pyatv
 - https://github.com/project-chip/connectedhomeip
 - https://github.com/winsw/winsw
+
+The unified Device Manager is documented in `docs/DEVICE_NETWORK.md`. Android-Web-Control and Home Assistant Core are reference projects; Brahma does not vendor their full runtimes as hard dependencies.
