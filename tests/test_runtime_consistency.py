@@ -97,6 +97,19 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertEqual(calls["probe"], 1)
         self.assertEqual(calls["sync"], 1)
 
+    def test_startup_readiness_is_provider_aware(self):
+        source = self.read("ui.py")
+        self.assertIn("def _check_config(self) -> bool:", source)
+        self.assertIn('if provider == "OpenRouter":', source)
+        self.assertIn("if offline or is_local(provider):", source)
+        self.assertIn("return bool(api.get(\"gemini_api_key\"))", source)
+
+    def test_live_voice_does_not_retry_without_gemini_credential(self):
+        source = self.read("main.py")
+        self.assertIn("def _has_gemini_voice_credentials()", source)
+        self.assertIn("if not offline_mode and not is_local(selected_provider) and gemini_voice_ready:", source)
+        self.assertIn("Continuous Live voice is unavailable without a Gemini voice credential", source)
+
     def test_provider_auto_switch_setting_is_consumed(self):
         source = self.read("main.py")
         self.assertIn('auto_provider_switch = bool(app_settings.get("auto_provider_switch", True))', source)
