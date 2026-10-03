@@ -4720,6 +4720,8 @@ class LauncherControlPanel(QDialog):
                  desktop_enabled: bool = False,
                  on_toggle_desktop=None,
                  on_desktop_status=None,
+                 desktop_profile: str = "adaptive",
+                 on_set_desktop_profile=None,
                  parent=None):
         super().__init__(parent)
         self._on_open = on_open
@@ -4733,7 +4735,9 @@ class LauncherControlPanel(QDialog):
         self._on_open_dev = on_open_dev
         self._on_toggle_desktop = on_toggle_desktop
         self._on_desktop_status = on_desktop_status
+        self._on_set_desktop_profile = on_set_desktop_profile
         self._desktop_enabled = bool(desktop_enabled)
+        self._desktop_profile = str(desktop_profile or "adaptive").lower()
 
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -4813,6 +4817,33 @@ class LauncherControlPanel(QDialog):
             checked=self._desktop_enabled,
         )
 
+        profile_row = QHBoxLayout()
+        profile_label = QLabel("Performance")
+        profile_label.setStyleSheet("color: rgba(255,255,255,0.64); background: transparent; font: 600 9pt 'Segoe UI';")
+        self._desktop_profile_combo = QComboBox()
+        self._desktop_profile_combo.addItems(["adaptive", "balanced", "performance", "game", "efficiency"])
+        index = max(0, self._desktop_profile_combo.findText(self._desktop_profile))
+        self._desktop_profile_combo.setCurrentIndex(index)
+        self._desktop_profile_combo.setMinimumHeight(34)
+        self._desktop_profile_combo.setStyleSheet("""
+            QComboBox {
+                background: rgba(255,255,255,0.05);
+                color: #FFFFFF;
+                border: 1px solid rgba(255,255,255,0.09);
+                border-radius: 10px;
+                padding: 4px 10px;
+            }
+            QComboBox::drop-down { border: none; width: 24px; }
+            QComboBox QAbstractItemView {
+                background: #0f1117;
+                color: #FFFFFF;
+                selection-background-color: rgba(0,191,255,0.24);
+            }
+        """)
+        self._desktop_profile_combo.currentTextChanged.connect(self._set_desktop_profile)
+        profile_row.addWidget(profile_label)
+        profile_row.addWidget(self._desktop_profile_combo, 1)
+
         self._open_btn.clicked.connect(lambda: self._invoke(self._on_open))
         self._close_btn.clicked.connect(lambda: self._invoke(self._on_close))
         self._startup_btn.clicked.connect(lambda: self._invoke(self._on_toggle_startup, self._startup_btn.isChecked()))
@@ -4827,6 +4858,7 @@ class LauncherControlPanel(QDialog):
         lay.addWidget(QLabel("DESKTOP ENVIRONMENT"))
         lay.itemAt(lay.count() - 1).widget().setStyleSheet("color: rgba(255,255,255,0.58); background: transparent; font: 700 8pt 'Courier New'; letter-spacing: 1px;")
         lay.addWidget(self._desktop_btn)
+        lay.addLayout(profile_row)
 
         for btn in (
             self._open_app_btn, self._open_btn, self._close_btn, self._startup_btn,
@@ -4836,6 +4868,18 @@ class LauncherControlPanel(QDialog):
             lay.addWidget(btn)
 
         self.adjustSize()
+
+    def _set_desktop_profile(self, profile: str):
+        profile = str(profile or "adaptive").strip().lower()
+        if not self._on_set_desktop_profile:
+            return
+        try:
+            result = self._on_set_desktop_profile(profile)
+            self._desktop_profile = profile
+            if self._on_desktop_status:
+                self._on_desktop_status(result)
+        except Exception:
+            pass
 
     def _toggle_desktop(self):
         enabled = self._desktop_btn.isChecked()
@@ -15451,8 +15495,10 @@ class BrahmaUI:
             on_show_icon=self._show_floating_icon,
             on_open_dev=self._open_developer_mode_dialog,
             desktop_enabled=bool(getattr(self._desktop_controller, "enabled", False)),
+            desktop_profile=str(getattr(getattr(self._desktop_controller, "performance", None), "profile", "adaptive")),
             on_toggle_desktop=self._set_desktop_mode_from_ui,
             on_desktop_status=self._log_desktop_status,
+            on_set_desktop_profile=self._set_desktop_profile_from_ui,
         )
         self._control_panel = panel
         self._position_control_panel(panel)
@@ -15469,6 +15515,18 @@ class BrahmaUI:
         except Exception as exc:
             self._win.write_log(f"ERR: Desktop mode change failed: {exc}")
             return {"enabled": bool(getattr(controller, "enabled", False)), "last_error": str(exc)}
+
+    def _set_desktop_profile_from_ui(self, profile: str):
+        controller = getattr(self, "_desktop_controller", None)
+        if controller is None:
+            return {"ok": False, "error": "Desktop environment is not available."}
+        try:
+            result = controller.configure(profile=profile)
+            self._win.write_log(f"SYS: Desktop performance profile set to {controller.performance.profile}.")
+            return result
+        except Exception as exc:
+            self._win.write_log(f"ERR: Desktop performance profile failed: {exc}")
+            return {"ok": False, "error": str(exc)}
 
     def _log_desktop_status(self, result):
         try:
