@@ -66,17 +66,21 @@ class UpdateChecker(QObject):
         return None
 
     def _check_loop(self):
-        while not self._stop_event.is_set():
-            local_hash = self._get_local_hash()
-            remote_hash = self._get_remote_hash()
+        try:
+            while not self._stop_event.is_set():
+                local_hash = self._get_local_hash()
+                remote_hash = self._get_remote_hash()
 
-            if local_hash and remote_hash and local_hash != remote_hash:
-                print(f"[Updater] Update detected! Local: {local_hash[:7]}, Remote: {remote_hash[:7]}")
-                self.update_available_sig.emit(remote_hash)
-                break # Stop checking once an update is detected
+                if local_hash and remote_hash and local_hash != remote_hash:
+                    print(f"[Updater] Update detected! Local: {local_hash[:7]}, Remote: {remote_hash[:7]}")
+                    self.update_available_sig.emit(remote_hash)
+                    break  # Stop checking once an update is detected.
 
-            # Poll every 6 hours and sleep in one interruptible wait.
-            self._stop_event.wait(timeout=21600)
+                # Poll every 6 hours and sleep in one interruptible wait.
+                self._stop_event.wait(timeout=21600)
+        finally:
+            if self._check_thread is threading.current_thread():
+                self._check_thread = None
 
 def apply_update_and_restart(base_dir=None):
     """Apply only fast-forward updates, then restart; never discard local work."""
