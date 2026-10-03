@@ -53,16 +53,37 @@ class BrahmaConnectService:
             return
 
         def _runner():
-            self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
-            self._loop.run_until_complete(self.gateway.serve())
+            loop = asyncio.new_event_loop()
+            self._loop = loop
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(self.gateway.serve())
+            finally:
+                try:
+                    loop.run_until_complete(asyncio.sleep(0))
+                except Exception:
+                    pass
+                loop.close()
+                self._loop = None
+                self._started = False
 
-        self._thread = threading.Thread(target=_runner, name="BrahmaConnectGateway", daemon=True)
+        self._thread = threading.Thread(
+            target=_runner,
+            name="BrahmaConnectGateway",
+            daemon=True,
+        )
         self._thread.start()
         self._started = True
 
     def stop(self) -> None:
         self.gateway.request_shutdown()
+        thread = self._thread
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=2.0)
+        if thread and not thread.is_alive():
+            self._thread = None
+            self._loop = None
+        self._started = False
 
     def is_running(self) -> bool:
         return self.gateway.is_running()
