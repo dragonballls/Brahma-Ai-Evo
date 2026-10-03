@@ -158,6 +158,15 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("gateway().base_url", source)
         self.assertIn("gateway().ensure_ready(force=True)", source)
 
+    def test_screen_vision_session_is_bounded_and_stoppable(self):
+        source = self.read("actions/screen_processor.py")
+        self.assertIn("asyncio.Queue(maxsize=30)", source)
+        self.assertIn("asyncio.Queue(maxsize=48)", source)
+        self.assertIn("def stop(self)", source)
+        self.assertIn("while not self._stop_event.is_set()", source)
+        self.assertIn("def stop_screen_processor()", source)
+        self.assertIn("stop_screen_processor()", self.read("main.py"))
+
     def test_email_daemon_has_interruptible_shutdown(self):
         source = self.read("actions/google_workspace_mcp.py")
         self.assertIn("_email_daemon_stop_event = threading.Event()", source)
