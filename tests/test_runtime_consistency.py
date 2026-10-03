@@ -77,6 +77,12 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertEqual(calls["probe"], 1)
         self.assertEqual(calls["sync"], 1)
 
+    def test_provider_auto_switch_setting_is_consumed(self):
+        source = self.read("main.py")
+        self.assertIn('auto_provider_switch = bool(app_settings.get("auto_provider_switch", True))', source)
+        self.assertIn("if not reply and not is_offline_mode and auto_provider_switch:", source)
+        self.assertIn('primary_provider = "OpenRouter" if (', source)
+
     def test_live_audio_queues_are_bounded(self):
         source = self.read("main.py")
         self.assertIn("asyncio.Queue(maxsize=48)", source)
