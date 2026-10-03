@@ -4,6 +4,7 @@ import subprocess
 import threading
 import time
 import requests
+from pathlib import Path
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from core.runtime_paths import GITHUB_OWNER, GITHUB_REPOSITORY, GITHUB_BRANCH
