@@ -2652,7 +2652,12 @@ class BrahmaLive:
             return
 
         # Autonomous Self-Healing & Continuous Learning Fast-Path
-        is_trigger_bug = any(p in lower_cmd for p in ("trigger test bug", "simulate bug", "test bug", "create bug", "simulate error", "trigger error", "break test"))
+        is_trigger_bug = bool(
+            re.fullmatch(
+                r"(?:brahma(?: evo)?[ ,:]*)?(?:please )?(?:(?:trigger|simulate)(?: a)? test bug|run test action)[.!]?",
+                lower_cmd,
+            )
+        )
         is_heal_cmd = any(p in lower_cmd for p in ("fix that bug", "fix the bug", "heal yourself", "auto heal", "patch yourself", "fix error", "fix this error"))
         is_rollback_cmd = any(p in lower_cmd for p in ("undo last patch", "rollback patch", "revert patch", "undo patch"))
         is_patch_history = any(p in lower_cmd for p in ("patch history", "patch log", "show patches", "auto heal status"))
@@ -4085,9 +4090,10 @@ class BrahmaLive:
             parts.append(mem_str)
         parts.append(sys_prompt)
         parts.append(
-            "Wake-word mode: if the microphone is muted, still listen for the words 'Brahma Evo', 'hey', 'hi', and 'hello'. "
-            "When you hear one of these activation cues, keep the session friendly and concise, "
-            "and wait for the user's next command. "
+            "Wake-word mode: if the microphone is muted, only an explicit 'Brahma Evo' phrase "
+            "(optionally preceded by 'hey', 'hi', or 'hello') can activate the assistant. Never wake "
+            "on a generic 'hey', 'hi', or 'hello' by itself. After activation, wait for the actual "
+            "user command and never execute a tool from the wake phrase alone. "
             "IMPORTANT: Do NOT speak an unprompted generic greeting (like 'Thank you, how can I help you?') upon connecting. "
             "Remain completely silent until the user speaks to you or asks a question."
         )
@@ -4897,6 +4903,16 @@ class BrahmaLive:
         speech_buffer = bytearray()
         silence_chunks = 0
 
+        # Local/Offline voice previously duplicated the same microphone input:
+        # one path used local speech recognition while another streamed it to
+        # Gemini Live. Cache the mode once per stream and give ownership to one
+        # recognizer only.
+        app_cfg = config_manager.load_settings()
+        local_voice_mode = (
+            app_cfg.get("default_ai_provider") == "Local"
+            or bool(app_cfg.get("offline_mode_enabled", False))
+        )
+
         def callback(indata, frames, time_info, status):
             nonlocal silence_chunks
             with self._speaking_lock:
@@ -4915,10 +4931,8 @@ class BrahmaLive:
             if not self.ui.muted or getattr(self.ui, "_wakeword_listening", False):
                 lvl = float(np.sqrt(np.mean(np.square(indata, dtype=np.float32))))
                 
-                # Handle Local AI voice input when in Local or Offline mode
-                app_cfg = config_manager.load_settings()
-                if app_cfg.get("default_ai_provider") == "Local" or app_cfg.get("offline_mode_enabled", False):
-                    if not brahma_speaking and not self.ui.muted:
+                if local_voice_mode:
+                    if not brahma_speaking and not self.ui.muted and not getattr(self.ui, "_wakeword_listening", False):
                         if lvl > 22.0:
                             speech_buffer.extend(indata.tobytes())
                             silence_chunks = 0
@@ -4942,6 +4956,15 @@ class BrahmaLive:
                                         except Exception:
                                             pass
                                     threading.Thread(target=_process_local_speech, args=(captured,), daemon=True).start()
+
+                    # Local/Offline mode owns microphone recognition; do not send
+                    # the same speech to the separate Gemini Live session.
+                    data = np.zeros_like(indata).tobytes()
+                    loop.call_soon_threadsafe(
+                        self.out_queue.put_nowait,
+                        {"data": data, "mime_type": "audio/pcm"}
+                    )
+                    return
 
                 if brahma_speaking:
                     if self._echo.is_user_speech(indata, SEND_SAMPLE_RATE, lvl) and lvl > 28.0:
