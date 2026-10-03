@@ -64,6 +64,7 @@ ig_session.json
 api_keys.json
 email_credentials.json
 
+build_vendor/omniroute_runtime/
 build/
 dist/
 gradle-8.7-bin.zip
