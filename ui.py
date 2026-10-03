@@ -11161,7 +11161,8 @@ class OmniRouteEmbeddedPage(QWidget):
                 from core.omniroute import gateway
                 gateway().ensure_ready()
             except Exception as exc:
-                self._status.setText("OmniRoute startup failed")
+                # Qt widgets must only be mutated from the GUI thread. The
+                # dashboard retry loop below will surface the unavailable state.
                 try:
                     import logging
                     logging.getLogger("BrahmaUI").warning(
@@ -11216,8 +11217,9 @@ class SettingsHubPage(QWidget):
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(subtitle)
 
-        cards_lay = QHBoxLayout()
-        cards_lay.setSpacing(24)
+        cards_lay = QGridLayout()
+        cards_lay.setHorizontalSpacing(24)
+        cards_lay.setVerticalSpacing(24)
         cards_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         cards_data = [
@@ -11227,9 +11229,9 @@ class SettingsHubPage(QWidget):
             ("OmniRoute", "Open the real OmniRoute provider and routing console", "🧠", 5)
         ]
 
-        for title_text, desc_text, icon_emoji, target_idx in cards_data:
+        for index, (title_text, desc_text, icon_emoji, target_idx) in enumerate(cards_data):
             card = QFrame()
-            card.setFixedSize(280, 200)
+            card.setFixedSize(260, 190)
             card.setCursor(Qt.CursorShape.PointingHandCursor)
             card.setStyleSheet(
                 f"QFrame {{ "
@@ -11267,7 +11269,7 @@ class SettingsHubPage(QWidget):
             card_lay.addWidget(d)
 
             card.mousePressEvent = lambda e, idx=target_idx: self._nav_cb(idx)
-            cards_lay.addWidget(card)
+            cards_lay.addWidget(card, index // 2, index % 2)
 
         lay.addStretch(1)
         lay.addLayout(cards_lay)
