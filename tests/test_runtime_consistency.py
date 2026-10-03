@@ -203,6 +203,32 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("except PermissionError:", source)
         self.assertIn("            except PermissionError:\n                raise", source)
 
+    def test_core_credential_lookup_normalizes_provider_aliases(self):
+        source = self.read("config/__init__.py")
+        self.assertIn('"google gemini": "gemini"', source)
+        self.assertIn('"open router": "openrouter"', source)
+        self.assertIn('get_config().get(f"{key_name}_api_key"', source)
+
+    def test_gemini_credentials_are_read_through_shared_config(self):
+        source = self.read("main.py")
+        self.assertIn("from config import get_api_key", source)
+        self.assertIn('return get_api_key("Gemini")', source)
+        self.assertNotIn('json.load(f)["gemini_api_key"]', source)
+
+    def test_openrouter_credentials_use_shared_config(self):
+        source = self.read("or_client.py")
+        self.assertIn("from config import get_api_key", source)
+        self.assertIn('return get_api_key("OpenRouter")', source)
+
+    def test_live_config_does_not_send_removed_affective_dialog_flag(self):
+        source = self.read("main.py")
+        self.assertNotIn("enable_affective_dialog", source)
+
+    def test_omniroute_uses_canonical_runtime_endpoint(self):
+        source = self.read("core/omniroute.py")
+        self.assertIn("OMNIROUTE_DEFAULT_BASE_URL", source)
+        self.assertNotIn('"http://127.0.0.1:20128/v1"', source)
+
     def test_requirements_do_not_duplicate_package_names(self):
         names = []
         for line in self.read("requirements.txt").splitlines():
