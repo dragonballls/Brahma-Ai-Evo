@@ -254,6 +254,11 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertNotIn('"http://127.0.0.1:20128/"', source)
         self.assertIn("OMNIROUTE_DEFAULT_BASE_URL", source)
 
+    def test_main_ui_api_reads_use_canonical_config_accessor(self):
+        source = self.read("ui.py")
+        self.assertIn("from config import get_config", source)
+        self.assertNotIn("API_FILE.read_text(encoding=\"utf-8\")", source)
+
     def test_provider_normalization_has_one_canonical_alias_table(self):
         source = self.read("core/provider_policy.py")
         self.assertIn("aliases = {", source)
