@@ -36,3 +36,5 @@ jobs:
         run: python -m unittest tests.test_selected_advanced_capabilities -v
       - name: Run functional self-awareness regressions
         run: python -m unittest tests.test_self_awareness -v
+      - name: Run Live duplex voice regressions
+        run: python -m unittest tests.test_live_voice_contract -v
