@@ -56,11 +56,14 @@ class RuntimeConsistencyTests(unittest.TestCase):
             store.append_message(convo, "user", "hello")
             store.delete_conversation(convo)
 
-            with sqlite3.connect(Path(td) / "workspace.sqlite3") as conn:
+            conn = sqlite3.connect(Path(td) / "workspace.sqlite3")
+            try:
                 remaining = conn.execute(
                     "SELECT COUNT(*) FROM messages WHERE conversation_id = ?",
                     (convo,),
                 ).fetchone()[0]
+            finally:
+                conn.close()
 
             self.assertEqual(remaining, 0)
 
