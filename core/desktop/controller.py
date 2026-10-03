@@ -33,15 +33,21 @@ class DesktopModeController:
         self.enabled = False
         self.last_error = ""
         self._show_overlay = False
+        self._use_workerw = False
         self._last_workspace_identity = ""
         self._last_workspace_persist_at = 0.0
 
     def _ensure_layer(self) -> DesktopLayer:
         if self.layer is None:
-            self.layer = DesktopLayer(self.base_dir)
+            self.layer = DesktopLayer(self.base_dir, use_workerw=self._use_workerw)
         return self.layer
 
-    def configure(self, profile: str | None = None, show_overlay: bool | None = None) -> dict[str, Any]:
+    def configure(
+        self,
+        profile: str | None = None,
+        show_overlay: bool | None = None,
+        use_workerw: bool | None = None,
+    ) -> dict[str, Any]:
         if profile is not None:
             try:
                 self.performance.set_profile(profile)
@@ -50,9 +56,20 @@ class DesktopModeController:
                 self.last_error = f"Unknown performance profile '{profile}'; using adaptive."
         if show_overlay is not None:
             self._show_overlay = bool(show_overlay)
+        if use_workerw is not None:
+            self._use_workerw = bool(use_workerw)
+            # Recreate only if not active; live backend switching is deliberately
+            # avoided because SetParent is a Windows-native boundary.
+            if not self.enabled and self.layer is not None:
+                try:
+                    self.layer.close()
+                except Exception:
+                    pass
+                self.layer = None
         self.workspace.set(
             performance_profile=self.performance.profile,
             show_performance_overlay=self._show_overlay,
+            use_workerw=self._use_workerw,
         )
         return self.status()
 
@@ -75,6 +92,7 @@ class DesktopModeController:
                 state["desktop_mode"] = True
                 state["performance_profile"] = self.performance.profile
                 state["show_performance_overlay"] = self._show_overlay
+                state["use_workerw"] = self._use_workerw
                 self.workspace.save(state)
                 try:
                     if hasattr(self.ui, "_load_app_settings") and hasattr(self.ui, "_save_app_settings"):
@@ -228,6 +246,8 @@ class DesktopModeController:
             "windows_supported": WindowManager.available(),
             "profile": self.performance.profile,
             "show_performance_overlay": self._show_overlay,
+            "use_workerw": self._use_workerw,
+            "desktop_backend": self.layer.desktop_backend() if self.layer else ("WorkerW" if self._use_workerw else "bottommost-window"),
             "last_error": self.last_error,
             "performance": self.performance.status(),
             "web_panels": web_application_host.status(),
