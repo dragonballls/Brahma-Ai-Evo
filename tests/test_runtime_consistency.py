@@ -224,9 +224,12 @@ class RuntimeConsistencyTests(unittest.TestCase):
     def test_omniroute_setup_imports_central_constants(self):
         setup = self.read("core/omniroute_setup.py")
         runtime = self.read("core/runtime_paths.py")
-        self.assertIn("OMNIROUTE_DEFAULT_PORT", setup)
+        contract = self.read("core/runtime_contract.py")
+        self.assertIn("from core.runtime_contract import NODE_VERSION, OMNIROUTE_VERSION", setup)
         self.assertIn("from core.runtime_paths import API_CONFIG_PATH, OMNIROUTE_DEFAULT_BASE_URL, OMNIROUTE_DEFAULT_PORT", setup)
         self.assertIn("OMNIROUTE_DEFAULT_PORT = 20128", runtime)
+        self.assertIn('OMNIROUTE_VERSION = "3.8.50"', contract)
+        self.assertIn('NODE_VERSION = "24.21.0"', contract)
 
     def test_boot_sentry_runs_after_singleton_import_boundary(self):
         main = self.read("main.py")
