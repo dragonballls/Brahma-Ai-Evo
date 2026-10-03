@@ -162,9 +162,9 @@ class WindowManager:
             return False
 
         # Never tune Windows system binaries or processes from Windows folders.
-        windows_root = os.environ.get("WINDIR", r"C:\Windows").lower().rstrip("\/")
+        windows_root = os.environ.get("WINDIR", r"C:\Windows").lower().rstrip("\\/")
         try:
-            if exe.startswith(windows_root + "\"):
+            if exe.startswith(windows_root + "\\"):
                 return False
         except Exception:
             pass
