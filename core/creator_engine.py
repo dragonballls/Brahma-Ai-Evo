@@ -20,6 +20,26 @@ logger = logging.getLogger("brahma.creator")
 class CreatorError(RuntimeError):
     """Expected Creator pipeline failure."""
 
+
+def _safe_segments(segments: list[dict[str, Any]] | None, duration: float) -> list[dict[str, Any]]:
+    clean: list[dict[str, Any]] = []
+    for item in segments or []:
+        try:
+            start = max(0.0, float(item.get("start", 0)))
+            end = min(float(duration), float(item.get("end", duration)))
+            speed = max(0.25, min(4.0, float(item.get("speed", 1) or 1)))
+        except (TypeError, ValueError):
+            continue
+        if end <= start + 0.05:
+            continue
+        clean.append({
+            "start": start,
+            "end": end,
+            "speed": speed,
+            "reason": str(item.get("reason") or item.get("description") or "selected segment"),
+        })
+    return clean
+
 CREATOR_ROOT = get_user_data_dir() / "CreatorProjects"
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 
