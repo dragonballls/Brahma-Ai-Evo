@@ -1928,13 +1928,14 @@ TOOL_DECLARATIONS = [
             "properties": {
                 "action": {
                     "type": "STRING",
-                    "description": "status | enable | disable | toggle | open | list_windows | control_window | set_profile"
+                    "description": "status | enable | disable | toggle | open | host_window | list_windows | control_window | set_profile"
                 },
                 "target": {"type": "STRING", "description": "Application, URL, window title, PID/HWND, or executable target."},
                 "window_action": {"type": "STRING", "description": "focus | minimize | maximize | restore | close | move | resize | dock"},
                 "profile": {"type": "STRING", "description": "adaptive | balanced | performance | game | efficiency"},
                 "overlay": {"type": "BOOLEAN", "description": "Show the optional desktop performance HUD."},
                 "use_workerw": {"type": "BOOLEAN", "description": "Advanced Windows-only WorkerW wallpaper backend; disabled by default for DPI safety."},
+                "embed": {"type": "BOOLEAN", "description": "For open: host the native application inside a Brahma workspace when safe."},
                 "x": {"type": "INTEGER", "description": "Window X coordinate for move/resize/dock."},
                 "y": {"type": "INTEGER", "description": "Window Y coordinate for move/resize/dock."},
                 "width": {"type": "INTEGER", "description": "Window width for resize/dock."},
@@ -5138,7 +5139,18 @@ class BrahmaLive:
                 elif action == "toggle":
                     result = json.dumps(controller.toggle(), ensure_ascii=False)
                 elif action == "open":
-                    result = json.dumps(controller.open(str(args.get("target") or "")), ensure_ascii=False)
+                    result = json.dumps(
+                        controller.open(
+                            str(args.get("target") or ""),
+                            embed=bool(args.get("embed", False)),
+                        ),
+                        ensure_ascii=False,
+                    )
+                elif action == "host_window":
+                    result = json.dumps(
+                        controller.host_native(str(args.get("target") or "")),
+                        ensure_ascii=False,
+                    )
                 elif action == "list_windows":
                     result = json.dumps(controller.windows(), ensure_ascii=False)
                 elif action == "control_window":
