@@ -363,9 +363,11 @@ class RuntimeConsistencyTests(unittest.TestCase):
     def test_omniroute_runtime_version_pin_is_verified_release(self):
         setup_source = self.read("core/omniroute_setup.py")
         prepare_source = self.read("scripts/prepare_omniroute_runtime.py")
-        self.assertIn('OMNIROUTE_VERSION = "3.8.50"', setup_source)
-        self.assertIn("from core.omniroute_setup import OMNIROUTE_VERSION", prepare_source)
-        self.assertIn('OMNIROUTE_COMMIT = "5458026c216f77a3da68ea49152dc33470cfe2cb"', prepare_source)
+        contract_source = self.read("core/runtime_contract.py")
+        self.assertIn('OMNIROUTE_VERSION = "3.8.50"', contract_source)
+        self.assertIn('OMNIROUTE_COMMIT = "5458026c216f77a3da68ea49152dc33470cfe2cb"', contract_source)
+        self.assertIn("from core.runtime_contract import NODE_VERSION, OMNIROUTE_VERSION", setup_source)
+        self.assertIn("from core.runtime_contract import NODE_VERSION, OMNIROUTE_COMMIT, OMNIROUTE_VERSION", prepare_source)
 
     def test_ui_does_not_duplicate_omniroute_default_endpoint(self):
         source = self.read("ui.py")
