@@ -10,7 +10,7 @@ import os
 # Hardware acceleration & WebGL flags for smooth 180fps+ rendering in Chromium
 os.environ.setdefault(
     "QTWEBENGINE_CHROMIUM_FLAGS",
-    "--enable-gpu-rasterization --enable-zero-copy --ignore-gpu-blocklist --enable-accelerated-2d-canvas --enable-webgl --enable-webgl2-compute-context --disable-frame-rate-limit --disable-gpu-vsync --num-raster-threads=4 --use-angle=d3d11 --disable-gpu-driver-bug-workarounds"
+    "--enable-gpu-rasterization --enable-zero-copy --enable-accelerated-2d-canvas --enable-webgl --use-angle=d3d11 --num-raster-threads=2"
 )
 
 import platform
@@ -207,6 +207,7 @@ class BackgroundWidget(QWidget):
         self._state_sig.connect(self._do_set_ai_state)
         self._audio_sig.connect(self._do_set_audio_level)
         self._last_audio_js_time = 0.0
+        self._last_pointer_js_time = 0.0
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, False)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
         self.setAutoFillBackground(True)
@@ -330,7 +331,7 @@ class BackgroundWidget(QWidget):
 
     def _do_set_audio_level(self, level: float) -> None:
         now = time.monotonic()
-        if (now - self._last_audio_js_time) < 0.016:  # Ultra-smooth 60 FPS WebEngine bridge
+        if (now - self._last_audio_js_time) < 0.05:  # 20 Hz is sufficient for the adaptive visualizer
             return
         self._last_audio_js_time = now
         if self._web_view:
@@ -343,6 +344,10 @@ class BackgroundWidget(QWidget):
                 pass
 
     def set_pointer_norm(self, nx: float, ny: float) -> None:
+        now = time.monotonic()
+        if (now - self._last_pointer_js_time) < 0.033:
+            return
+        self._last_pointer_js_time = now
         if self._web_view:
             try:
                 page = self._web_view.page()
@@ -1480,7 +1485,7 @@ class _SysMetrics:
                 self._update()
             except Exception:
                 pass
-            time.sleep(1.5)
+            time.sleep(5.0)
 
     def _update(self):
         cpu = psutil.cpu_percent(interval=None)
@@ -8049,7 +8054,7 @@ class FloatingLauncher(QWidget):
 
         self._anim_timer = QTimer(self)
         self._anim_timer.timeout.connect(self._anim_tick)
-        self._anim_timer.start(25)  # 40fps
+        self._anim_timer.start(50)  # 20fps
 
         self._single_timer = QTimer(self)
         self._single_timer.setSingleShot(True)
@@ -8061,7 +8066,7 @@ class FloatingLauncher(QWidget):
         self._gaze_y = 0.0
         self._target_snap_x = 0
         self._spring_timer = QTimer(self)
-        self._spring_timer.setInterval(16)
+        self._spring_timer.setInterval(33)
         self._spring_timer.timeout.connect(self._spring_step)
 
         self._dragging = False
@@ -8100,7 +8105,7 @@ class FloatingLauncher(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         if hasattr(self, "_anim_timer") and not self._anim_timer.isActive():
-            self._anim_timer.start(25)
+            self._anim_timer.start(50)
 
     def _anim_tick(self):
         if not self.isVisible():
@@ -8629,7 +8634,7 @@ class MainWindow(QMainWindow):
         # Metrik gÃ¼ncelleme timer'Ä±
         self._metric_tmr = QTimer(self)
         self._metric_tmr.timeout.connect(self._update_metrics)
-        self._metric_tmr.start(2000)
+        self._metric_tmr.start(5000)
         self._update_metrics()
 
         self._log_sig.connect(self._on_log_text)
