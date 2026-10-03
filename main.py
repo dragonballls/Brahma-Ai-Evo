@@ -67,6 +67,7 @@ from actions.computer_settings import computer_settings
 from actions.screen_processor  import screen_process
 from actions.meeting_assistant import MeetingAssistant
 from actions.youtube_video     import youtube_video
+from actions.creator_studio  import creator_control
 from actions.obs_control    import obs_control
 from actions.desktop           import desktop_control
 from actions.browser_control   import browser_control
@@ -1138,6 +1139,44 @@ TOOL_DECLARATIONS = [
                 "request": {"type": "STRING", "description": "Natural-language setting request, e.g. 'turn off startup animation', 'make Brahma lighter on my PC', or 'use OpenRouter by default'"},
             },
             "required": ["action"]
+        }
+    },
+    {
+        "name": "creator_studio",
+        "description": (
+            "AI Creator Studio for making videos and audio from the user's footage or audio. "
+            "ALWAYS use for requests to create, edit, produce, script, caption, clean audio, add music, "
+            "make thumbnails, generate titles/descriptions/hashtags/tags/chapters, prepare Shorts/Reels, "
+            "find music, record creator audio, or publish a finished video to YouTube. "
+            "Analyze the actual footage first, then create a deterministic editable project. "
+            "Use action='produce' for analyze + plan + metadata + script + render without publishing; "
+            "use action='publish' only when the user explicitly asks to upload. "
+            "Use action='music_search' for copyright-safe/licensed music discovery and action='record_audio' "
+            "for microphone recording. Existing OBS integration can be used through record_start/record_stop. "
+            "Never try to disguise copyrighted audio or defeat content-identification systems."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "tools | create | plan | produce | render | publish | metadata | script | rights_review | music_search | record_audio | status | record_start | record_stop"},
+                "request": {"type": "STRING", "description": "Natural-language creator request."},
+                "goal": {"type": "STRING", "description": "What the finished content should accomplish and feel like."},
+                "source": {"type": "STRING", "description": "Source video path; Brahma can also find a recent video automatically."},
+                "video_path": {"type": "STRING", "description": "Alias for source."},
+                "project": {"type": "STRING", "description": "Creator project name or project manifest path."},
+                "platform": {"type": "STRING", "description": "youtube | youtube_short | tiktok | instagram_reel or other target."},
+                "target_length": {"type": "STRING", "description": "Desired final duration, such as 8 minutes or 45 seconds."},
+                "script_length": {"type": "STRING", "description": "short | medium | long."},
+                "music_path": {"type": "STRING", "description": "Optional user-provided music file."},
+                "query": {"type": "STRING", "description": "Music discovery query or creator topic."},
+                "mood": {"type": "STRING", "description": "Desired music/content mood."},
+                "output": {"type": "STRING", "description": "Output WAV path for record_audio."},
+                "duration_seconds": {"type": "NUMBER", "description": "Microphone recording duration."},
+                "privacy": {"type": "STRING", "description": "YouTube privacy: private | unlisted | public. Default private."},
+                "playlist_id": {"type": "STRING", "description": "Optional YouTube playlist ID."},
+                "length": {"type": "STRING", "description": "Requested script length."}
+            },
+            "required": []
         }
     },
     {
@@ -4984,6 +5023,13 @@ class BrahmaLive:
                                     self.ui.refresh()
                             except Exception:
                                 pass
+            elif name == "creator_studio":
+                r = await loop.run_in_executor(
+                    None,
+                    lambda: creator_control(parameters=args, player=self.ui, speak=self.speak)
+                )
+                result = r or "Creator task completed."
+
             elif name == "obs_control":
                 r = await loop.run_in_executor(
                     None,
