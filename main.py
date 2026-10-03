@@ -113,10 +113,7 @@ EchoGuard = lazy_attr("core.echo", "EchoGuard")
 audio_devices = lazy_module("core.audio_devices")
 from updater import restart_application, update_from_github
 
-try:
-    from dashboard.server import DashboardServer
-except Exception:
-    DashboardServer = None
+DashboardServer = lazy_attr("dashboard.server", "DashboardServer")
 
 try:
     from actions.instagram_mcp import start_daemon as start_ig_daemon, set_ig_prompt_callback
@@ -126,10 +123,7 @@ except ImportError:
     except ImportError:
         start_ig_daemon = None
 
-try:
-    from brahma_connect.service import get_service as get_brahma_connect_service
-except Exception:
-    get_brahma_connect_service = None
+get_brahma_connect_service = lazy_attr("brahma_connect.service", "get_service")
 
 
 def get_base_dir():
@@ -5405,7 +5399,10 @@ def main():
 
     brahma_connect = None
     brahma_connect_enabled = False
-    if get_brahma_connect_service is not None:
+    # Gateway construction imports FastAPI/crypto and allocates server state, so
+    # keep it completely dormant in low-power mode until the user opens or uses
+    # Brahma Connect.
+    if bool(app_settings.get("background_mobile_connect", not low_power)):
         try:
             brahma_connect = get_brahma_connect_service(BASE_DIR)
             brahma_connect_enabled = bool(brahma_connect.gateway.config.enabled)
@@ -5416,6 +5413,8 @@ def main():
             except Exception:
                 pass
             brahma_connect = None
+    else:
+        _startup_log("brahma connect construction skipped by low-power mode")
     try:
         if brahma_connect is not None and hasattr(ui, "set_brahma_connect_service"):
             ui.set_brahma_connect_service(brahma_connect)
@@ -5468,12 +5467,18 @@ def main():
 
     # Globe is initialized lazily when a geospatial command actually needs it.
 
-    # Initialize plugin manager and load any plugins from ./plugins
-    try:
-        plugin_manager = PluginManager(BASE_DIR)
-        plugin_manager.load_plugins()
-    except Exception:
-        plugin_manager = None
+    # Plugins can be expensive and are fully optional. Load them at startup only
+    # when explicitly requested; feature commands can still load their own modules
+    # on demand.
+    plugin_manager = None
+    if bool(app_settings.get("load_plugins_on_startup", not low_power)):
+        try:
+            plugin_manager = PluginManager(BASE_DIR)
+            plugin_manager.load_plugins()
+        except Exception:
+            plugin_manager = None
+    else:
+        _startup_log("plugin loading skipped by low-power/startup setting")
 
     def runner():
         _startup_log("runner waiting api key")
