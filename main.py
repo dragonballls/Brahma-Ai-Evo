@@ -2240,8 +2240,19 @@ class BrahmaLive:
                 self._dashboard = DashboardServer()
                 if not self._dashboard_started:
                     self._dashboard_started = True
+                    def _run_mobile_connect():
+                        async def _mobile_loop():
+                            await asyncio.gather(
+                                self._serve_dashboard(),
+                                self._consume_remote_commands(),
+                            )
+                        try:
+                            asyncio.run(_mobile_loop())
+                        except Exception as exc:
+                            self._startup_log(f"on-demand mobile connect error: {exc}")
+
                     threading.Thread(
-                        target=lambda: asyncio.run(self._serve_dashboard()),
+                        target=_run_mobile_connect,
                         daemon=True,
                         name="mobile-connect-on-demand",
                     ).start()
@@ -4982,6 +4993,8 @@ class BrahmaLive:
 
     async def _listen_audio(self):
         print("[BRAHMA EVO] 🎤 Mic started")
+        if self._echo is None:
+            self._echo = EchoGuard()
         loop = asyncio.get_event_loop()
         import numpy as np
 
