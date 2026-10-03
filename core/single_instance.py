@@ -31,9 +31,13 @@ class SingleInstance:
         if os.name == "nt":
             import ctypes
 
-            kernel32 = ctypes.windll.kernel32
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+            kernel32.CreateMutexW.restype = ctypes.c_void_p
+            kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+            kernel32.CloseHandle.restype = ctypes.c_bool
             ctypes.set_last_error(0)
-            handle = kernel32.CreateMutexW(None, True, self.name)
+            handle = kernel32.CreateMutexW(None, False, self.name)
             if not handle:
                 raise OSError(ctypes.get_last_error() or 1, "CreateMutexW failed")
 
@@ -71,8 +75,9 @@ class SingleInstance:
                 import ctypes
 
                 if self._handle:
-                    ctypes.windll.kernel32.ReleaseMutex(self._handle)
-                    ctypes.windll.kernel32.CloseHandle(self._handle)
+                    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+                    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+                    kernel32.CloseHandle(self._handle)
             except Exception:
                 pass
             self._handle = None
