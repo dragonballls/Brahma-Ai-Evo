@@ -5209,6 +5209,7 @@ class BrahmaLive:
             await asyncio.sleep(5)
 
 def _main_impl():
+    global _SINGLE_INSTANCE_GUARD
     _startup_log("main entered")
     try:
         if update_from_github(BASE_DIR):
