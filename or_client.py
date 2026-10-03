@@ -286,6 +286,14 @@ class OpenRouterClient:
             messages.extend(history)
         messages.append({"role": "user", "content": prompt})
 
+        omni_result = self._call_omniroute(
+            messages,
+            model=model or "auto",
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        if omni_result:
+            return omni_result
         return self._call_with_fallback(
             TEXT_MODELS, messages, model, max_tokens, temperature
         )
@@ -304,9 +312,17 @@ class OpenRouterClient:
             {"role": "system", "content": system},
             {"role": "user",   "content": prompt},
         ]
-        raw = self._call_with_fallback(
-            TEXT_MODELS, messages, model, max_tokens, temperature=0.2
+        raw = self._call_omniroute(
+            messages,
+            model=model or "auto",
+            max_tokens=max_tokens,
+            temperature=0.2,
+            response_format={"type": "json_object"},
         )
+        if not raw:
+            raw = self._call_with_fallback(
+                TEXT_MODELS, messages, model, max_tokens, temperature=0.2
+            )
 
         clean = raw.strip()
         if clean.startswith("```"):
@@ -352,6 +368,14 @@ class OpenRouterClient:
                 ],
             },
         ]
+        omni_result = self._call_omniroute(
+            messages,
+            model=model or "auto",
+            max_tokens=max_tokens,
+            temperature=0.2,
+        )
+        if omni_result:
+            return omni_result
         return self._call_with_fallback(
             VISION_MODELS, messages, model, max_tokens, temperature=0.2
         )
@@ -387,18 +411,31 @@ class OpenRouterClient:
         temperature: float = DEFAULT_TEMPERATURE,
     ) -> str:
     
+        omni_result = self._call_omniroute(
+            messages,
+            model=model or "auto",
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        if omni_result:
+            return omni_result
         return self._call_with_fallback(
             TEXT_MODELS, messages, model, max_tokens, temperature
         )
 
     def available_models(self) -> dict:
-        return {
+        info = {
             "text_models":   TEXT_MODELS,
             "vision_models": VISION_MODELS,
             "rate_limited":  list(_rate_limited.keys()),
             "total_text":    len(TEXT_MODELS),
             "total_vision":  len(VISION_MODELS),
         }
+        try:
+            info["omniroute"] = self._omniroute.status()
+        except Exception:
+            info["omniroute"] = {"available": False, "reason": "status unavailable"}
+        return info
 
 client = OpenRouterClient()
 
