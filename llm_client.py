@@ -169,6 +169,11 @@ class UnifiedAIClient:
             system = system.rstrip() + "\n\n" + emotional_controller.prompt_block(prompt, state=state)
         except Exception:
             pass
+        try:
+            from core.language_policy import prompt_block as language_prompt_block
+            system = system.rstrip() + "\n\n" + language_prompt_block()
+        except Exception:
+            pass
         if self._provider == "Local" or bool(self._provider and self._provider.lower() == "local"):
             return self.chat(prompt, system=system, history=history)
         from core.intelligence_orchestrator import orchestrator
