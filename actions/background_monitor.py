@@ -96,10 +96,12 @@ def _run_check(m_id, m):
                 alert_msg = f"Alert: Website {m['target']} appears to be down or unreachable."
 
         if alert_msg:
-            # Alert triggered! Remove monitor and speak.
+            # Alert triggered! Remove monitor atomically, then speak without
+            # holding the monitor lock during callback work.
+            with _monitor_lock:
+                _monitors.pop(m_id, None)
             if _speech_sink:
                 _speech_sink(alert_msg)
-            del _monitors[m_id]
             
     except Exception as e:
         print(f"[Monitor] Error checking {m_id}: {e}")
