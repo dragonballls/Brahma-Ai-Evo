@@ -394,6 +394,25 @@ class DeviceManager:
         self._save()
         return record.to_dict()
 
+    def disconnect(self, device_id: str) -> dict[str, Any]:
+        record = self.get(device_id)
+        if record is None:
+            raise ValueError("Device not found.")
+        result: dict[str, Any] = {"ok": True}
+        if record.backend == "adb":
+            adb = integrations.info("adb")
+            endpoint = record.address or record.serial
+            if adb.installed and adb.path and endpoint and _is_ip_endpoint(endpoint):
+                result = _run_adb(adb.path, ["disconnect", endpoint], timeout=6.0)
+            elif adb.installed and adb.path and record.serial and record.address:
+                result = _run_adb(adb.path, ["disconnect", record.serial], timeout=6.0)
+        record.status = "Offline"
+        record.mode = "background"
+        record.last_seen = 0.0
+        self._save()
+        result["device"] = record.to_dict()
+        return result
+
     # ---------- Android ----------
     def pair_android(self, address: str, pairing_code: str = "") -> dict[str, Any]:
         addr = str(address or "").strip()
