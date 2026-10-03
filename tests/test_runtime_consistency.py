@@ -77,6 +77,31 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertEqual(calls["probe"], 1)
         self.assertEqual(calls["sync"], 1)
 
+    def test_live_audio_queues_are_bounded(self):
+        source = self.read("main.py")
+        self.assertIn("asyncio.Queue(maxsize=48)", source)
+        self.assertIn("self._enqueue_live_input", source)
+        self.assertIn("self._enqueue_playback", source)
+
+    def test_shutdown_cleans_background_services(self):
+        source = self.read("main.py")
+        self.assertIn("def stop_background_services(self)", source)
+        self.assertIn("self._idle_stop_event.set()", source)
+        self.assertIn("brahma_connect.stop()", source)
+        self.assertIn("dashboard.stop()", source)
+        self.assertIn("aboutToQuit.connect(_cleanup_runtime_services)", source)
+
+    def test_sensorium_shutdown_is_interruptible(self):
+        source = self.read("core/sensorium.py")
+        self.assertIn("self._stop_event = threading.Event()", source)
+        self.assertIn("self._stop_event.wait", source)
+        self.assertNotIn("time.sleep(sleep_for)", source)
+
+    def test_boot_sentry_uses_patch_age_guard(self):
+        source = self.read("core/boot_sentry.py")
+        self.assertIn('float(entry.get("timestamp"))', source)
+        self.assertIn("age <= 300.0", source)
+
     def test_unsafe_core_updater_reset_is_gone(self):
         source = self.read("core/updater.py")
         self.assertNotIn('["git", "reset", "--hard"', source)
