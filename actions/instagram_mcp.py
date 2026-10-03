@@ -725,67 +725,94 @@ class InstagramService:
             self._running = False
             return
 
-        POLL_INTERVAL = 35
+        poll_interval = 35
         try:
             while self._running:
-            try:
-                threads = cl.direct_threads(amount=10)
-                my_user_id = str(cl.user_id) if hasattr(cl, "user_id") else ""
-
-                for thread in threads:
-                    latest_msg = thread.messages[0] if thread.messages else None
-                    if latest_msg and str(latest_msg.user_id) != my_user_id:
-                        if self._last_processed_msgs.get(str(thread.id)) != str(latest_msg.id):
-                            self._last_processed_msgs[str(thread.id)] = str(latest_msg.id)
-                            text = latest_msg.text or ""
-                            sender_username = thread.users[0].username if thread.users else "Unknown"
-
-                            ig_log(f"Incoming DM from @{sender_username}: {text}")
-
-                            if self._reply_callback:
-                                is_auto = str(thread.id) in self._auto_threads
-                                ai_response = self._reply_callback(str(thread.id), sender_username, text, is_auto)
-                                if ai_response:
-                                    ig_log(f"Auto-replying to @{sender_username}: {ai_response[:40]}...")
-                                    cl.direct_send(ai_response, thread_ids=[int(thread.id)])
-                            else:
-                                try:
-                                    from actions.attention_monitor import speak_native
-                                    clean_text = (text or "").strip()
-                                    snippet = f": '{clean_text[:75]}...'" if len(clean_text) > 75 else (f": '{clean_text}'" if clean_text else "")
-                                    speak_native(f"You received a message from {sender_username}{snippet}.")
-                                except Exception as e:
-                                    ig_log(f"Voice alert notice: {e}")
-
-                            if self._stop_event.wait(timeout=2):
-                                break
-
-                # Check and approve message requests
                 try:
-                    pending = cl.direct_pending_inbox()
-                    for t in pending:
-                        sender_name = t.users[0].username if t.users else "Unknown"
-                        ig_log(f"Auto-approving incoming request from @{sender_name}")
-                        cl.direct_pending_approve(t.id)
-                        if self._stop_event.wait(timeout=1):
+                    threads = cl.direct_threads(amount=10)
+                    my_user_id = str(cl.user_id) if hasattr(cl, "user_id") else ""
+
+                    for thread in threads:
+                        latest_msg = thread.messages[0] if thread.messages else None
+                        if latest_msg and str(latest_msg.user_id) != my_user_id:
+                            if self._last_processed_msgs.get(str(thread.id)) != str(latest_msg.id):
+                                self._last_processed_msgs[str(thread.id)] = str(latest_msg.id)
+                                text = latest_msg.text or ""
+                                sender_username = thread.users[0].username if thread.users else "Unknown"
+
+                                ig_log(f"Incoming DM from @{sender_username}: {text}")
+
+                                if self._reply_callback:
+                                    is_auto = str(thread.id) in self._auto_threads
+                                    ai_response = self._reply_callback(
+                                        str(thread.id), sender_username, text, is_auto
+                                    )
+                                    if ai_response:
+                                        ig_log(
+                                            f"Auto-replying to @{sender_username}: "
+                                            f"{ai_response[:40]}..."
+                                        )
+                                        cl.direct_send(
+                                            ai_response,
+                                            thread_ids=[int(thread.id)],
+                                        )
+                                else:
+                                    try:
+                                        from actions.attention_monitor import speak_native
+                                        clean_text = (text or "").strip()
+                                        snippet = (
+                                            f": '{clean_text[:75]}...'"
+                                            if len(clean_text) > 75
+                                            else (f": '{clean_text}'" if clean_text else "")
+                                        )
+                                        speak_native(
+                                            f"You received a message from "
+                                            f"{sender_username}{snippet}."
+                                        )
+                                    except Exception as e:
+                                        ig_log(f"Voice alert notice: {e}")
+
+                                if self._stop_event.wait(timeout=2):
+                                    break
+
+                    if self._stop_event.is_set():
+                        break
+
+                    try:
+                        pending = cl.direct_pending_inbox()
+                        for thread in pending:
+                            sender_name = (
+                                thread.users[0].username if thread.users else "Unknown"
+                            )
+                            ig_log(
+                                f"Auto-approving incoming request from @{sender_name}"
+                            )
+                            cl.direct_pending_approve(thread.id)
+                            if self._stop_event.wait(timeout=1):
+                                break
+                    except Exception:
+                        pass
+
+                except Exception as e:
+                    err_str = str(e).lower()
+                    ig_log(f"Polling cycle error: {e}")
+                    if "429" in err_str or "too many requests" in err_str:
+                        ig_log(
+                            "Instagram rate limit (429) hit. "
+                            "Pausing for 60s cooldown..."
+                        )
+                        if self._stop_event.wait(timeout=60):
                             break
-                except Exception:
-                    pass
+                    elif "login_required" in err_str:
+                        ig_log(
+                            "Session expired (login_required). "
+                            "Resetting auth flag for refresh..."
+                        )
+                        self._authenticated = False
+                        if self._stop_event.wait(timeout=30):
+                            break
 
-            except Exception as e:
-                err_str = str(e).lower()
-                ig_log(f"Polling cycle error: {e}")
-                if "429" in err_str or "too many requests" in err_str:
-                    ig_log("Instagram rate limit (429) hit. Pausing for 60s cooldown...")
-                    if self._stop_event.wait(timeout=60):
-                        break
-                elif "login_required" in err_str:
-                    ig_log("Session expired (login_required). Resetting auth flag for refresh...")
-                    self._authenticated = False
-                    if self._stop_event.wait(timeout=30):
-                        break
-
-                if self._stop_event.wait(timeout=POLL_INTERVAL):
+                if self._stop_event.wait(timeout=poll_interval):
                     break
         finally:
             self._running = False
