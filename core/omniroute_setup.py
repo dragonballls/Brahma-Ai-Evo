@@ -24,7 +24,7 @@ import urllib.request
 OMNIROUTE_VERSION = "3.8.50"
 NODE_VERSION = "24.21.0"
 OMNIROUTE_PACKAGE = f"omniroute@{OMNIROUTE_VERSION}"
-DEFAULT_PORT = 20128
+DEFAULT_PORT = OMNIROUTE_DEFAULT_PORT
 PROVISION_TIMEOUT_SECONDS = max(
     30, int(os.environ.get("BRAHMA_OMNIROUTE_PROVISION_TIMEOUT", "300"))
 )
@@ -101,7 +101,7 @@ class OmniRouteRuntimeStatus:
 class OmniRouteProvisioner:
     def __init__(
         self,
-        base_url: str = f"http://127.0.0.1:{DEFAULT_PORT}/v1",
+        base_url: str = OMNIROUTE_DEFAULT_BASE_URL,
         data_dir: Path | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
