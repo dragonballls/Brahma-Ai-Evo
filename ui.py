@@ -11087,10 +11087,11 @@ class SystemConnectivitySidebar(QFrame):
 
 
 class OmniRouteEmbeddedPage(QWidget):
-    """OmniRoute dashboard as a first-class Brahma settings page."""
+    """OmniRoute dashboard as a first-class, lazily-created Brahma settings page."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self._started = False
+        self._web = None
         self._retry_timer = None
 
         root = QVBoxLayout(self)
@@ -11125,33 +11126,53 @@ class OmniRouteEmbeddedPage(QWidget):
         hint.setStyleSheet(f"color: {C.TEXT_DIM};")
         root.addWidget(hint)
 
-        if WEB_ENGINE_AVAILABLE:
-            self._web = QWebEngineView(self)
-            self._web.setStyleSheet("background: #020306; border: none;")
-            self._web.loadStarted.connect(
-                lambda: self._status.setText("Connecting to OmniRoute…")
-            )
-            self._web.loadFinished.connect(self._load_finished)
-            root.addWidget(self._web, 1)
-        else:
-            self._web = None
-            error = QLabel(
-                "Qt WebEngine is unavailable in this build, so the OmniRoute dashboard cannot be embedded."
-            )
-            error.setWordWrap(True)
-            error.setStyleSheet(f"color: {C.RED};")
-            root.addWidget(error, 1)
+        self._content_host = QWidget(self)
+        self._content_layout = QVBoxLayout(self._content_host)
+        self._content_layout.setContentsMargins(0, 0, 0, 0)
+        self._content_layout.addWidget(
+            QLabel("OmniRoute dashboard will initialize when this page is opened.")
+        )
+        root.addWidget(self._content_host, 1)
 
     def _back_to_settings(self):
-        stack = getattr(self.window(), "_center_stack", None)
-        if stack is not None:
-            stack.setCurrentIndex(3)
+        win = self.window()
+        stack = getattr(win, "_center_stack", None)
+        page = getattr(win, "_settings_hub_page", None)
+        if stack is not None and page is not None:
+            stack.setCurrentWidget(page)
+
+    def _ensure_view(self):
+        if self._web is not None:
+            return
+        if not WEB_ENGINE_AVAILABLE:
+            label = QLabel(
+                "Qt WebEngine is unavailable in this build, so the OmniRoute dashboard cannot be embedded."
+            )
+            label.setWordWrap(True)
+            label.setStyleSheet(f"color: {C.RED};")
+            self._content_layout.replaceWidget(self._content_layout.itemAt(0).widget(), label)
+            self._content_layout.addWidget(label)
+            return
+
+        placeholder = self._content_layout.itemAt(0).widget()
+        if placeholder is not None:
+            placeholder.deleteLater()
+
+        self._web = QWebEngineView(self)
+        self._web.setStyleSheet("background: #020306; border: none;")
+        self._web.loadStarted.connect(
+            lambda: self._status.setText("Connecting to OmniRoute…")
+        )
+        self._web.loadFinished.connect(self._load_finished)
+        self._content_layout.addWidget(self._web, 1)
 
     def _reload(self):
+        self._ensure_view()
         if self._web is not None:
             self._web.load(QUrl("http://127.0.0.1:20128/"))
 
     def _start_gateway(self):
+        self._ensure_view()
         if self._started or self._web is None:
             return
         self._started = True
@@ -11161,8 +11182,6 @@ class OmniRouteEmbeddedPage(QWidget):
                 from core.omniroute import gateway
                 gateway().ensure_ready()
             except Exception as exc:
-                # Qt widgets must only be mutated from the GUI thread. The
-                # dashboard retry loop below will surface the unavailable state.
                 try:
                     import logging
                     logging.getLogger("BrahmaUI").warning(
@@ -13267,7 +13286,7 @@ class SystemConnectivityPage(QWidget):
             if self._ctrl() and hasattr(self._ctrl(), "write_log"):
                 self._ctrl().write_log("ERR: OmniRoute page is unavailable.")
             return
-        stack.setCurrentIndex(5)
+        stack.setCurrentWidget(page)
 
     def _save_cloud_provider_key(self, provider: str, field: str, key: str, status_lbl):
         key = (key or "").strip()
