@@ -238,6 +238,16 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("OMNIROUTE_DEFAULT_BASE_URL", source)
         self.assertNotIn('"http://127.0.0.1:20128/v1"', source)
 
+    def test_omniroute_runtime_version_pin_is_current_release_line(self):
+        source = self.read("core/omniroute_setup.py")
+        self.assertIn('OMNIROUTE_VERSION = "3.8.51"', source)
+        self.assertNotIn('OMNIROUTE_VERSION = "3.8.50"', source)
+
+    def test_ui_does_not_duplicate_omniroute_default_endpoint(self):
+        source = self.read("ui.py")
+        self.assertNotIn('"http://127.0.0.1:20128/"', source)
+        self.assertIn("OMNIROUTE_DEFAULT_BASE_URL", source)
+
     def test_requirements_do_not_duplicate_package_names(self):
         names = []
         for line in self.read("requirements.txt").splitlines():
