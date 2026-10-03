@@ -45,6 +45,12 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertEqual(API_CONFIG_PATH.name, "api_keys.json")
         self.assertEqual(API_CONFIG_PATH.parent.name, "config")
 
+    def test_identity_persistence_is_atomic(self):
+        source = self.read("core/identity.py")
+        self.assertIn("self._lock = threading.RLock()", source)
+        self.assertIn("temp = self.config_file.with_suffix(\".json.tmp\")", source)
+        self.assertIn("temp.replace(self.config_file)", source)
+
     def test_provider_policy_is_canonical(self):
         from core.provider_policy import (
             GEMINI,
