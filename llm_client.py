@@ -156,6 +156,24 @@ class UnifiedAIClient:
     ) -> str:
         """Use the cloud multi-model intelligence layer while preserving Local mode."""
         self.reload_settings()
+        # Ground every conversational cloud/local call in the same functional
+        # self-model so "I/me/you/my phone" and action-state claims stay distinct.
+        try:
+            from core.self_model import self_awareness
+            system = system.rstrip() + "\n\n" + self_awareness.prompt_block(prompt)
+        except Exception:
+            pass
+        try:
+            from core.emotional_controller import emotional_controller
+            state = emotional_controller.assess(prompt)
+            system = system.rstrip() + "\n\n" + emotional_controller.prompt_block(prompt, state=state)
+        except Exception:
+            pass
+        try:
+            from core.language_policy import prompt_block as language_prompt_block
+            system = system.rstrip() + "\n\n" + language_prompt_block()
+        except Exception:
+            pass
         if self._provider == "Local" or bool(self._provider and self._provider.lower() == "local"):
             return self.chat(prompt, system=system, history=history)
         from core.intelligence_orchestrator import orchestrator
