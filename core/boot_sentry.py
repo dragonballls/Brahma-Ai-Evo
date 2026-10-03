@@ -38,8 +38,28 @@ def check_and_recover_on_boot() -> bool:
     if not history or not isinstance(history, list):
         return False
 
-    last_patch = history[-1]
-    if last_patch.get("status") != "applied" or not last_patch.get("backup_path"):
+    # Only recover from a patch that was actually applied immediately before
+    # the recorded crash. Older successful patches must never be reverted because
+    # of an unrelated crash weeks later.
+    try:
+        crash_time = CRASH_LOG.stat().st_mtime
+    except OSError:
+        return False
+
+    last_patch = None
+    for entry in reversed(history):
+        if entry.get("status") != "applied" or not entry.get("backup_path"):
+            continue
+        try:
+            patch_time = float(entry.get("timestamp"))
+        except (TypeError, ValueError):
+            continue
+        age = crash_time - patch_time
+        if 0.0 <= age <= 300.0:
+            last_patch = entry
+            break
+
+    if last_patch is None:
         return False
 
     target_file = Path(last_patch.get("target_file", ""))
