@@ -12,7 +12,8 @@ from pathlib import Path
 try:
     import pyautogui
     pyautogui.FAILSAFE = True
-    pyautogui.PAUSE    = 0.05
+    # Fast-hand defaults; JEV's structured UI path bypasses screenshot/coordinate loops.
+    pyautogui.PAUSE    = 0.01
     _PYAUTOGUI = True
 except ImportError:
     _PYAUTOGUI = False
@@ -191,13 +192,13 @@ def _scroll(direction: str = "down", amount: int = 3) -> str:
     return f"Scrolled {direction} ×{amount}"
 
 
-def _move(x: int, y: int, duration: float = 0.3) -> str:
+def _move(x: int, y: int, duration: float = 0.06) -> str:
     _require_pyautogui()
     pyautogui.moveTo(x, y, duration=duration)
     return f"Mouse → ({x}, {y})"
 
 
-def _drag(x1: int, y1: int, x2: int, y2: int, duration: float = 0.5) -> str:
+def _drag(x1: int, y1: int, x2: int, y2: int, duration: float = 0.14) -> str:
     _require_pyautogui()
     pyautogui.moveTo(x1, y1, duration=0.2)
     pyautogui.dragTo(x2, y2, duration=duration, button="left")
@@ -340,7 +341,9 @@ def computer_control(
       amount        : scroll amount (default: 3)
       seconds       : wait duration
       title         : window title fragment for focus_window
-      description   : natural-language element description for screen_find/click
+      description   : natural-language element description for screen_find/screen_click or JEV goal
+      goal          : natural-language goal for JEV Hands
+      max_steps     : maximum JEV UI actions (default 30)
       type          : data type for random_data
       field         : memory field name for user_data
       clear_first   : bool, clear field before typing (default: true)
@@ -365,6 +368,7 @@ def computer_control(
       focus_window  — bring window to foreground
       screen_find   — AI element finder (returns x,y)
       screen_click  — AI element finder + click
+      jev_task      — JEV fast UI decision loop over real Windows controls
       random_data   — generate fake form data
       user_data     — pull real data from memory
     """
@@ -455,6 +459,14 @@ def computer_control(
 
         if action == "focus_window":
             return _focus_window(params.get("title", ""))
+
+        if action in ("jev", "jev_task", "jev_hands"):
+            from core.jev_hands import run_task
+            return run_task(
+                params.get("goal") or params.get("description") or "",
+                player=player,
+                max_steps=int(params.get("max_steps", 30)),
+            )
 
         if action == "random_data":
             dt     = params.get("type", "name")
