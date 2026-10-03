@@ -10,6 +10,7 @@ from typing import Optional
 import requests
 from core.omniroute import gateway as _omniroute_gateway
 from core.runtime_paths import API_CONFIG_PATH
+from config import get_api_key
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("openrouter_client")
@@ -25,12 +26,7 @@ API_KEY_PATH = API_CONFIG_PATH
 
 def _load_api_key() -> str:
     try:
-        with open(API_KEY_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        key = data.get("openrouter_api_key", "").strip()
-        return key
-    except FileNotFoundError:
-        return ""
+        return get_api_key("OpenRouter")
     except Exception as e:
         logger.warning(f"[OpenRouter] Failed to load API key: {e}")
         return ""
