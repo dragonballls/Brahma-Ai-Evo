@@ -137,3 +137,19 @@ class WindowsBackendTests(TestCase):
         )
         with patch.dict(module.os.environ, {"WINDIR": r"C:\Windows"}, clear=False):
             self.assertFalse(module.WindowManager.is_user_process(fake))
+
+
+class NativeHostTests(TestCase):
+    def test_native_host_rejects_missing_target_without_touching_windows(self):
+        module = __import__("core.desktop.native_host", fromlist=["NativeWindowHost"])
+        host = module.NativeWindowHost()
+        with patch.object(module.WindowManager, "enumerate_windows", return_value=[]):
+            result = host.host("not-a-real-window")
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["embedded"])
+
+    def test_foreign_window_lookup_matches_exact_executable(self):
+        module = __import__("core.desktop.native_host", fromlist=["NativeWindowHost"])
+        window = SimpleNamespace(hwnd=44, pid=55, title="Example App", exe="example.exe")
+        with patch.object(module.WindowManager, "enumerate_windows", return_value=[window]):
+            self.assertEqual(module.NativeWindowHost.find_target("example.exe"), window)
