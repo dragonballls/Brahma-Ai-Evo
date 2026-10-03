@@ -256,12 +256,15 @@ class OptimizationLearner:
         recent = samples[-20:]
         cpu = statistics.mean(float(s.get("cpu_percent") or 0.0) for s in recent)
         mem = statistics.mean(float(s.get("memory_percent") or 0.0) for s in recent)
+        latest = recent[-1]
+        latest_cpu = float(latest.get("cpu_percent") or 0.0)
+        latest_mem = float(latest.get("memory_percent") or 0.0)
         recommendations: list[str] = []
-        if cpu >= 80:
+        if latest_cpu >= 80 or cpu >= 80:
             recommendations.append("Prefer lazy/on-demand background work.")
-        if mem >= 88:
+        if latest_mem >= 88 or mem >= 88:
             recommendations.append("Reduce retained caches and defer nonessential indexing.")
-        if cpu < 25 and mem < 65:
+        if not recommendations and cpu < 25 and mem < 65 and latest_cpu < 25 and latest_mem < 65:
             recommendations.append("Current profile is comfortable for background learning.")
         return recommendations
 
