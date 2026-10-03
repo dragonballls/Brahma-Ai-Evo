@@ -48,12 +48,12 @@ class SelfAwarenessTests(unittest.TestCase):
         self.assertIn("you/your/yourself refer to SELF", block)
         self.assertIn("CURRENT TURN ENTITY MAP", block)
         self.assertIn('"my" -> user', block)
-        self.assertIn('"PC" -> device', block)
+        self.assertIn('"pc" -> device', block)
 
     def test_identity_answer_never_guesses_missing_user_name(self):
         with patch.object(SelfAwareness, "_owner_name", return_value=""):
             ans = SelfAwareness().identity_answer("who am i")
-        self.assertIn("won’t guess", ans)
+        self.assertIn("won\'t guess", ans)
 
     def test_identity_answer_uses_stored_user_name(self):
         with patch.object(SelfAwareness, "_owner_name", return_value="Alex"):
@@ -75,12 +75,38 @@ class SelfAwarenessTests(unittest.TestCase):
 
 
     def test_feature_wrapper_exposes_identity_actions(self):
-        from features.self_awareness import execute
+        import importlib.util
+        feature_path = Path(__file__).resolve().parents[1] / "features" / "self_awareness.py"
+        spec = importlib.util.spec_from_file_location("test_self_awareness_feature", feature_path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        spec.loader.exec_module(module)
+        execute = module.execute
         with patch.object(SelfAwareness, "_owner_name", return_value="Alex"), patch.object(SelfAwareness, "_assistant_name", return_value="Brahma"):
             self.assertTrue(execute(action="snapshot")["success"])
             self.assertEqual(execute(action="classify", text="you")["entity"], "self")
             self.assertEqual(execute(action="classify", text="me")["entity"], "user")
             self.assertIn("Alex", execute(action="answer", text="who am i")["answer"])
+    
+    def test_intelligent_chat_injects_self_model_context(self):
+        from llm_client import UnifiedAIClient
+
+        client = UnifiedAIClient()
+        with patch.object(client, "reload_settings", return_value=None),              patch.object(client, "_provider", "OpenRouter", create=True),              patch("core.intelligence_orchestrator.orchestrator.respond", return_value="ok") as respond:
+            client.intelligent_chat("Can you open my phone?")
+        kwargs = respond.call_args.kwargs
+        self.assertIn("[FUNCTIONAL SELF-AWARENESS]", kwargs["system"])
+        self.assertIn("I/me/my/mine/myself refer to USER", kwargs["system"])
+
+    def test_identity_service_exposes_self_model_in_system_prompt(self):
+        from core.identity import IdentityService
+
+        identity = IdentityService()
+        with patch("core.identity.SelfAwareness", create=True):
+            # Verify the production integration exists by invoking the method
+            # and checking the self-awareness marker is present.
+            value = identity.get_custom_instructions()
+        self.assertIn("[FUNCTIONAL SELF-AWARENESS]", value)
 
 if __name__ == "__main__":
     unittest.main()
