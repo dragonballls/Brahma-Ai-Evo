@@ -58,3 +58,5 @@ jobs:
         run: python -m unittest tests.test_desktop_integrations -v
       - name: Run unified device manager regressions
         run: python -m unittest tests.test_device_manager -v
+      - name: Run media control and video understanding regressions
+        run: python -m unittest tests.test_media_control -v
