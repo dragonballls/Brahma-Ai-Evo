@@ -452,7 +452,7 @@ class GlobeWindow(QWidget):
         elif action == "close":
             self.hide()
 
-    def _do_open(self, focus_location: Optional[str] = None, mode: Optional[str] = None):
+    def _do_open(self, focus_location: Optional[str] = None, mode: Optional[str] = None, *, load_gods_eye: bool = True):
         self._position_overlay()
         self.show()
         self.raise_()
@@ -464,7 +464,7 @@ class GlobeWindow(QWidget):
                 self._web_view.page().runJavaScript(f"if (window.BrahmaGlobe && window.BrahmaGlobe.switchMode) window.BrahmaGlobe.switchMode('{mode}');")
         elif mode:
             self._pending_mode = mode
-        if mode in (None, "3D"):
+        if load_gods_eye and mode in (None, "3D"):
             self.refresh_gods_eye()
         if focus_location:
             QTimer.singleShot(600, lambda: self.fly_to(focus_location))
@@ -552,7 +552,7 @@ class GlobeWindow(QWidget):
 
     def _do_gods_eye(self, data: Optional[dict]):
         """Render the structured God’s Eye payload in the existing 3D/2D globe surface."""
-        self._do_open()
+        self._do_open(load_gods_eye=False)
         if not self._is_page_loaded:
             self._pending_gods_eye = data or {}
             return
