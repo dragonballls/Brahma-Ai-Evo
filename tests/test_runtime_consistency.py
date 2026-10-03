@@ -45,6 +45,27 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertEqual(API_CONFIG_PATH.name, "api_keys.json")
         self.assertEqual(API_CONFIG_PATH.parent.name, "config")
 
+    def test_workspace_delete_cascades_messages(self):
+        from workspace_store import WorkspaceStore
+        import sqlite3
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as td:
+            store = WorkspaceStore(Path(td) / "workspace.sqlite3")
+            convo = store.create_conversation("Consistency Test")
+            store.append_message(convo, "user", "hello")
+            store.delete_conversation(convo)
+
+            with sqlite3.connect(Path(td) / "workspace.sqlite3") as conn:
+                remaining = conn.execute(
+                    "SELECT COUNT(*) FROM messages WHERE conversation_id = ?",
+                    (convo,),
+                ).fetchone()[0]
+                pragma = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+
+            self.assertEqual(pragma, 1)
+            self.assertEqual(remaining, 0)
+
     def test_identity_persistence_is_atomic(self):
         source = self.read("core/identity.py")
         self.assertIn("self._lock = threading.RLock()", source)
