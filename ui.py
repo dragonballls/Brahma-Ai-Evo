@@ -9437,26 +9437,20 @@ class MainWindow(QMainWindow):
         self._refresh_discord_card()
 
     def _load_api_defaults(self) -> dict:
-        if not API_FILE.exists():
+        try:
+            from config import get_config
+            data = get_config()
+            data.setdefault("gemini_api_key", "")
+            data.setdefault("openrouter_api_key", "")
+            data.setdefault("anthropic_api_key", "")
+            return data
+        except Exception:
             return {
                 "gemini_api_key": "",
                 "openrouter_api_key": "",
                 "anthropic_api_key": "",
                 "os_system": platform.system(),
             }
-        try:
-            data = json.loads(API_FILE.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                data.setdefault("anthropic_api_key", "")
-                return data
-        except Exception:
-            pass
-        return {
-            "gemini_api_key": "",
-            "openrouter_api_key": "",
-            "anthropic_api_key": "",
-            "os_system": platform.system(),
-        }
 
     def _startup_enabled(self) -> bool:
         if platform.system() != "Windows":
