@@ -10,7 +10,6 @@ SUPPORTED_PROVIDERS: Final[tuple[str, ...]] = (GEMINI, OPENROUTER, LOCAL)
 
 
 def normalize_provider(value: object, default: str = GEMINI) -> str:
-    raw = str(value or "").strip().casefold()
     aliases = {
         "gemini": GEMINI,
         "google gemini": GEMINI,
@@ -22,9 +21,16 @@ def normalize_provider(value: object, default: str = GEMINI) -> str:
         "local ai": LOCAL,
         "ollama": LOCAL,
     }
+    raw = str(value or "").strip().casefold()
     if raw in aliases:
         return aliases[raw]
-    return normalize_provider(default, GEMINI) if raw else normalize_provider(default, GEMINI)
+
+    default_raw = str(default or "").strip().casefold()
+    if default_raw in aliases:
+        return aliases[default_raw]
+    if default_raw:
+        return str(default).strip()
+    return GEMINI
 
 
 def is_local(value: object) -> bool:
