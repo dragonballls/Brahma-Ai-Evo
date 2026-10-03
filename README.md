@@ -106,7 +106,8 @@
 - **Python 3.12** or **Python 3.13**
 - **Git**
 - Working Microphone & Speakers (Webcam optional for vision)
-- **Google Gemini API Key** (Get from [Google AI Studio](https://aistudio.google.com/))
+- **Google Gemini API Key** (required for native Gemini Live voice; get it from [Google AI Studio](https://aistudio.google.com/))
+- **OpenRouter API Key** (optional cloud text provider; also supported through the `OPENROUTER_API_KEY` environment variable)
 
 ### Installation
 
@@ -127,8 +128,10 @@
 
 3. **Configure API Keys:**
    - Launch Brahma AI Evo.
-   - Click the **Settings** icon on the top navigation bar.
-   - Enter your **Gemini API Key** and any optional credentials (Spotify MCP, Weather, etc.) into the respective cards.
+   - Open **System & Connectivity** in Settings.
+   - For **OpenRouter**, click **Add API Key**, save it, then click **Test Connection**. The key can be pasted normally or as `Bearer sk-or-...`; Brahma normalizes the value automatically.
+   - For **Gemini**, enter the Gemini key when you want native Gemini Live voice.
+   - Brahma preserves previously saved provider keys when another setup screen is skipped or left empty.
    - Click **Save & Connect**.
 
 ---
