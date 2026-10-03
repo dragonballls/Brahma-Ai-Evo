@@ -9,25 +9,27 @@ LOCAL: Final[str] = "Local"
 SUPPORTED_PROVIDERS: Final[tuple[str, ...]] = (GEMINI, OPENROUTER, LOCAL)
 
 
+ALIASES: Final[dict[str, str]] = {
+    "gemini": GEMINI,
+    "google gemini": GEMINI,
+    "google-gemini": GEMINI,
+    "google": GEMINI,
+    "openrouter": OPENROUTER,
+    "open router": OPENROUTER,
+    "local": LOCAL,
+    "local ai": LOCAL,
+    "ollama": LOCAL,
+}
+
+
 def normalize_provider(value: object, default: str = GEMINI) -> str:
-    aliases = {
-        "gemini": GEMINI,
-        "google gemini": GEMINI,
-        "google-gemini": GEMINI,
-        "google": GEMINI,
-        "openrouter": OPENROUTER,
-        "open router": OPENROUTER,
-        "local": LOCAL,
-        "local ai": LOCAL,
-        "ollama": LOCAL,
-    }
     raw = str(value or "").strip().casefold()
-    if raw in aliases:
-        return aliases[raw]
+    if raw in ALIASES:
+        return ALIASES[raw]
 
     default_raw = str(default or "").strip().casefold()
-    if default_raw in aliases:
-        return aliases[default_raw]
+    if default_raw in ALIASES:
+        return ALIASES[default_raw]
     if default_raw:
         return str(default).strip()
     return GEMINI
