@@ -24,11 +24,14 @@ class UnifiedAIClient:
         self._local_model = "llama3.2"
         self.reload_settings()
 
+    def _is_local_provider(self) -> bool:
+        return str(self._provider or "").strip().casefold() == "local"
+
     def reload_settings(self):
         try:
             with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            self._provider = data.get("default_ai_provider", "OpenRouter")
+            self._provider = str(data.get("default_ai_provider", "OpenRouter") or "OpenRouter").strip()
             self._local_url = data.get("local_ai_url", "http://localhost:11434/v1").rstrip("/")
             self._local_model = data.get("local_ai_model", "llama3.2")
         except Exception as e:
@@ -64,7 +67,7 @@ class UnifiedAIClient:
 
     def chat(self, prompt: str, system: str = "You are a helpful assistant.", history: Optional[list[dict]] = None, model: Optional[str] = None, max_tokens: int = 4096, temperature: float = 0.7) -> str:
         self.reload_settings()
-        if self._provider == "Local":
+        if self._is_local_provider():
             messages = [{"role": "system", "content": system}]
             if history:
                 messages.extend(history)
