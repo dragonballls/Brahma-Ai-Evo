@@ -240,6 +240,7 @@ def _ensure_desktop_shortcut() -> None:
             check=True,
             capture_output=True,
             text=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         marker_path.write_text("created", encoding="utf-8")
         _startup_log(f"desktop shortcut created at {shortcut_path}")
