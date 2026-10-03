@@ -49,14 +49,30 @@ def allowed()->bool:
         return not bool(d.get("offline_mode_enabled",False)) and d.get("intelligence_mode")!="off" and bool(d.get("intelligence_orchestration_enabled",True))
     except Exception:return True
 
+def _runtime_intelligence_mode() -> str:
+    p = get_user_data_dir() / "config" / "app_settings.json"
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return str(data.get("intelligence_mode", "smart") or "smart").strip().lower()
+    except Exception:
+        return "smart"
+
+
 def profile_for(prompt:str,requested:Optional[str],cfg:dict)->str:
-    if requested:return str(requested).lower().strip()
+    if requested:
+        return str(requested).lower().strip()
     t=prompt.casefold()
-    if any(x in t for x in CODING):return "coding"
-    if any(x in t for x in MAINT):return "maintenance"
-    if any(x in t for x in VISION):return "vision"
+    mode = _runtime_intelligence_mode()
+    if mode == "fast":
+        return "fast"
+    if any(x in t for x in CODING):
+        return "coding"
+    if any(x in t for x in MAINT):
+        return "maintenance"
+    # Vision remains an explicit profile until the request carries actual image data.
     sw=tuple(str(x).casefold() for x in cfg.get("simple_keywords",()))
-    if len(t.strip())<=int(cfg.get("simple_max_chars",220)) and any(t.strip().startswith(x) for x in sw):return str(cfg.get("simple_profile","fast"))
+    if len(t.strip())<=int(cfg.get("simple_max_chars",220)) and any(t.strip().startswith(x) for x in sw):
+        return str(cfg.get("simple_profile","fast"))
     return str(cfg.get("default_profile","smart"))
 
 def trim(s:str,n:int)->str:
