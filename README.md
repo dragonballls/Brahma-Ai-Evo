@@ -112,7 +112,7 @@
 
 1. **Clone the repository:**
    ```powershell
-   git clone https://github.com/titechprabhasolutions/Brahma-Ai-Evo.git
+   git clone https://github.com/dragonballls/Brahma-Ai-Evo.git
    cd Brahma-Ai-Evo
    ```
 
