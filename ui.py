@@ -61,6 +61,7 @@ from smart_home_page_new import BrahmaHomePage, _DeviceTile
 from core.local_brain import local_brain
 from workspace_store import store as workspace_store
 from core.identity import identity
+from core.provider_policy import display_name, normalize_provider, SUPPORTED_PROVIDERS
 from sound_manager import sound_mgr
 
 def _base_dir() -> Path:
@@ -11124,7 +11125,7 @@ class SystemConnectivitySidebar(QFrame):
         if self._bridge() and hasattr(self._bridge(), "_win"):
             version = APP_VERSION
             platform_name = platform.system()
-            provider = self._bridge()._win._load_app_settings().get("default_ai_provider", "Gemini")
+            provider = display_name(self._bridge()._win._load_app_settings().get("default_ai_provider", "Gemini"))
             last_updated = time.strftime("%d %b %Y %H:%M")
             self._info_rows["Version"].setText(version)
             self._info_rows["Platform"].setText(platform_name)
@@ -11133,7 +11134,7 @@ class SystemConnectivitySidebar(QFrame):
         else:
             self._info_rows["Version"].setText(APP_VERSION)
             self._info_rows["Platform"].setText(platform.system())
-            self._info_rows["Current AI Provider"].setText("Gemini")
+            self._info_rows["Current AI Provider"].setText(display_name("Gemini"))
             self._info_rows["Last Updated"].setText(time.strftime("%d %b %Y %H:%M"))
 
 
