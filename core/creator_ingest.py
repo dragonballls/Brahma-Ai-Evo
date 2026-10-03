@@ -19,7 +19,10 @@ def _probe(path: Path) -> tuple[bool, float]:
     r = _run([exe, "-v", "error", "-show_entries", "stream=codec_type", "-of", "json", str(path)], 60)
     if r.returncode != 0:
         raise CreatorIngestError(r.stderr[-2000:] or "Could not inspect source media.")
-    return any(s.get("codec_type") == "audio" for s in json.loads(r.stdout or "{}").get("streams", []))
+    data = json.loads(r.stdout or "{}")
+    has_audio = any(s.get("codec_type") == "audio" for s in data.get("streams", []))
+    duration = float((data.get("format") or {}).get("duration") or 0)
+    return has_audio, duration
 
 def prepare_sources(sources: list[str], destination: str) -> str:
     paths = [Path(x).expanduser().resolve() for x in sources if str(x).strip()]
