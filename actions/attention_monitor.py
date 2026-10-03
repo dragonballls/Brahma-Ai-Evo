@@ -580,7 +580,7 @@ class AttentionMonitor:
     def __init__(
         self,
         on_event: Callable[[dict], None] | None = None,
-        interval: float = 2.0,
+        interval: float = 5.0,
     ):
         self._on_event = on_event
         self._interval = max(1.0, float(interval))
