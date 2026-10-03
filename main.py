@@ -1985,6 +1985,7 @@ TOOL_DECLARATIONS = [
                 "capabilities": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "Optional device capability names."},
                 "metadata": {"type": "OBJECT", "description": "Optional adapter metadata, such as WOL broadcast address."},
                 "auto_reconnect": {"type": "BOOLEAN", "description": "Automatically reconnect supported paired devices when possible."},
+                "refresh": {"type": "BOOLEAN", "description": "Force a fresh discovery scan for status."},
                 "x": {"type": "INTEGER", "description": "Device panel X position inside the holographic workspace."},
                 "y": {"type": "INTEGER", "description": "Device panel Y position inside the holographic workspace."},
                 "width": {"type": "INTEGER", "description": "Device panel width."},
@@ -5279,7 +5280,7 @@ class BrahmaLive:
                 action = str(args.get("action") or "status").strip().lower()
                 device_id = str(args.get("device_id") or args.get("target") or "").strip()
 
-                async def _device_call():
+                def _device_call():
                     if action == "status":
                         return device_manager.status(refresh=bool(args.get("refresh", False)))
                     if action == "scan":
@@ -5328,10 +5329,6 @@ class BrahmaLive:
                     return {"ok": False, "error": f"Unknown device_manager action: {action}"}
 
                 result = await loop.run_in_executor(None, _device_call)
-                # run_in_executor cannot directly await an async function result;
-                # unwrap the coroutine in the worker thread when needed.
-                if hasattr(result, "__await__"):
-                    result = await result
 
                 if action == "show" and isinstance(result, dict) and result.get("ok"):
                     ui_args = {
