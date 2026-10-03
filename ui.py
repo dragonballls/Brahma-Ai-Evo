@@ -8630,6 +8630,7 @@ class MainWindow(QMainWindow):
         self.on_text_command  = None
         self.on_attention_action = None
         self.on_chat_event = None
+        self._clipboard_ai_handler = None
         self.on_remote_clicked = None
         self._muted           = False
         self._wakeword_listening = False
@@ -14721,6 +14722,17 @@ class BrahmaUI:
             "text": f"💡 {label}",
             "source": "clipboard",
         })
+        handler = getattr(self, "_clipboard_ai_handler", None)
+        if handler:
+            try:
+                threading.Thread(
+                    target=handler,
+                    args=(category, content),
+                    daemon=True,
+                    name="clipboard-ai-comment",
+                ).start()
+            except Exception:
+                pass
 
     def _toggle_command_bar(self):
         if self._command_bar.isVisible():
@@ -15039,6 +15051,18 @@ class BrahmaUI:
 
     def write_log(self, text: str):
         self._win._log_sig.emit(text)
+
+    def record_chat_event(self, event: dict):
+        """Persist/render a conversation event through the single UI callback."""
+        try:
+            callback = self._win.on_chat_event
+            if callback:
+                callback(dict(event or {}))
+        except Exception:
+            pass
+
+    def set_clipboard_ai_handler(self, handler):
+        self._clipboard_ai_handler = handler
 
     def show_confirm(self, title: str, detail: str = ""):
         self.w.show_confirm(title, detail)
