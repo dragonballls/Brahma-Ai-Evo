@@ -62,6 +62,18 @@ class MissionNoteUiTests(TestCase):
         self.assertIn('self._title.setText("AUTONOMOUS MISSION NOTE")', source)
         self.assertIn('self._bar.setRange(0, 0)', source)
         self.assertIn('self._eta_lbl.setText("ETA: estimating…")', source)
+        self.assertIn('self._mission_hide_btn = QPushButton("×")', source)
+        self.assertIn('self._mission_hide_btn.clicked.connect(self._hide_mission_note)', source)
+        self.assertIn('self._mission_note_ui_state_path', source)
+        self.assertIn('def _hide_mission_note(self) -> bool:', source)
+        self.assertIn('def reopen_mission_note(self) -> bool:', source)
+        self.assertIn('self._set_mission_note_hidden(True, self._mission_id)', source)
+        self.assertIn('self._set_mission_note_hidden(False, mission.get("mission_id"))', source)
+        self.assertIn('if self._mission_note_hidden:', source)
+        self.assertIn('return self._set_mission_note_visibility(True)', source)
+        self.assertIn('return self._set_mission_note_visibility(False)', source)
+        self.assertIn('"Mission note reopened; autonomous work continues."', source)
+        self.assertIn('"Mission note hidden; autonomous work continues."', source)
 
 class AutonomousMissionTests(TestCase):
     def test_duration_parser(self):
