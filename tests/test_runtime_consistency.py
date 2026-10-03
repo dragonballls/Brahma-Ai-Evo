@@ -45,6 +45,26 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertEqual(API_CONFIG_PATH.name, "api_keys.json")
         self.assertEqual(API_CONFIG_PATH.parent.name, "config")
 
+    def test_provider_policy_is_canonical(self):
+        from core.provider_policy import (
+            GEMINI,
+            OPENROUTER,
+            LOCAL,
+            display_name,
+            is_gemini,
+            is_local,
+            is_openrouter,
+            normalize_provider,
+        )
+        self.assertEqual(normalize_provider("google gemini"), GEMINI)
+        self.assertEqual(normalize_provider("Gemini"), GEMINI)
+        self.assertEqual(normalize_provider("OPENROUTER"), OPENROUTER)
+        self.assertEqual(normalize_provider("local ai"), LOCAL)
+        self.assertTrue(is_gemini("Google-Gemini"))
+        self.assertTrue(is_openrouter("open router"))
+        self.assertTrue(is_local("OLLAMA"))
+        self.assertEqual(display_name("gemini"), "Google Gemini")
+
     def test_local_provider_matching_is_case_insensitive(self):
         source = self.read("llm_client.py")
         self.assertIn("def _is_local_provider(self)", source)
