@@ -9328,10 +9328,13 @@ class MainWindow(QMainWindow):
                 data = json.loads(DISCORD_SETTINGS_FILE.read_text(encoding="utf-8"))
                 if isinstance(data, dict):
                     settings.update(data)
+                    # Legacy configs may have a token but no explicit enabled
+                    # field; preserve that compatibility without overriding an
+                    # explicit False.
+                    if "enabled" not in data and str(data.get("bot_token") or "").strip():
+                        settings["enabled"] = True
             except Exception:
                 pass
-        if (settings.get("bot_token") or "").strip():
-            settings["enabled"] = True
         return dict(settings)
 
     def _save_discord_settings(self, settings: dict):
@@ -16508,7 +16511,7 @@ class BrahmaUI:
 
     def _on_discord_config_changed(self, settings: dict):
         settings = settings or {}
-        enabled = bool(settings.get("enabled", False) or (settings.get("bot_token") or "").strip())
+        enabled = bool(settings.get("enabled", False))
         token = (settings.get("bot_token") or "").strip()
         channel_id = (settings.get("channel_id") or "").strip()
         self._discord_service.set_target_channel_id(channel_id)
