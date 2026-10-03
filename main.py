@@ -2456,6 +2456,26 @@ class BrahmaLive:
             self._attention_monitor.stop()
         except Exception:
             pass
+        try:
+            sensorium.stop()
+        except Exception:
+            pass
+        try:
+            clip_sentry = getattr(self.ui, "_clip_sentry", None)
+            if clip_sentry is not None:
+                clip_sentry.stop()
+        except Exception:
+            pass
+        try:
+            from actions.google_workspace_mcp import stop_email_daemon
+            stop_email_daemon()
+        except Exception:
+            pass
+        try:
+            from actions.instagram_mcp import stop_daemon as stop_ig_daemon
+            stop_ig_daemon()
+        except Exception:
+            pass
 
     def set_push_to_talk(self, enabled: bool) -> str:
         self._ptt_enabled = bool(enabled)
