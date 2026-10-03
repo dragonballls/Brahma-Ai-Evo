@@ -44,6 +44,10 @@ class IdentityService:
         self.load()
 
     def load(self):
+        with self._lock:
+            self._load_unlocked()
+
+    def _load_unlocked(self):
         # Seed from a bundled identity template when present, then overlay persisted
         # user state. Saving always targets the writable user-data copy.
         sources = [self.bundled_config_file, self.config_file]
@@ -67,17 +71,30 @@ class IdentityService:
             self.save()
 
     def save(self):
-        try:
-            with self._lock:
+        with self._lock:
+            try:
                 self.config_file.parent.mkdir(parents=True, exist_ok=True)
                 temp = self.config_file.with_suffix(".json.tmp")
-                temp.write_text(
-                    json.dumps(self.data, indent=4, ensure_ascii=False),
-                    encoding="utf-8",
-                )
-                temp.replace(self.config_file)
-        except Exception as e:
-            print(f"Error saving identity config: {e}")
+                try:
+                    temp.write_text(
+                        json.dumps(self.data, indent=4, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+                    temp.replace(self.config_file)
+                except Exception:
+                    try:
+                        temp.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    raise
+            except Exception as e:
+                print(f"Error saving identity config: {e}")
+                raise
+
+    def _set_value(self, section: str, key: str, value: Any) -> None:
+        with self._lock:
+            self.data.setdefault(section, {})[key] = value
+            self.save()
 
     # Assistant methods
     def get_assistant_name(self) -> str:
@@ -85,24 +102,21 @@ class IdentityService:
         return val if val is not None else "Brahma"
         
     def set_assistant_name(self, name: str):
-        self.data["assistant"]["name"] = name
-        self.save()
+        self._set_value("assistant", "name", name)
 
     def get_application_name(self) -> str:
         val = self.data["assistant"].get("application_name", "Brahma Evo")
         return val if val is not None else "Brahma Evo"
         
     def set_application_name(self, name: str):
-        self.data["assistant"]["application_name"] = name
-        self.save()
+        self._set_value("assistant", "application_name", name)
 
     def get_assistant_title(self) -> str:
         val = self.data["assistant"].get("title", "Personal AI Assistant")
         return val if val is not None else "Personal AI Assistant"
         
     def set_assistant_title(self, title: str):
-        self.data["assistant"]["title"] = title
-        self.save()
+        self._set_value("assistant", "title", title)
 
     # Owner Profile methods
     def get_owner_name(self) -> str:
@@ -110,42 +124,39 @@ class IdentityService:
         return val if val is not None else ""
         
     def set_owner_name(self, name: str):
-        self.data["owner"]["name"] = name
-        if not self.data["owner"].get("preferred_name"):
-            self.data["owner"]["preferred_name"] = name
-        self.save()
+        with self._lock:
+            self.data["owner"]["name"] = name
+            if not self.data["owner"].get("preferred_name"):
+                self.data["owner"]["preferred_name"] = name
+            self.save()
 
     def get_owner_role(self) -> str:
         val = self.data["owner"].get("role", "")
         return val if val is not None else ""
         
     def set_owner_role(self, role: str):
-        self.data["owner"]["role"] = role
-        self.save()
+        self._set_value("owner", "role", role)
 
     def get_owner_location(self) -> str:
         val = self.data["owner"].get("location", "")
         return val if val is not None else ""
         
     def set_owner_location(self, location: str):
-        self.data["owner"]["location"] = location
-        self.save()
+        self._set_value("owner", "location", location)
 
     def get_owner_interests(self) -> List[str]:
         val = self.data["owner"].get("interests", [])
         return val if val is not None else []
         
     def set_owner_interests(self, interests: List[str]):
-        self.data["owner"]["interests"] = interests
-        self.save()
+        self._set_value("owner", "interests", list(interests or []))
 
     def get_owner_about(self) -> str:
         val = self.data["owner"].get("about", "")
         return val if val is not None else ""
         
     def set_owner_about(self, about: str):
-        self.data["owner"]["about"] = about
-        self.save()
+        self._set_value("owner", "about", about)
 
     # Behavior methods
     def get_behavior_mode(self) -> str:
@@ -153,8 +164,7 @@ class IdentityService:
         return val if val is not None else "professional"
         
     def set_behavior_mode(self, mode: str):
-        self.data["behavior"]["mode"] = mode
-        self.save()
+        self._set_value("behavior", "mode", mode)
 
     def get_custom_instructions(self) -> str:
         val = self.data["behavior"].get("custom_instructions", "")
@@ -170,16 +180,14 @@ class IdentityService:
             return base
         
     def set_custom_instructions(self, instructions: str):
-        self.data["behavior"]["custom_instructions"] = instructions
-        self.save()
+        self._set_value("behavior", "custom_instructions", instructions)
         
     def is_proactive(self) -> bool:
         val = self.data["behavior"].get("proactive", True)
         return val if val is not None else True
         
     def set_proactive(self, proactive: bool):
-        self.data["behavior"]["proactive"] = proactive
-        self.save()
+        self._set_value("behavior", "proactive", bool(proactive))
 
     # System methods
     def is_shared_computer(self) -> bool:
@@ -187,8 +195,7 @@ class IdentityService:
         return val if val is not None else False
         
     def set_shared_computer(self, is_shared: bool):
-        self.data["system"]["shared_computer"] = is_shared
-        self.save()
+        self._set_value("system", "shared_computer", bool(is_shared))
 
     def is_setup_complete(self) -> bool:
         # Consider setup complete if owner name is provided
