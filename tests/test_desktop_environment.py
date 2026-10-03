@@ -153,3 +153,11 @@ class NativeHostTests(TestCase):
         window = SimpleNamespace(hwnd=44, pid=55, title="Example App", exe="example.exe")
         with patch.object(module.WindowManager, "enumerate_windows", return_value=[window]):
             self.assertEqual(module.NativeWindowHost.find_target("example.exe"), window)
+
+
+class MainLifecycleTests(TestCase):
+    def test_main_contains_local_qapplication_shutdown_hook(self):
+        main_path = Path(__file__).resolve().parents[1] / "main.py"
+        source = main_path.read_text(encoding="utf-8")
+        self.assertIn("from PyQt6.QtWidgets import QApplication", source)
+        self.assertIn("aboutToQuit.connect(desktop_controller.shutdown)", source)
