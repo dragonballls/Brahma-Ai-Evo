@@ -7,9 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-
-REMOTE = "https://github.com/dragonballls/Brahma-Ai-Evo.git"
-BRANCH = "main"
+from core.runtime_paths import GITHUB_BRANCH as BRANCH, GITHUB_REMOTE as REMOTE
 
 
 def _run_git(base_dir: Path, *args: str) -> subprocess.CompletedProcess[str]:
