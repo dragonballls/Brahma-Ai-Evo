@@ -78,7 +78,7 @@ class CreatorStudioTests(unittest.TestCase):
             ],
         )
         self.assertIn("concat=n=2", vf)
-        self.assertIn("concat=n=2", af)
+        self.assertIn("[acat]asetpts=PTS-STARTPTS[aout]", af)
 
     def test_rights_review_is_conservative(self):
         result = creator_engine.rights_review({"rights_flags": []}, None)
@@ -97,7 +97,7 @@ class CreatorStudioTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             source = Path(temp_dir) / "source.mp4"
             source.write_bytes(b"placeholder")
-            self.assertEqual(prepare_sources([str(source)], str(Path(temp_dir) / "joined.mp4")), str(source))
+            self.assertEqual(Path(prepare_sources([str(source)], str(Path(temp_dir) / "joined.mp4"))), source.resolve())
 
     def test_creator_tool_reports_capabilities_without_media(self):
         result = json.loads(creator_control({"action": "tools"}))
