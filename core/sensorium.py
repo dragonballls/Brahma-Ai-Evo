@@ -40,9 +40,10 @@ def get_idle_time_seconds() -> float:
 
 class PassiveSensorium:
     def __init__(self, poll_interval: float = 10.0):
-        self.poll_interval = poll_interval
+        self.poll_interval = max(1.0, float(poll_interval))
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        self._stop_event = threading.Event()
 
         # Telemetry State
         self.current_window: Dict[str, Any] = {}
@@ -69,6 +70,7 @@ class PassiveSensorium:
         """Starts the background sensorium loop."""
         if self._running:
             return
+        self._stop_event.clear()
         self._running = True
         self._thread = threading.Thread(target=self._loop, name="BrahmaSensorium", daemon=True)
         self._thread.start()
@@ -76,6 +78,7 @@ class PassiveSensorium:
     def stop(self):
         """Stops the sensorium loop."""
         self._running = False
+        self._stop_event.set()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=1.0)
 
@@ -105,7 +108,8 @@ class PassiveSensorium:
             # Back off while the user is away so passive telemetry does not
             # keep waking the CPU unnecessarily.
             sleep_for = 30.0 if self.user_idle_seconds >= 120.0 else self.poll_interval
-            time.sleep(sleep_for)
+            if self._stop_event.wait(timeout=sleep_for):
+                break
 
     def _update_telemetry(self):
         # 1. Window & Process
