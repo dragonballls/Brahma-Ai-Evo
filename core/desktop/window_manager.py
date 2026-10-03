@@ -278,6 +278,35 @@ class WindowManager:
             return False
 
     @staticmethod
+    def is_fullscreen_or_borderless(hwnd: int) -> bool:
+        if not _WIN32_AVAILABLE:
+            return False
+        rect = WindowManager.get_rect(hwnd)
+        if rect is None:
+            return False
+        try:
+            import win32api
+            monitor = win32api.MonitorFromPoint((rect[0], rect[1]), 1)
+            if not monitor:
+                return False
+            info = win32api.GetMonitorInfo(monitor)
+            mon_left, mon_top, mon_right, mon_bottom = info.get("Monitor", (0, 0, 0, 0))
+            width = rect[2] - rect[0]
+            height = rect[3] - rect[1]
+            monitor_width = mon_right - mon_left
+            monitor_height = mon_bottom - mon_top
+            # Treat exact monitor coverage (including borderless) as a game/fullscreen
+            # surface. Tiny title-bar differences do not qualify.
+            return (
+                abs(rect[0] - mon_left) <= 2
+                and abs(rect[1] - mon_top) <= 2
+                and abs(width - monitor_width) <= 2
+                and abs(height - monitor_height) <= 2
+            )
+        except Exception:
+            return False
+
+    @staticmethod
     def get_rect(hwnd: int) -> tuple[int, int, int, int] | None:
         if not _WIN32_AVAILABLE:
             return None
