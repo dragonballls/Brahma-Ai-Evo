@@ -1,13 +1,10 @@
-"""Brahma desktop environment primitives.
-
-The desktop package is intentionally isolated from the main UI.  It provides:
-- a persistent workspace model,
-- safe Windows window inspection/control,
-- an adaptive resource governor,
-- a click-through desktop rendering layer,
-- and a controller that composes those pieces without replacing Explorer.
-"""
-
-from .controller import DesktopModeController
+"""Brahma desktop environment package."""
 
 __all__ = ["DesktopModeController"]
+
+
+def __getattr__(name):
+    if name == "DesktopModeController":
+        from .controller import DesktopModeController
+        return DesktopModeController
+    raise AttributeError(name)
