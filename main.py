@@ -154,6 +154,17 @@ def _get_api_key() -> str:
         return json.load(f)["gemini_api_key"]
 
 
+def _has_gemini_voice_credentials() -> bool:
+    """Voice Live requires a Gemini credential even when text uses another provider."""
+    try:
+        if not API_CONFIG_PATH.is_file():
+            return False
+        data = json.loads(API_CONFIG_PATH.read_text(encoding="utf-8"))
+        return bool(str(data.get("gemini_api_key") or "").strip())
+    except Exception:
+        return False
+
+
 def _is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.25)
@@ -6812,13 +6823,29 @@ def _main_impl():
         try:
             ui.set_clipboard_ai_handler(_clipboard_ai_handler)
         except Exception as exc:
-            ui.write_log(f"ERR: Clipboard assistant wiring failed: {exc}")
+        selected_settings = config_manager.load_settings()
+        selected_provider = normalize_provider(
+            selected_settings.get("default_ai_provider", "Gemini")
+        )
+        offline_mode = bool(selected_settings.get("offline_mode_enabled", False))
+        gemini_voice_ready = _has_gemini_voice_credentials()
 
-        try:
-            asyncio.run(brahma_evo.run())
-        except KeyboardInterrupt:
-            print("\n🔴 Shutting down...")
-
+        # Do not run an endless Gemini Live reconnect loop when the user
+        # intentionally configured Local/OpenRouter without a Gemini credential.
+        if not offline_mode and not is_local(selected_provider) and gemini_voice_ready:
+            try:
+                asyncio.run(brahma_evo.run())
+            except KeyboardInterrupt:
+                print("\n🔴 Shutting down...")
+        else:
+            _startup_log(
+                f"Live voice session not started: provider={selected_provider}, "
+                f"offline={offline_mode}, gemini_voice_credentials={gemini_voice_ready}"
+            )
+            ui.write_log(
+                "SYS: Continuous Live voice is unavailable without a Gemini voice credential; "
+                "text/control features remain available."
+            )
     def start_runner():
         threading.Thread(target=runner, daemon=True).start()
 
