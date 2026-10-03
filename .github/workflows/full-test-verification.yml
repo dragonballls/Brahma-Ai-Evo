@@ -27,12 +27,19 @@ jobs:
       - name: Run all tests under tests/
         shell: pwsh
         run: python -m unittest discover -s tests -p "test_*.py" -v
-      - name: Run repository-root test modules
+      - name: Run bounded repository-root test modules
         shell: pwsh
         run: |
-          $tests = Get-ChildItem -Path . -File -Filter "test*.py" | Sort-Object Name
-          foreach ($test in $tests) {
-            Write-Host "=== RUNNING $($test.Name) ==="
-            python $test.FullName
+          $tests = @("test_local_brain.py", "test_self_heal.py")
+          foreach ($name in $tests) {
+            Write-Host "=== RUNNING $name ==="
+            python $name
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+      - name: Run bounded Sensorium lifecycle smoke test
+        shell: pwsh
+        run: |
+          python -c "import time; from core.sensorium import sensorium; sensorium.start(); time.sleep(1); sensorium.stop(); print('Sensorium start/stop smoke test passed')"
+      - name: Compile interactive live harness
+        shell: pwsh
+        run: python -m py_compile test_sensorium_live.py
