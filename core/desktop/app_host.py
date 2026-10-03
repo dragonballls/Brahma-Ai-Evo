@@ -44,8 +44,23 @@ class ApplicationHost:
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
             elif platform.system() == "Windows":
-                # Use ShellExecute semantics so installed applications, URI
-                # handlers, and .lnk files remain Windows-native.
+                # Reuse Brahma's existing application alias/launcher first so
+                # commands such as "open Chrome" continue to use the same
+                # tested resolution path as the normal assistant tool.
+                try:
+                    from actions.open_app import open_app as existing_open_app
+                    existing_result = existing_open_app(
+                        parameters={"app_name": target},
+                        response=None,
+                        player=None,
+                    )
+                    lowered = str(existing_result or "").lower()
+                    if not lowered.startswith(("could not", "error", "failed")):
+                        return {"ok": True, "type": "native", "target": target, "launcher_result": str(existing_result)}
+                except Exception:
+                    pass
+                # Final Windows-native fallback for registered applications,
+                # URI handlers, and .lnk files.
                 os.startfile(target)  # type: ignore[attr-defined]
                 process = None
             else:
