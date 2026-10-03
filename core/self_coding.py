@@ -334,7 +334,10 @@ Implement the goal directly in the current repository and leave the working tree
         promoted_sha = promoted.stdout.strip()
         pushed = self._git("push", "origin", "main", timeout=300)
         if pushed.returncode != 0:
-            self._git("reset", "--hard", checkpoint.baseline)
+            current_head = self._git("rev-parse", "HEAD")
+            status = self._git("status", "--porcelain")
+            if current_head.returncode == 0 and current_head.stdout.strip() == promoted_sha and not status.stdout.strip():
+                self._git("reset", "--hard", checkpoint.baseline)
             self._git("switch", previous)
             self._save(checkpoint)
             raise SelfCodingError(pushed.stderr.strip() or "Approval publish failed safely.")
@@ -379,7 +382,10 @@ Implement the goal directly in the current repository and leave the working tree
                 undo_commits.append(head.stdout.strip())
             pushed = self._git("push", "origin", "main", timeout=300)
             if pushed.returncode != 0:
-                self._git("reset", "--hard", checkpoint.promoted_sha)
+                current_head = self._git("rev-parse", "HEAD")
+                status = self._git("status", "--porcelain")
+                if current_head.returncode == 0 and current_head.stdout.strip() != checkpoint.promoted_sha and not status.stdout.strip():
+                    self._git("reset", "--keep", checkpoint.promoted_sha)
                 self._git("switch", current)
                 raise SelfCodingError(pushed.stderr.strip() or "Unable to publish checkpoint undo.")
             undone = Checkpoint(
