@@ -97,7 +97,7 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
         self.assertIn("class OmniRouteEmbeddedPage(QWidget):", source)
         self.assertIn("self._omniroute_page = OmniRouteEmbeddedPage()", source)
         self.assertIn("self._center_stack.addWidget(self._omniroute_page)", source)
-        self.assertIn("stack.setCurrentIndex(5)", source)
+        self.assertIn("stack.setCurrentWidget(page)", source)
         self.assertIn("def _start_gateway(self):", source)
         self.assertIn("self._retry_timer", source)
         self.assertIn('"OmniRoute connected"', source)
