@@ -1934,6 +1934,7 @@ TOOL_DECLARATIONS = [
                 "window_action": {"type": "STRING", "description": "focus | minimize | maximize | restore | close | move | resize | dock"},
                 "profile": {"type": "STRING", "description": "adaptive | balanced | performance | game | efficiency"},
                 "overlay": {"type": "BOOLEAN", "description": "Show the optional desktop performance HUD."},
+                "use_workerw": {"type": "BOOLEAN", "description": "Advanced Windows-only WorkerW wallpaper backend; disabled by default for DPI safety."},
                 "x": {"type": "INTEGER", "description": "Window X coordinate for move/resize/dock."},
                 "y": {"type": "INTEGER", "description": "Window Y coordinate for move/resize/dock."},
                 "width": {"type": "INTEGER", "description": "Window width for resize/dock."},
@@ -5128,6 +5129,7 @@ class BrahmaLive:
                     result = json.dumps(controller.configure(
                         profile=args.get("profile"),
                         show_overlay=args.get("overlay") if "overlay" in args else None,
+                        use_workerw=args.get("use_workerw") if "use_workerw" in args else None,
                     ), ensure_ascii=False)
                     if not controller.enabled:
                         result = json.dumps(controller.enable(), ensure_ascii=False)
@@ -5151,7 +5153,13 @@ class BrahmaLive:
                     )
                 elif action == "set_profile":
                     profile = str(args.get("profile") or "adaptive").strip().lower()
-                    result = json.dumps(controller.configure(profile=profile), ensure_ascii=False)
+                    result = json.dumps(
+                        controller.configure(
+                            profile=profile,
+                            use_workerw=args.get("use_workerw") if "use_workerw" in args else None,
+                        ),
+                        ensure_ascii=False,
+                    )
                 else:
                     result = "Choose status, enable, disable, toggle, open, list_windows, control_window, or set_profile."
 
@@ -5726,6 +5734,7 @@ def _main_impl():
         desktop_controller.configure(
             profile=str(settings.get("desktop_performance_profile") or "adaptive"),
             show_overlay=bool(settings.get("show_desktop_performance_overlay", False)),
+            use_workerw=bool(settings.get("desktop_workerw_backend_enabled", False)),
         )
         ui.set_desktop_environment_controller(desktop_controller)
         ui.write_log("SYS: Brahma desktop environment ready (Windows remains the safety layer).")
