@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from core.user_paths import get_user_data_dir
+from core.runtime_paths import OMNIROUTE_DEFAULT_BASE_URL
 from .omniroute_setup import OmniRouteProvisioner, default_data_dir
 
 
@@ -21,7 +22,7 @@ class OmniRouteGateway:
         self.base_url = (
             base_url
             or os.environ.get("BRAHMA_OMNIROUTE_BASE_URL", "")
-            or "http://127.0.0.1:20128/v1"
+            or OMNIROUTE_DEFAULT_BASE_URL
         ).rstrip("/")
         self.provisioner = OmniRouteProvisioner(self.base_url)
         self._lock = threading.Lock()
