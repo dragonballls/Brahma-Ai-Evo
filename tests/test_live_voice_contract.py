@@ -32,6 +32,11 @@ class LiveVoiceContractTests(unittest.TestCase):
     def test_live_affective_dialog_is_enabled(self):
         self.assertIn("enable_affective_dialog=True", self.main_text)
 
+    def test_language_lock_is_present_in_voice_and_system_prompt(self):
+        self.assertIn("language_policy import prompt_block", self.main_text)
+        self.assertIn("language_prompt_block()", self.main_text)
+        self.assertIn("Change response language only when the user explicitly requests", self.main_text)
+
     def test_server_vad_and_start_of_activity_interrupts_are_configured(self):
         self.assertIn("realtime_input_config={", self.main_text)
         self.assertIn('"automatic_activity_detection"', self.main_text)
