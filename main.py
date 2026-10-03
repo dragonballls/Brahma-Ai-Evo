@@ -2279,6 +2279,153 @@ class BrahmaLive:
             stop_native_speech()
         except Exception:
             pass
+        # Exact control-plane commands for the two new integrations. These
+        # are deliberately narrow so a misheard sentence cannot approve, undo,
+        # or launch self-coding accidentally.
+        lower_exact = re.sub(r"\s+", " ", text.lower()).strip()
+
+        if lower_exact in {"omniroute status", "check omniroute", "check omniroute status"}:
+            from core.omniroute import gateway
+            status = gateway().status()
+            self.ui.write_log(
+                f"OmniRoute: {'ready' if status.get('available') else 'unavailable'} "
+                f"v{status.get('version') or '?'} @ {status.get('base_url')}"
+            )
+            self.speak(
+                "OmniRoute is ready." if status.get("available")
+                else "OmniRoute is not ready."
+            )
+            self.ui.set_state("LISTENING")
+            return
+
+        if lower_exact in {"sync omniroute keys", "sync omniroute api keys", "sync omniroute providers"}:
+            def _sync_omni():
+                try:
+                    from core.omniroute import gateway
+                    result = gateway().provisioner.sync_existing_provider_keys(
+                        get_user_data_dir() / "config" / "api_keys.json"
+                    )
+                    self.ui.write_log(f"[OmniRoute] Provider sync: {result}")
+                    self.speak(
+                        f"OmniRoute provider sync finished. "
+                        f"{len(result.get('configured', []))} configured."
+                    )
+                except Exception as exc:
+                    self.ui.write_log(f"ERR: OmniRoute provider sync failed: {exc}")
+                    self.speak("OmniRoute provider sync failed.")
+                finally:
+                    self.ui.set_state("LISTENING")
+            threading.Thread(target=_sync_omni, daemon=True, name="omniroute-sync").start()
+            return
+
+        m = re.fullmatch(r"(?:test )?omniroute provider ([a-z0-9_.-]+)", lower_exact)
+        if m:
+            provider = m.group(1)
+            def _test_omni():
+                try:
+                    from core.omniroute import gateway
+                    result = gateway().test_provider(provider)
+                    self.ui.write_log(f"[OmniRoute] Provider test: {result}")
+                    self.speak(
+                        f"OmniRoute provider test {'passed' if result.get('ok') else 'failed'} for {provider}."
+                    )
+                except Exception as exc:
+                    self.ui.write_log(f"ERR: OmniRoute provider test failed: {exc}")
+                    self.speak("OmniRoute provider test failed.")
+                finally:
+                    self.ui.set_state("LISTENING")
+            threading.Thread(target=_test_omni, daemon=True, name="omniroute-test").start()
+            return
+
+        m = re.fullmatch(r"(?:self[- ]code|code yourself|improve yourself(?: by)?)\s+(.+)", text, flags=re.IGNORECASE)
+        if m:
+            goal = m.group(1).strip()
+            self.ui.begin_task_workspace(
+                text,
+                ["Create isolated checkpoint", "Implement requested code change", "Run Brahma verification", "Leave checkpoint pending for approval"],
+                source=source or "local",
+            )
+            def _preview_self_code():
+                try:
+                    from core.self_coding import SelfCodingAgent
+                    result = SelfCodingAgent().preview(goal, max_passes=1)
+                    self.ui.write_log(f"[SelfCoding] {json.dumps(result, ensure_ascii=False)}")
+                    self.speak(
+                        f"Self-coding preview completed. Checkpoint {result.get('checkpoint_id')} "
+                        "is pending approval."
+                    )
+                    self.ui.finish_task_workspace(
+                        f"Checkpoint {result.get('checkpoint_id')} is ready for explicit approval.",
+                        "Self-coding preview verified.",
+                        100,
+                    )
+                except Exception as exc:
+                    self.ui.write_log(f"ERR: Self-coding preview failed safely: {exc}")
+                    self.speak("Self-coding preview failed safely. No main branch change was published.")
+                    self.ui.finish_task_workspace(str(exc), "Self-coding preview failed.", 0)
+                finally:
+                    self.ui.set_state("LISTENING")
+            threading.Thread(target=_preview_self_code, daemon=True, name="self-coding-preview").start()
+            return
+
+        m = re.fullmatch(r"(?:approve|promote) (?:self[- ]coding )?checkpoint ([a-z0-9._-]+)", lower_exact)
+        if m:
+            checkpoint = m.group(1)
+            def _approve_self_code():
+                try:
+                    from core.self_coding import SelfCodingAgent
+                    promoted = SelfCodingAgent().approve(checkpoint)
+                    self.ui.write_log(f"[SelfCoding] Approved {checkpoint} -> {promoted}")
+                    self.speak(f"Checkpoint {checkpoint} was approved and promoted.")
+                    self.ui.finish_task_workspace(
+                        f"Checkpoint {checkpoint} promoted to main at {promoted}.",
+                        "Self-coding approved.",
+                        100,
+                    )
+                except Exception as exc:
+                    self.ui.write_log(f"ERR: Self-coding approval failed safely: {exc}")
+                    self.speak("Self-coding approval was refused safely.")
+                    self.ui.finish_task_workspace(str(exc), "Self-coding approval refused.", 0)
+                finally:
+                    self.ui.set_state("LISTENING")
+            threading.Thread(target=_approve_self_code, daemon=True, name="self-coding-approve").start()
+            return
+
+        m = re.fullmatch(r"undo (?:self[- ]coding )?checkpoint ([a-z0-9._-]+)", lower_exact)
+        if m:
+            checkpoint = m.group(1)
+            def _undo_self_code():
+                try:
+                    from core.self_coding import SelfCodingAgent
+                    result = SelfCodingAgent().undo(checkpoint)
+                    self.ui.write_log(f"[SelfCoding] Undone {checkpoint}: {result}")
+                    self.speak(f"Checkpoint {checkpoint} was undone.")
+                    self.ui.finish_task_workspace(
+                        f"Checkpoint {checkpoint} undone.",
+                        "Self-coding undo completed.",
+                        100,
+                    )
+                except Exception as exc:
+                    self.ui.write_log(f"ERR: Self-coding undo failed safely: {exc}")
+                    self.speak("Self-coding undo was refused safely.")
+                    self.ui.finish_task_workspace(str(exc), "Self-coding undo refused.", 0)
+                finally:
+                    self.ui.set_state("LISTENING")
+            threading.Thread(target=_undo_self_code, daemon=True, name="self-coding-undo").start()
+            return
+
+        if lower_exact in {"list self coding checkpoints", "list self-coding checkpoints", "self coding checkpoints"}:
+            try:
+                from core.self_coding import SelfCodingAgent
+                checkpoints = SelfCodingAgent().list_checkpoints()
+                self.ui.write_log(f"[SelfCoding] {json.dumps(checkpoints, ensure_ascii=False)}")
+                self.speak(f"There are {len(checkpoints)} self-coding checkpoints.")
+            except Exception as exc:
+                self.ui.write_log(f"ERR: Self-coding checkpoint list failed: {exc}")
+                self.speak("I could not read the self-coding checkpoints.")
+            self.ui.set_state("LISTENING")
+            return
+
         # allow plugins to handle the incoming text command first
         try:
             pm = getattr(self, "plugin_manager", None)
