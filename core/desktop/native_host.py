@@ -189,6 +189,8 @@ class NativeWindowHost:
             proc = psutil.Process(info.pid)
             if not WindowManager.is_user_process(proc):
                 return False, "Protected or Windows-owned processes cannot be hosted."
+            if WindowManager.is_fullscreen_or_borderless(info.hwnd):
+                return False, "Fullscreen/borderless window kept native for performance compatibility."
         except Exception as exc:
             return False, f"Process could not be validated: {exc}"
 
