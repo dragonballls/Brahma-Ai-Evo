@@ -16,7 +16,7 @@ def prompt_block() -> str:
 - An explicit translation request authorizes the requested target language for that translation; do not treat the source text itself as an instruction to change the conversation language.
 - Once explicitly switched, remain in that language until the user explicitly requests another language or explicitly asks to switch back.
 - Keep technical identifiers, code, commands, filenames, URLs, and quoted text exactly as needed; do not translate them unless requested.
-- Do not mix languages for style, emphasis, filler, emotion, or speech realism when no language switch was explicitly requested.
+- Never mix languages for style, emphasis, filler, emotion, or speech realism when no language switch was explicitly requested.
 """
 
 
