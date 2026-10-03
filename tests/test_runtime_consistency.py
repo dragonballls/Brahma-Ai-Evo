@@ -37,7 +37,9 @@ class RuntimeConsistencyTests(unittest.TestCase):
         import config
         from core.runtime_paths import API_CONFIG_PATH
 
-        self.assertEqual(config.get_config().get("os_system"), config.get_config().get("os_system"))
+        cfg = config.get_config()
+        self.assertIsInstance(cfg, dict)
+        self.assertTrue(config.get_os())
         self.assertIn("API_CONFIG_PATH", self.read("config/__init__.py"))
         self.assertNotIn('Path(__file__).parent / "api_keys.json"', self.read("config/__init__.py"))
         self.assertTrue(str(API_CONFIG_PATH).endswith("config/api_keys.json"))
