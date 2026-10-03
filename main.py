@@ -265,6 +265,12 @@ def _load_system_prompt() -> str:
         except Exception as e_rules:
             print(f"[LearnedRules] Error injecting rules into prompt: {e_rules}")
 
+        try:
+            from core.language_policy import prompt_block as language_prompt_block
+            base_prompt = base_prompt.rstrip() + "\n\n" + language_prompt_block()
+        except Exception:
+            pass
+
         return identity_str + base_prompt
     except Exception as e:
         print(f"Error injecting identity: {e}")
@@ -4403,6 +4409,8 @@ class BrahmaLive:
             from core.emotional_controller import emotional_controller
             parts.append(emotional_controller.prompt_block())
             parts.append(profile_prompt_block())
+            from core.language_policy import prompt_block as language_prompt_block
+            parts.append(language_prompt_block())
             parts.append(
                 "Re-evaluate emotional state and speech prosody from every new user turn. "
                 "The baseline shown above is not a fixed emotion; pace and tone should change naturally with context.\n"
