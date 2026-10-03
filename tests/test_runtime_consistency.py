@@ -111,6 +111,18 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("base_url: str = OMNIROUTE_DEFAULT_BASE_URL", setup)
         self.assertNotIn("DEFAULT_PORT = 20128", setup)
 
+    def test_local_discovery_uses_configured_endpoint(self):
+        source = self.read("core/local_brain.py")
+        self.assertIn("f"{self.endpoint}/models"", source)
+        self.assertIn("DEFAULT_ENDPOINT.rstrip", source)
+        self.assertIn('"data"', source)
+
+    def test_local_model_download_updates_stay_on_qt_thread(self):
+        source = self.read("ui.py")
+        self.assertIn("local_model_pull_update = pyqtSignal(object)", source)
+        self.assertIn("self.local_model_pull_update.emit(chunk)", source)
+        self.assertNotIn('pull_model_async("qwen2.5:3b", lambda chunk: _populate_models())', source)
+
     def test_local_model_default_is_shared_with_unified_client(self):
         brain = self.read("core/local_brain.py")
         client = self.read("llm_client.py")
