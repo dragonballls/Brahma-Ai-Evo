@@ -69,6 +69,15 @@ class DesktopModeController:
                 state["performance_profile"] = self.performance.profile
                 state["show_performance_overlay"] = self._show_overlay
                 self.workspace.save(state)
+                try:
+                    if hasattr(self.ui, "_load_app_settings") and hasattr(self.ui, "_save_app_settings"):
+                        settings = self.ui._load_app_settings()
+                        settings["desktop_mode_enabled"] = True
+                        settings["desktop_performance_profile"] = self.performance.profile
+                        settings["show_desktop_performance_overlay"] = self._show_overlay
+                        self.ui._save_app_settings(settings)
+                except Exception:
+                    pass
                 self._start_timer()
                 self.tick()
                 return self.status()
@@ -103,6 +112,13 @@ class DesktopModeController:
             state = self.workspace.load()
             state["desktop_mode"] = False
             self.workspace.save(state)
+            try:
+                if hasattr(self.ui, "_load_app_settings") and hasattr(self.ui, "_save_app_settings"):
+                    settings = self.ui._load_app_settings()
+                    settings["desktop_mode_enabled"] = False
+                    self.ui._save_app_settings(settings)
+            except Exception:
+                pass
             result = self.status()
             result["restored_process_priorities"] = restored
             return result
