@@ -507,7 +507,7 @@ class DashboardServer:
         self._aes_cache:  dict[str, bytes]= {}   # session_key → AES bytes
         self._clients: set[WebSocket]     = set()
         self._history: list[dict]         = []
-        self._command_queue               = asyncio.Queue()
+        self._command_queue               = asyncio.Queue(maxsize=64)
         self._server                      = None
         self._wake_callback               = None
         self._connect_callback            = None
@@ -557,6 +557,17 @@ class DashboardServer:
         self._connect_callback = fn
 
     # ── broadcast ────────────────────────────────────────────────────────
+
+    def _enqueue_command(self, text: str) -> bool:
+        """Queue one authenticated remote command without blocking the HTTP/WS handler."""
+        value = str(text or "").strip()
+        if not value:
+            return True
+        try:
+            self._command_queue.put_nowait(value)
+            return True
+        except asyncio.QueueFull:
+            return False
 
     async def broadcast(self, msg: dict) -> None:
         self._history.append(msg)
@@ -715,7 +726,8 @@ class DashboardServer:
             else:
                 text = (body.get("text") or "").strip()
             if text:
-                await self._command_queue.put(text)
+                if not self._enqueue_command(text):
+                    return JSONResponse({"error": "Command queue is busy; retry shortly."}, status_code=429)
                 if self._wake_callback:
                     self._wake_callback()
             return JSONResponse({"ok": True})
@@ -873,7 +885,9 @@ class DashboardServer:
                         enc = data.get("enc", "")
                         t   = self._decrypt(tok, enc) if enc else (data.get("text") or "").strip()
                         if t:
-                            await self._command_queue.put(t)
+                            if not self._enqueue_command(t):
+                                await websocket.send_json({"type": "error", "error": "Command queue is busy; retry shortly."})
+                                continue
                             if self._wake_callback:
                                 self._wake_callback()
             except WebSocketDisconnect:
