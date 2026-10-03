@@ -229,10 +229,6 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None, player: Any 
         from actions.file_controller import file_controller
         return file_controller(parameters=parameters, player=player) or "Done."
 
-    elif tool == "cmd_control":
-        from actions.cmd_control import cmd_control
-        return cmd_control(parameters=parameters, player=player) or "Done."
-
     elif tool == "claude_code":
         from actions.claude_code_bridge import run_developer_mode_request
         claude_parameters = dict(parameters or {})
