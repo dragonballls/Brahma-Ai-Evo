@@ -278,6 +278,16 @@ class WindowManager:
             return False
 
     @staticmethod
+    def get_rect(hwnd: int) -> tuple[int, int, int, int] | None:
+        if not _WIN32_AVAILABLE:
+            return None
+        try:
+            left, top, right, bottom = win32gui.GetWindowRect(int(hwnd))
+            return int(left), int(top), int(right), int(bottom)
+        except Exception:
+            return None
+
+    @staticmethod
     def set_position(hwnd: int, x: int, y: int, width: int, height: int) -> bool:
         if not _WIN32_AVAILABLE:
             return False
