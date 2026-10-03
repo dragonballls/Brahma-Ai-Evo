@@ -54,8 +54,8 @@ if (-not $PythonExe) {
 
 # 4. Check for Node.js
 if (-not (Get-Command "node" -ErrorAction SilentlyContinue)) {
-    Write-Host "Node.js not found. Downloading Node v20 LTS..." -ForegroundColor Yellow
-    $NodeUrl = "https://nodejs.org/dist/v20.11.1/node-v20.11.1-x64.msi"
+    Write-Host "Node.js not found. Downloading Node v24.21.0..." -ForegroundColor Yellow
+    $NodeUrl = "https://nodejs.org/dist/v24.21.0/node-v24.21.0-x64.msi"
     $NodeInstaller = "$env:TEMP\node_installer.msi"
     Invoke-WebRequest -Uri $NodeUrl -OutFile $NodeInstaller
     
