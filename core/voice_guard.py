@@ -89,6 +89,7 @@ class VoiceToolExecutionGate:
         "google_workspace",
         "workspace",
         "skill_forge",
+        "universal_task",
         "dynamic_skill",
         "auto_heal",
         "rollback",

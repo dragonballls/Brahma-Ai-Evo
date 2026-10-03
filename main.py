@@ -1993,6 +1993,31 @@ TOOL_DECLARATIONS = [
         }
     },
     {
+        "name": "universal_task",
+        "description": (
+            "LAST-RESORT universal capability executor. Use this when the user's request is an actual task "
+            "and none of Brahma's specialized tools or installed dynamic skills can fulfill it. "
+            "It first checks existing dynamic skills; when no capability exists, Project Ultron synthesizes, "
+            "Crucible-verifies, hot-loads, and runs a focused new skill against the original request. "
+            "Do NOT use this for normal questions that Brahma can answer directly, and do NOT use it instead "
+            "of a specialized tool. Generated capabilities never receive unrestricted shell execution or hidden persistence."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "request": {
+                    "type": "STRING",
+                    "description": "The complete user task that no existing specialized tool can currently fulfill."
+                },
+                "context": {
+                    "type": "STRING",
+                    "description": "Optional constraints, relevant application/file context, or expected output."
+                }
+            },
+            "required": ["request"]
+        }
+    },
+    {
         "name": "skill_forge",
         "description": "Use whenever the user explicitly asks to make, create, build, or add a new skill or feature. Starts creation immediately, validates the generated Python feature, and registers it for use. Do not use screen analysis for feature-creation requests.",
         "parameters": {
@@ -4306,7 +4331,10 @@ class BrahmaLive:
             "Cloud text reasoning is routed through the local OmniRoute gateway when available. "
             "Use the existing direct-provider fallback only when OmniRoute is unavailable. "
             "For self-coding requests, use the self_coding tool and keep preview, approval, and undo "
-            "as separate explicit actions. Never approve a checkpoint unless the user explicitly asks."
+            "as separate explicit actions. Never approve a checkpoint unless the user explicitly asks. "
+            "For an actual task that no specialized tool or existing dynamic skill can fulfill, use "
+            "universal_task as the LAST RESORT so Project Ultron can synthesize, verify, hot-load, and execute "
+            "a focused capability instead of simply claiming the task is impossible."
         )
         parts.append(
             "Wake-word mode: if the microphone is muted, only an explicit 'Brahma Evo' phrase "
@@ -4909,6 +4937,53 @@ class BrahmaLive:
                         result = "Choose preview, approve, undo, or list."
                 except Exception as exc:
                     result = f"Self-coding action failed safely: {exc}"
+            elif name == "universal_task":
+                request = str(args.get("request") or "").strip()
+                context = str(args.get("context") or "").strip()
+                if not request:
+                    result = "A task request is required."
+                else:
+                    from core.universal_agent import run as run_universal_task
+                    self.ui.update_task_workspace(
+                        title="Universal Capability",
+                        command=request,
+                        plan=[
+                            "Check specialized Brahma tools",
+                            "Check existing dynamic skills",
+                            "Create and verify a missing capability when needed",
+                            "Execute and return the result",
+                        ],
+                        status="Expanding capability",
+                        output="Finding the correct execution path.",
+                        percent=25,
+                    )
+                    universal_result = await loop.run_in_executor(
+                        None,
+                        lambda: run_universal_task(request, context=context, max_repair_attempts=2),
+                    )
+                    if universal_result.get("success"):
+                        result = (
+                            f"Universal task completed via {universal_result.get('skill', 'Brahma capability')}. "
+                            f"{universal_result.get('result', '')}"
+                        ).strip()
+                        self.ui.update_task_workspace(
+                            title="Universal Capability",
+                            command=request,
+                            plan=[
+                                "Check specialized Brahma tools",
+                                "Check existing dynamic skills",
+                                "Create and verify a missing capability when needed",
+                                "Execute and return the result",
+                            ],
+                            status="Completed",
+                            output=str(universal_result.get("result", ""))[:12000],
+                            percent=100,
+                        )
+                    else:
+                        result = (
+                            f"Universal task could not be completed: "
+                            f"{universal_result.get('message', universal_result.get('status', 'unknown failure'))}"
+                        )
             elif name == "skill_forge":
                 action = (args.get("action") or "forge").lower().strip()
                 from core.dynamic_registry import DynamicToolRegistry
