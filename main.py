@@ -94,6 +94,7 @@ from updater import restart_application, update_from_github
 from core.single_instance import SingleInstance
 from core.voice_guard import VoiceCommandGate, VoiceToolExecutionGate
 from core.duplex_voice import BargeInGate, PlaybackGeneration
+from core.prosody import profile_for_text, profile_prompt_block
 
 try:
     from dashboard.server import DashboardServer
@@ -4200,12 +4201,29 @@ class BrahmaLive:
         if not text:
             return
 
+        try:
+            from core.emotional_controller import emotional_controller
+            state = emotional_controller.assess(text)
+        except Exception:
+            state = None
+
+        profile = profile_for_text(
+            text,
+            state=state.name if state is not None else "neutral",
+            intensity=state.intensity if state is not None else 0.5,
+        )
+
         if self.session and self._loop:
-            # Route text through Gemini Live API for the unified native Charon voice
+            # Route text through Gemini Live API for the unified native Charon voice.
             import asyncio
             async def _send():
                 try:
-                    prompt = f"System Alert / Context: {text}\n\nPlease relay this information to me naturally now."
+                    prompt = (
+                        f"[LIVE DELIVERY]\n{profile.prompt_directive()} "
+                        "Vary cadence naturally within the utterance; do not read the delivery labels aloud.\n\n"
+                        f"System Alert / Context: {text}\n\n"
+                        "Please relay this information naturally now."
+                    )
                     await self.session.send(input=prompt, end_of_turn=True)
                 except Exception as e:
                     print(f"[BRAHMA EVO] Unified Speak (Charon) err: {e}")
@@ -4213,7 +4231,12 @@ class BrahmaLive:
                         try:
                             self.set_speaking(True)
                             from actions.attention_monitor import _speak_edge_native
-                            _speak_edge_native(text)
+                            _speak_edge_native(
+                                text,
+                                rate=profile.edge_rate,
+                                pitch=profile.edge_pitch,
+                                sapi_rate=profile.sapi_rate,
+                            )
                         except Exception as exc:
                             print(f"[Brahma Speak] Fallback TTS failed: {exc}")
                         finally:
@@ -4221,12 +4244,17 @@ class BrahmaLive:
                     threading.Thread(target=_fallback, daemon=True).start()
             asyncio.run_coroutine_threadsafe(_send(), self._loop)
         else:
-            # Fallback when Gemini Live is disconnected or in offline mode
+            # Fallback when Gemini Live is disconnected or in offline mode.
             def _speak_thread():
                 try:
                     self.set_speaking(True)
                     from actions.attention_monitor import _speak_edge_native
-                    _speak_edge_native(text)
+                    _speak_edge_native(
+                        text,
+                        rate=profile.edge_rate,
+                        pitch=profile.edge_pitch,
+                        sapi_rate=profile.sapi_rate,
+                    )
                 except Exception as exc:
                     print(f"[Brahma Speak] Unified TTS failed: {exc}")
                 finally:
@@ -4359,6 +4387,11 @@ class BrahmaLive:
         try:
             from core.emotional_controller import emotional_controller
             parts.append(emotional_controller.prompt_block())
+            parts.append(profile_prompt_block())
+            parts.append(
+                "Re-evaluate emotional state and speech prosody from every new user turn. "
+                "The baseline shown above is not a fixed emotion; pace and tone should change naturally with context.\n"
+            )
         except Exception:
             pass
 
