@@ -12,16 +12,18 @@ from core.runtime_paths import GITHUB_OWNER, GITHUB_REPOSITORY, GITHUB_BRANCH
 class UpdateChecker(QObject):
     update_available_sig = pyqtSignal(str)
 
-    def __init__(self, repo_owner=GITHUB_OWNER, repo_name=GITHUB_REPOSITORY, branch=GITHUB_BRANCH):
+    def __init__(self, repo_owner=GITHUB_OWNER, repo_name=GITHUB_REPOSITORY, branch=GITHUB_BRANCH, base_dir=None):
         super().__init__()
         self.repo_owner = repo_owner
         self.repo_name = repo_name
         self.branch = branch
+        self.base_dir = Path(base_dir).resolve() if base_dir else Path(__file__).resolve().parent.parent
         self._stop_event = threading.Event()
         self._check_thread = None
 
     def start(self):
         if self._check_thread is None:
+            self._stop_event.clear()
             self._check_thread = threading.Thread(target=self._check_loop, daemon=True, name="updater-thread")
             self._check_thread.start()
 
@@ -29,6 +31,8 @@ class UpdateChecker(QObject):
         self._stop_event.set()
         if self._check_thread:
             self._check_thread.join(timeout=1.0)
+            if not self._check_thread.is_alive():
+                self._check_thread = None
 
     def check_now(self) -> str | None:
         """Check GitHub once and emit when a newer commit is available."""
@@ -41,7 +45,11 @@ class UpdateChecker(QObject):
 
     def _get_local_hash(self):
         try:
-            output = subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL)
+            output = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=self.base_dir,
+                stderr=subprocess.DEVNULL,
+            )
             return output.decode("utf-8").strip()
         except Exception:
             return None
