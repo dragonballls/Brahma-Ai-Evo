@@ -83,6 +83,12 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("self._enqueue_live_input", source)
         self.assertIn("self._enqueue_playback", source)
 
+    def test_ui_metrics_worker_has_shutdown_path(self):
+        ui = self.read("ui.py")
+        self.assertIn("self._stop_event = threading.Event()", ui)
+        self.assertIn("def stop_background_metrics(self)", ui)
+        self.assertIn("ui.stop_background_metrics()", self.read("main.py"))
+
     def test_shutdown_cleans_background_services(self):
         source = self.read("main.py")
         self.assertIn("def stop_background_services(self)", source)
