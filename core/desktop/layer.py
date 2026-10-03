@@ -9,6 +9,7 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import QFrame, QLabel, QMainWindow, QVBoxLayout, QWidget
 
 from .window_manager import WindowManager
+from .windows_desktop import WindowsDesktopHost
 
 if platform.system() == "Windows":
     _OS = "Windows"
@@ -22,6 +23,7 @@ class DesktopLayer(QMainWindow):
     def __init__(self, base_dir: Path, parent=None):
         super().__init__(parent)
         self._base_dir = Path(base_dir)
+        self._desktop_host = WindowsDesktopHost()
         self.setWindowTitle("Brahma Evo Desktop")
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -103,14 +105,32 @@ class DesktopLayer(QMainWindow):
     def showEvent(self, event):
         super().showEvent(event)
         self._apply_geometry()
-        QTimer.singleShot(0, self._keep_bottom)
+        QTimer.singleShot(0, self._prepare_desktop_backend)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._status.move(18, 18)
 
     def _apply_geometry(self):
+        if self._desktop_host.attached:
+            self.setGeometry(0, 0, self._desktop_host._client_size(self._desktop_host._workerw)[0], self._desktop_host._client_size(self._desktop_host._workerw)[1])
+            return
         self.setGeometry(self._virtual_geometry())
+
+    def _prepare_desktop_backend(self):
+        try:
+            virtual = self._virtual_geometry()
+            attached = self._desktop_host.attach(
+                int(self.winId()),
+                int(virtual.width()),
+                int(virtual.height()),
+            )
+            if attached:
+                self._apply_geometry()
+            else:
+                self._keep_bottom()
+        except Exception:
+            self._keep_bottom()
 
     def restack(self) -> None:
         self._keep_bottom()
@@ -118,6 +138,8 @@ class DesktopLayer(QMainWindow):
     def _keep_bottom(self):
         try:
             self._apply_geometry()
+            if self._desktop_host.attached:
+                return
             if WindowManager.available():
                 WindowManager.set_desktop_layer_style(int(self.winId()))
         except Exception:
@@ -144,9 +166,18 @@ class DesktopLayer(QMainWindow):
         except Exception:
             pass
 
+    def hideEvent(self, event):
+        try:
+            if self._desktop_host.attached:
+                self._desktop_host.detach(int(self.winId()))
+        except Exception:
+            pass
+        super().hideEvent(event)
+
     def closeEvent(self, event):
         try:
             self._restack.stop()
+            self._desktop_host.detach(int(self.winId()))
         except Exception:
             pass
         super().closeEvent(event)
