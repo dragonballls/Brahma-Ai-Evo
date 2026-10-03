@@ -8706,13 +8706,13 @@ class MainWindow(QMainWindow):
 
         self._clock_tmr = QTimer(self)
         self._clock_tmr.timeout.connect(self._tick_clock)
-        self._clock_tmr.start(10000 if _low_power_ui_enabled() else 1000)
+        self._clock_tmr.start(30000 if _low_power_ui_enabled() else 1000)
         self._tick_clock()
 
         # Metrik gÃ¼ncelleme timer'Ä±
         self._metric_tmr = QTimer(self)
         self._metric_tmr.timeout.connect(self._update_metrics)
-        self._metric_tmr.start(10000 if _low_power_ui_enabled() else 2000)
+        self._metric_tmr.start(30000 if _low_power_ui_enabled() else 2000)
         self._update_metrics()
 
         self._log_sig.connect(self._on_log_text)
@@ -9125,7 +9125,9 @@ class MainWindow(QMainWindow):
                 pass
         if page == "dashboard" and hasattr(self, "_smart_devices_section"):
             try:
-                self._smart_devices_section.refresh(force=True)
+                self._smart_devices_section.refresh(
+                    force=not _low_power_ui_enabled()
+                )
             except Exception:
                 pass
         if hasattr(self, "_right_panel"):
@@ -13230,7 +13232,7 @@ class SmartDevicesSection(QFrame):
     def __init__(self, controller=None, parent=None):
         super().__init__(parent)
         self._controller = controller
-        self._service = SmartHomeService()
+        self._service = None
         self._snapshot = ""
         self._device_tiles: list[_DeviceTile] = []
         self._card_anims: list[QPropertyAnimation] = []
@@ -13443,9 +13445,24 @@ class SmartDevicesSection(QFrame):
 
         self._poll_tmr = QTimer(self)
         self._poll_tmr.timeout.connect(lambda: self.refresh(force=False))
-        self._poll_tmr.start(2500)
+        self._poll_tmr.start(30000 if _low_power_ui_enabled() else 2500)
 
-        self.refresh(force=True)
+        # In low-power mode, do not perform a network/device scan during UI
+        # construction. The existing refresh button and page activation still
+        # provide immediate on-demand refreshes.
+        if not _low_power_ui_enabled():
+            self.refresh(force=True)
+        else:
+            self._empty_card.setVisible(True)
+            self._scroll.setVisible(False)
+
+    def _service_obj(self):
+        if self._service is None:
+            try:
+                self._service = SmartHomeService()
+            except Exception:
+                self._service = None
+        return self._service
 
     def _controller_bridge(self):
         return self._controller
