@@ -78,6 +78,41 @@ class ApplicationHost:
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
+    def find_after_launch(self, target: str, *, baseline_pids: set[int] | None = None,
+                         timeout: float = 6.0) -> WindowInfo | None:
+        """Find the launched application's real top-level window without guessing forever."""
+        import time as _time
+        target_text = str(target or "").strip().lower()
+        baseline = set(baseline_pids or set())
+        deadline = _time.monotonic() + max(0.5, min(float(timeout), 10.0))
+
+        while _time.monotonic() < deadline:
+            windows = WindowManager.enumerate_windows()
+            candidates: list[WindowInfo] = []
+            for window in windows:
+                if not window.visible or not window.title:
+                    continue
+                if window.pid in baseline:
+                    continue
+                text = f"{window.title} {window.exe}".lower()
+                if target_text and target_text in text:
+                    candidates.append(window)
+                elif is_game_window(window) and target_text in {"minecraft", "roblox"}:
+                    candidates.append(window)
+
+            if candidates:
+                return candidates[0]
+
+            # Existing-window fallback: useful when the launcher correctly
+            # focuses an already-running application instead of spawning a PID.
+            for window in windows:
+                text = f"{window.title} {window.exe}".lower()
+                if target_text and target_text in text:
+                    return window
+
+            _time.sleep(0.25)
+        return None
+
     def _find(self, hwnd_or_title: str) -> WindowInfo | None:
         text = str(hwnd_or_title or "").strip()
         if not text:
