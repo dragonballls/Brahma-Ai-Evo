@@ -82,7 +82,7 @@ class UnifiedAIClient:
 
     def chat_json(self, prompt: str, system: str = "Return ONLY valid JSON.", model: Optional[str] = None, max_tokens: int = 4096) -> dict:
         self.reload_settings()
-        if self._provider == "Local":
+        if self._is_local_provider():
             messages = [
                 {"role": "system", "content": system + " Output valid JSON only, without any markdown formatting."},
                 {"role": "user", "content": prompt}
@@ -177,7 +177,7 @@ class UnifiedAIClient:
             system = system.rstrip() + "\n\n" + language_prompt_block()
         except Exception:
             pass
-        if self._provider == "Local" or bool(self._provider and self._provider.lower() == "local"):
+        if self._is_local_provider():
             return self.chat(prompt, system=system, history=history)
         from core.intelligence_orchestrator import orchestrator
         return orchestrator.respond(
