@@ -8,12 +8,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, Dict
+import threading
 
-from core.user_paths import get_user_data_dir
+from core.runtime_paths import CONFIG_DIR, APP_SETTINGS_PATH
 
 BSE_DIR = Path(__file__).resolve().parent.parent
-CONFIG_DIR = get_user_data_dir() / "config"
-SETTINGS_FILE = CONFIG_DIR / "app_settings.json"
+SETTINGS_FILE = APP_SETTINGS_PATH
+_SETTINGS_LOCK = threading.RLock()
 
 
 
@@ -22,32 +23,37 @@ def _ensure_config() -> None:
 
 
 def load_settings() -> Dict[str, Any]:
-    _ensure_config()
-    if not SETTINGS_FILE.exists():
-        return {}
-    try:
-        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    with _SETTINGS_LOCK:
+        _ensure_config()
+        if not SETTINGS_FILE.exists():
+            return {}
+        try:
+            data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+            return dict(data) if isinstance(data, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
 
 
 def save_settings(data: Dict[str, Any]) -> None:
-    _ensure_config()
-    current = load_settings()
-    current.update(data)
-    temp_path = SETTINGS_FILE.with_suffix(".json.tmp")
-    try:
-        with open(temp_path, "w", encoding="utf-8") as f:
-            json.dump(current, f, indent=4)
-            f.flush()
-        temp_path.replace(SETTINGS_FILE)
-    except Exception as e:
+    if not isinstance(data, dict):
+        raise TypeError("settings update must be a dictionary")
+    with _SETTINGS_LOCK:
+        _ensure_config()
+        current = load_settings()
+        current.update(data)
+        temp_path = SETTINGS_FILE.with_suffix(".json.tmp")
         try:
-            temp_path.unlink(missing_ok=True)
-        except Exception:
-            pass
-        print(f"[CONFIG] Error saving settings: {e}")
+            temp_path.write_text(
+                json.dumps(current, indent=4, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            temp_path.replace(SETTINGS_FILE)
+        except Exception as e:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            print(f"[CONFIG] Error saving settings: {e}")
 
 
 def get_setting(key: str, default: Any = None) -> Any:
