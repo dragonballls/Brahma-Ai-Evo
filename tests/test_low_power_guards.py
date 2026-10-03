@@ -46,7 +46,8 @@ class LowPowerGuardTests(unittest.TestCase):
         self.assertIn("(os.path.join(cwd, 'config', 'models'), 'config', 'models')", spec)
         self.assertIn("(os.path.join(cwd, 'config', 'intelligence.json'), 'config', 'intelligence.json')", spec)
         ui = self.read("ui.py")
-        self.assertIn('CONFIG_DIR = get_user_data_dir() / "config"', ui)
+        self.assertIn("from core.runtime_paths import CONFIG_DIR", ui)
+        self.assertIn("API_CONFIG_PATH", ui)
         self.assertNotIn('Path("config/api_keys.json")', ui)
         self.assertNotIn('Path("config/ig_session.json")', ui)
 
@@ -170,8 +171,9 @@ class LowPowerGuardTests(unittest.TestCase):
     def test_updater_targets_this_repository(self):
         root_updater = self.read("updater.py")
         core_updater = self.read("core/updater.py")
-        self.assertIn("https://github.com/dragonballls/Brahma-Ai-Evo.git", root_updater)
-        self.assertIn('repo_owner="dragonballls", repo_name="Brahma-Ai-Evo"', core_updater)
+        self.assertIn("GITHUB_REMOTE", root_updater)
+        self.assertIn("GITHUB_OWNER", core_updater)
+        self.assertIn("GITHUB_REPOSITORY", core_updater)
 
 
 if __name__ == "__main__":
