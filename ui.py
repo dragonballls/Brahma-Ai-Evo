@@ -11230,7 +11230,7 @@ class OmniRouteEmbeddedPage(QWidget):
         def ensure_gateway():
             try:
                 from core.omniroute import gateway
-                gateway().ensure_ready()
+                gateway().ensure_ready(force=True)
             except Exception as exc:
                 try:
                     import logging
