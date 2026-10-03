@@ -4884,7 +4884,7 @@ class BrahmaLive:
                 result = r or "Reminder set."
 
             elif name == "youtube_video":
-                r = await loop.run_in_executor(None, lambda: youtube_video(parameters=args, response=None, player=self.ui))
+                r = await loop.run_in_executor(None, lambda: youtube_video(parameters=args, response=None, player=self.ui, speak=self.speak))
                 result = r or "Done."
             elif name == "file_processor":
                 if not args.get("file_path") and self.ui.current_file:
