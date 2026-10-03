@@ -17,7 +17,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install lightweight test dependency
-        run: python -m pip install requests
+        run: python -m pip install requests psutil
       - name: Compile Python sources
         run: python -m compileall -q actions core features memory plugins smart_home scripts main.py ui.py
       - name: Run low-power guards
@@ -32,3 +32,5 @@ jobs:
         run: python -m unittest tests.test_gods_eye_globe -v
       - name: Run multi-model intelligence regressions
         run: python -m unittest tests.test_intelligence_orchestrator -v
+      - name: Run PC health and autonomous mission regressions
+        run: python -m unittest tests.test_pc_health_and_missions -v
