@@ -1569,9 +1569,10 @@ class _SysMetrics:
     def _loop(self):
         while self._running:
             if self._paused:
-                if self._stop_event.wait():
-                    break
-                self._stop_event.clear()
+                # Resume and stop use separate signals. Waiting on the stop
+                # event here would make resume() unable to wake a paused worker.
+                self._resume_event.wait()
+                self._resume_event.clear()
                 continue
             try:
                 self._update()
