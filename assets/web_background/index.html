@@ -178,12 +178,13 @@
       camera = new THREE.PerspectiveCamera(38, w / h, 0.1, 1000);
       camera.position.set(0, 0, 46);
 
+      const lowPowerMode = new URLSearchParams(window.location.search).get('power') !== 'full';
       renderer = new THREE.WebGLRenderer({
-        antialias: true,
-        powerPreference: 'high-performance'
+        antialias: !lowPowerMode,
+        powerPreference: lowPowerMode ? 'low-power' : 'high-performance'
       });
       renderer.setSize(w, h);
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setPixelRatio(lowPowerMode ? 1 : Math.min(window.devicePixelRatio, 2));
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       renderer.toneMappingExposure = 1.05;
       container.appendChild(renderer.domElement);
@@ -702,14 +703,41 @@
       }
     }
 
-    function renderLoop() {
-      requestAnimationFrame(renderLoop);
-      const dt = Math.min(clock.getDelta(), 0.05);
-      
-      updateSimulation(dt);
+    let _renderTimer = null;
+    let _lastRenderMs = 0;
 
-      controls.update();
-      composer.render();
+    function targetRenderFps() {
+      const lowPower = new URLSearchParams(window.location.search).get('power') !== 'full';
+      if (!lowPower) return 60;
+      if (document.hidden) return 1;
+      switch (currentState) {
+        case "THINKING":
+        case "EXECUTING":
+        case "WORKING":
+        case "SPEAKING":
+        case "SCANNING":
+          return 24;
+        case "LISTENING":
+          return 12;
+        case "MUTED":
+        case "IDLE":
+        default:
+          return 4;
+      }
+    }
+
+    function renderLoop(now) {
+      const fps = targetRenderFps();
+      const interval = 1000 / fps;
+      if ((now - _lastRenderMs) >= interval || !_lastRenderMs) {
+        const dt = Math.min(clock.getDelta(), 0.08);
+        updateSimulation(dt);
+        controls.update();
+        composer.render();
+        _lastRenderMs = now;
+      }
+      clearTimeout(_renderTimer);
+      _renderTimer = setTimeout(() => requestAnimationFrame(renderLoop), Math.max(1, interval * 0.85));
     }
 
     function onWindowResize() {
