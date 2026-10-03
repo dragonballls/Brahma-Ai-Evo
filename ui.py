@@ -8968,6 +8968,7 @@ class MainWindow(QMainWindow):
         self._settings_bridge = None
         self._api_ready = False
         self._app_settings_cache: dict | None = None
+        self._app_settings_mtime_ns: int | None = None
         self._overlay: QWidget | None = None
         self._remote_overlay: RemoteKeyOverlay | None = None
         self._scan_overlay: ScanningOverlay | None = None
@@ -9213,8 +9214,16 @@ class MainWindow(QMainWindow):
             pass
 
     def _load_app_settings(self) -> dict:
-        if self._app_settings_cache is not None:
+        try:
+            mtime_ns = APP_SETTINGS_FILE.stat().st_mtime_ns
+        except OSError:
+            mtime_ns = None
+        if (
+            self._app_settings_cache is not None
+            and mtime_ns == self._app_settings_mtime_ns
+        ):
             return dict(self._app_settings_cache)
+
         settings = _default_app_settings()
         if APP_SETTINGS_FILE.exists():
             try:
@@ -9224,12 +9233,19 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         self._app_settings_cache = dict(settings)
+        self._app_settings_mtime_ns = mtime_ns
         return dict(settings)
 
     def _save_app_settings(self, settings: dict):
         os.makedirs(CONFIG_DIR, exist_ok=True)
-        APP_SETTINGS_FILE.write_text(json.dumps(settings, indent=4), encoding="utf-8")
+        temp = APP_SETTINGS_FILE.with_suffix(".json.tmp")
+        temp.write_text(json.dumps(settings, indent=4), encoding="utf-8")
+        os.replace(temp, APP_SETTINGS_FILE)
         self._app_settings_cache = dict(settings)
+        try:
+            self._app_settings_mtime_ns = APP_SETTINGS_FILE.stat().st_mtime_ns
+        except OSError:
+            self._app_settings_mtime_ns = None
 
     def _startup_animation_enabled(self) -> bool:
         if platform.system() != "Windows":
@@ -15755,6 +15771,7 @@ class BrahmaUI:
         self._boot_overlay: BootSequenceOverlay | None = None
         self._desktop_controller = None
         self._app_settings_cache: dict | None = None
+        self._app_settings_mtime_ns: int | None = None
         self._launcher.single_clicked.connect(self._toggle_workspace_sidebar)
         self._launcher.double_clicked.connect(self._on_launcher_double_clicked)
         self._launcher.action_requested.connect(self._handle_launcher_action)
@@ -15885,24 +15902,38 @@ class BrahmaUI:
                 pass
 
     def _load_app_settings(self) -> dict:
-        if self._app_settings_cache is not None:
+        try:
+            mtime_ns = APP_SETTINGS_FILE.stat().st_mtime_ns
+        except OSError:
+            mtime_ns = None
+        if (
+            self._app_settings_cache is not None
+            and mtime_ns == self._app_settings_mtime_ns
+        ):
             return dict(self._app_settings_cache)
+
         settings = _default_app_settings()
         if APP_SETTINGS_FILE.exists():
             try:
                 data = json.loads(APP_SETTINGS_FILE.read_text(encoding="utf-8"))
                 if isinstance(data, dict):
-                    for k, v in data.items():
-                        settings[k] = v
+                    settings.update(data)
             except Exception:
                 pass
         self._app_settings_cache = dict(settings)
+        self._app_settings_mtime_ns = mtime_ns
         return dict(settings)
 
     def _save_app_settings(self, settings: dict):
         os.makedirs(CONFIG_DIR, exist_ok=True)
-        APP_SETTINGS_FILE.write_text(json.dumps(settings, indent=4), encoding="utf-8")
+        temp = APP_SETTINGS_FILE.with_suffix(".json.tmp")
+        temp.write_text(json.dumps(settings, indent=4), encoding="utf-8")
+        os.replace(temp, APP_SETTINGS_FILE)
         self._app_settings_cache = dict(settings)
+        try:
+            self._app_settings_mtime_ns = APP_SETTINGS_FILE.stat().st_mtime_ns
+        except OSError:
+            self._app_settings_mtime_ns = None
 
     def _save_launcher_position(self, x: int, y: int):
         try:
