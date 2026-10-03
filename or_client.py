@@ -201,7 +201,7 @@ class OpenRouterClient:
                 if resp.status_code == 401:
                     raise PermissionError(
                         f"[OpenRouter] Authentication failed for model {model}. "
-                        "Check your API key in config/api_keys.json."
+                        "Check your API key in the Brahma Evo provider settings."
                     )
 
                 if resp.status_code == 403:
