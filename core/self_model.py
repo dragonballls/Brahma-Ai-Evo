@@ -238,7 +238,10 @@ class SelfAwareness:
         return "\n".join(lines) + "\n"
 
     def identity_answer(self, user_text: str) -> str | None:
-        normalized = re.sub(r"[^a-z0-9? ]+", " ", str(user_text or "").casefold())
+        # Remove apostrophes before collapsing whitespace so contractions such
+        # as "what's" and "I'm" normalize to their intended forms.
+        normalized = str(user_text or "").casefold().replace("'", "").replace("’", "")
+        normalized = re.sub(r"[^a-z0-9? ]+", " ", normalized)
         normalized = re.sub(r"\s+", " ", normalized).strip().rstrip("?").strip()
         if normalized in {"who are you", "what are you", "what is your name", "whats your name", "who is jarvis", "who is brahma"}:
             name = self._assistant_name()
