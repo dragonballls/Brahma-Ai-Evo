@@ -66,5 +66,8 @@ def update_from_github(base_dir: Path) -> bool:
 
 
 def restart_application(base_dir: Path) -> None:
-    """Replace the current process with the updated application."""
-    os.execv(sys.executable, [sys.executable, str(base_dir / "main.py"), *sys.argv[1:]])
+    """Replace the current process with the updated source or frozen application."""
+    if getattr(sys, "frozen", False):
+        os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
+    else:
+        os.execv(sys.executable, [sys.executable, str(base_dir / "main.py"), *sys.argv[1:]])
