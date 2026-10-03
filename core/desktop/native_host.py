@@ -4,39 +4,44 @@ import platform
 from dataclasses import dataclass
 from typing import Any
 
+from .window_manager import WindowInfo, WindowManager
+
 try:
     from PyQt6.QtCore import Qt
     from PyQt6.QtGui import QFont, QWindow
-    from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+    from PyQt6.QtWidgets import (
+        QFrame,
+        QHBoxLayout,
+        QLabel,
+        QPushButton,
+        QVBoxLayout,
+        QWidget,
+    )
     _QT_AVAILABLE = True
 except Exception:  # pragma: no cover
     Qt = QFont = QWindow = QFrame = QHBoxLayout = QLabel = QPushButton = QVBoxLayout = QWidget = None
     _QT_AVAILABLE = False
 
 
-@dataclass
-    class NativeHostRecord:
-        hwnd: int
-        pid: int
-        title: str
-        exe: str
-    
-    
-    if _QT_AVAILABLE:
-        class NativeWindowPanel(QFrame):
-        """Brahma-styled host for a foreign Windows HWND.
-    
-        Qt handles the foreign-window container/reparenting path. The panel owns
-        the QWindow wrapper, not the underlying application process/window.
-        """
-    
+@dataclass(frozen=True)
+class NativeHostRecord:
+    hwnd: int
+    pid: int
+    title: str
+    exe: str
+
+
+if _QT_AVAILABLE:
+    class NativeWindowPanel(QFrame):
+        """Brahma-styled container for a foreign Windows HWND."""
+
         def __init__(self, info: WindowInfo, on_closed=None, parent=None):
             super().__init__(parent)
             self.info = info
             self._on_closed = on_closed
             self._foreign: QWindow | None = None
             self._container: QWidget | None = None
-    
+
             self.setObjectName("NativeWindowPanel")
             self.setStyleSheet(
                 """
@@ -62,36 +67,36 @@ except Exception:  # pragma: no cover
                 }
                 """
             )
-    
+
             root = QVBoxLayout(self)
             root.setContentsMargins(8, 8, 8, 8)
             root.setSpacing(6)
-    
+
             header = QHBoxLayout()
             icon = QLabel("◈")
             icon.setStyleSheet("color:#00e5ff; font-weight:700;")
             header.addWidget(icon)
-    
+
             label = QLabel(info.title or info.exe or f"Window {info.hwnd}")
             label.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
             header.addWidget(label, 1)
-    
+
             status = QLabel(f"{info.exe} • PID {info.pid}")
             status.setStyleSheet("color:rgba(255,255,255,0.48); font:8pt 'Segoe UI';")
             header.addWidget(status)
-    
+
             close = QPushButton("×")
             close.setFixedSize(30, 28)
             close.setToolTip("Close hosted workspace")
             close.clicked.connect(self.close)
             header.addWidget(close)
             root.addLayout(header)
-    
+
             foreign = QWindow.fromWinId(int(info.hwnd))
             if foreign is None:
-                raise RuntimeError("Windows/Qt could not wrap the target HWND.")
+                raise RuntimeError("Qt could not wrap the target HWND.")
             self._foreign = foreign
-    
+
             self._container = QWidget.createWindowContainer(foreign, self)
             self._container.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
             self._container.setMinimumSize(320, 220)
@@ -99,20 +104,17 @@ except Exception:  # pragma: no cover
                 "background:#000000; border:1px solid rgba(255,255,255,0.08); border-radius:10px;"
             )
             root.addWidget(self._container, 1)
-    
+
         def focus_foreign(self) -> bool:
             try:
-                if self._foreign is None:
-                    return False
-                self._foreign.requestActivate()
+                if self._foreign is not None:
+                    self._foreign.requestActivate()
                 return WindowManager.focus(self.info.hwnd)
             except Exception:
                 return False
-    
+
         def closeEvent(self, event):
             try:
-                # Detaching the QWindow wrapper removes the container relationship;
-                # the native application/window remains alive.
                 if self._foreign is not None:
                     self._foreign.setParent(None)
             except Exception:
@@ -123,7 +125,15 @@ except Exception:  # pragma: no cover
             except Exception:
                 pass
             super().closeEvent(event)
-    class NativeWindowHost:
+
+
+else:
+    class NativeWindowPanel:  # type: ignore[no-redef]
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("Qt is unavailable.")
+
+
+class NativeWindowHost:
     """Creates isolated Brahma workspace panels for native Windows windows."""
 
     def __init__(self):
@@ -138,13 +148,16 @@ except Exception:  # pragma: no cover
         text = str(target or "").strip().lower()
         if not text:
             return None
+
         windows = WindowManager.enumerate_windows()
         try:
             hwnd = int(text)
         except Exception:
             hwnd = None
+
         if hwnd is not None:
             return next((item for item in windows if item.hwnd == hwnd), None)
+
         exact = next(
             (
                 item for item in windows
@@ -152,8 +165,9 @@ except Exception:  # pragma: no cover
             ),
             None,
         )
-        if exact:
+        if exact is not None:
             return exact
+
         return next(
             (
                 item for item in windows
@@ -168,18 +182,25 @@ except Exception:  # pragma: no cover
             return False, "Target window was not found."
         if not info.hwnd or not info.pid:
             return False, "Target window does not have a valid native handle."
+
         try:
             import psutil
+
             proc = psutil.Process(info.pid)
             if not WindowManager.is_user_process(proc):
                 return False, "Protected or Windows-owned processes cannot be hosted."
         except Exception as exc:
             return False, f"Process could not be validated: {exc}"
+
         return True, ""
 
     def host(self, target: str) -> dict[str, Any]:
         if not self.supported():
-            return {"ok": False, "embedded": False, "error": "Native window hosting is only available on Windows."}
+            return {
+                "ok": False,
+                "embedded": False,
+                "error": "Native window hosting is only available on Windows with Qt.",
+            }
 
         info = self.find_target(target)
         safe, error = self._safe_target(info)
@@ -187,12 +208,21 @@ except Exception:  # pragma: no cover
             return {"ok": False, "embedded": False, "error": error}
 
         assert info is not None
-        existing = next((panel for panel in self._panels if panel.info.hwnd == info.hwnd), None)
+
+        existing = next(
+            (panel for panel in self._panels if panel.info.hwnd == info.hwnd),
+            None,
+        )
         if existing is not None:
             existing.show()
             existing.raise_()
             existing.focus_foreign()
-            return {"ok": True, "embedded": True, "hwnd": info.hwnd, "title": info.title}
+            return {
+                "ok": True,
+                "embedded": True,
+                "hwnd": info.hwnd,
+                "title": info.title,
+            }
 
         try:
             panel = NativeWindowPanel(info, on_closed=self._on_closed)
@@ -202,6 +232,7 @@ except Exception:  # pragma: no cover
             panel.show()
             panel.raise_()
             panel.focus_foreign()
+
             return {
                 "ok": True,
                 "embedded": True,
@@ -214,7 +245,7 @@ except Exception:  # pragma: no cover
             return {
                 "ok": False,
                 "embedded": False,
-                "error": f"Native hosting failed safely; the application was not terminated. {exc}",
+                "error": f"Native hosting failed safely; the application remains running. {exc}",
             }
 
     def _on_closed(self, panel: NativeWindowPanel):
@@ -249,9 +280,3 @@ except Exception:  # pragma: no cover
 
 
 native_window_host = NativeWindowHost()
-
-
-if not _QT_AVAILABLE:
-    class NativeWindowPanel:  # type: ignore[no-redef]
-        def __init__(self, *args, **kwargs):
-            raise RuntimeError("Qt is unavailable.")
