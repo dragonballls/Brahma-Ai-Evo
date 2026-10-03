@@ -354,11 +354,12 @@ class InstagramService:
         try:
             if not (BROWSER_PROFILE_DIR.exists() and (BROWSER_PROFILE_DIR / "Default").exists()):
                 return False
-            if CONFIG_PATH.exists():
-                with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    return bool(data.get("instagram_browser_authenticated") and data.get("instagram_sessionid"))
-            return False
+            from config import get_config
+            data = get_config()
+            return bool(
+                data.get("instagram_browser_authenticated")
+                and data.get("instagram_sessionid")
+            )
         except Exception:
             return False
 
@@ -371,10 +372,12 @@ class InstagramService:
 
     def load_credentials(self) -> Tuple[str, str]:
         try:
-            if CONFIG_PATH.exists():
-                with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    return data.get("instagram_username", "").strip(), data.get("instagram_password", "").strip()
+            from config import get_config
+            data = get_config()
+            return (
+                str(data.get("instagram_username", "") or "").strip(),
+                str(data.get("instagram_password", "") or "").strip(),
+            )
         except Exception as e:
             ig_log(f"Error reading credentials: {e}")
         return "", ""
