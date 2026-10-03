@@ -369,6 +369,11 @@ class BackgroundWidget(QWidget):
             pass
 
     def _do_set_audio_level(self, level: float) -> None:
+        try:
+            if float(level) > 0.05:
+                self.wake_from_deep_idle()
+        except Exception:
+            pass
         now = time.monotonic()
         if (now - self._last_audio_js_time) < 0.05:  # 20 Hz is sufficient for the adaptive visualizer
             return
