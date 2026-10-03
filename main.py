@@ -6058,6 +6058,7 @@ def _main_impl():
 
     if desktop_controller is not None:
         try:
+            from PyQt6.QtWidgets import QApplication
             app_instance = QApplication.instance()
             if app_instance is not None:
                 app_instance.aboutToQuit.connect(desktop_controller.shutdown)
