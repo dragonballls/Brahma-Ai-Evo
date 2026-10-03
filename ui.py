@@ -9022,6 +9022,24 @@ class MainWindow(QMainWindow):
         else:
             self.showFullScreen()
 
+    def set_desktop_render_suspended(self, suspended: bool) -> None:
+        """Release the hidden MainWindow renderer while DesktopLayer owns the scene."""
+        suspended = bool(suspended)
+        bg = getattr(self, "_bg_widget", None)
+        if bg is None:
+            return
+        try:
+            bg.set_deep_idle(suspended)
+        except Exception:
+            pass
+        try:
+            web = getattr(bg, "_web_view", None)
+            if web is not None:
+                web.setUpdatesEnabled(not suspended)
+                web.setVisible(not suspended and bg.isVisible())
+        except Exception:
+            pass
+
     def _load_app_settings(self) -> dict:
         if self._app_settings_cache is not None:
             return dict(self._app_settings_cache)
@@ -14998,6 +15016,8 @@ class BrahmaUI:
         except Exception:
             pass
         try:
+            if hasattr(self._win, "set_desktop_render_suspended"):
+                self._win.set_desktop_render_suspended(True)
             self._win.hide()
         except Exception:
             pass
@@ -15011,6 +15031,8 @@ class BrahmaUI:
         """Return Brahma to its normal application presentation."""
         try:
             self._launcher.hide()
+            if hasattr(self._win, "set_desktop_render_suspended"):
+                self._win.set_desktop_render_suspended(False)
             self.show_main()
         except Exception:
             try:
