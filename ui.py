@@ -11167,6 +11167,69 @@ class SystemConnectivityPage(QWidget):
         )
         lay1.addWidget(self._gemini_row)
         lay1.addWidget(self._or_row)
+
+        # Additional cloud providers used by OmniRoute's multi-model intelligence pool.
+        provider_pool = self._card(
+            "Advanced Cloud Intelligence Pool",
+            "Add optional provider keys. Brahma keeps them locally and OmniRoute can use them for smart routing, fallback, and multi-model reasoning."
+        )
+        pool_lay = provider_pool.layout()
+        for provider_id, label, field in (
+            ("openai", "OpenAI", "openai_api_key"),
+            ("anthropic", "Anthropic", "anthropic_api_key"),
+            ("groq", "Groq", "groq_api_key"),
+            ("xai", "xAI", "xai_api_key"),
+            ("cerebras", "Cerebras", "cerebras_api_key"),
+            ("deepseek", "DeepSeek", "deepseek_api_key"),
+            ("mistral", "Mistral", "mistral_api_key"),
+            ("cohere", "Cohere", "cohere_api_key"),
+        ):
+            row = QHBoxLayout()
+            label_widget = QLabel(label)
+            label_widget.setMinimumWidth(82)
+            key_input = QLineEdit()
+            key_input.setEchoMode(QLineEdit.EchoMode.Password)
+            key_input.setPlaceholderText("Optional API key")
+            key_input.setText((self._api_defaults.get(field) or "").strip())
+            save_btn = QPushButton("Save")
+            test_btn = QPushButton("Test")
+            status_lbl = QLabel("Configured" if key_input.text().strip() else "Not configured")
+            status_lbl.setStyleSheet(f"color: {C.GREEN if key_input.text().strip() else C.TEXT_DIM}; font-size: 10px;")
+            save_btn.clicked.connect(
+                lambda _checked=False, p=provider_id, f=field, inp=key_input, st=status_lbl:
+                    self._save_cloud_provider_key(p, f, inp.text(), st)
+            )
+            test_btn.clicked.connect(
+                lambda _checked=False, p=provider_id, inp=key_input, st=status_lbl:
+                    self._test_cloud_provider_key(p, inp.text(), st)
+            )
+            row.addWidget(label_widget)
+            row.addWidget(key_input, 1)
+            row.addWidget(save_btn)
+            row.addWidget(test_btn)
+            row.addWidget(status_lbl)
+            pool_lay.addLayout(row)
+
+        intel_row = QHBoxLayout()
+        intel_row.addWidget(QLabel("Intelligence Mode"))
+        self._intelligence_mode_combo = QComboBox()
+        self._intelligence_mode_combo.addItems(["Smart", "Fast", "Off"])
+        saved_intel_mode = str(self._load_app_settings().get("intelligence_mode", "smart")).lower()
+        self._intelligence_mode_combo.setCurrentText({"smart": "Smart", "fast": "Fast", "off": "Off"}.get(saved_intel_mode, "Smart"))
+        self._intelligence_mode_combo.currentTextChanged.connect(
+            lambda text: self._set_setting("intelligence_mode", text.lower())
+        )
+        intel_row.addWidget(self._intelligence_mode_combo, 1)
+        pool_lay.addLayout(intel_row)
+
+        consensus = self._mk_toggle(
+            "Enable multi-model reasoning + final synthesis",
+            bool(self._load_app_settings().get("intelligence_orchestration_enabled", True)),
+            lambda checked: self._set_setting("intelligence_orchestration_enabled", bool(checked)),
+        )
+        pool_lay.addWidget(consensus)
+        lay.addWidget(provider_pool)
+
         controls = QHBoxLayout()
         controls.setSpacing(12)
         self._default_provider = QComboBox()
