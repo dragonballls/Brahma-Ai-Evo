@@ -312,20 +312,31 @@ def _extract_gemini_text(response) -> str:
 
 
 def _gemini_text_reply(prompt: str) -> str:
-    client = genai.Client(
-        api_key=_get_api_key(),
-        http_options={"api_version": "v1beta"},
-    )
     system_prompt = (
         "You are Brahma Evo, a concise, helpful desktop assistant. "
         "Reply naturally and briefly. Do not mention internal implementation details."
     )
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=f"{system_prompt}\n\nUser: {prompt}",
-        config={"temperature": 0.6},
-    )
-    return _extract_gemini_text(response)
+    # OmniRoute-backed cloud path is preferred. Direct Gemini remains the
+    # compatibility fallback if the local gateway cannot be started.
+    try:
+        return openrouter_client.chat(
+            prompt,
+            system=system_prompt,
+            model="auto",
+            max_tokens=4096,
+            temperature=0.6,
+        )
+    except Exception:
+        client = genai.Client(
+            api_key=_get_api_key(),
+            http_options={"api_version": "v1beta"},
+        )
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=f"{system_prompt}\n\nUser: {prompt}",
+            config={"temperature": 0.6},
+        )
+        return _extract_gemini_text(response)
 
 
 def _ig_gemini_reply(username: str, text: str) -> str:
@@ -4144,6 +4155,12 @@ class BrahmaLive:
         if mem_str:
             parts.append(mem_str)
         parts.append(sys_prompt)
+        parts.append(
+            "Cloud text reasoning is routed through the local OmniRoute gateway when available. "
+            "Use the existing direct-provider fallback only when OmniRoute is unavailable. "
+            "For self-coding requests, use the self_coding tool and keep preview, approval, and undo "
+            "as separate explicit actions. Never approve a checkpoint unless the user explicitly asks."
+        )
         parts.append(
             "Wake-word mode: if the microphone is muted, only an explicit 'Brahma Evo' phrase "
             "(optionally preceded by 'hey', 'hi', or 'hello') can activate the assistant. Never wake "
