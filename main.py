@@ -6604,6 +6604,11 @@ def _main_impl():
         except Exception:
             pass
         try:
+            if hasattr(ui, "stop_background_metrics"):
+                ui.stop_background_metrics()
+        except Exception:
+            pass
+        try:
             clip_sentry = getattr(ui, "_clip_sentry", None)
             if clip_sentry is not None:
                 clip_sentry.stop()
