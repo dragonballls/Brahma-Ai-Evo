@@ -1,4 +1,4 @@
-from core.user_paths import get_user_data_dir
+from core.runtime_paths import APP_SETTINGS_PATH
 """
 Brahma Evo - Cinematic Holographic Sound Effects Subsystem
 Provides low-latency, non-blocking sci-fi acoustics for holographic UI interactions:
@@ -23,7 +23,7 @@ from PyQt6.QtMultimedia import QSoundEffect
 
 BASE_DIR = Path(__file__).resolve().parent
 SOUNDS_DIR = BASE_DIR / "assets" / "sounds"
-SETTINGS_FILE = get_user_data_dir() / "config" / "app_settings.json"
+SETTINGS_FILE = APP_SETTINGS_PATH
 
 
 def _generate_default_sounds(target_dir: Path):
