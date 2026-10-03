@@ -36,10 +36,17 @@ def save_settings(data: Dict[str, Any]) -> None:
     _ensure_config()
     current = load_settings()
     current.update(data)
+    temp_path = SETTINGS_FILE.with_suffix(".json.tmp")
     try:
-        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+        with open(temp_path, "w", encoding="utf-8") as f:
             json.dump(current, f, indent=4)
+            f.flush()
+        temp_path.replace(SETTINGS_FILE)
     except Exception as e:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
         print(f"[CONFIG] Error saving settings: {e}")
 
 
