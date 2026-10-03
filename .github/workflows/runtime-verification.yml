@@ -48,7 +48,7 @@ jobs:
           & $node $entry --version
           if ($LASTEXITCODE -ne 0) { throw "OmniRoute CLI version check failed." }
 
-      - name: Start OmniRoute and test local API
+      - name: Initialize and start OmniRoute, then test local API
         shell: pwsh
         env:
           BRAHMA_OMNIROUTE_ENABLED: "1"
@@ -58,26 +58,42 @@ jobs:
           $entry = Join-Path $runtime "node_modules\omniroute\bin\omniroute.mjs"
           $env:DATA_DIR = Join-Path $PWD "omniroute-ci-data"
           $env:PORT = "20128"
+          $env:OMNIROUTE_SETUP_PASSWORD = "ci-runtime-test-password"
           New-Item -ItemType Directory -Force -Path $env:DATA_DIR | Out-Null
-          $proc = Start-Process -FilePath $node -ArgumentList @($entry, "--no-open", "--port", "20128") -WorkingDirectory $runtime -WindowStyle Hidden -PassThru
+
+          & $node $entry setup --non-interactive --password $env:OMNIROUTE_SETUP_PASSWORD
+          if ($LASTEXITCODE -ne 0) { throw "OmniRoute non-interactive setup failed." }
+
+          $stdout = Join-Path $PWD "omniroute.stdout.log"
+          $stderr = Join-Path $PWD "omniroute.stderr.log"
+          $proc = Start-Process -FilePath $node -ArgumentList @($entry, "--no-open", "--port", "20128") -WorkingDirectory $runtime -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
           try {
             $ready = $false
             for ($i = 0; $i -lt 60; $i++) {
               Start-Sleep -Milliseconds 500
-              try {
-                $resp = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:20128/v1/models" -TimeoutSec 2
-                if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 500) {
-                  $ready = $true
-                  Write-Host "OmniRoute HTTP endpoint responded with status $($resp.StatusCode)."
-                  Write-Host $resp.Content.Substring(0, [Math]::Min(1000, $resp.Content.Length))
-                  break
-                }
-              } catch {}
+              foreach ($uri in @("http://127.0.0.1:20128/api/monitoring/health", "http://127.0.0.1:20128/v1/models")) {
+                try {
+                  $resp = Invoke-WebRequest -UseBasicParsing -Uri $uri -TimeoutSec 2
+                  if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 500) {
+                    $ready = $true
+                    Write-Host "OmniRoute HTTP endpoint responded: $uri -> $($resp.StatusCode)."
+                    if ($resp.Content) { Write-Host $resp.Content.Substring(0, [Math]::Min(1000, $resp.Content.Length)) }
+                    break
+                  }
+                } catch {}
+              }
+              if ($ready) { break }
               if ($proc.HasExited) {
-                throw "OmniRoute exited before its local API became reachable."
+                Write-Host "OmniRoute stdout:"; if (Test-Path $stdout) { Get-Content $stdout -Tail 100 }
+                Write-Host "OmniRoute stderr:"; if (Test-Path $stderr) { Get-Content $stderr -Tail 100 }
+                throw "OmniRoute exited before its local API became reachable (exit $($proc.ExitCode))."
               }
             }
-            if (-not $ready) { throw "OmniRoute local API did not become reachable within 30 seconds." }
+            if (-not $ready) {
+              Write-Host "OmniRoute stdout:"; if (Test-Path $stdout) { Get-Content $stdout -Tail 100 }
+              Write-Host "OmniRoute stderr:"; if (Test-Path $stderr) { Get-Content $stderr -Tail 100 }
+              throw "OmniRoute local API did not become reachable within 30 seconds."
+            }
           } finally {
             if (-not $proc.HasExited) {
               Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
