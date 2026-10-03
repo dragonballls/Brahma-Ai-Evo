@@ -12,10 +12,11 @@ import shutil
 import sys
 from pathlib import Path
 
+from core.runtime_paths import CONFIG_DIR, FATAL_CRASH_LOG_PATH
+
 logger = logging.getLogger("BootSentry")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-CONFIG_DIR = get_user_data_dir() / "config"
 CRASH_LOG = FATAL_CRASH_LOG_PATH
 PATCH_HISTORY_FILE = CONFIG_DIR / "patch_history.json"
 
