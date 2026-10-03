@@ -53,6 +53,20 @@ class LowPowerGuardTests(unittest.TestCase):
         main = self.read("main.py")
         self.assertIn('get_setting("clipboard_auto_comment_enabled", False)', main)
 
+    def test_clipboard_has_one_watcher_and_voice_guards(self):
+        main = self.read("main.py")
+        clipboard = self.read("core/clipboard_sentry.py")
+        ui = self.read("ui.py")
+        self.assertNotIn("def _clipboard_monitor():", main)
+        self.assertIn("def _clipboard_ai_handler(category: str, content: str):", main)
+        self.assertIn("self._clipboard_ai_handler", ui)
+        self.assertIn("self._wake = threading.Event()", clipboard)
+        self.assertIn("self._wake.wait(2.5)", clipboard)
+        self.assertIn("from core.voice_guard import VoiceCommandGate, VoiceToolExecutionGate", main)
+        self.assertIn("self._voice_command_gate.accept(text)", main)
+        self.assertIn("self._voice_tool_gate.allow(fc.name, args)", main)
+        self.assertIn("Generic \"hey/hi/hello\" must never wake", main)
+
     def test_deep_idle_suspends_nonessential_work(self):
         ui = self.read("ui.py")
         main = self.read("main.py")
