@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import sys
 import unittest
 from pathlib import Path
 import tempfile
 import json
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from core.gods_eye import GeoPoint, LocationSnapshot, _point
 from core.gods_eye_globe import GlobeLocator, build_globe_payload
