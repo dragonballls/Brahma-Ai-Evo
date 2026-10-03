@@ -3761,6 +3761,9 @@ class BrahmaLive:
                         ),
                     )
                     print("[BRAHMA EVO] 🌐 OpenRouter answered successfully!")
+                except PermissionError as e_or:
+                    print(f"[BRAHMA EVO] ⚠️ OpenRouter authentication failed: {e_or}")
+                    reply = f"OpenRouter authentication failed. {str(e_or).strip()}"
                 except Exception as e_or:
                     print(f"[BRAHMA EVO] ⚠️ OpenRouter failed: {e_or}")
 
@@ -3864,8 +3867,14 @@ class BrahmaLive:
                     except Exception as exc:
                         print(f"[BRAHMA EVO] ⚠️ Gemini fallback failed: {exc}")
 
-            # 4. Ultimate offline safety net: Local Brain fallback
-            if not reply and local_brain.is_available():
+            # 5. Ultimate Local Brain fallback is only allowed when Local/offline
+            # mode is selected or automatic provider switching is enabled.
+            allow_local_fallback = (
+                is_offline_mode
+                or configured_provider == "Local"
+                or auto_provider_switch
+            )
+            if not reply and allow_local_fallback and local_brain.is_available():
                 try:
                     res = local_brain.chat_complete([
                         {"role": "system", "content": "You are Brahma Evo, the autonomous desktop operating system. You control this PC. Never claim you cannot do automations."},
