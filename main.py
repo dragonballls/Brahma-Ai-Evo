@@ -99,6 +99,7 @@ from core.voice_guard import VoiceCommandGate, VoiceToolExecutionGate
 from core.duplex_voice import BargeInGate, PlaybackGeneration
 from core.prosody import profile_for_text, profile_prompt_block
 from core.provider_policy import normalize_provider, is_local, is_gemini, is_openrouter
+from config import get_api_key
 
 try:
     from dashboard.server import DashboardServer
@@ -150,17 +151,13 @@ _VOICE_SESSION_GUARD = threading.Lock()
 
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    return get_api_key("Gemini")
 
 
 def _has_gemini_voice_credentials() -> bool:
     """Voice Live requires a Gemini credential even when text uses another provider."""
     try:
-        if not API_CONFIG_PATH.is_file():
-            return False
-        data = json.loads(API_CONFIG_PATH.read_text(encoding="utf-8"))
-        return bool(str(data.get("gemini_api_key") or "").strip())
+        return bool(get_api_key("Gemini"))
     except Exception:
         return False
 
@@ -4766,7 +4763,6 @@ class BrahmaLive:
 
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
-            enable_affective_dialog=True,
             output_audio_transcription={},
             input_audio_transcription={},
             # Automatic VAD supplies continuous activity detection and server-side
