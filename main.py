@@ -91,6 +91,7 @@ from workspace_store import store as workspace_store
 from smart_home.service import SmartHomeService
 from plugin_manager import PluginManager
 from updater import restart_application, update_from_github
+from core.single_instance import SingleInstance
 
 try:
     from dashboard.server import DashboardServer
@@ -127,6 +128,9 @@ SEND_SAMPLE_RATE    = 16000
 RECEIVE_SAMPLE_RATE = 24000
 CHUNK_SIZE          = 1024
 LIVE_CONNECT_TIMEOUT = 12
+
+_SINGLE_INSTANCE_GUARD = None
+_VOICE_SESSION_GUARD = threading.Lock()
 
 
 def _get_api_key() -> str:
@@ -5086,6 +5090,19 @@ class BrahmaLive:
             stream.close()
 
     async def run(self):
+        if not _VOICE_SESSION_GUARD.acquire(blocking=False):
+            try:
+                self.ui.write_log("SYS: Voice session already active; duplicate voice start ignored.")
+                self.ui.set_state("LISTENING")
+            except Exception:
+                pass
+            return
+        try:
+            await self._run_impl()
+        finally:
+            _VOICE_SESSION_GUARD.release()
+
+    async def _run_impl(self):
         # announce boot steps to UI overlay (thread-safe wrappers)
         try:
             self.ui.boot_add_step("Load configuration")
@@ -5191,11 +5208,14 @@ class BrahmaLive:
             print("[BRAHMA EVO] 🔄 Reconnecting in 5s...")
             await asyncio.sleep(5)
 
-def main():
+def _main_impl():
     _startup_log("main entered")
     try:
         if update_from_github(BASE_DIR):
             _startup_log("updated from GitHub; restarting")
+            if _SINGLE_INSTANCE_GUARD is not None:
+                _SINGLE_INSTANCE_GUARD.release()
+                _SINGLE_INSTANCE_GUARD = None
             restart_application(BASE_DIR)
             return
     except Exception as exc:
@@ -5476,6 +5496,24 @@ def main():
     ui.show_main()
     ui.root.mainloop()
 
+
+def main():
+    global _SINGLE_INSTANCE_GUARD
+    guard = SingleInstance("Local\\Brahma-Ai-Evo.Singleton.v1")
+    try:
+        if not guard.acquire():
+            _startup_log("duplicate launch ignored: existing Brahma Evo instance is already running")
+            return
+    except Exception as exc:
+        _startup_log(f"single-instance guard failed: {exc}")
+        return
+
+    _SINGLE_INSTANCE_GUARD = guard
+    try:
+        _main_impl()
+    finally:
+        guard.release()
+        _SINGLE_INSTANCE_GUARD = None
 
 if __name__ == "__main__":
     import sys
