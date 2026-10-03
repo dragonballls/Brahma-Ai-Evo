@@ -84,6 +84,19 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
         self.assertTrue(hasattr(OmniRouteGateway, "ensure_ready"))
         self.assertTrue(hasattr(SelfCodingAgent, "preview"))
 
+    def test_omniroute_startup_is_headless(self):
+        source = Path(ROOT / "core" / "omniroute_setup.py").read_text(encoding="utf-8")
+        self.assertIn("command = self.command_argv(for_start=True)", source)
+        self.assertIn('if for_start and "--no-open" not in command:', source)
+
+    def test_embedded_dashboard_does_not_reload_forever(self):
+        source = Path(ROOT / "ui.py").read_text(encoding="utf-8")
+        self.assertIn("def _open_omniroute_dashboard(self):", source)
+        self.assertIn("if existing.isVisible():", source)
+        self.assertIn("retry_timer.stop()", source)
+        self.assertIn('QTimer.singleShot(300, lambda: web.load(url))', source)
+        self.assertIn('"OmniRoute dashboard connected"', source)
+
     def test_omniroute_is_local_and_lazy(self):
         from core.omniroute import OmniRouteGateway
 
