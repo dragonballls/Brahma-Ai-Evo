@@ -2964,6 +2964,9 @@ class ChatBubble(QFrame):
         self._browser.setOpenExternalLinks(True)
         self._browser.setWordWrap(True)
         self._browser.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        self._browser.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._browser.customContextMenuRequested.connect(self._show_context_menu)
+        self._browser.setToolTip("Right-click to copy this message")
         self._browser.setStyleSheet("QLabel { background: transparent; border: none; color: #f4f6f8; padding: 0; margin: 0; }")
         self._render_text(text or "")
 
@@ -2977,6 +2980,27 @@ class ChatBubble(QFrame):
 
         if animate and role == "assistant":
             self._start_typing_animation()
+
+    def _show_context_menu(self, pos):
+        menu = QMenu(self)
+        copy_action = menu.addAction("Copy message")
+        copy_selected = None
+        try:
+            if self._browser.hasSelectedText():
+                copy_selected = menu.addAction("Copy selected text")
+        except Exception:
+            pass
+        chosen = menu.exec(self._browser.mapToGlobal(pos))
+        if chosen is copy_selected:
+            try:
+                QApplication.clipboard().setText(self._browser.selectedText())
+            except Exception:
+                pass
+        elif chosen is copy_action:
+            try:
+                QApplication.clipboard().setText(self._full_text)
+            except Exception:
+                pass
 
     def _render_text(self, text: str, final: bool = True):
         self._browser.setText(_markdown_to_html(text or "", self._role))
