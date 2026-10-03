@@ -9590,7 +9590,7 @@ class MainWindow(QMainWindow):
     def _set_page(self, page: str):
         self._current_page = page
         if hasattr(self, "_center_stack") and isinstance(self._center_stack, QStackedWidget):
-            index = {"dashboard": 0, "home": 1, "devices": 2, "settings": 3}.get(page, 0)
+            index = {"dashboard": 0, "home": 1, "devices": 2, "settings": 3, "omniroute": 5}.get(page, 0)
             self._center_stack.setCurrentIndex(index)
         if page == "devices" and hasattr(self, "_devices_page"):
             try:
