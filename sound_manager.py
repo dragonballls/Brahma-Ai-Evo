@@ -162,7 +162,7 @@ class SoundManager(QObject):
         self._effects: dict[str, QSoundEffect] = {}
 
         self._load_settings()
-        self._init_audio()
+        self._audio_initialized = False
 
     def _load_settings(self):
         try:
@@ -243,9 +243,16 @@ class SoundManager(QObject):
 
     # --- Playback Methods ---
 
+    def _ensure_audio(self):
+        if self._audio_initialized:
+            return
+        self._init_audio()
+        self._audio_initialized = True
+
     def _play(self, name: str):
         if not self._enabled:
             return
+        self._ensure_audio()
         eff = self._effects.get(name)
         if eff:
             try:
