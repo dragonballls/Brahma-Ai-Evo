@@ -2,13 +2,12 @@ param(
     [switch]$IsElevated = $false
 )
 
-# 1. Self-Elevate to Admin (Required for silent global installs)
-if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Host "Elevating privileges for installation..."
-    $arguments = "& '" + $myinvocation.mycommand.definition + "'"
-    Start-Process powershell -Verb runAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command $arguments"
-    exit
-}
+# 1. Only elevate when installation/repair work is actually required.
+# Normal launches should not trigger UAC. Dependencies are installed into the
+# repository venv, so administrative privileges are unnecessary in the healthy path.
+$IsAdministrator = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator
+)
 
 $ErrorActionPreference = "Stop"
 $WorkingDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
@@ -82,13 +81,29 @@ if (-not (Test-Path $VenvPython)) {
     Write-Host "Virtual Environment already exists." -ForegroundColor Green
 }
 
-# 6. Install Dependencies
-Write-Host "Updating pip and installing dependencies..." -ForegroundColor Cyan
-Start-Process -FilePath $VenvPython -ArgumentList "-m pip install --upgrade pip setuptools wheel" -Wait -NoNewWindow
-Start-Process -FilePath $VenvPython -ArgumentList "-m pip install -r requirements.txt" -Wait -NoNewWindow
-
-Write-Host "Installing Playwright browsers..." -ForegroundColor Cyan
-Start-Process -FilePath $VenvPython -ArgumentList "-m playwright install" -Wait -NoNewWindow
+# 6. Verify/repair dependencies only when the venv cannot import the app.
+$NeedsRepair = $false
+try {
+    & $VenvPython -c "import PyQt6, requests, psutil" | Out-Null
+    if ($LASTEXITCODE -ne 0) { $NeedsRepair = $true }
+} catch {
+    $NeedsRepair = $true
+}
+if ($NeedsRepair) {
+    Write-Host "Brahma dependencies need repair; installing into .venv..." -ForegroundColor Cyan
+    if (-not $IsAdministrator) {
+        Write-Host "Using the repository-local virtual environment; no elevation is required." -ForegroundColor DarkGray
+    }
+    & $VenvPython -m pip install -r requirements.txt
+    if ($LASTEXITCODE -ne 0) {
+        throw "Dependency installation failed."
+    }
+    try {
+        & $VenvPython -m playwright install
+    } catch {
+        Write-Host "Playwright browser installation skipped: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}
 
 # 7. Launch App
 Write-Host "Starting Brahma AI..." -ForegroundColor Green
