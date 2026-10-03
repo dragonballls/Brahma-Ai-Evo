@@ -2665,7 +2665,7 @@ class TaskCard(QFrame):
         deadline = mission.get("deadline")
         finished = mission.get("finished_at")
 
-        self._title.setText("AUTONOMOUS MISSION")
+        self._title.setText("AUTONOMOUS MISSION NOTE")
         self._command_lbl.setText(f"Mission: {goal}")
         if until:
             self._plan_lbl.setText(f"Completion condition: {until}")
