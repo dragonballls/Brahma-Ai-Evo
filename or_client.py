@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 import requests
+from core.omniroute import gateway as _omniroute_gateway
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("openrouter_client")
@@ -89,6 +90,7 @@ class OpenRouterClient:
             "HTTP-Referer":  "https://github.com/brahma-ai",
             "X-Title":       "Brahma Evo",
         }
+        self._omniroute = _omniroute_gateway()
 
     def _is_rate_limited(self, model: str) -> bool:
         ts = _rate_limited.get(model)
@@ -105,6 +107,58 @@ class OpenRouterClient:
             f"[OpenRouter] Rate limited: {model} — "
             f"cooling down for {RATE_LIMIT_COOLDOWN}s"
         )
+
+    def _omniroute_enabled(self) -> bool:
+        import os
+        return os.environ.get("BRAHMA_OMNIROUTE_ENABLED", "1").strip().lower() not in {
+            "0", "false", "no", "off"
+        }
+
+    def _call_omniroute(
+        self,
+        messages: list[dict],
+        model: Optional[str] = None,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        temperature: float = DEFAULT_TEMPERATURE,
+        response_format: Optional[dict] = None,
+    ) -> Optional[str]:
+        if not self._omniroute_enabled() or not self._omniroute.ensure_ready():
+            return None
+        payload: dict = {
+            "model": model or "auto",
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if response_format:
+            payload["response_format"] = response_format
+        headers = {"Content-Type": "application/json"}
+        import os
+        omni_key = os.environ.get("BRAHMA_OMNIROUTE_API_KEY", "").strip()
+        if omni_key:
+            headers["Authorization"] = f"Bearer {omni_key}"
+        try:
+            response = requests.post(
+                self._omniroute.base_url + "/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=REQUEST_TIMEOUT,
+            )
+            if response.status_code != 200:
+                logger.warning(f"[OmniRoute] HTTP {response.status_code}; using direct provider fallback")
+                return None
+            data = response.json()
+            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            if isinstance(content, list):
+                content = "".join(
+                    str(item.get("text", ""))
+                    for item in content
+                    if isinstance(item, dict)
+                )
+            return str(content).strip() if content else None
+        except Exception as exc:
+            logger.warning(f"[OmniRoute] request failed; using direct provider fallback: {exc}")
+            return None
 
     def _call(
         self,
