@@ -36,10 +36,17 @@ def test_chromium_gpu_flags():
     flags = os.environ["QTWEBENGINE_CHROMIUM_FLAGS"]
     assert "--enable-gpu-rasterization" in flags
     assert "--enable-zero-copy" in flags
-    assert "--ignore-gpu-blocklist" in flags
-    assert "--disable-frame-rate-limit" in flags
-    assert "--disable-gpu-vsync" in flags
     assert "--use-angle=d3d11" in flags
+
+    experimental = os.environ.get("BRAHMA_EXPERIMENTAL_HOLO_RENDER") == "1"
+    if experimental:
+        assert "--ignore-gpu-blocklist" in flags
+        assert "--disable-frame-rate-limit" in flags
+        assert "--disable-gpu-vsync" in flags
+    else:
+        assert "--ignore-gpu-blocklist" not in flags
+        assert "--disable-frame-rate-limit" not in flags
+        assert "--disable-gpu-vsync" not in flags
 
 def test_globe_bridge_signals():
     bridge = GlobeBridge()
