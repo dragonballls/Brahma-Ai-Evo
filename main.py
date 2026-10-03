@@ -318,6 +318,11 @@ def _gemini_text_reply(prompt: str) -> str:
         "You are Brahma Evo, a concise, helpful desktop assistant. "
         "Reply naturally and briefly. Do not mention internal implementation details."
     )
+    try:
+        from core.language_policy import prompt_block as language_prompt_block
+        system_prompt += "\n\n" + language_prompt_block()
+    except Exception:
+        pass
     # OmniRoute-backed cloud path is preferred. Direct Gemini remains the
     # compatibility fallback if the local gateway cannot be started.
     try:
@@ -347,6 +352,11 @@ def _ig_gemini_reply(username: str, text: str) -> str:
         "Reply naturally, briefly, and conversationally to the incoming message. "
         "Do not sound like a bot. Keep your replies under 2 sentences."
     )
+    try:
+        from core.language_policy import prompt_block as language_prompt_block
+        system_prompt += "\n\n" + language_prompt_block()
+    except Exception:
+        pass
     prompt = f"Instagram DM from {username}: {text}"
     
     try:
@@ -380,6 +390,11 @@ def _clipboard_gemini_reply(text: str) -> str:
         "Make a very short, interesting, or helpful 1-sentence comment or question about it. "
         "Do not offer to 'help' or ask 'how can I help'. Just make a standalone witty observation or summary."
     )
+    try:
+        from core.language_policy import prompt_block as language_prompt_block
+        system_prompt += "\n\n" + language_prompt_block()
+    except Exception:
+        pass
     prompt = text
     try:
         client = genai.Client(
