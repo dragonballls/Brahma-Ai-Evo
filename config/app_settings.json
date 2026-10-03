@@ -30,5 +30,6 @@
     "clipboard_monitor_enabled": false,
     "startup_briefing_enabled": false,
     "background_mobile_connect": false,
-    "load_plugins_on_startup": false
+    "load_plugins_on_startup": false,
+    "background_updates_enabled": false
 }
