@@ -112,6 +112,9 @@ class DesktopLayer(QMainWindow):
     def _apply_geometry(self):
         self.setGeometry(self._virtual_geometry())
 
+    def restack(self) -> None:
+        self._keep_bottom()
+
     def _keep_bottom(self):
         try:
             self._apply_geometry()
