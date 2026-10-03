@@ -8333,7 +8333,9 @@ class FloatingLauncher(QWidget):
         self._state = (state or "idle").strip().lower()
         self._status_line = (detail or self._default_status()).strip() or self._default_status()
         if hasattr(self, "_anim_timer"):
-            active = self._state in {"listening", "thinking", "speaking", "executing", "processing", "working"}
+            active = self._state in {"thinking", "speaking", "executing", "processing", "working"} or (
+                self._state == "listening" and not _low_power_ui_enabled()
+            )
             if active or not _low_power_ui_enabled():
                 if not self._anim_timer.isActive():
                     self._anim_timer.start(33 if _low_power_ui_enabled() else 25)
@@ -8735,7 +8737,7 @@ class MainWindow(QMainWindow):
         self._ready = self._check_config()
         self._api_ready = self._ready
         if self._ready:
-            self._apply_state("LISTENING")
+            self._apply_state("IDLE" if _low_power_ui_enabled() else "LISTENING")
         else:
             self._show_setup(self._load_api_defaults())
         self._scan_sig.connect(self._apply_scan_state)
