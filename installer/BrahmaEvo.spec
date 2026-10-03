@@ -13,7 +13,8 @@ a = Analysis(
     binaries=[],
     datas=[
         (os.path.join(cwd, 'assets'), 'assets'),
-        (os.path.join(cwd, 'config'), 'config'),
+        (os.path.join(cwd, 'config', 'models'), 'config', 'models'),
+        (os.path.join(cwd, 'config', 'intelligence.json'), 'config', 'intelligence.json'),
         (os.path.join(cwd, 'core'), 'core'),
         (os.path.join(cwd, 'brahma_connect'), 'brahma_connect'),
         (os.path.join(cwd, 'actions'), 'actions'),
