@@ -73,6 +73,7 @@ class GodsEye:
 
         self.config_dir = Path(config_dir or (get_user_data_dir() / "config"))
         self._connect_service = None
+        self._life360 = None
 
     def _current_snapshot(self) -> LocationSnapshot:
         try:
@@ -172,6 +173,25 @@ class GodsEye:
         if "tablet" in name:
             return "device"
         return "device"
+
+    def _life360_provider(self):
+        if self._life360 is None:
+            from core.selected_capabilities import Life360Provider
+            self._life360 = Life360Provider()
+        return self._life360
+
+    def family_locations(self) -> list[dict[str, Any]]:
+        """Return authorized family locations from the opt-in Life360 provider."""
+        try:
+            return self._life360_provider().locations()
+        except Exception:
+            return []
+
+    def family_provider_status(self) -> dict[str, Any]:
+        try:
+            return self._life360_provider().status()
+        except Exception as exc:
+            return {"enabled": False, "configured": False, "error": type(exc).__name__}
 
     def saved_locations(self) -> list[dict[str, Any]]:
         """Read explicitly saved coordinate records, when present."""
