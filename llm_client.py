@@ -163,6 +163,12 @@ class UnifiedAIClient:
             system = system.rstrip() + "\n\n" + self_awareness.prompt_block(prompt)
         except Exception:
             pass
+        try:
+            from core.emotional_controller import emotional_controller
+            state = emotional_controller.assess(prompt)
+            system = system.rstrip() + "\n\n" + emotional_controller.prompt_block(prompt, state=state)
+        except Exception:
+            pass
         if self._provider == "Local" or bool(self._provider and self._provider.lower() == "local"):
             return self.chat(prompt, system=system, history=history)
         from core.intelligence_orchestrator import orchestrator
