@@ -103,6 +103,16 @@ def test_executor_auto_heal_error_recording(monkeypatch):
         raise ValueError("Simulated tool crash for Auto-Heal test")
 
     monkeypatch.setattr("agent.executor._call_tool", failing_tool)
+    monkeypatch.setattr(
+        "agent.executor.analyze_error",
+        lambda step, error, attempt=1: {
+            "decision": __import__("agent.executor", fromlist=["ErrorDecision"]).ErrorDecision.ABORT,
+            "reason": "Expected test failure",
+            "fix_suggestion": "",
+            "max_retries": 0,
+            "user_message": "",
+        },
+    )
 
     executor = AgentExecutor()
     executor.execute(goal="test auto heal recording", speak=None, player=None)
