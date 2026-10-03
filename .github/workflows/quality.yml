@@ -19,14 +19,14 @@ jobs:
       - name: Compile Python sources
         run: python -m compileall -q actions core features memory plugins smart_home scripts main.py ui.py
       - name: Run low-power guards
-        run: python tests/test_low_power_guards.py
+        run: python -m unittest tests.test_low_power_guards -v
       - name: Run voice safety regressions
-        run: python tests/test_voice_guards.py
+        run: python -m unittest tests.test_voice_guards -v
       - name: Run OmniRoute and self-coding regressions
-        run: python tests/test_omniroute_self_coding.py
+        run: python -m unittest tests.test_omniroute_self_coding -v
       - name: Run universal capability regressions
-        run: python tests/test_universal_agent.py
+        run: python -m unittest tests.test_universal_agent -v
       - name: Run God’s Eye globe regressions
-        run: python tests/test_gods_eye_globe.py
+        run: python -m unittest tests.test_gods_eye_globe -v
       - name: Run multi-model intelligence regressions
-        run: python tests/test_intelligence_orchestrator.py
+        run: python -m unittest tests.test_intelligence_orchestrator -v
