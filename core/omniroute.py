@@ -110,11 +110,12 @@ class OmniRouteGateway:
     def configure_provider(self, provider: str, api_key: str) -> dict[str, object]:
         if not self.provisioner.ensure_running(wait_seconds=15.0):
             raise RuntimeError("OmniRoute is not ready; provider configuration was not applied.")
-        result = self.provisioner.configure_provider(provider, api_key)
-        self._credentials_synced = False
-        self._ready = True
-        self._last_check_at = time.monotonic()
-        return result
+        with self._lock:
+            result = self.provisioner.configure_provider(provider, api_key)
+            self._credentials_synced = False
+            self._ready = True
+            self._last_check_at = time.monotonic()
+            return result
 
     def mark_credentials_stale(self) -> None:
         """Invalidate the cached provider-key sync without starting the gateway."""
@@ -123,16 +124,17 @@ class OmniRouteGateway:
 
     def sync_credentials(self) -> dict[str, object]:
         """Re-sync the current user provider-key file into the running gateway."""
-        self._credentials_synced = False
-        try:
-            result = self.provisioner.sync_existing_provider_keys(
-                API_CONFIG_PATH
-            )
-        except Exception as exc:
-            return {"ok": False, "synced": False, "error": str(exc)}
-        skipped = list(result.get("skipped") or [])
-        self._credentials_synced = not skipped
-        return {"ok": not skipped, "synced": not skipped, **result}
+        with self._lock:
+            self._credentials_synced = False
+            try:
+                result = self.provisioner.sync_existing_provider_keys(
+                    API_CONFIG_PATH
+                )
+            except Exception as exc:
+                return {"ok": False, "synced": False, "error": str(exc)}
+            skipped = list(result.get("skipped") or [])
+            self._credentials_synced = not skipped
+            return {"ok": not skipped, "synced": not skipped, **result}
 
     def test_provider(self, provider: str) -> dict[str, object]:
         import subprocess
