@@ -2337,7 +2337,7 @@ class BrahmaLive:
             threading.Thread(target=_test_omni, daemon=True, name="omniroute-test").start()
             return
 
-        m = re.fullmatch(r"(?:self[- ]code|code yourself|improve yourself(?: by)?)\s+(.+)", text, flags=re.IGNORECASE)
+        m = re.fullmatch(r"(?:self[- ]code|self[- ]coding|code yourself|improve yourself(?: by)?)\s+(.+)", text, flags=re.IGNORECASE)
         if m:
             goal = m.group(1).strip()
             self.ui.begin_task_workspace(
