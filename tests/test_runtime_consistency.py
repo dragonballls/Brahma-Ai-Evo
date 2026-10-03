@@ -213,16 +213,27 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("def mark_credentials_stale(self)", gateway_source)
         self.assertIn("gateway().mark_credentials_stale()", ui_source)
 
+    def test_omniroute_provider_cache_mutations_use_gateway_lock(self):
+        source = self.read("core/omniroute.py")
+        start = source.index("def configure_provider")
+        end = source.index("def test_provider", start)
+        block = source[start:end]
+        self.assertIn("with self._lock:", block)
+        self.assertIn("def sync_credentials", block)
+        self.assertIn("with self._lock:", block)
+
     def test_openrouter_401_is_not_swallowed_as_generic_error(self):
         source = self.read("or_client.py")
         self.assertIn("except PermissionError:", source)
         self.assertIn("            except PermissionError:\n                raise", source)
 
-    def test_core_credential_lookup_normalizes_provider_aliases(self):
+    def test_core_credential_lookup_reuses_canonical_provider_policy(self):
         source = self.read("config/__init__.py")
-        self.assertIn('"google gemini": "gemini"', source)
-        self.assertIn('"open router": "openrouter"', source)
-        self.assertIn('get_config().get(f"{key_name}_api_key"', source)
+        self.assertIn("from core.provider_policy import", source)
+        self.assertIn("normalize_provider", source)
+        self.assertIn("storage_names = {", source)
+        self.assertNotIn('"google gemini": "gemini"', source)
+        self.assertNotIn('"open router": "openrouter"', source)
 
     def test_gemini_credentials_are_read_through_shared_config(self):
         source = self.read("main.py")
