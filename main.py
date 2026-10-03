@@ -6829,6 +6829,8 @@ def _main_impl():
         try:
             ui.set_clipboard_ai_handler(_clipboard_ai_handler)
         except Exception as exc:
+            ui.write_log(f"ERR: Clipboard assistant wiring failed: {exc}")
+
         selected_settings = config_manager.load_settings()
         selected_provider = normalize_provider(
             selected_settings.get("default_ai_provider", "Gemini")
