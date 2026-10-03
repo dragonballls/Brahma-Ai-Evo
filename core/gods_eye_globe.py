@@ -95,6 +95,25 @@ def build_globe_payload(eye: Any) -> dict[str, object]:
             )
         )
 
+    family_locations = eye.family_locations()
+    for index, item in enumerate(family_locations):
+        point = _point(item)
+        if point is None or not bool(item.get("authorized", True)):
+            continue
+        label = str(item.get("label") or item.get("name") or "Family")[:120]
+        locators.append(
+            GlobeLocator(
+                f"family:{index}:{_slug(label, 50)}",
+                label,
+                point[0],
+                point[1],
+                "family",
+                True,
+                item.get("accuracy_m"),
+                "life360",
+            )
+        )
+
     for item in eye.saved_locations():
         point = _point(item)
         if point is None:
@@ -114,7 +133,7 @@ def build_globe_payload(eye: Any) -> dict[str, object]:
         )
 
     current_authorized = bool(current.permitted and current_point is not None)
-    provider_count = len(eye.provider_locations())
+    provider_count = len(eye.provider_locations()) + len(family_locations)
     if current_authorized:
         sensor_state = "current-live"
     elif provider_count:
@@ -132,7 +151,9 @@ def build_globe_payload(eye: Any) -> dict[str, object]:
         "sensor_state": sensor_state,
         "current_source": current.source,
         "current_accuracy_m": current.accuracy_m,
-        "provider_status": [],
+        "provider_status": [eye.family_provider_status()],
+        "connected_device_count": len(eye.provider_locations()),
+        "family_count": len(family_locations),
         "locator_count": len(locators),
         "locators": [item.as_dict() for item in locators],
     }

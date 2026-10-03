@@ -32,3 +32,5 @@ jobs:
         run: python -m unittest tests.test_gods_eye_globe -v
       - name: Run multi-model intelligence regressions
         run: python -m unittest tests.test_intelligence_orchestrator -v
+      - name: Run selected advanced capability regressions
+        run: python -m unittest tests.test_selected_advanced_capabilities -v
