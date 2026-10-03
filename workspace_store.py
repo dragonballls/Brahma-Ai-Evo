@@ -249,11 +249,8 @@ class WorkspaceStore:
                 prompt = (
                     "Summarize the following user conversation into 1-2 short, conversational sentences "
                     "that describe what the user was doing or asking about. Phrase it as "
-                    "'In your previous conversation, you were...'
-
-"
-                    f"Conversation:
-{full_text}"
+                    "'In your previous conversation, you were...'\\n\\n"
+                    f"Conversation:\\n{full_text}"
                 )
                 summary = ai_client.intelligent_chat(
                     prompt,
