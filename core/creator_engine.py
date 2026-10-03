@@ -301,3 +301,17 @@ def publish_creator_project(project: str, privacy: str, playlist_id: str | None)
     from core.creator_publish import publish_project
     _, manifest = read_manifest(project)
     return publish_project(manifest, privacy=privacy, playlist_id=playlist_id)
+
+
+def produce_creator_project(args: dict[str, Any]) -> dict[str, Any]:
+    result = create_creator_project(args)
+    rendered = render_creator_project(result["project"])
+    return {
+        "ok": True,
+        "project": result["project"],
+        "analysis_summary": result.get("analysis_summary"),
+        "metadata": rendered.get("metadata") or result.get("metadata"),
+        "script": result.get("script"),
+        "rights_review": rendered.get("rights_review") or result.get("rights_review"),
+        "render": rendered,
+    }
