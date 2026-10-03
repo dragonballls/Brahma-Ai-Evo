@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from core.user_paths import get_user_data_dir
 import os
 
@@ -32,14 +34,10 @@ try:
 except Exception:
     pass
 
+from core.lazy_import import lazy_module, lazy_attr
 from core import undo as undo_stack
-from core import audio_devices
-from core.echo import EchoGuard
-from core.hotkey import PushToTalk
 from memory import config_manager
 from memory.memory_manager import search_memory
-
-import core.boot_sentry
 from core.sensorium import sensorium
 from core.protocols import protocols
 from core.local_brain import local_brain
@@ -63,48 +61,55 @@ try:
 except Exception:
     pass
 
-import sounddevice as sd
-from google import genai
-from google.genai import types
+sd = lazy_module("sounddevice")
+genai = lazy_module("google.genai")
+types = lazy_module("google.genai.types")
 from ui import BrahmaUI
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
     should_extract_memory, extract_memory, auto_learn_interaction
 )
 
-from actions.file_processor import file_processor
-from actions.flight_finder     import flight_finder
-from actions.open_app          import open_app
-from actions.weather_report    import weather_action
-from actions.send_message      import send_message
-from actions.reminder          import reminder
-from actions.computer_settings import computer_settings
-from actions.screen_processor  import screen_process
-from actions.meeting_assistant import MeetingAssistant
-from actions.youtube_video     import youtube_video
-from actions.desktop           import desktop_control
-from actions.browser_control   import browser_control
-from actions.file_controller   import file_controller
-from actions.office_builder     import create_presentation, create_spreadsheet
-from actions.docx_tools        import word_document
-from actions.pdf_tools         import create_pdf
-from actions.brahma_connect    import (
-    connect_list_devices,
-    connect_get_device,
-    connect_get_capabilities,
-    connect_execute,
-    connect_pair_device,
-    connect_disconnect_device,
-)
-from actions.web_search        import web_search as web_search_action
-from actions.computer_control  import computer_control
-from actions.game_updater      import game_updater
-from actions.attention_monitor import AttentionMonitor, speak_native, stop_native_speech, handle_call_action, read_event_preview, set_speech_sink
+file_processor = lazy_attr("actions.file_processor", "file_processor")
+flight_finder = lazy_attr("actions.flight_finder", "flight_finder")
+open_app = lazy_attr("actions.open_app", "open_app")
+weather_action = lazy_attr("actions.weather_report", "weather_action")
+send_message = lazy_attr("actions.send_message", "send_message")
+reminder = lazy_attr("actions.reminder", "reminder")
+computer_settings = lazy_attr("actions.computer_settings", "computer_settings")
+screen_process = lazy_attr("actions.screen_processor", "screen_process")
+MeetingAssistant = lazy_attr("actions.meeting_assistant", "MeetingAssistant")
+youtube_video = lazy_attr("actions.youtube_video", "youtube_video")
+desktop_control = lazy_attr("actions.desktop", "desktop_control")
+browser_control = lazy_attr("actions.browser_control", "browser_control")
+file_controller = lazy_attr("actions.file_controller", "file_controller")
+create_presentation = lazy_attr("actions.office_builder", "create_presentation")
+create_spreadsheet = lazy_attr("actions.office_builder", "create_spreadsheet")
+word_document = lazy_attr("actions.docx_tools", "word_document")
+create_pdf = lazy_attr("actions.pdf_tools", "create_pdf")
+connect_list_devices = lazy_attr("actions.brahma_connect", "connect_list_devices")
+connect_get_device = lazy_attr("actions.brahma_connect", "connect_get_device")
+connect_get_capabilities = lazy_attr("actions.brahma_connect", "connect_get_capabilities")
+connect_execute = lazy_attr("actions.brahma_connect", "connect_execute")
+connect_pair_device = lazy_attr("actions.brahma_connect", "connect_pair_device")
+connect_disconnect_device = lazy_attr("actions.brahma_connect", "connect_disconnect_device")
+web_search_action = lazy_attr("actions.web_search", "web_search")
+computer_control = lazy_attr("actions.computer_control", "computer_control")
+game_updater = lazy_attr("actions.game_updater", "game_updater")
+AttentionMonitor = lazy_attr("actions.attention_monitor", "AttentionMonitor")
+speak_native = lazy_attr("actions.attention_monitor", "speak_native")
+stop_native_speech = lazy_attr("actions.attention_monitor", "stop_native_speech")
+handle_call_action = lazy_attr("actions.attention_monitor", "handle_call_action")
+read_event_preview = lazy_attr("actions.attention_monitor", "read_event_preview")
+set_speech_sink = lazy_attr("actions.attention_monitor", "set_speech_sink")
 # from actions.daily_briefing import compile_daily_briefing
-from llm_client import client as openrouter_client
-from workspace_store import store as workspace_store
-from smart_home.service import SmartHomeService
-from plugin_manager import PluginManager
+openrouter_client = lazy_attr("llm_client", "client")
+workspace_store = lazy_attr("workspace_store", "store")
+SmartHomeService = lazy_attr("smart_home.service", "SmartHomeService")
+PluginManager = lazy_attr("plugin_manager", "PluginManager")
+PushToTalk = lazy_attr("core.hotkey", "PushToTalk")
+EchoGuard = lazy_attr("core.echo", "EchoGuard")
+audio_devices = lazy_module("core.audio_devices")
 from updater import restart_application, update_from_github
 
 try:
@@ -142,6 +147,14 @@ SEND_SAMPLE_RATE    = 16000
 RECEIVE_SAMPLE_RATE = 24000
 CHUNK_SIZE          = 640
 LIVE_CONNECT_TIMEOUT = 12
+
+def _low_power_mode(settings: dict | None = None) -> bool:
+    """Keep expensive background work dormant unless explicitly requested."""
+    env = os.environ.get("BRAHMA_LOW_POWER_MODE")
+    if env is not None:
+        return env.strip().lower() not in {"0", "false", "off", "no"}
+    settings = settings if settings is not None else config_manager.load_settings()
+    return bool(settings.get("low_power_mode", True))
 
 
 def _get_api_key() -> str:
@@ -2104,11 +2117,12 @@ class BrahmaLive:
         except Exception:
             self._ptt_enabled = False
 
-        try:
-            audio_devices.configure(SEND_SAMPLE_RATE, RECEIVE_SAMPLE_RATE)
-            audio_devices.prefetch()
-        except Exception:
-            pass
+        if not _low_power_mode():
+            try:
+                audio_devices.configure(SEND_SAMPLE_RATE, RECEIVE_SAMPLE_RATE)
+                audio_devices.prefetch()
+            except Exception:
+                pass
         self._last_activity = time.monotonic()
         self._idle_prompts = [
             "Hey, you there?",
@@ -2117,8 +2131,12 @@ class BrahmaLive:
             "Need anything?",
             "I'm here if you want me.",
         ]
-        self._idle_speech_thread = threading.Thread(target=self._idle_speech_loop, daemon=True)
-        self._idle_speech_thread.start()
+        self._idle_speech_thread = None
+        if not _low_power_mode():
+            self._idle_speech_thread = threading.Thread(
+                target=self._idle_speech_loop, daemon=True, name="idle-proactive"
+            )
+            self._idle_speech_thread.start()
 
     def set_push_to_talk(self, enabled: bool) -> str:
         self._ptt_enabled = bool(enabled)
@@ -5160,7 +5178,10 @@ class BrahmaLive:
         except Exception:
             pass
 
-        self._attention_monitor.start()
+        app_settings = config_manager.load_settings()
+        low_power = _low_power_mode(app_settings)
+        if bool(app_settings.get("background_attention_monitor", not low_power)):
+            self._attention_monitor.start()
         try:
             self.ui.boot_set_step_status("Start attention monitor", "done")
             self.ui.boot_set_progress(12, "Attention monitor online")
@@ -5182,7 +5203,6 @@ class BrahmaLive:
             pass
 
         gemini_key = _get_api_key()
-        app_settings = config_manager.load_settings()
         configured_provider = str(app_settings.get("default_ai_provider", "Gemini") or "Gemini")
 
         # OpenRouter/Local can operate without a Gemini key for text commands.
@@ -5233,7 +5253,10 @@ class BrahmaLive:
                         tg.create_task(self._relay_phone_audio())
                         tg.create_task(self._receive_audio())
                         tg.create_task(self._play_audio())
-                        if not self._startup_briefing_started:
+                        if (
+                            not self._startup_briefing_started
+                            and bool(app_settings.get("startup_briefing_enabled", not low_power))
+                        ):
                             self._startup_briefing_started = True
                             threading.Thread(
                                 target=_speak_daily_briefing,
@@ -5281,8 +5304,14 @@ def main():
         _startup_log(f"GitHub update skipped: {exc}")
     _ensure_desktop_shortcut()
     ui = BrahmaUI(str(BASE_DIR / "assets" / "Brahma_Lite_Logo.png"), show_immediately=True)
+    app_settings = config_manager.load_settings()
+    low_power = _low_power_mode(app_settings)
     dashboard = None
-    dashboard_enabled = DashboardServer is not None and not _is_port_in_use(8000)
+    dashboard_enabled = (
+        DashboardServer is not None
+        and not _is_port_in_use(8000)
+        and bool(app_settings.get("background_mobile_connect", not low_power))
+    )
     if DashboardServer is not None and not dashboard_enabled:
         _startup_log("dashboard disabled: port 8000 already in use")
         try:
@@ -5353,8 +5382,9 @@ def main():
     ui.show_main()
     _startup_log("ui shown")
 
-    # Start Brahma Passive Sensorium Engine (v2)
-    try:
+    # Start Brahma Passive Sensorium Engine (v2) only when background monitoring is enabled.
+    if bool(app_settings.get("background_sensorium", not low_power)):
+        try:
         def _on_sensorium_alert(alert_type: str, meta: dict):
             msg = meta.get("message", "System state change detected.")
             try:
@@ -5362,21 +5392,14 @@ def main():
             except Exception:
                 pass
         sensorium.register_interjection_handler(_on_sensorium_alert)
-        sensorium.start()
-        _startup_log("passive sensorium daemon started")
-    except Exception as exc:
-        _startup_log(f"sensorium start failed: {exc}")
+            sensorium.start()
+            _startup_log("passive sensorium daemon started")
+        except Exception as exc:
+            _startup_log(f"sensorium start failed: {exc}")
+    else:
+        _startup_log("passive sensorium skipped by low-power mode")
 
-    try:
-        from core.globe_window import GlobeWindow
-        GlobeWindow.get_instance(parent=None)
-        _startup_log("globe window initialized")
-    except Exception as exc:
-        _startup_log(f"globe window initialization failed: {exc}")
-        try:
-            ui.write_log(f"ERR: Globe window initialization failed: {exc}")
-        except Exception:
-            pass
+    # Globe is initialized lazily when a geospatial command actually needs it.
 
     # Initialize plugin manager and load any plugins from ./plugins
     try:
@@ -5418,9 +5441,10 @@ def main():
         except Exception:
             pass
 
+        background_watchers = bool(app_settings.get("background_social_watchers", not low_power))
         print(f"DEBUG: start_ig_daemon is {start_ig_daemon}")
-        
-        if start_ig_daemon:
+
+        if background_watchers and start_ig_daemon:
             try:
                 from actions.instagram_mcp import set_ig_prompt_callback
             except ImportError:
@@ -5448,7 +5472,8 @@ def main():
             start_ig_daemon()
 
         # Background Email Watcher
-        try:
+        if background_watchers:
+            try:
             from actions.google_workspace_mcp import (
                 start_email_daemon,
                 set_email_prompt_callback,
@@ -5467,8 +5492,8 @@ def main():
                 set_email_prompt_callback(_email_handler)
                 start_email_daemon(poll_interval=25)
                 print("[Brahma Evo] Background email watcher started.")
-        except Exception as e:
-            print(f"[Brahma Evo] Email daemon initialization notice: {e}")
+            except Exception as e:
+                print(f"[Brahma Evo] Email daemon initialization notice: {e}")
 
         def _clipboard_monitor():
             try:
@@ -5490,7 +5515,10 @@ def main():
                 except Exception:
                     pass
 
-        threading.Thread(target=_clipboard_monitor, daemon=True, name="clipboard-monitor").start()
+        if bool(app_settings.get("clipboard_monitor_enabled", not low_power)):
+            threading.Thread(target=_clipboard_monitor, daemon=True, name="clipboard-monitor").start()
+        else:
+            _startup_log("clipboard monitor skipped by low-power mode")
 
         try:
             asyncio.run(brahma_evo.run())
