@@ -41,6 +41,7 @@ from memory.memory_manager import search_memory
 from core.sensorium import sensorium
 from core.protocols import protocols
 from core.local_brain import local_brain
+import core.boot_sentry
 import asyncio
 import threading
 import json
@@ -5385,13 +5386,13 @@ def main():
     # Start Brahma Passive Sensorium Engine (v2) only when background monitoring is enabled.
     if bool(app_settings.get("background_sensorium", not low_power)):
         try:
-        def _on_sensorium_alert(alert_type: str, meta: dict):
-            msg = meta.get("message", "System state change detected.")
-            try:
-                ui.write_log(f"🧠 SENSORIUM: {msg}")
-            except Exception:
-                pass
-        sensorium.register_interjection_handler(_on_sensorium_alert)
+            def _on_sensorium_alert(alert_type: str, meta: dict):
+                msg = meta.get("message", "System state change detected.")
+                try:
+                    ui.write_log(f"🧠 SENSORIUM: {msg}")
+                except Exception:
+                    pass
+            sensorium.register_interjection_handler(_on_sensorium_alert)
             sensorium.start()
             _startup_log("passive sensorium daemon started")
         except Exception as exc:
@@ -5474,24 +5475,24 @@ def main():
         # Background Email Watcher
         if background_watchers:
             try:
-            from actions.google_workspace_mcp import (
-                start_email_daemon,
-                set_email_prompt_callback,
-                get_stored_gmail_credentials,
-            )
-            gmail_addr, gmail_pw = get_stored_gmail_credentials()
-            if gmail_addr and gmail_pw:
-                def _email_handler(sender, subject, msg_id):
-                    clean_subj = (subject or "No Subject").strip()
-                    subj_preview = f"'{clean_subj[:70]}...'" if len(clean_subj) > 70 else f"'{clean_subj}'"
-                    msg = f"You received a new email from {sender} with subject: {subj_preview}."
-                    ui.write_log(f"📧 Email ({sender}): {clean_subj}")
-                    ui.write_log(f"Brahma Evo: {msg}")
-                    brahma_evo.speak(msg)
+                from actions.google_workspace_mcp import (
+                    start_email_daemon,
+                    set_email_prompt_callback,
+                    get_stored_gmail_credentials,
+                )
+                gmail_addr, gmail_pw = get_stored_gmail_credentials()
+                if gmail_addr and gmail_pw:
+                    def _email_handler(sender, subject, msg_id):
+                        clean_subj = (subject or "No Subject").strip()
+                        subj_preview = f"'{clean_subj[:70]}...'" if len(clean_subj) > 70 else f"'{clean_subj}'"
+                        msg = f"You received a new email from {sender} with subject: {subj_preview}."
+                        ui.write_log(f"📧 Email ({sender}): {clean_subj}")
+                        ui.write_log(f"Brahma Evo: {msg}")
+                        brahma_evo.speak(msg)
 
-                set_email_prompt_callback(_email_handler)
-                start_email_daemon(poll_interval=25)
-                print("[Brahma Evo] Background email watcher started.")
+                    set_email_prompt_callback(_email_handler)
+                    start_email_daemon(poll_interval=25)
+                    print("[Brahma Evo] Background email watcher started.")
             except Exception as e:
                 print(f"[Brahma Evo] Email daemon initialization notice: {e}")
 
