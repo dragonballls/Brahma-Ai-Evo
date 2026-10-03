@@ -161,6 +161,13 @@ def _mission_loop(mission_id: str) -> None:
         _save()
 
     executor = AgentExecutor()
+    deadline_reached = threading.Event()
+    deadline_timer: threading.Timer | None = None
+    if deadline is not None:
+        remaining = max(0.0, deadline - time.time())
+        deadline_timer = threading.Timer(remaining, lambda: (deadline_reached.set(), event.set()))
+        deadline_timer.daemon = True
+        deadline_timer.start()
 
     try:
         while not event.is_set():
@@ -193,23 +200,48 @@ def _mission_loop(mission_id: str) -> None:
 
             try:
                 result = executor.execute(goal=task_goal, cancel_flag=event, player=None)
+                finished_now = time.time()
+                cancellation_requested = event.is_set() and not deadline_reached.is_set()
+                time_limit_reached = deadline_reached.is_set() or (deadline is not None and finished_now >= deadline)
                 with _LOCK:
                     mission["last_result"] = result
-                    mission["last_finished_at"] = time.time()
+                    mission["last_finished_at"] = finished_now
                     mission["error"] = ""
+                    if time_limit_reached:
+                        mission["status"] = "timed_out"
+                        mission["finished_at"] = finished_now
+                        _save()
+                        return
+                    if cancellation_requested:
+                        mission["status"] = "cancelled"
+                        mission["finished_at"] = finished_now
+                        _save()
+                        return
                     complete = _check_completion(mission, result)
                     if complete and not keep_working:
                         mission["status"] = "completed"
-                        mission["finished_at"] = time.time()
+                        mission["finished_at"] = finished_now
                         _save()
                         return
                     _save()
             except Exception as exc:
+                failure_now = time.time()
+                cancellation_requested = event.is_set() and not deadline_reached.is_set()
+                time_limit_reached = deadline_reached.is_set() or (deadline is not None and failure_now >= deadline)
                 with _LOCK:
                     mission["error"] = str(exc)
-                    mission["last_finished_at"] = time.time()
-                    mission["status"] = "running"
+                    mission["last_finished_at"] = failure_now
+                    if time_limit_reached:
+                        mission["status"] = "timed_out"
+                        mission["finished_at"] = failure_now
+                    elif cancellation_requested:
+                        mission["status"] = "cancelled"
+                        mission["finished_at"] = failure_now
+                    else:
+                        mission["status"] = "running"
                     _save()
+                    if mission["status"] in {"timed_out", "cancelled"}:
+                        return
 
             if not keep_working and mission.get("until"):
                 # A completion condition was supplied: keep trying until it matches
@@ -224,7 +256,10 @@ def _mission_loop(mission_id: str) -> None:
                 event.wait(timeout=interval)
 
         with _LOCK:
-            mission["status"] = "cancelled"
+            if deadline_reached.is_set():
+                mission["status"] = "timed_out"
+            else:
+                mission["status"] = "cancelled"
             mission["finished_at"] = time.time()
             _save()
     except Exception as exc:
@@ -233,6 +268,9 @@ def _mission_loop(mission_id: str) -> None:
             mission["error"] = str(exc)
             mission["finished_at"] = time.time()
             _save()
+    finally:
+        if deadline_timer is not None:
+            deadline_timer.cancel()
 
 
 def start_mission(
