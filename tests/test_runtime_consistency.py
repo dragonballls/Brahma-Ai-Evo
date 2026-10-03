@@ -158,6 +158,12 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("gateway().base_url", source)
         self.assertIn("gateway().ensure_ready(force=True)", source)
 
+    def test_mobile_command_queue_is_bounded(self):
+        source = self.read("dashboard/server.py")
+        self.assertIn("asyncio.Queue(maxsize=64)", source)
+        self.assertIn("def _enqueue_command(self, text: str) -> bool:", source)
+        self.assertIn("Command queue is busy; retry shortly.", source)
+
     def test_screen_vision_session_is_bounded_and_stoppable(self):
         source = self.read("actions/screen_processor.py")
         self.assertIn("asyncio.Queue(maxsize=30)", source)
