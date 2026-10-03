@@ -13479,6 +13479,8 @@ class SystemConnectivityPage(QWidget):
         provider = normalize_provider(text)
         offline = is_local(provider)
         self._set_setting("offline_mode_enabled", offline)
+        if not offline:
+            self._set_setting("last_cloud_provider", provider)
         if hasattr(self, "_offline_mode_btn"):
             self._offline_mode_btn.blockSignals(True)
             self._offline_mode_btn.setChecked(offline)
@@ -13504,6 +13506,10 @@ class SystemConnectivityPage(QWidget):
             self._ctrl().write_log(f"SYS: Auto provider switch {'enabled' if checked else 'disabled'}.")
 
     def _toggle_offline_mode(self, checked: bool):
+        settings = self._load_app_settings()
+        current_provider = normalize_provider(settings.get("default_ai_provider", "Gemini"))
+        if checked and not is_local(current_provider):
+            self._set_setting("last_cloud_provider", current_provider)
         self._set_setting("offline_mode_enabled", bool(checked))
         if checked:
             self._set_setting("default_ai_provider", "Local")
@@ -13517,15 +13523,18 @@ class SystemConnectivityPage(QWidget):
                 self._sys_provider.setText("Local")
             msg = "🔒 SYSTEM: Air-Gapped Offline Mode ENGAGED. All operations running 100% locally."
         else:
-            self._set_setting("default_ai_provider", "Gemini")
+            restore_provider = normalize_provider(settings.get("last_cloud_provider", "Gemini"))
+            if is_local(restore_provider):
+                restore_provider = "Gemini"
+            self._set_setting("default_ai_provider", restore_provider)
             if hasattr(self, "_default_provider"):
                 self._default_provider.blockSignals(True)
-                self._default_provider.setCurrentText("Google Gemini")
+                self._default_provider.setCurrentText(display_name(restore_provider))
                 self._default_provider.blockSignals(False)
             if hasattr(self, "_local_ai_widget"):
                 self._local_ai_widget.setVisible(False)
             if hasattr(self, "_sys_provider"):
-                self._sys_provider.setText("Gemini")
+                self._sys_provider.setText(restore_provider)
             msg = "🌐 SYSTEM: Offline Mode DISENGAGED. Cloud connectivity restored."
         if self._ctrl() and hasattr(self._ctrl(), "write_log"):
             self._ctrl().write_log(msg)
