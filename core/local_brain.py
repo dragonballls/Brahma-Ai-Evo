@@ -49,16 +49,37 @@ class LocalBrain:
         self._cached_models: List[str] = []
 
     def is_available(self) -> bool:
-        """Checks if the local LLM server is up and responding."""
-        try:
-            req = urllib.request.Request(f"{OLLAMA_BASE}/api/tags", method="GET")
-            with urllib.request.urlopen(req, timeout=2.0) as resp:
-                if resp.status == 200:
+        """Check the configured OpenAI-compatible endpoint, then Ollama's native API."""
+        endpoints: list[tuple[str, str]] = [
+            (f"{self.endpoint}/models", "openai"),
+        ]
+        if self.endpoint.rstrip("/") == DEFAULT_ENDPOINT.rstrip("/"):
+            endpoints.append((f"{OLLAMA_BASE}/api/tags", "ollama"))
+
+        for url, kind in endpoints:
+            try:
+                req = urllib.request.Request(url, method="GET")
+                with urllib.request.urlopen(req, timeout=2.0) as resp:
+                    if resp.status != 200:
+                        continue
                     data = json.loads(resp.read().decode("utf-8"))
-                    self._cached_models = [m.get("name") for m in data.get("models", [])]
+                    if kind == "openai":
+                        models = data.get("data", [])
+                        self._cached_models = [
+                            str(model.get("id") or "").strip()
+                            for model in models
+                            if isinstance(model, dict) and str(model.get("id") or "").strip()
+                        ]
+                    else:
+                        self._cached_models = [
+                            str(model.get("name") or "").strip()
+                            for model in data.get("models", [])
+                            if isinstance(model, dict) and str(model.get("name") or "").strip()
+                        ]
                     return True
-        except Exception:
-            pass
+            except Exception:
+                continue
+        self._cached_models = []
         return False
 
     def list_installed_models(self) -> List[str]:
