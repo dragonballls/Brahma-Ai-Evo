@@ -55,7 +55,8 @@ class EmotionalController:
         elif user_requested_toughness or any(p in t for p in (
             "be honest with me", "tell me straight", "call me out", "criticize me",
             "criticise me", "don't sugarcoat", "dont sugarcoat", "tough love",
-            "be blunt", "hold me accountable",
+            "be blunt", "be brutal", "brutal honesty", "hold me accountable",
+            "don't go easy", "dont go easy",
         )):
             state = EmotionalState("stern", 0.8, "the user requested direct accountability")
         elif any(p in t for p in (
