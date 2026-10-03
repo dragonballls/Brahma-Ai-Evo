@@ -1,4 +1,3 @@
-from core.runtime_paths import FATAL_CRASH_LOG_PATH
 """
 Boot Sentry for Brahma AI
 Runs at absolute startup before any heavy modules or UI to guarantee boot resilience.
