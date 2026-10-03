@@ -62,6 +62,7 @@ class AdaptivePerformanceEngine:
         self._io_cache: dict[int, tuple[float, int, int]] = {}
         self._original_priority: dict[tuple[int, float], object] = {}
         self._managed_target: dict[tuple[int, float], object] = {}
+        self._original_memory_priority: dict[tuple[int, float], int] = {}
         self._last_adjustment: dict[int, float] = {}
         self._last_trim: dict[tuple[int, float], float] = {}
         self._min_adjustment_interval = 20.0
@@ -292,6 +293,14 @@ class AdaptivePerformanceEngine:
                     with self._lock:
                         self._original_priority.pop((pid, created), None)
                         self._managed_target.pop((pid, created), None)
+            try:
+                proc = psutil.Process(pid)
+                if abs(float(proc.create_time()) - created) <= 0.5 and WindowManager.is_user_process(proc):
+                    if WindowManager.set_memory_priority(pid, self._original_memory_priority.get((pid, created), 5)):
+                        with self._lock:
+                            self._original_memory_priority.pop((pid, created), None)
+            except Exception:
+                pass
             except Exception:
                 continue
 
@@ -330,6 +339,33 @@ class AdaptivePerformanceEngine:
         except Exception:
             return None
 
+    def _remember_memory_priority(self, proc: object) -> tuple[int, float] | None:
+        try:
+            key = (int(proc.pid), float(proc.create_time()))
+            with self._lock:
+                if key not in self._original_memory_priority:
+                    original = WindowManager.get_memory_priority(key[0])
+                    if original is not None:
+                        self._original_memory_priority[key] = original
+            return key
+        except Exception:
+            return None
+
+    def _restore_memory_priority(self, proc: object) -> bool:
+        try:
+            key = (int(proc.pid), float(proc.create_time()))
+            with self._lock:
+                original = self._original_memory_priority.get(key)
+            if original is None:
+                return False
+            if not WindowManager.set_memory_priority(key[0], original):
+                return False
+            with self._lock:
+                self._original_memory_priority.pop(key, None)
+            return True
+        except Exception:
+            return False
+
     def _restore_demoted_foreground(self, proc: object) -> bool:
         if psutil is None:
             return False
@@ -357,6 +393,7 @@ class AdaptivePerformanceEngine:
             if not WindowManager.is_user_process(proc):
                 return
             self._restore_demoted_foreground(proc)
+            self._restore_memory_priority(proc)
             key = self._remember_priority(proc)
             if key is None:
                 return
@@ -419,6 +456,10 @@ class AdaptivePerformanceEngine:
                     self.action_count += 1
 
                 if decision.trim_background_memory and window.minimized:
+                    memory_key = self._remember_memory_priority(proc)
+                    if memory_key is not None:
+                        # LOW (2) is a hint to the memory manager, not a hard cap.
+                        WindowManager.set_memory_priority(pid, 2)
                     if now - self._last_trim.get(key, 0.0) >= self._min_trim_interval:
                         if WindowManager.trim_working_set(pid):
                             self._last_trim[key] = now
@@ -446,14 +487,23 @@ class AdaptivePerformanceEngine:
             return restored
         with self._lock:
             original = dict(self._original_priority)
+            original_memory = dict(self._original_memory_priority)
             self._original_priority.clear()
             self._managed_target.clear()
+            self._original_memory_priority.clear()
         for (pid, created), priority in original.items():
             try:
                 proc = psutil.Process(pid)
                 if abs(float(proc.create_time()) - created) > 0.5:
                     continue
                 if WindowManager.set_priority(proc, priority):
+                    restored += 1
+            except Exception:
+                continue
+        for (pid, created), priority in original_memory.items():
+            try:
+                proc = psutil.Process(pid)
+                if abs(float(proc.create_time()) - created) <= 0.5 and WindowManager.set_memory_priority(pid, priority):
                     restored += 1
             except Exception:
                 continue
@@ -467,6 +517,7 @@ class AdaptivePerformanceEngine:
             "snapshot": asdict(snap) if snap else None,
             "decision": asdict(decision) if decision else None,
             "tracked_processes": len(self._original_priority),
+            "tracked_memory_priority_processes": len(self._original_memory_priority),
             "actions_applied": self.action_count,
             "learning": brain.status(),
         }
