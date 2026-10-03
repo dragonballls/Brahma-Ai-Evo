@@ -168,8 +168,8 @@ class ExternalActionTests(TestCase):
             "info",
             side_effect=lambda key: proc if key == "procgovernor" else win,
         ), patch("core.desktop.integrations._run_command") as run:
-            self.assertFalse(hub.procgovernor_validate(""))
-            self.assertFalse(hub.winsw_status(""))
+            self.assertFalse(hub.procgovernor_validate("")["ok"])
+            self.assertFalse(hub.winsw_status("")["ok"])
             run.assert_not_called()
 
     def test_lhm_and_presentmon_have_low_polling_defaults(self):
