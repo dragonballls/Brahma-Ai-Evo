@@ -101,3 +101,29 @@ class PerformancePolicyTests(TestCase):
                 restored = engine.restore()
         self.assertEqual(restored, 1)
         set_priority.assert_called_once_with(fake, 8)
+
+
+class WindowPolicyTests(TestCase):
+    def test_game_window_detection_is_title_and_executable_based(self):
+        module = _load("core/desktop/window_manager.py", "desktop_window_policy")
+        self.assertTrue(module.is_game_window(module.WindowInfo(1, 2, "Minecraft 1.21", "javaw.exe", False, True)))
+        self.assertTrue(module.is_game_window(module.WindowInfo(1, 2, "Roblox", "RobloxPlayerBeta.exe", False, True)))
+        self.assertFalse(module.is_game_window(module.WindowInfo(1, 2, "Google", "chrome.exe", False, True)))
+
+    def test_windows_protected_processes_are_never_candidates(self):
+        module = _load("core/desktop/window_manager.py", "desktop_window_policy_protected")
+        protected = SimpleNamespace(name=lambda: "explorer.exe")
+        self.assertTrue(module.WindowManager.is_protected_process(protected))
+
+
+class ApplicationHostTests(TestCase):
+    def test_empty_target_is_rejected_without_touching_windows(self):
+        module = _load("core/desktop/app_host.py", "desktop_app_host_empty")
+        result = module.ApplicationHost().open("")
+        self.assertFalse(result["ok"])
+
+    def test_window_lookup_requires_a_real_match(self):
+        module = _load("core/desktop/app_host.py", "desktop_app_host_lookup")
+        host = module.ApplicationHost()
+        with patch.object(module.WindowManager, "enumerate_windows", return_value=[]):
+            self.assertIsNone(host._find("definitely-not-a-window"))
