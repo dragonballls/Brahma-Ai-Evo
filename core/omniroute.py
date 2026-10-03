@@ -84,6 +84,12 @@ class OmniRouteGateway:
         self.provisioner.ensure_running(wait_seconds=15.0)
         return self.provisioner.configure_provider(provider, api_key)
 
+    def sync_credentials(self) -> dict[str, object]:
+        """Re-sync the current user provider-key file into the running gateway."""
+        self._credentials_synced = False
+        self._sync_credentials_once()
+        return {"ok": True, "synced": True}
+
     def test_provider(self, provider: str) -> dict[str, object]:
         import subprocess
 
