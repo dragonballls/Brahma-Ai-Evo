@@ -765,6 +765,61 @@ TOOL_DECLARATIONS = [
         }
     },
     {
+        "name": "omniroute",
+        "description": (
+            "Manage Brahma's built-in local OmniRoute gateway. It provides one local "
+            "OpenAI-compatible cloud endpoint and routes through configured provider credentials. "
+            "Use only for OmniRoute status, provider synchronization, or provider testing."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "status | sync_existing_keys | test_provider",
+                },
+                "provider": {
+                    "type": "STRING",
+                    "description": "Provider identifier for test_provider.",
+                },
+            },
+            "required": ["action"],
+        },
+    },
+    {
+        "name": "self_coding",
+        "description": (
+            "Guarded autonomous coding for Brahma itself. 'preview' creates an isolated named "
+            "checkpoint branch, lets Brahma's existing coding engine implement the goal, runs "
+            "verification, and leaves the verified work pending. 'approve' explicitly promotes "
+            "one pending checkpoint to main. 'undo' safely discards a pending checkpoint or "
+            "reverts an approved checkpoint. 'list' shows durable checkpoints. Never approve "
+            "without an explicit user request."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "preview | approve | undo | list",
+                },
+                "goal": {
+                    "type": "STRING",
+                    "description": "The coding improvement to implement for preview.",
+                },
+                "checkpoint": {
+                    "type": "STRING",
+                    "description": "Checkpoint ID for approve or undo.",
+                },
+                "max_passes": {
+                    "type": "INTEGER",
+                    "description": "Verified coding passes, 1-3 (default 1).",
+                },
+            },
+            "required": ["action"],
+        },
+    },
+    {
         "name": "background_monitor",
         "description": (
             "Sets up a background monitor to check crypto prices, system RAM/CPU, or website uptime. "
@@ -4622,6 +4677,71 @@ class BrahmaLive:
                     return types.FunctionResponse(id=fc.id, name=name, response={"result": result})
                 else:
                     result = "Choose start, take_over, or hang_up."
+            elif name == "omniroute":
+                action = (args.get("action") or "status").strip().lower()
+                from core.omniroute import gateway
+                omni = gateway()
+                if action == "status":
+                    result = json.dumps(omni.status(), ensure_ascii=False)
+                elif action == "sync_existing_keys":
+                    from core.user_paths import get_user_data_dir
+                    result = json.dumps(
+                        omni.provisioner.sync_existing_provider_keys(
+                            get_user_data_dir() / "config" / "api_keys.json"
+                        ),
+                        ensure_ascii=False,
+                    )
+                elif action == "test_provider":
+                    provider = (args.get("provider") or "").strip()
+                    if not provider:
+                        result = "A provider is required for test_provider."
+                    else:
+                        result = json.dumps(omni.test_provider(provider), ensure_ascii=False)
+                else:
+                    result = "Choose status, sync_existing_keys, or test_provider."
+            elif name == "self_coding":
+                action = (args.get("action") or "list").strip().lower()
+                agent = __import__("core.self_coding", fromlist=["SelfCodingAgent"]).SelfCodingAgent()
+                try:
+                    if action == "preview":
+                        goal = (args.get("goal") or "").strip()
+                        if not goal:
+                            result = "A self-coding goal is required."
+                        else:
+                            result_obj = await loop.run_in_executor(
+                                None,
+                                lambda: agent.preview(
+                                    goal,
+                                    max_passes=int(args.get("max_passes") or 1),
+                                ),
+                            )
+                            result = json.dumps(result_obj, ensure_ascii=False)
+                    elif action == "approve":
+                        checkpoint = (args.get("checkpoint") or "").strip()
+                        if not checkpoint:
+                            result = "A checkpoint ID is required."
+                        else:
+                            promoted = await loop.run_in_executor(
+                                None,
+                                lambda: agent.approve(checkpoint),
+                            )
+                            result = f"Self-coding checkpoint {checkpoint} approved and promoted to main at {promoted}."
+                    elif action == "undo":
+                        checkpoint = (args.get("checkpoint") or "").strip()
+                        if not checkpoint:
+                            result = "A checkpoint ID is required."
+                        else:
+                            undone = await loop.run_in_executor(
+                                None,
+                                lambda: agent.undo(checkpoint),
+                            )
+                            result = f"Self-coding checkpoint {checkpoint} {undone}."
+                    elif action == "list":
+                        result = json.dumps(agent.list_checkpoints(), ensure_ascii=False)
+                    else:
+                        result = "Choose preview, approve, undo, or list."
+                except Exception as exc:
+                    result = f"Self-coding action failed safely: {exc}"
             elif name == "skill_forge":
                 action = (args.get("action") or "forge").lower().strip()
                 from core.dynamic_registry import DynamicToolRegistry
