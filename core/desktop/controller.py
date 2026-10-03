@@ -149,6 +149,33 @@ class DesktopModeController:
             result["restored_process_priorities"] = restored
             return result
 
+    def shutdown(self) -> dict[str, Any]:
+        """Release runtime resources without clearing the user's desktop-mode preference."""
+        with self._lock:
+            was_enabled = self.enabled
+            self.enabled = False
+            self._stop_timer()
+            try:
+                if self.layer:
+                    self.layer.set_low_power(True)
+                    self.layer.hide()
+            except Exception:
+                pass
+            restored = self.performance.restore()
+            try:
+                native_window_host.close_all()
+            except Exception:
+                pass
+            try:
+                web_application_host.close_all()
+            except Exception:
+                pass
+            return {
+                "enabled_before_shutdown": was_enabled,
+                "restored_process_priorities": restored,
+                "desktop_preference_preserved": True,
+            }
+
     def toggle(self) -> dict[str, Any]:
         return self.disable() if self.enabled else self.enable()
 
