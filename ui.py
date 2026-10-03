@@ -9133,6 +9133,14 @@ class MainWindow(QMainWindow):
                 )
             elif action == "background":
                 workspace.background_device(str(payload.get("device_id") or ""))
+            elif action == "place":
+                workspace.place_device(
+                    str(payload.get("device_id") or ""),
+                    x=payload.get("x"),
+                    y=payload.get("y"),
+                    width=payload.get("width"),
+                    height=payload.get("height"),
+                )
             elif action == "refresh":
                 workspace.refresh(scan=False)
         except Exception:
@@ -9594,7 +9602,10 @@ class MainWindow(QMainWindow):
             cw = self.centralWidget()
             self._overlay.setGeometry(0, 0, cw.width(), cw.height())
         if getattr(self, "_device_network_workspace", None) is not None and self._device_network_workspace.isVisible():
-            self._device_network_workspace.setGeometry(8, 8, max(1, self.width() - 16), max(1, self.height() - 16))
+            geometry = self.frameGeometry()
+            self._device_network_workspace.setGeometry(
+                geometry.adjusted(8, 8, -8, -8)
+            )
         if hasattr(self, '_floating_gesture_card') and self.centralWidget():
             cw = self.centralWidget()
             rw = self._right_panel.width() if hasattr(self, '_right_panel') and self._right_panel.isVisible() and not getattr(self, '_right_collapsed', False) else 0
@@ -14664,13 +14675,17 @@ class DeviceNetworkWorkspace(QFrame):
     """
 
     def __init__(self, main_window, manager):
-        super().__init__(main_window)
+        super().__init__(None)
         self._main_window = main_window
         self._manager = manager
         self._panels: dict[str, tuple[_DeviceSubWindow, _DevicePanel]] = {}
 
         self.setObjectName("DeviceNetworkWorkspace")
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.Tool
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
 
         root = QVBoxLayout(self)
@@ -14745,7 +14760,8 @@ class DeviceNetworkWorkspace(QFrame):
         self.hide()
 
     def show_workspace(self):
-        self.setGeometry(self._main_window.rect().adjusted(8, 8, -8, -8))
+        geometry = self._main_window.frameGeometry()
+        self.setGeometry(geometry.adjusted(8, 8, -8, -8))
         self.show()
         self.raise_()
         self.activateWindow()
@@ -15392,11 +15408,14 @@ class BrahmaConnectDevicesPage(QFrame):
 
     def _open_holographic_network(self):
         parent = self.parentWidget()
-        if parent is not None and hasattr(parent, "show_device_network_workspace"):
-            try:
-                parent.show_device_network_workspace()
-            except Exception:
-                pass
+        while parent is not None:
+            if hasattr(parent, "show_device_network_workspace"):
+                try:
+                    parent.show_device_network_workspace()
+                except Exception:
+                    pass
+                return
+            parent = parent.parentWidget() if hasattr(parent, "parentWidget") else None
 
     def _service_obj(self):
         return self._service or getattr(self.parentWidget(), "_brahma_connect", None)
