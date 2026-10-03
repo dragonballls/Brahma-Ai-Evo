@@ -244,40 +244,33 @@ class WorkspaceStore:
             
         def _do_summary():
             try:
-                from google import genai
-                from config import get_api_key
-                api_key = get_api_key("Gemini")
-                if not api_key:
-                    return
-                
-                client = genai.Client(api_key=api_key, http_options={"api_version": "v1beta"})
+                from llm_client import client as ai_client
+
                 prompt = (
                     "Summarize the following user conversation into 1-2 short, conversational sentences "
-                    "that describe what the user was doing or asking about. Phrase it as 'Yesterday you were...'\n\n"
-                    f"Conversation:\n{full_text}"
+                    "that describe what the user was doing or asking about. Phrase it as "
+                    "'In your previous conversation, you were...'
+
+"
+                    f"Conversation:
+{full_text}"
                 )
-                response = client.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=prompt,
-                    config={"temperature": 0.5},
-                )
-                
-                text_parts = []
-                for candidate in getattr(response, "candidates", []) or []:
-                    content = getattr(candidate, "content", None)
-                    if not content: continue
-                    for part in getattr(content, "parts", []) or []:
-                        pt = getattr(part, "text", None)
-                        if pt: text_parts.append(pt)
-                summary = "".join(text_parts).strip()
-                if not summary:
-                    summary = (getattr(response, "text", "") or "").strip()
-                
+                summary = ai_client.intelligent_chat(
+                    prompt,
+                    system=(
+                        "You summarize a previous Brahma Evo conversation. "
+                        "Use only the supplied conversation, keep the result concise and factual, "
+                        "and preserve the conversation's current language. Do not invent missing details."
+                    ),
+                    context=full_text,
+                    profile="balanced",
+                ).strip()
+
                 if summary:
                     self._set_state("last_session_summary", summary)
             except Exception as e:
                 print(f"[WorkspaceStore] Failed to summarize session: {e}")
-                
+
         threading.Thread(target=_do_summary, daemon=True).start()
 
     def rollover_active_conversation_on_startup(self) -> str:
