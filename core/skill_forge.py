@@ -353,22 +353,7 @@ Additional Context: {context_hints}
             except Exception as exc:
                 logger.error(f"[Forge] Gemini client error: {exc}")
 
-        # Fallback to Unified llm_client if available
-        try:
-            from llm_client import client as unified_client
-            resp = unified_client.chat(
-                prompt=prompt,
-                system=system_instructions,
-                max_tokens=8192,
-                temperature=0.2,
-            )
-            data = cls._parse_json_response(resp)
-            if not isinstance(data.get("manifest"), dict) or not isinstance(data.get("code"), str):
-                raise ValueError("Unified LLM response must contain a manifest object and code string.")
-            data["success"] = True
-            return data
-        except Exception as fallback_exc:
-            return {"success": False, "error": f"LLM synthesis failed: {fallback_exc}"}
+        return {"success": False, "error": "LLM synthesis failed after OmniRoute and Gemini fallbacks."}
 
     @classmethod
     def _repair_code(cls, broken_code: str, error_msg: str, goal: str) -> Dict[str, Any]:
