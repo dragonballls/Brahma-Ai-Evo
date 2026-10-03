@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 
-REMOTE = "https://github.com/titechprabhasolutions/Brahma---personal.git"
+REMOTE = "https://github.com/dragonballls/Brahma-Ai-Evo.git"
 BRANCH = "main"
 
 
@@ -36,8 +36,15 @@ def update_from_github(base_dir: Path) -> bool:
         return False
 
     remote = _run_git(base_dir, "remote", "get-url", "origin")
-    if remote.returncode != 0 or not remote.stdout.strip():
-        _run_git(base_dir, "remote", "add", "origin", REMOTE)
+    remote_url = remote.stdout.strip() if remote.returncode == 0 else ""
+    if not remote_url:
+        added = _run_git(base_dir, "remote", "add", "origin", REMOTE)
+        if added.returncode != 0:
+            return False
+    elif remote_url != REMOTE:
+        fixed = _run_git(base_dir, "remote", "set-url", "origin", REMOTE)
+        if fixed.returncode != 0:
+            return False
 
     fetch = _run_git(base_dir, "fetch", "origin", BRANCH, "--quiet")
     if fetch.returncode != 0:
