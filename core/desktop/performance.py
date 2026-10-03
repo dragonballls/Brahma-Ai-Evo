@@ -13,6 +13,7 @@ except Exception:  # pragma: no cover
 
 from .performance_brain import brain
 from .window_manager import WindowManager, WindowInfo, is_game_window
+from .integrations import integrations
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,11 @@ class PerformanceSnapshot:
     gpu_memory_total_mb: float | None = None
     gpu_temperature_c: float | None = None
     gpu_power_w: float | None = None
+    cpu_temperature_c: float | None = None
+    gpu_temperature_c_lhm: float | None = None
+    frame_time_ms: float | None = None
+    frame_time_p95_ms: float | None = None
+    fps: float | None = None
 
 
 @dataclass(frozen=True)
@@ -180,6 +186,12 @@ class AdaptivePerformanceEngine:
         memory = psutil.virtual_memory()
         foreground = WindowManager.foreground()
         gpu = self._gpu_stats()
+        game_active = is_game_window(foreground)
+        external = integrations.performance_telemetry(
+            game_active=game_active,
+            foreground_pid=foreground.pid if foreground else None,
+        )
+        effective_gpu_temp = float(gpu["gpu_temperature_c"]) if gpu else external.get("gpu_temperature_c_lhm")
         snap = PerformanceSnapshot(
             timestamp=time.time(),
             cpu_percent=cpu,
@@ -189,11 +201,16 @@ class AdaptivePerformanceEngine:
             foreground_pid=foreground.pid if foreground else None,
             foreground_title=foreground.title if foreground else "",
             foreground_exe=foreground.exe if foreground else "",
-            game_active=is_game_window(foreground),
+            game_active=game_active,
             gpu_memory_used_mb=float(gpu["gpu_memory_used_mb"]) if gpu else None,
             gpu_memory_total_mb=float(gpu["gpu_memory_total_mb"]) if gpu else None,
-            gpu_temperature_c=float(gpu["gpu_temperature_c"]) if gpu else None,
+            gpu_temperature_c=effective_gpu_temp,
             gpu_power_w=float(gpu["gpu_power_w"]) if gpu else None,
+            cpu_temperature_c=float(external["cpu_temperature_c"]) if external.get("cpu_temperature_c") is not None else None,
+            gpu_temperature_c_lhm=float(external["gpu_temperature_c_lhm"]) if external.get("gpu_temperature_c_lhm") is not None else None,
+            frame_time_ms=float(external["frame_time_ms"]) if external.get("frame_time_ms") is not None else None,
+            frame_time_p95_ms=float(external["frame_time_p95_ms"]) if external.get("frame_time_p95_ms") is not None else None,
+            fps=float(external["fps"]) if external.get("fps") is not None else None,
         )
         self.last_snapshot = snap
         self._observe_visible_processes(snap.foreground_pid)
@@ -257,7 +274,17 @@ class AdaptivePerformanceEngine:
 
     def decide(self, snapshot: PerformanceSnapshot) -> PerformanceDecision:
         if self.profile == "game" or snapshot.game_active:
-            raw_pressure = "high" if snapshot.cpu_percent >= 90 or snapshot.memory_percent >= 85 else "normal"
+            thermal_high = (
+                (snapshot.gpu_temperature_c is not None and snapshot.gpu_temperature_c >= 90.0)
+                or (snapshot.cpu_temperature_c is not None and snapshot.cpu_temperature_c >= 95.0)
+            )
+            frame_pressure = snapshot.frame_time_p95_ms is not None and snapshot.frame_time_p95_ms >= 25.0
+            raw_pressure = "high" if (
+                snapshot.cpu_percent >= 90
+                or snapshot.memory_percent >= 85
+                or thermal_high
+                or frame_pressure
+            ) else "normal"
             stable_pressure = self._stabilize_pressure(raw_pressure)
             decision = PerformanceDecision(
                 mode="game",
@@ -281,8 +308,12 @@ class AdaptivePerformanceEngine:
                 reason="Efficiency profile requested; background work is reduced conservatively.",
             )
         elif self.profile == "performance":
-            raw_pressure = "high" if snapshot.cpu_percent >= 92 or snapshot.memory_percent >= 88 or (
-                snapshot.gpu_percent is not None and snapshot.gpu_percent >= 95.0
+            raw_pressure = "high" if (
+                snapshot.cpu_percent >= 92
+                or snapshot.memory_percent >= 88
+                or (snapshot.gpu_percent is not None and snapshot.gpu_percent >= 95.0)
+                or (snapshot.gpu_temperature_c is not None and snapshot.gpu_temperature_c >= 90.0)
+                or (snapshot.cpu_temperature_c is not None and snapshot.cpu_temperature_c >= 95.0)
             ) else "normal"
             stable_pressure = self._stabilize_pressure(raw_pressure)
             decision = PerformanceDecision(
@@ -295,8 +326,22 @@ class AdaptivePerformanceEngine:
                 reason="Performance profile requested; foreground responsiveness is prioritized.",
             )
         else:
-            raw_pressure = "high" if snapshot.memory_percent >= 92 or snapshot.cpu_percent >= 95 else (
-                "elevated" if snapshot.memory_percent >= 82 or snapshot.cpu_percent >= 88 else "normal"
+            thermal_high = (
+                (snapshot.gpu_temperature_c is not None and snapshot.gpu_temperature_c >= 90.0)
+                or (snapshot.cpu_temperature_c is not None and snapshot.cpu_temperature_c >= 95.0)
+            )
+            frame_pressure = snapshot.frame_time_p95_ms is not None and snapshot.frame_time_p95_ms >= 30.0
+            raw_pressure = "high" if (
+                snapshot.memory_percent >= 92
+                or snapshot.cpu_percent >= 95
+                or thermal_high
+                or frame_pressure
+            ) else (
+                "elevated" if (
+                    snapshot.memory_percent >= 82
+                    or snapshot.cpu_percent >= 88
+                    or (snapshot.frame_time_p95_ms is not None and snapshot.frame_time_p95_ms >= 22.0)
+                ) else "normal"
             )
             pressure = self._stabilize_pressure(raw_pressure)
             decision = PerformanceDecision(
@@ -308,7 +353,7 @@ class AdaptivePerformanceEngine:
                 ),
                 prioritize_foreground=False,
                 trim_background_memory=pressure == "high",
-                reason="Adaptive policy reacts to sustained CPU/RAM/GPU pressure and preserves foreground quality.",
+                reason="Adaptive policy reacts to sustained CPU/RAM/GPU/thermal/frame-pacing pressure and preserves foreground quality.",
             )
         self.last_decision = decision
         return decision
@@ -569,6 +614,7 @@ class AdaptivePerformanceEngine:
             "tracked_memory_priority_processes": len(self._original_memory_priority),
             "actions_applied": self.action_count,
             "learning": brain.status(),
+            "integrations": integrations.status(),
             "pressure_state": self._pressure_state,
             "pressure_candidate": self._pressure_candidate,
         }
