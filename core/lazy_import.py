@@ -30,6 +30,14 @@ class _Lazy:
     def __getattr__(self, name: str) -> Any:
         return getattr(self._load(), name)
 
+    def __setattr__(self, name: str, value: Any) -> None:
+        # Keep proxy internals on the proxy; forward runtime attributes to the
+        # real object so lazy singletons remain transparent to callers.
+        if name in self.__slots__:
+            object.__setattr__(self, name, value)
+            return
+        setattr(self._load(), name, value)
+
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return self._load()(*args, **kwargs)
 
