@@ -33,4 +33,15 @@ jobs:
       - name: Run multi-model intelligence regressions
         run: python -m unittest tests.test_intelligence_orchestrator -v
       - name: Run selected advanced capability regressions
-        run: python -m unittest tests.test_selected_advanced_capabilities -v
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          python -m unittest tests.test_selected_advanced_capabilities -v 2>&1 | Tee-Object selected-capability-test.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload selected capability test log on failure
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: selected-capability-test-log
+          path: selected-capability-test.log
+          if-no-files-found: warn
