@@ -68,6 +68,11 @@ class AdaptivePerformanceEngine:
         self._min_adjustment_interval = 20.0
         self._min_trim_interval = 180.0
         self._gpu_cache: tuple[float, dict[str, Any] | None] = (0.0, None)
+        self._pressure_state = "normal"
+        self._pressure_candidate = "normal"
+        self._pressure_candidate_since = time.monotonic()
+        self._pressure_enter_delay = 5.0
+        self._pressure_clear_delay = 8.0
         self.last_decision: PerformanceDecision | None = None
         self.last_snapshot: PerformanceSnapshot | None = None
         self.action_count = 0
@@ -78,6 +83,30 @@ class AdaptivePerformanceEngine:
             raise ValueError(f"Unknown performance profile: {profile}")
         self.profile = normalized
         return normalized
+
+    @staticmethod
+    def _pressure_rank(value: str) -> int:
+        return {"normal": 0, "elevated": 1, "high": 2}.get(str(value).lower(), 0)
+
+    def _stabilize_pressure(self, raw: str) -> str:
+        raw = str(raw or "normal").lower()
+        if raw not in {"normal", "elevated", "high"}:
+            raw = "normal"
+        now = time.monotonic()
+        current_rank = self._pressure_rank(self._pressure_state)
+        raw_rank = self._pressure_rank(raw)
+
+        if raw != self._pressure_candidate:
+            self._pressure_candidate = raw
+            self._pressure_candidate_since = now
+            return self._pressure_state
+
+        delay = self._pressure_enter_delay if raw_rank > current_rank else self._pressure_clear_delay
+        if now - self._pressure_candidate_since < delay:
+            return self._pressure_state
+
+        self._pressure_state = raw
+        return self._pressure_state
 
     def _gpu_stats(self) -> dict[str, Any] | None:
         now = time.monotonic()
@@ -228,9 +257,11 @@ class AdaptivePerformanceEngine:
 
     def decide(self, snapshot: PerformanceSnapshot) -> PerformanceDecision:
         if self.profile == "game" or snapshot.game_active:
+            raw_pressure = "high" if snapshot.cpu_percent >= 90 or snapshot.memory_percent >= 85 else "normal"
+            stable_pressure = self._stabilize_pressure(raw_pressure)
             decision = PerformanceDecision(
                 mode="game",
-                pressure="high" if snapshot.cpu_percent >= 90 or snapshot.memory_percent >= 85 else "normal",
+                pressure=stable_pressure,
                 game_active=True,
                 reduce_background_work=True,
                 prioritize_foreground=True,
@@ -238,9 +269,11 @@ class AdaptivePerformanceEngine:
                 reason="Foreground game detected; Brahma is minimizing background competition.",
             )
         elif self.profile == "efficiency":
+            raw_pressure = "high" if snapshot.memory_percent >= 85 or snapshot.cpu_percent >= 90 else "normal"
+            stable_pressure = self._stabilize_pressure(raw_pressure)
             decision = PerformanceDecision(
                 mode="efficiency",
-                pressure="high" if snapshot.memory_percent >= 85 or snapshot.cpu_percent >= 90 else "normal",
+                pressure=stable_pressure,
                 game_active=False,
                 reduce_background_work=True,
                 prioritize_foreground=False,
@@ -248,11 +281,13 @@ class AdaptivePerformanceEngine:
                 reason="Efficiency profile requested; background work is reduced conservatively.",
             )
         elif self.profile == "performance":
+            raw_pressure = "high" if snapshot.cpu_percent >= 92 or snapshot.memory_percent >= 88 or (
+                snapshot.gpu_percent is not None and snapshot.gpu_percent >= 95.0
+            ) else "normal"
+            stable_pressure = self._stabilize_pressure(raw_pressure)
             decision = PerformanceDecision(
                 mode="performance",
-                pressure="high" if snapshot.cpu_percent >= 92 or snapshot.memory_percent >= 88 or (
-                    snapshot.gpu_percent is not None and snapshot.gpu_percent >= 95.0
-                ) else "normal",
+                pressure=stable_pressure,
                 game_active=False,
                 reduce_background_work=snapshot.cpu_percent >= 85 or snapshot.memory_percent >= 82,
                 prioritize_foreground=True,
@@ -260,9 +295,10 @@ class AdaptivePerformanceEngine:
                 reason="Performance profile requested; foreground responsiveness is prioritized.",
             )
         else:
-            pressure = "high" if snapshot.memory_percent >= 92 or snapshot.cpu_percent >= 95 else (
+            raw_pressure = "high" if snapshot.memory_percent >= 92 or snapshot.cpu_percent >= 95 else (
                 "elevated" if snapshot.memory_percent >= 82 or snapshot.cpu_percent >= 88 else "normal"
             )
+            pressure = self._stabilize_pressure(raw_pressure)
             decision = PerformanceDecision(
                 mode="adaptive" if self.profile == "adaptive" else "balanced",
                 pressure=pressure,
@@ -533,4 +569,6 @@ class AdaptivePerformanceEngine:
             "tracked_memory_priority_processes": len(self._original_memory_priority),
             "actions_applied": self.action_count,
             "learning": brain.status(),
+            "pressure_state": self._pressure_state,
+            "pressure_candidate": self._pressure_candidate,
         }
