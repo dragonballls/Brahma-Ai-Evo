@@ -610,6 +610,7 @@ class AttentionMonitor:
         self._interval = max(1.0, float(interval))
         self._running = False
         self._thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
         self._db = _db_path()
         self._last_id = 0
         self._seen_keys: set[str] = set()
@@ -619,12 +620,14 @@ class AttentionMonitor:
         if self._running:
             return
         self._last_id = self._current_max_id()
+        self._stop_event.clear()
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
         self._running = False
+        self._stop_event.set()
 
     def _loop(self) -> None:
         if not self._db.exists():
@@ -635,7 +638,8 @@ class AttentionMonitor:
                 self._poll_once()
             except Exception as exc:
                 print(f"[AttentionMonitor] poll failed: {exc}")
-            time.sleep(self._interval)
+            if self._stop_event.wait(timeout=self._interval):
+                break
 
     def _current_max_id(self) -> int:
         try:
