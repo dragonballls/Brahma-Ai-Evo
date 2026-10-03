@@ -225,7 +225,7 @@ class RuntimeConsistencyTests(unittest.TestCase):
         setup = self.read("core/omniroute_setup.py")
         runtime = self.read("core/runtime_paths.py")
         contract = self.read("core/runtime_contract.py")
-        self.assertIn("from core.runtime_contract import NODE_VERSION, OMNIROUTE_VERSION", setup)
+        self.assertIn("from core.runtime_contract import OMNIROUTE_VERSION", setup)
         self.assertIn("from core.runtime_paths import API_CONFIG_PATH, OMNIROUTE_DEFAULT_BASE_URL, OMNIROUTE_DEFAULT_PORT", setup)
         self.assertIn("OMNIROUTE_DEFAULT_PORT = 20128", runtime)
         self.assertIn('OMNIROUTE_VERSION = "3.8.50"', contract)
