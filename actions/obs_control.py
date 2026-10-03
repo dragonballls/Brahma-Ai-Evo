@@ -272,20 +272,44 @@ def _find_item(items: list[dict[str, Any]], source: str) -> dict[str, Any]:
     raise OBSControlError(f"OBS source '{source}' was not found.")
 
 
-def _preset(position: str) -> tuple[float, float]:
-    positions = {
-        "top-left": (0.035, 0.035),
-        "top-right": (0.965, 0.035),
-        "bottom-left": (0.035, 0.965),
-        "bottom-right": (0.965, 0.965),
-        "center": (0.5, 0.5),
-    }
+def _preset_position(position: str, transform: dict[str, Any]) -> tuple[float, float]:
     key = position.strip().lower().replace("_", "-").replace(" ", "-")
-    if key not in positions:
+    if key not in {"top-left", "top-right", "bottom-left", "bottom-right", "center"}:
         raise OBSControlError(
             "Position must be top-left, top-right, bottom-left, bottom-right, or center."
         )
-    return positions[key]
+    canvas_w = float(transform.get("canvasWidth") or 1920)
+    canvas_h = float(transform.get("canvasHeight") or 1080)
+    width = float(transform.get("width") or transform.get("sourceWidth") or 0)
+    height = float(transform.get("height") or transform.get("sourceHeight") or 0)
+    pad_x = canvas_w * 0.035
+    pad_y = canvas_h * 0.035
+    anchor = int(transform.get("alignment") or 0)
+
+    horizontal = "center"
+    vertical = "center"
+    if anchor & 1:
+        horizontal = "left"
+    elif anchor & 2:
+        horizontal = "right"
+    if anchor & 4:
+        vertical = "top"
+    elif anchor & 8:
+        vertical = "bottom"
+
+    if key.endswith("left"):
+        x = pad_x if horizontal == "left" else pad_x + width / 2
+    elif key.endswith("right"):
+        x = canvas_w - pad_x if horizontal == "right" else canvas_w - pad_x - width / 2
+    else:
+        x = canvas_w / 2
+    if key.startswith("top"):
+        y = pad_y if vertical == "top" else pad_y + height / 2
+    elif key.startswith("bottom"):
+        y = canvas_h - pad_y if vertical == "bottom" else canvas_h - pad_y - height / 2
+    else:
+        y = canvas_h / 2
+    return x, y
 
 
 def run(parameters: dict[str, Any] | None = None, player=None, speak=None) -> str:
@@ -393,12 +417,9 @@ def run(parameters: dict[str, Any] | None = None, player=None, speak=None) -> st
             if args.get("y") is not None:
                 patch["positionY"] = float(args["y"])
             if args.get("position"):
-                # Presets are interpreted relative to the OBS canvas dimensions.
-                canvas_w = float(transform.get("canvasWidth") or 1920)
-                canvas_h = float(transform.get("canvasHeight") or 1080)
-                px, py = _preset(str(args["position"]))
-                patch["positionX"] = canvas_w * px
-                patch["positionY"] = canvas_h * py
+                px, py = _preset_position(str(args["position"]), transform)
+                patch["positionX"] = px
+                patch["positionY"] = py
         elif action == "source_resize":
             source_w = float(transform.get("sourceWidth") or 0)
             source_h = float(transform.get("sourceHeight") or 0)
@@ -410,6 +431,13 @@ def run(parameters: dict[str, Any] | None = None, player=None, speak=None) -> st
                 patch["scaleY"] = float(args["scale_y"])
             elif args.get("height") is not None and source_h > 0:
                 patch["scaleY"] = float(args["height"]) / source_h
+            # A single width/height request preserves the source aspect ratio.
+            if args.get("width") is not None and args.get("height") is None and source_w > 0 and source_h > 0:
+                factor = float(args["width"]) / source_w
+                patch["scaleY"] = factor
+            elif args.get("height") is not None and args.get("width") is None and source_w > 0 and source_h > 0:
+                factor = float(args["height"]) / source_h
+                patch["scaleX"] = factor
         else:
             patch["rotation"] = float(args.get("rotation", 0))
 
@@ -496,6 +524,8 @@ def obs_control(parameters: dict[str, Any] | None = None, player=None, speak=Non
         result = run(parameters=parameters, player=player, speak=speak)
     except OBSControlError as exc:
         result = f"OBS control failed: {exc}"
+    except Exception as exc:
+        result = f"OBS control failed safely: {exc}"
     if player is not None:
         try:
             player.write_log(f"OBS: {result}")
