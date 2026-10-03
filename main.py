@@ -1968,7 +1968,7 @@ TOOL_DECLARATIONS = [
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "action": {"type": "STRING", "description": "open | route | drive | location | fly_to | weather | flights | iss | earthquakes | nearby | radar | inspect"},
+                "action": {"type": "STRING", "description": "open | gods_eye | route | drive | location | fly_to | weather | flights | iss | earthquakes | nearby | radar | inspect"},
                 "origin": {"type": "STRING", "description": "Origin city for a route."},
                 "destination": {"type": "STRING", "description": "Destination city for a route."},
                 "location": {"type": "STRING", "description": "City or area to focus on."},
@@ -4788,7 +4788,10 @@ class BrahmaLive:
                 location = args.get("location") or "current"
                 if action == "open":
                     globe.open_globe(location if args.get("location") else None)
-                    result = "Opened the interactive Brahma map."
+                    result = "Opened the interactive Brahma map with God’s Eye."
+                elif action == "gods_eye":
+                    r = await loop.run_in_executor(None, globe.show_gods_eye)
+                    result = "Opened God’s Eye on the 3D globe and refreshed authorized locator feeds."
                 elif action == "route":
                     r = await loop.run_in_executor(None, lambda: globe.show_route(args.get("origin", ""), args.get("destination", "")))
                     result = f"Flight route: {r.get('origin')} to {r.get('destination')}, {r.get('distance_km')} km, about {r.get('flight_time')}."
