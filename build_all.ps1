@@ -6,7 +6,7 @@ Write-Host "Building Brahma Evo Application..." -ForegroundColor Cyan
 
 if (-not $SkipOmniRoute) {
     Write-Host "Preparing pinned OmniRoute runtime..." -ForegroundColor Cyan
-    & ..\.venv\Scripts\python.exe scripts\prepare_omniroute_runtime.py build_vendor\omniroute_runtime
+    & .\.venv\Scripts\python.exe scripts\prepare_omniroute_runtime.py build_vendor\omniroute_runtime
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Failed to prepare OmniRoute runtime!" -ForegroundColor Red
         exit 1
