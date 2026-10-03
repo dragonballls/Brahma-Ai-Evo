@@ -111,6 +111,13 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("base_url: str = OMNIROUTE_DEFAULT_BASE_URL", setup)
         self.assertNotIn("DEFAULT_PORT = 20128", setup)
 
+    def test_bootstrap_targets_repository_python_runtime(self):
+        source = self.read("bootstrap.ps1")
+        self.assertIn("py -3.12", source)
+        self.assertIn("python 3.12.10", source)
+        self.assertIn("python-3.12.10-amd64.exe", source)
+        self.assertNotIn("python-3.11.8-amd64.exe", source)
+
     def test_brahma_connect_service_has_synchronized_lifecycle(self):
         source = self.read("brahma_connect/service.py")
         self.assertIn("_lock: threading.RLock", source)
