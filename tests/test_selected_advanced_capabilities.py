@@ -57,7 +57,7 @@ class SelectedCapabilitiesTests(unittest.TestCase):
         self.assertEqual(len(SpatialAudioEngine.spatialize([1, 2, 3], azimuth_deg=0)), 3)
 
     def test_optimization_learner_adapts_sampling_interval_without_changing_system(self):
-        with tempfile.TemporaryDirectory() as td, patch.object(OptimizationLearner, "PATH", Path(td) / "optimization.json"), patch("time.monotonic", side_effect=[0.0, 5.0, 31.0]):
+        with tempfile.TemporaryDirectory() as td, patch.object(OptimizationLearner, "PATH", Path(td) / "optimization.json"), patch("time.monotonic", side_effect=[100.0, 105.0, 131.0]):
             first = OptimizationLearner.observe(cpu_percent=20, memory_percent=40)
             second = OptimizationLearner.observe(cpu_percent=20, memory_percent=40)
             third = OptimizationLearner.observe(cpu_percent=90, memory_percent=92)
