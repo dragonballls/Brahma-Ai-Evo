@@ -1,8 +1,8 @@
 {
   "name": "autonomous_mission",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "active": true,
-  "description": "Runs a Brahma Evo goal autonomously in the background for an exact duration or until a verifiable completion condition is met. Supports cancellation and persistent mission status while using low-power waits between iterations.",
+  "description": "Runs Brahma Evo goals in isolated external worker processes for an exact duration or until a verifiable completion condition is met. Durable mission state, absolute deadlines, worker heartbeats, cancellation flags, and hidden Windows recovery tasks allow missions to resume after Brahma restarts and system reboot without claiming work happened while the machine was offline.",
   "triggers": [
     "work on this for 24 hours",
     "keep working for 5 minutes",
@@ -22,7 +22,7 @@
     "properties": {
       "action": {
         "type": "STRING",
-        "description": "Action: start, list, status, cancel."
+        "description": "Action: start, list, status, cancel, recover."
       },
       "goal": {
         "type": "STRING",
