@@ -2225,9 +2225,32 @@ class BrahmaLive:
                 print(f"[Proactive] Error: {e}")
 
     def _make_remote_key(self):
+        """Start Mobile Connect only when the user requests it."""
         if self._dashboard is None:
-            self.ui.write_log("ERR: Mobile Connect unavailable. Install fastapi, uvicorn, cryptography, and qrcode[pil].")
-            return None
+            if DashboardServer is None:
+                self.ui.write_log(
+                    "ERR: Mobile Connect dependencies are unavailable. "
+                    "Install fastapi, uvicorn, cryptography, and qrcode[pil]."
+                )
+                return None
+            if _is_port_in_use(8000):
+                self.ui.write_log("ERR: Mobile Connect port 8000 is already in use.")
+                return None
+            try:
+                self._dashboard = DashboardServer()
+                if not self._dashboard_started:
+                    self._dashboard_started = True
+                    threading.Thread(
+                        target=lambda: asyncio.run(self._serve_dashboard()),
+                        daemon=True,
+                        name="mobile-connect-on-demand",
+                    ).start()
+                    self._startup_mobile_connect = True
+            except Exception as exc:
+                self.ui.write_log(f"ERR: Mobile Connect could not start: {exc}")
+                self._dashboard = None
+                return None
+
         key = self._dashboard.new_key()
         url = self._dashboard.get_url()
         manual = self._dashboard.get_manual_url()
