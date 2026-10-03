@@ -18,6 +18,10 @@ import sys
 import tempfile
 from urllib.request import urlopen
 
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 from core.omniroute_setup import OMNIROUTE_VERSION
 from zipfile import ZipFile
 
