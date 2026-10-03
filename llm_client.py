@@ -30,11 +30,20 @@ class UnifiedAIClient:
 
     def reload_settings(self):
         try:
-            with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            self._provider = normalize_provider(data.get("default_ai_provider", "OpenRouter"), "OpenRouter")
-            self._local_url = data.get("local_ai_url", "http://localhost:11434/v1").rstrip("/")
-            self._local_model = data.get("local_ai_model", "llama3.2")
+            from memory.config_manager import load_settings
+            data = load_settings()
+            self._provider = normalize_provider(
+                data.get("default_ai_provider", "OpenRouter"),
+                "OpenRouter",
+            )
+            self._local_url = str(
+                data.get("local_ai_url", "http://localhost:11434/v1")
+                or "http://localhost:11434/v1"
+            ).rstrip("/")
+            self._local_model = str(
+                data.get("local_ai_model", "llama3.2")
+                or "llama3.2"
+            ).strip() or "llama3.2"
         except Exception as e:
             logger.error(f"[LLM Client] Failed to load settings: {e}")
 
