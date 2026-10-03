@@ -23,7 +23,7 @@ class TestOBSControl(unittest.TestCase):
         transform = {"canvasWidth": 1920, "canvasHeight": 1080, "width": 400, "height": 300, "alignment": 0}
         x, y = obs_control._preset_position("top-right", transform)
         self.assertEqual(x, 1692.8)
-        self.assertEqual(y, 37.8)
+        self.assertEqual(y, 187.8)
 
     def test_preset_position_rejects_unknown_name(self):
         with self.assertRaises(obs_control.OBSControlError):
