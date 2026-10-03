@@ -12643,6 +12643,16 @@ class SystemConnectivityPage(QWidget):
 
     def _open_omniroute_dashboard(self):
         """Embed the real OmniRoute dashboard inside Brahma Evo."""
+        existing = getattr(self, "_omniroute_dashboard_dialog", None)
+        if existing is not None:
+            try:
+                if existing.isVisible():
+                    existing.raise_()
+                    existing.activateWindow()
+                    return
+            except Exception:
+                pass
+
         if not WEB_ENGINE_AVAILABLE:
             if self._ctrl() and hasattr(self._ctrl(), "write_log"):
                 self._ctrl().write_log("ERR: Qt WebEngine is unavailable; cannot embed the OmniRoute dashboard.")
@@ -12700,12 +12710,6 @@ class SystemConnectivityPage(QWidget):
         root.addWidget(web, 1)
 
         url = QUrl("http://127.0.0.1:20128/")
-        web.loadStarted.connect(lambda: status.setText("Connecting to OmniRoute…"))
-        web.loadFinished.connect(
-            lambda ok: status.setText(
-                "OmniRoute dashboard connected" if ok else "OmniRoute is still starting — retrying…"
-            )
-        )
         refresh_btn.clicked.connect(lambda: web.reload())
         close_btn.clicked.connect(dialog.close)
 
@@ -12728,7 +12732,18 @@ class SystemConnectivityPage(QWidget):
         retry_timer = QTimer(dialog)
         retry_timer.setInterval(1500)
         retry_timer.timeout.connect(lambda: web.load(url))
-        retry_timer.start()
+
+        def on_load_finished(ok: bool):
+            if ok:
+                retry_timer.stop()
+                status.setText("OmniRoute dashboard connected")
+            else:
+                status.setText("OmniRoute is still starting — retrying…")
+                if not retry_timer.isActive():
+                    retry_timer.start()
+
+        web.loadStarted.connect(lambda: status.setText("Connecting to OmniRoute…"))
+        web.loadFinished.connect(on_load_finished)
 
         def stop_retry(*_args):
             if retry_timer.isActive():

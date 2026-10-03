@@ -272,7 +272,7 @@ class OmniRouteProvisioner:
     def ensure_running(self, *, wait_seconds: float = 15.0) -> bool:
         if self._probe():
             return True
-        command = self.command_argv()
+        command = self.command_argv(for_start=True)
         if self._process is None or self._process.poll() is not None:
             self._process = subprocess.Popen(
                 command + ["--port", str(self.port)],
