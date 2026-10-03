@@ -285,6 +285,41 @@ class AutonomousMissionEdgeCaseTests(TestCase):
             mod._mission_loop("mission-deadline")
         self.assertEqual(mod.status("mission-deadline")["status"], "timed_out")
 
+
+class PublicActionDispatchTests(TestCase):
+    def test_pc_health_action_dispatch(self):
+        mod = _load_skill_module("pc_health_guardian_skill_dispatch", "features/pc_health_guardian/skill.py")
+        with patch.object(mod, "diagnose", return_value={"findings": [], "memory": {"percent": 1}, "cpu_percent": 2}), \\
+             patch.object(mod, "detect_memory_leaks", return_value=[]), \\
+             patch.object(mod, "repair", return_value={"success": True, "actions": []}), \\
+             patch.object(mod, "start_monitor", return_value="started"), \\
+             patch.object(mod, "stop_monitor", return_value="stopped"), \\
+             patch.object(mod, "get_status", return_value={"running": False}):
+            self.assertIn("PC diagnosis complete", mod.execute(action="diagnose")["summary"])
+            self.assertEqual(mod.execute(action="memory_leak")["leaks"], [])
+            self.assertTrue(mod.execute(action="repair")["output"]["success"])
+            self.assertEqual(mod.execute(action="monitor")["summary"], "started")
+            self.assertEqual(mod.execute(action="stop")["summary"], "stopped")
+            self.assertEqual(mod.execute(action="status")["status"]["running"], False)
+
+    def test_autonomous_action_dispatch(self):
+        mod = _load_skill_module("autonomous_mission_skill_dispatch", "features/autonomous_mission/skill.py")
+        with patch.object(mod, "start_mission", return_value="Started autonomous mission mission-test for 5 minutes."), \\
+             patch.object(mod, "list_missions", return_value=[{"mission_id": "mission-test"}]), \\
+             patch.object(mod, "status", return_value={"mission_id": "mission-test", "status": "running"}), \\
+             patch.object(mod, "cancel", return_value="Cancellation requested for mission mission-test."):
+            self.assertIn("mission-test", mod.execute(action="start", goal="test")["summary"])
+            self.assertEqual(mod.execute(action="list")["missions"][0]["mission_id"], "mission-test")
+            self.assertEqual(mod.execute(action="status", mission_id="mission-test")["status"]["status"], "running")
+            self.assertIn("Cancellation requested", mod.execute(action="cancel", mission_id="mission-test")["summary"])
+
+    def test_invalid_pc_monitor_duration_is_rejected(self):
+        mod = _load_skill_module("pc_health_guardian_skill_invalid_duration", "features/pc_health_guardian/skill.py")
+        with patch.object(mod.threading, "Thread") as thread:
+            result = mod.start_monitor(duration="not-a-duration")
+        self.assertIn("could not parse", result.lower())
+        thread.assert_not_called()
+
 if __name__ == "__main__":
     import unittest
     unittest.main()
