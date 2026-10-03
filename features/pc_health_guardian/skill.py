@@ -506,7 +506,7 @@ def repair(target: str = "auto", allow_disruptive: bool = False) -> dict[str, An
 def _watch_loop(duration_seconds: float | None = None, interval_seconds: int = 60, auto_repair: bool = False) -> None:
     global _WATCH_STATUS
     started = time.time()
-    deadline = started + duration_seconds if duration_seconds else None
+    deadline = started + duration_seconds if duration_seconds is not None else None
     with _WATCH_LOCK:
         _WATCH_STATUS.update({
             "running": True,
@@ -584,7 +584,7 @@ def _parse_duration(value: str | int | float | None) -> float | None:
     if value is None or value == "":
         return None
     if isinstance(value, (int, float)):
-        return max(0.0, float(value))
+        return min(max(0.0, float(value)), 30 * 86400)
     text = str(value).strip().lower()
     compact = re.sub(r"[,;]", " ", text)
     matches = re.findall(r"(\d+(?:\.\d+)?)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d)", compact)
