@@ -1,5 +1,5 @@
 from __future__ import annotations
-from core.user_paths import get_user_data_dir
+from core.runtime_paths import API_CONFIG_PATH
 
 import asyncio
 import json
@@ -15,18 +15,9 @@ def _load_discord_module():
     try:
         import discord as mod
         return mod
-    except Exception:
-        try:
-            subprocess.run(
-                [sys.executable, "-m", "pip", "install", "discord.py"],
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            import discord as mod
-            return mod
-        except Exception:
-            return None
+    except Exception as exc:
+        logger.warning("Discord dependency unavailable: %s", exc)
+        return None
 
 
 discord = _load_discord_module()
@@ -44,7 +35,7 @@ def _base_dir() -> Path:
 
 
 BASE_DIR = _base_dir()
-API_KEYS_FILE = get_user_data_dir() / "config" / "api_keys.json"
+API_KEYS_FILE = API_CONFIG_PATH
 
 
 def _load_api_keys() -> dict:
