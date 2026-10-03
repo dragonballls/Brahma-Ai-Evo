@@ -10669,6 +10669,11 @@ class MainWindow(QMainWindow):
                 "anthropic_api_key": existing.get("anthropic_api_key", ""),
                 "os_system": os_name,
             })
+            try:
+                from core.omniroute import gateway
+                gateway().mark_credentials_stale()
+            except Exception:
+                pass
             self._ready = True
             self._api_ready = True
             if self._overlay:
@@ -10773,7 +10778,7 @@ class MainWindow(QMainWindow):
         self._settings_page = SystemConnectivityPage()
         self._center_stack.addWidget(self._settings_page)
         
-        self._settings_hub_page = SettingsHubPage(lambda idx: self._center_stack.setCurrentIndex(idx))
+        self._settings_hub_page = SettingsHubPage(lambda page: self._set_page(page))
         self._center_stack.addWidget(self._settings_hub_page)
 
         self._omniroute_page = OmniRouteEmbeddedPage()
@@ -11312,13 +11317,13 @@ class SettingsHubPage(QWidget):
         cards_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         cards_data = [
-            ("Brahma Evo Home", "Configure smart home integrations", "🏠", 1),
-            ("Devices", "Manage and control connected hardware", "🔌", 2),
-            ("System & Connect", "Configure providers and api preferences", "⚙️", 3),
-            ("OmniRoute", "Open the real OmniRoute provider and routing console", "🧠", 5)
+            ("Brahma Evo Home", "Configure smart home integrations", "🏠", "home"),
+            ("Devices", "Manage and control connected hardware", "🔌", "devices"),
+            ("System & Connect", "Configure providers and api preferences", "⚙️", "settings"),
+            ("OmniRoute", "Open the real OmniRoute provider and routing console", "🧠", "omniroute")
         ]
 
-        for index, (title_text, desc_text, icon_emoji, target_idx) in enumerate(cards_data):
+        for index, (title_text, desc_text, icon_emoji, target_page) in enumerate(cards_data):
             card = QFrame()
             card.setFixedSize(260, 190)
             card.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -11357,7 +11362,7 @@ class SettingsHubPage(QWidget):
             d.setAlignment(Qt.AlignmentFlag.AlignCenter)
             card_lay.addWidget(d)
 
-            card.mousePressEvent = lambda e, idx=target_idx: self._nav_cb(idx)
+            card.mousePressEvent = lambda e, page=target_page: self._nav_cb(page)
             cards_lay.addWidget(card, index // 2, index % 2)
 
         lay.addStretch(1)
@@ -13367,7 +13372,7 @@ class SystemConnectivityPage(QWidget):
             # on its next request without blocking the settings UI.
             try:
                 from core.omniroute import gateway
-                gateway()._credentials_synced = False
+                gateway().mark_credentials_stale()
             except Exception:
                 pass
             if self._ctrl() and hasattr(self._ctrl(), "write_log"):
