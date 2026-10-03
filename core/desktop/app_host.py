@@ -31,10 +31,14 @@ class ApplicationHost:
         if target.startswith(("http://", "https://", "www.")):
             url = target if "://" in target else f"https://{target}"
             try:
-                webbrowser.open(url, new=0)
-                return {"ok": True, "type": "web", "target": url}
-            except Exception as exc:
-                return {"ok": False, "error": str(exc)}
+                from .web_host import web_application_host
+                return web_application_host.open(url)
+            except Exception:
+                try:
+                    webbrowser.open(url, new=0)
+                    return {"ok": True, "type": "web", "embedded": False, "target": url}
+                except Exception as exc:
+                    return {"ok": False, "error": str(exc)}
 
         try:
             if platform.system() == "Windows" and Path(target).exists():
