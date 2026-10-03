@@ -1492,6 +1492,9 @@ def _default_app_settings() -> dict:
         "show_workspace_on_startup": False,
         "launcher_pos": None,
         "launch_minimized": False,
+        "desktop_mode_enabled": False,
+        "desktop_performance_profile": "adaptive",
+        "show_desktop_performance_overlay": False,
         "check_updates_on_startup": True,
         "default_ai_provider": "Gemini",
         "auto_provider_switch": True,
@@ -14888,6 +14891,7 @@ class BrahmaUI:
         self._workspace_sidebar = WorkspaceSidebar()
         self._control_panel: LauncherControlPanel | None = None
         self._boot_overlay: BootSequenceOverlay | None = None
+        self._desktop_controller = None
         self._app_settings_cache: dict | None = None
         self._launcher.single_clicked.connect(self._toggle_workspace_sidebar)
         self._launcher.double_clicked.connect(self._on_launcher_double_clicked)
@@ -14981,6 +14985,38 @@ class BrahmaUI:
         self._command_bar.hide()
         self._launcher.hide()
         self._win.hide()
+
+    def set_desktop_environment_controller(self, controller) -> None:
+        """Attach the optional desktop-layer controller without coupling UI to it."""
+        self._desktop_controller = controller
+
+    def enter_desktop_mode(self) -> None:
+        """Hide only Brahma's normal window and expose the launcher over the desktop."""
+        try:
+            self._command_bar.hide()
+            self._workspace_sidebar.hide_workspace(animate=False)
+        except Exception:
+            pass
+        try:
+            self._win.hide()
+        except Exception:
+            pass
+        try:
+            self._show_floating_icon()
+            self._launcher.raise_()
+        except Exception:
+            pass
+
+    def exit_desktop_mode(self) -> None:
+        """Return Brahma to its normal application presentation."""
+        try:
+            self._launcher.hide()
+            self.show_main()
+        except Exception:
+            try:
+                self._win.show()
+            except Exception:
+                pass
 
     def _load_app_settings(self) -> dict:
         if self._app_settings_cache is not None:
