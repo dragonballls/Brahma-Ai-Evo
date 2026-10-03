@@ -78,6 +78,30 @@ LOGO_ICO   = BASE_DIR / "assets" / "Brahma_Lite_Logo.ico"
 BACKGROUND_IMAGE_FILE = BASE_DIR / "assets" / "background.png"
 MODEL_DOWNLOAD_URL = "https://storage.googleapis.com/mediapipe-assets/hand_landmarker.task"
 
+def _read_app_version() -> str:
+    try:
+        text = (BASE_DIR / "version.txt").read_text(encoding="utf-8")
+        match = re.search(r"ProductVersion', '([^']+)'", text)
+        if match:
+            return "v" + match.group(1).strip().lstrip("v")
+    except Exception:
+        pass
+    return "v1.0.0"
+
+
+APP_VERSION = _read_app_version()
+
+
+def _request_update_check(owner) -> None:
+    checker = getattr(owner, "_updater", None)
+    if checker is None:
+        return
+    threading.Thread(
+        target=checker.check_now,
+        daemon=True,
+        name="brahma-update-check-now",
+    ).start()
+
 _DEFAULT_W, _DEFAULT_H = 980, 700
 _MIN_W,     _MIN_H     = 820, 580
 _LEFT_W  = 160
@@ -11081,12 +11105,14 @@ class SystemConnectivitySidebar(QFrame):
             pass
 
     def _check_updates(self):
-        if self._bridge() and hasattr(self._bridge(), "write_log"):
-            self._bridge().write_log("SYS: Update check is not connected to a remote service yet.")
+        owner = self._bridge()
+        if owner is not None and hasattr(owner, "write_log"):
+            _request_update_check(owner)
+            owner.write_log("SYS: Checking GitHub for a newer Brahma Evo build…")
 
     def refresh(self):
         if self._bridge() and hasattr(self._bridge(), "_win"):
-            version = "v1.0.0"
+            version = APP_VERSION
             platform_name = platform.system()
             provider = self._bridge()._win._load_app_settings().get("default_ai_provider", "Gemini")
             last_updated = time.strftime("%d %b %Y %H:%M")
@@ -11095,7 +11121,7 @@ class SystemConnectivitySidebar(QFrame):
             self._info_rows["Current AI Provider"].setText(provider)
             self._info_rows["Last Updated"].setText(last_updated)
         else:
-            self._info_rows["Version"].setText("v1.0.0")
+            self._info_rows["Version"].setText(APP_VERSION)
             self._info_rows["Platform"].setText(platform.system())
             self._info_rows["Current AI Provider"].setText("Gemini")
             self._info_rows["Last Updated"].setText(time.strftime("%d %b %Y %H:%M"))
@@ -12164,7 +12190,7 @@ class SystemConnectivityPage(QWidget):
         about_grid.setHorizontalSpacing(22)
         about_grid.setVerticalSpacing(8)
         entries = [
-            ("Version", "v1.0.0"),
+            ("Version", APP_VERSION),
             ("Build Number", "2026.06.29"),
             ("Release Date", "29 Jun 2026"),
         ]
@@ -13191,7 +13217,7 @@ class SystemConnectivityPage(QWidget):
         self._sys_note.setStyleSheet(f"color: {C.TEXT_MED};")
         lay.addWidget(self._sys_online)
         lay.addWidget(self._sys_note)
-        self._sys_version = QLabel("v1.0.0")
+        self._sys_version = QLabel(APP_VERSION)
         self._sys_platform = QLabel(platform.system())
         self._sys_provider = QLabel("Gemini")
         self._sys_updated = QLabel(time.strftime("%d %b %Y %H:%M"))
@@ -13558,8 +13584,10 @@ class SystemConnectivityPage(QWidget):
             pass
 
     def _check_updates(self):
-        if self._ctrl() and hasattr(self._ctrl(), "write_log"):
-            self._ctrl().write_log("SYS: Update check requested.")
+        owner = self._ctrl()
+        if owner is not None and hasattr(owner, "write_log"):
+            _request_update_check(owner)
+            owner.write_log("SYS: Checking GitHub for a newer Brahma Evo build…")
 
     def refresh(self):
         api = self._load_api_defaults()
