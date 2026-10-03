@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 from pathlib import Path
 from typing import Dict, Any, List
 
@@ -13,6 +14,7 @@ def get_base_dir() -> Path:
 
 class IdentityService:
     def __init__(self):
+        self._lock = threading.RLock()
         # Identity is mutable runtime state, so packaged installs keep it in user data.
         self.config_file = IDENTITY_PATH
         self.bundled_config_file = get_base_dir() / "config" / "identity.json"
@@ -66,9 +68,14 @@ class IdentityService:
 
     def save(self):
         try:
-            self.config_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.config_file, "w", encoding="utf-8") as f:
-                json.dump(self.data, f, indent=4)
+            with self._lock:
+                self.config_file.parent.mkdir(parents=True, exist_ok=True)
+                temp = self.config_file.with_suffix(".json.tmp")
+                temp.write_text(
+                    json.dumps(self.data, indent=4, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                temp.replace(self.config_file)
         except Exception as e:
             print(f"Error saving identity config: {e}")
 
