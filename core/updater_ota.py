@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 import subprocess
 
-GITHUB_REPO = "titechprabhasolutions/Brahma---personal"
+GITHUB_REPO = "dragonballls/Brahma-Ai-Evo"
 
 def get_current_version() -> str:
     try:
@@ -16,9 +16,13 @@ def get_current_version() -> str:
         else:
             base_dir = Path(__file__).resolve().parent.parent
             
-        version_file = base_dir / "app_version.txt"
+        version_file = base_dir / "version.txt"
         if version_file.exists():
-            return version_file.read_text(encoding='utf-8').strip()
+            import re
+            text = version_file.read_text(encoding="utf-8")
+            match = re.search(r"ProductVersion', '([^']+)'", text)
+            if match:
+                return match.group(1).strip()
     except Exception:
         pass
     return "1.0.0"
@@ -33,7 +37,7 @@ def check_for_updates() -> dict | None:
     """Checks the GitHub API for a new release. Returns release data if an update is available."""
     try:
         url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-        req = urllib.request.Request(url, headers={'User-Agent': 'BrahmaEcho-OTA'})
+        req = urllib.request.Request(url, headers={'User-Agent': 'BrahmaEvo-OTA'})
         with urllib.request.urlopen(req, timeout=10) as response:
             data = json.loads(response.read().decode('utf-8'))
             
@@ -67,7 +71,7 @@ def download_and_apply_update(url: str, ui_callback=None):
         from core.user_paths import get_user_data_dir
         update_dir = get_user_data_dir() / "updates"
         update_dir.mkdir(parents=True, exist_ok=True)
-        setup_path = update_dir / "BrahmaEcho_Setup_Update.exe"
+        setup_path = update_dir / "BrahmaEvo_Setup_Update.exe"
         
         req = urllib.request.Request(url, headers={'User-Agent': 'BrahmaEcho-OTA'})
         with urllib.request.urlopen(req, timeout=15) as response:
