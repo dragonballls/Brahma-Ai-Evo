@@ -6,10 +6,12 @@ import time
 import requests
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from core.runtime_paths import GITHUB_OWNER, GITHUB_REPOSITORY, GITHUB_BRANCH
+
 class UpdateChecker(QObject):
     update_available_sig = pyqtSignal(str)
 
-    def __init__(self, repo_owner="dragonballls", repo_name="Brahma-Ai-Evo", branch="main"):
+    def __init__(self, repo_owner=GITHUB_OWNER, repo_name=GITHUB_REPOSITORY, branch=GITHUB_BRANCH):
         super().__init__()
         self.repo_owner = repo_owner
         self.repo_name = repo_name
@@ -67,16 +69,21 @@ class UpdateChecker(QObject):
             # Poll every 6 hours and sleep in one interruptible wait.
             self._stop_event.wait(timeout=21600)
 
-def apply_update_and_restart():
+def apply_update_and_restart(base_dir=None):
+    """Apply only fast-forward updates, then restart; never discard local work."""
     print("[Updater] Applying update...")
     try:
-        # Fetch the latest changes from the origin
-        subprocess.check_call(["git", "fetch", "origin", "main"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        # Hard reset to the remote branch to ensure clean state
-        subprocess.check_call(["git", "reset", "--hard", "origin/main"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        
+        repo_dir = Path(base_dir or Path(__file__).resolve().parent.parent)
+        from updater import restart_application, update_from_github
+
+        changed = update_from_github(repo_dir)
+        if not changed:
+            print("[Updater] No safe update was applied; local changes may exist or GitHub is already current.")
+            return False
+
         print("[Updater] Update applied successfully. Restarting application...")
-        # Restart the app
-        os.execv(sys.executable, ['python'] + sys.argv)
+        restart_application(repo_dir)
+        return True
     except Exception as e:
         print(f"[Updater] Failed to apply update: {e}")
+        return False
