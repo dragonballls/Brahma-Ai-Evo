@@ -28,7 +28,7 @@ class PCHealthGuardianTests(TestCase):
         self.assertEqual(mod._parse_duration("1h 5m"), 3900)
 
     def test_leak_detection_requires_sustained_growth(self):
-        mod = importlib.import_module("features.pc_health_guardian.skill")
+        mod = _load_skill_module("pc_health_guardian_skill", "features/pc_health_guardian/skill.py")
 
         class FakeProc:
             def __init__(self, pid, name, rss):
@@ -52,7 +52,7 @@ class PCHealthGuardianTests(TestCase):
         self.assertGreater(leaks[0]["growth_mb_per_min"], 5)
 
     def test_repair_refuses_disruptive_actions_by_default(self):
-        mod = importlib.import_module("features.pc_health_guardian.skill")
+        mod = _load_skill_module("pc_health_guardian_skill", "features/pc_health_guardian/skill.py")
         with patch.object(mod, "diagnose", return_value={"findings": []}),              patch.object(mod, "detect_memory_leaks", return_value=[{
                  "pid": 123,
                  "name": "demo.exe",
@@ -95,13 +95,13 @@ class AutonomousMissionTests(TestCase):
         self.assertEqual(mod._parse_duration("24h 5m"), 86700)
 
     def test_completion_phrase(self):
-        mod = importlib.import_module("features.autonomous_mission.skill")
+        mod = _load_skill_module("autonomous_mission_skill", "features/autonomous_mission/skill.py")
         mission = {"completion_type": "phrase", "until": "tests pass"}
         self.assertTrue(mod._check_completion(mission, "Verification complete: all tests pass."))
         self.assertFalse(mod._check_completion(mission, "Tests are still failing."))
 
     def test_memory_completion(self):
-        mod = importlib.import_module("features.autonomous_mission.skill")
+        mod = _load_skill_module("autonomous_mission_skill", "features/autonomous_mission/skill.py")
         mission = {"completion_type": "memory_below", "completion_target": "70"}
         with patch.object(mod.psutil, "virtual_memory", return_value=type("VM", (), {"percent": 65})()):
             self.assertTrue(mod._check_completion(mission, "ignored"))
