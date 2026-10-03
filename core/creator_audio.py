@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import wave
-import numpy as np
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +9,7 @@ def record_microphone(destination: str, duration_seconds: float, sample_rate: in
     if duration_seconds <= 0 or duration_seconds > 7200:
         raise ValueError("Recording duration must be between 0 and 7200 seconds.")
     try:
+        import numpy as np
         import sounddevice as sd
     except ImportError as exc:
         raise RuntimeError("Microphone recording requires sounddevice.") from exc
