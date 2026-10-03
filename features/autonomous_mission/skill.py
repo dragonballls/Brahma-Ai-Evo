@@ -324,12 +324,20 @@ def start_mission(
     return f"Started autonomous mission {mission_id} for {duration or 'until completed'}. Use action=status with mission_id={mission_id} to inspect it."
 
 
+def _ensure_loaded() -> None:
+    with _LOCK:
+        if not _MISSIONS:
+            _load()
+
+
 def list_missions() -> list[dict[str, Any]]:
+    _ensure_loaded()
     with _LOCK:
         return [dict(m) for m in sorted(_MISSIONS.values(), key=lambda x: x.get("created_at", 0), reverse=True)]
 
 
 def status(mission_id: str) -> dict[str, Any]:
+    _ensure_loaded()
     with _LOCK:
         mission = _MISSIONS.get(mission_id)
         if not mission:
