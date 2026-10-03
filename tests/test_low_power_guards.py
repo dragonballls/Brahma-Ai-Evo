@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import os
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.single_instance import SingleInstance
 
 
 class LowPowerGuardTests(unittest.TestCase):
@@ -63,6 +70,43 @@ class LowPowerGuardTests(unittest.TestCase):
         self.assertIn("window.setDeepIdle = function(enabled)", html)
         self.assertIn("if (isDeepIdle)", html)
         self.assertIn("renderTimer = null;", html)
+
+    def test_single_instance_runtime_exclusion(self):
+        token = f"test-{os.getpid()}"
+        lock_path = Path(tempfile.gettempdir()) / f"brahma-singleton-{token}.lock"
+        first = SingleInstance(f"Brahma-Evo-Test-{token}", lock_path=lock_path)
+        second = SingleInstance(f"Brahma-Evo-Test-{token}", lock_path=lock_path)
+        try:
+            self.assertTrue(first.acquire())
+            self.assertFalse(second.acquire())
+        finally:
+            first.release()
+            second.release()
+
+        self.assertTrue(second.acquire())
+        second.release()
+
+    def test_single_instance_guard_is_real_and_main_enforced(self):
+        guard = self.read("core/single_instance.py")
+        main = self.read("main.py")
+        ui = self.read("ui.py")
+        self.assertIn("CreateMutexW", guard)
+        self.assertIn("ERROR_ALREADY_EXISTS = 183", guard)
+        self.assertIn("def release(self)", guard)
+        self.assertIn('SingleInstance("Local\\\\Brahma-Ai-Evo.Singleton.v1")', main)
+        self.assertIn("if not guard.acquire()", main)
+        self.assertIn("duplicate launch ignored", main)
+        self.assertIn("guard.release()", main)
+        self.assertIn("QObject", ui)
+        self.assertIn("QEvent.Type.WindowActivate", ui)
+
+    def test_voice_session_cannot_run_twice(self):
+        main = self.read("main.py")
+        self.assertIn("_VOICE_SESSION_GUARD = threading.Lock()", main)
+        self.assertIn("_VOICE_SESSION_GUARD.acquire(blocking=False)", main)
+        self.assertIn("Voice session already active; duplicate voice start ignored.", main)
+        self.assertIn("await self._run_impl()", main)
+        self.assertIn("_VOICE_SESSION_GUARD.release()", main)
 
     def test_updater_targets_this_repository(self):
         root_updater = self.read("updater.py")
