@@ -7,6 +7,8 @@ from unittest.mock import patch
 from core import creator_engine
 from core.creator_render import _segment_filters
 from core.creator_audio import record_microphone
+from core.creator_voice import generate_voiceover
+from core.creator_ingest import prepare_sources
 from actions.creator_studio import creator_control
 
 
@@ -86,6 +88,16 @@ class CreatorStudioTests(unittest.TestCase):
     def test_recording_rejects_invalid_duration_without_hardware(self):
         with self.assertRaises(ValueError):
             record_microphone("test.wav", 0)
+
+    def test_voiceover_rejects_empty_text_without_process(self):
+        with self.assertRaises(ValueError):
+            generate_voiceover("", "test.mp3")
+
+    def test_multi_source_single_input_is_non_destructive(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "source.mp4"
+            source.write_bytes(b"placeholder")
+            self.assertEqual(prepare_sources([str(source)], str(Path(temp_dir) / "joined.mp4")), str(source))
 
     def test_creator_tool_reports_capabilities_without_media(self):
         result = json.loads(creator_control({"action": "tools"}))
