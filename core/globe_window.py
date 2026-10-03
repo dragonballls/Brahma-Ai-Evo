@@ -12,7 +12,7 @@ from typing import Optional, Dict, Any, List
 # Hardware acceleration & WebGL flags for smooth 180fps+ rendering in Chromium
 os.environ.setdefault(
     "QTWEBENGINE_CHROMIUM_FLAGS",
-    "--enable-gpu-rasterization --enable-zero-copy --ignore-gpu-blocklist --enable-accelerated-2d-canvas --enable-webgl --enable-webgl2-compute-context --disable-frame-rate-limit --disable-gpu-vsync --num-raster-threads=4 --use-angle=d3d11 --disable-gpu-driver-bug-workarounds"
+    "--enable-gpu-rasterization --enable-zero-copy --enable-accelerated-2d-canvas --enable-webgl --use-angle=d3d11 --num-raster-threads=2"
 )
 
 from PyQt6.QtCore import Qt, QUrl, pyqtSlot, QObject, pyqtSignal, QTimer, QPoint, QCoreApplication
@@ -26,7 +26,7 @@ from PyQt6.QtGui import QColor, QIcon, QSurfaceFormat
 try:
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
     fmt = QSurfaceFormat.defaultFormat()
-    fmt.setSwapInterval(0)
+    fmt.setSwapInterval(1)
     QSurfaceFormat.setDefaultFormat(fmt)
     import PyQt6.QtWebEngineWidgets
 except Exception:
