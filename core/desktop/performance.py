@@ -182,6 +182,42 @@ class AdaptivePerformanceEngine:
         self.last_decision = decision
         return decision
 
+    def _restore_managed_process(self, pid: int) -> bool:
+        if psutil is None:
+            return False
+        try:
+            proc = psutil.Process(pid)
+            key = (int(proc.pid), float(proc.create_time()))
+            with self._lock:
+                original = self._original_priority.get(key)
+            if original is None:
+                return False
+            restored = WindowManager.set_priority(proc, original)
+            if restored:
+                with self._lock:
+                    self._original_priority.pop(key, None)
+            return restored
+        except Exception:
+            return False
+
+    def _restore_background_when_normal(self, decision: PerformanceDecision) -> None:
+        if decision.pressure != "normal" or decision.mode not in {"adaptive", "balanced", "efficiency"}:
+            return
+        if psutil is None:
+            return
+        with self._lock:
+            tracked = list(self._original_priority.items())
+        for (pid, created), priority in tracked:
+            try:
+                proc = psutil.Process(pid)
+                if abs(float(proc.create_time()) - created) > 0.5:
+                    continue
+                if WindowManager.is_user_process(proc) and WindowManager.set_priority(proc, priority):
+                    with self._lock:
+                        self._original_priority.pop((pid, created), None)
+            except Exception:
+                continue
+
     @staticmethod
     def _safe_background_candidates(foreground_pid: int | None) -> list[tuple[object, WindowInfo]]:
         if psutil is None:
@@ -282,7 +318,10 @@ class AdaptivePerformanceEngine:
         decision = self.decide(snap)
         if decision.prioritize_foreground or decision.mode == "game":
             self._set_foreground_priority(snap, decision)
+        elif snap.foreground_pid:
+            self._restore_managed_process(snap.foreground_pid)
         self._demote_background(snap, decision)
+        self._restore_background_when_normal(decision)
         return self.status()
 
     def restore(self) -> int:
