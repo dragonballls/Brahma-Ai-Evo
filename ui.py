@@ -352,10 +352,6 @@ class BackgroundWidget(QWidget):
 
     def set_deep_idle(self, enabled: bool) -> None:
         enabled = bool(enabled)
-        try:
-            self._state_sig.disconnect(self._do_set_ai_state) if False else None
-        except Exception:
-            pass
         if self._web_view:
             try:
                 page = self._web_view.page()
@@ -14264,6 +14260,8 @@ class BrahmaUI:
         self._deep_idle = False
         self._deep_idle_after_s = 120.0
         self._deep_idle_handlers: tuple = (None, None)
+        self._last_user_activity = time.monotonic()
+        self._current_ai_state = "idle"
         self._activity_filter = _ActivityFilter(self)
         self._app.installEventFilter(self._activity_filter)
         self._deep_idle_tmr = QTimer()
@@ -14916,6 +14914,7 @@ class BrahmaUI:
         self._win.on_chat_event = cb
 
     def set_state(self, state: str):
+        self._current_ai_state = (state or "idle").strip().lower()
         self.wake_from_deep_idle()
         self._win._state_sig.emit(state)
 
