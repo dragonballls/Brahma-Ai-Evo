@@ -51,6 +51,7 @@ class GlobeBridge(QObject):
     """Bridge for communication between WebGL JavaScript and PyQt6."""
     close_requested = pyqtSignal()
     view_updated = pyqtSignal(dict)
+    gods_eye_refresh_requested = pyqtSignal()
 
     @pyqtSlot()
     def closeGlobe(self):
@@ -63,6 +64,10 @@ class GlobeBridge(QObject):
             self.view_updated.emit(data)
         except Exception:
             pass
+
+    @pyqtSlot()
+    def requestGodsEyeRefresh(self):
+        self.gods_eye_refresh_requested.emit()
 
 
 class GlobeWindow(QWidget):
@@ -95,6 +100,7 @@ class GlobeWindow(QWidget):
         self._bridge = GlobeBridge()
         self._bridge.close_requested.connect(self.hide)
         self._bridge.view_updated.connect(self._on_view_updated)
+        self._bridge.gods_eye_refresh_requested.connect(self.refresh_gods_eye)
         self._last_view_data = {}
         self._web_view = None
         self._is_fullscreen = False
