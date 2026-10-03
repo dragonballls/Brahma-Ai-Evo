@@ -17,23 +17,18 @@ import subprocess
 import sys
 import tempfile
 from urllib.request import urlopen
+from zipfile import ZipFile
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from core.omniroute_setup import OMNIROUTE_VERSION
-from zipfile import ZipFile
+from core.runtime_contract import NODE_VERSION, OMNIROUTE_COMMIT, OMNIROUTE_VERSION
 
 
-NODE_VERSION = "24.21.0"
 NODE_ZIP_NAME = f"node-v{NODE_VERSION}-win-x64.zip"
 NODE_URL = f"https://nodejs.org/dist/v{NODE_VERSION}/{NODE_ZIP_NAME}"
 NODE_SHA256 = "158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541"
-# The runtime version is owned by core.omniroute_setup so packaging cannot drift.
-# The published version is owned by core.omniroute_setup; this commit pin verifies
-# the exact known-good 3.8.50 package lineage without duplicating the version source.
-OMNIROUTE_COMMIT = "5458026c216f77a3da68ea49152dc33470cfe2cb"
 OMNIROUTE_METADATA_URL = f"https://registry.npmjs.org/omniroute/{OMNIROUTE_VERSION}"
 CACHE_SCHEMA = "1"
 
@@ -205,9 +200,8 @@ def prepare(destination: Path) -> None:
         target = next((p for p in target_candidates if p.suffix == ".node"), None)
         if source is None:
             raise RuntimeError("Prepared OmniRoute runtime is missing a Windows better-sqlite3 native binary.")
-        if source:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
         if not _healthy(staging):
             raise RuntimeError("Prepared OmniRoute runtime failed native/version verification.")
 
