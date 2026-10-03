@@ -76,6 +76,37 @@ def render_project(manifest: dict[str, Any], destination: str) -> dict[str, Any]
     audio_ref = "[aout]" if any(s.get("codec_type") == "audio" for s in streams) else ""
     plan = manifest.get("plan") or {}
 
+    aspect = str(plan.get("aspect_ratio") or "").strip()
+    if aspect in {"9:16", "short", "vertical"}:
+        frame_w, frame_h = 720, 1280
+    elif aspect in {"1:1", "square"}:
+        frame_w, frame_h = 720, 720
+    else:
+        frame_w, frame_h = 1280, 720
+
+    effect_profile = str(plan.get("effect_profile") or "clean").lower()
+    if effect_profile == "cinematic":
+        filters.append(
+            f"{video_ref}eq=contrast=1.03:saturation=1.08:brightness=-0.01[graded]"
+        )
+        video_ref = "[graded]"
+    elif effect_profile == "vibrant":
+        filters.append(
+            f"{video_ref}eq=contrast=1.05:saturation=1.20:brightness=0.01[graded]"
+        )
+        video_ref = "[graded]"
+
+    filters.append(
+        f"{video_ref}scale={frame_w}:{frame_h}:force_original_aspect_ratio=increase,"
+        f"crop={frame_w}:{frame_h}:(iw-{frame_w})/2:(ih-{frame_h})/2[framed]"
+    )
+    video_ref = "[framed]"
+
+    fade_in = max(0.0, min(10.0, float(plan.get("fade_in_seconds", 0) or 0)))
+    if fade_in:
+        filters.append(f"{video_ref}fade=t=in:st=0:d={fade_in}[fadein]")
+        video_ref = "[fadein]"
+
     music_path = manifest.get("music_path")
     command = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(source)]
 
@@ -101,8 +132,30 @@ def render_project(manifest: dict[str, Any], destination: str) -> dict[str, Any]
     if music and music.is_file() and audio_ref:
         command += ["-stream_loop", "-1", "-i", str(music)]
         volume = max(0.0, min(0.5, float(plan.get("music_volume", 0.12) or 0.12)))
-        filters.append(f"[1:a]volume={volume}[music];{audio_ref}[music]amix=inputs=2:duration=first:dropout_transition=2[mixed]")
+        if bool(plan.get("music_ducking", True)):
+            filters.append(
+                f"[1:a]volume={volume}[music];"
+                f"[music]{audio_ref}sidechaincompress=threshold=0.03:ratio=8:attack=20:release=250[ducked];"
+                f"{audio_ref}[ducked]amix=inputs=2:duration=first:dropout_transition=2[mixed]"
+            )
+        else:
+            filters.append(
+                f"[1:a]volume={volume}[music];"
+                f"{audio_ref}[music]amix=inputs=2:duration=first:dropout_transition=2[mixed]"
+            )
         audio_ref = "[mixed]"
+
+    fade_out = max(0.0, min(10.0, float(plan.get("fade_out_seconds", 0) or 0)))
+    if fade_out:
+        probe_duration = float((info.get("format") or {}).get("duration") or 0)
+        segments_for_duration = segments or [{"start": 0, "end": probe_duration, "speed": 1}]
+        rendered_duration = sum(
+            max(0.0, float(s["end"]) - float(s["start"])) / max(0.25, float(s.get("speed", 1) or 1))
+            for s in segments_for_duration
+        )
+        start = max(0.0, rendered_duration - fade_out)
+        filters.append(f"{video_ref}fade=t=out:st={start}:d={fade_out}[fadeout]")
+        video_ref = "[fadeout]"
 
     if filters:
         command += ["-filter_complex", ";".join(filters)]
