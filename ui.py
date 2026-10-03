@@ -37,7 +37,9 @@ import time
 from collections import deque
 from pathlib import Path
 
-import psutil
+from core.lazy_import import lazy_attr, lazy_module
+
+psutil = lazy_module("psutil")
 if platform.system() == "Windows":
     import winreg
 
@@ -68,14 +70,17 @@ except Exception:
 QWebEngineView = None
 WEB_ENGINE_AVAILABLE = True
 
-from discord_bot import DiscordBotService
-from gesture_utils import estimate_gesture_state, GestureTracker
-from smart_home import SmartHomeService
-from smart_home_page_new import BrahmaHomePage, _DeviceTile
-from core.local_brain import local_brain
-from workspace_store import store as workspace_store
-from core.identity import identity
-from sound_manager import sound_mgr
+# Heavy/optional services stay unloaded until the corresponding UI feature is used.
+DiscordBotService = lazy_attr("discord_bot", "DiscordBotService")
+estimate_gesture_state = lazy_attr("gesture_utils", "estimate_gesture_state")
+GestureTracker = lazy_attr("gesture_utils", "GestureTracker")
+SmartHomeService = lazy_attr("smart_home", "SmartHomeService")
+BrahmaHomePage = lazy_attr("smart_home_page_new", "BrahmaHomePage")
+_DeviceTile = lazy_attr("smart_home_page_new", "_DeviceTile")
+local_brain = lazy_attr("core.local_brain", "local_brain")
+workspace_store = lazy_attr("workspace_store", "store")
+identity = lazy_attr("core.identity", "identity")
+sound_mgr = lazy_attr("sound_manager", "sound_mgr")
 
 def _base_dir() -> Path:
     if getattr(sys, "frozen", False):
