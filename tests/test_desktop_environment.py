@@ -208,3 +208,23 @@ class LaunchDiscoveryTests(TestCase):
         with patch.object(module.WindowManager, "enumerate_windows", return_value=[hidden]):
             result = host.find_after_launch("minecraft", baseline_pids=set(), timeout=0.5)
         self.assertIsNone(result)
+
+
+class WindowGeometryTests(TestCase):
+    def test_move_preserves_existing_size(self):
+        module = __import__("core.desktop.app_host", fromlist=["ApplicationHost"])
+        host = module.ApplicationHost()
+        window = SimpleNamespace(hwnd=42, pid=8, title="Example", exe="example.exe")
+        with patch.object(host, "_find", return_value=window),              patch.object(module.WindowManager, "get_rect", return_value=(10, 20, 810, 620)),              patch.object(module.WindowManager, "set_position", return_value=True) as setter:
+            result = host.control("move", "Example", x=100, y=200)
+        self.assertTrue(result["ok"])
+        setter.assert_called_once_with(42, 100, 200, 800, 600)
+
+    def test_resize_preserves_existing_position(self):
+        module = __import__("core.desktop.app_host", fromlist=["ApplicationHost"])
+        host = module.ApplicationHost()
+        window = SimpleNamespace(hwnd=42, pid=8, title="Example", exe="example.exe")
+        with patch.object(host, "_find", return_value=window),              patch.object(module.WindowManager, "get_rect", return_value=(10, 20, 810, 620)),              patch.object(module.WindowManager, "set_position", return_value=True) as setter:
+            result = host.control("resize", "Example", width=1200, height=700)
+        self.assertTrue(result["ok"])
+        setter.assert_called_once_with(42, 10, 20, 1200, 700)
