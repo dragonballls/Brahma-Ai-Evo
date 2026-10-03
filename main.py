@@ -25,7 +25,6 @@ from core.hotkey import PushToTalk
 from memory import config_manager
 from memory.memory_manager import search_memory
 
-import core.boot_sentry
 from core.sensorium import sensorium
 from core.protocols import protocols
 from core.local_brain import local_brain
@@ -6456,6 +6455,12 @@ class BrahmaLive:
 def _main_impl():
     global _SINGLE_INSTANCE_GUARD
     _startup_log("main entered")
+    try:
+        from core.boot_sentry import check_and_recover_on_boot
+        if check_and_recover_on_boot():
+            _startup_log("BootSentry recovered the previous patched state before startup.")
+    except Exception as exc:
+        _startup_log(f"BootSentry recovery check skipped: {exc}")
     try:
         # Respect the persisted startup-update preference. Default remains enabled,
         # preserving the existing auto-update behavior for normal installations.
