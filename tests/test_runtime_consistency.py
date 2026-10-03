@@ -125,6 +125,25 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("gateway().base_url", source)
         self.assertIn("gateway().ensure_ready(force=True)", source)
 
+    def test_email_daemon_has_interruptible_shutdown(self):
+        source = self.read("actions/google_workspace_mcp.py")
+        self.assertIn("_email_daemon_stop_event = threading.Event()", source)
+        self.assertIn("_email_daemon_stop_event.wait", source)
+        self.assertIn("_email_daemon_stop_event.set()", source)
+
+    def test_instagram_daemon_has_interruptible_shutdown(self):
+        source = self.read("actions/instagram_mcp.py")
+        self.assertIn("self._stop_event = threading.Event()", source)
+        self.assertIn("self._stop_event.wait(timeout=POLL_INTERVAL)", source)
+        self.assertIn("self._stop_event.set()", source)
+
+    def test_hidden_device_polling_stops_when_hidden(self):
+        source = self.read("ui.py")
+        self.assertIn("self._poll_tmr.start(2500)", source)
+        self.assertIn("self._poll_tmr.stop()", source)
+        self.assertIn("self._reconnect_timer.start()", source)
+        self.assertIn("self._reconnect_timer.stop()", source)
+
     def test_requirements_do_not_duplicate_package_names(self):
         names = []
         for line in self.read("requirements.txt").splitlines():
