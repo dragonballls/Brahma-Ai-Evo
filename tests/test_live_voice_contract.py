@@ -67,6 +67,14 @@ class LiveVoiceContractTests(unittest.TestCase):
     def test_hands_free_is_the_default_mode(self):
         self.assertFalse(config_manager.get_setting("push_to_talk_enabled", False))
 
+    def test_emotion_linked_prosody_is_wired_into_live_and_fallback_speech(self):
+        self.assertIn("from core.prosody import profile_for_text, profile_prompt_block", self.main_text)
+        self.assertIn("profile.prompt_directive()", self.main_text)
+        self.assertIn("rate=profile.edge_rate", self.main_text)
+        self.assertIn("pitch=profile.edge_pitch", self.main_text)
+        self.assertIn("sapi_rate=profile.sapi_rate", self.main_text)
+        self.assertIn("Vary cadence naturally within the utterance", self.main_text)
+
     def test_gate_and_generation_primitives_are_functional(self):
         gate = BargeInGate(required_blocks=2, minimum_level=10)
         self.assertFalse(gate.observe(is_user_speech=True, level=20))
