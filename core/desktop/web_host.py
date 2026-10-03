@@ -136,7 +136,7 @@ if _QT_AVAILABLE:
     def __init__(self):
         self._windows: list[WebApplicationWindow] = []
 
-    def open(self, url: str) -> dict:
+    def open(self, url: str, *, accent: str = "#00e5ff") -> dict:
         if not _QT_AVAILABLE:
             return {"ok": False, "type": "web", "embedded": False, "error": "Qt WebEngine is unavailable."}
         value = str(url or "").strip()
@@ -159,7 +159,7 @@ if _QT_AVAILABLE:
             except RuntimeError:
                 continue
 
-        window = WebApplicationWindow(target, on_closed=self._on_closed)
+        window = WebApplicationWindow(target, on_closed=self._on_closed, accent=accent)
         self._windows = [w for w in self._windows if w is not None]
         self._windows.append(window)
 
