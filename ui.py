@@ -14358,7 +14358,7 @@ class _DeviceSubWindow(QMdiSubWindow):
         super().__init__(parent)
         self.device_id = str(device_id)
         self._on_background = on_background
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
 
     def closeEvent(self, event):
         if self._on_background:
@@ -14366,7 +14366,8 @@ class _DeviceSubWindow(QMdiSubWindow):
                 self._on_background(self.device_id)
             except Exception:
                 pass
-        event.accept()
+        self.hide()
+        event.ignore()
 
 
 class _DevicePanel(QWidget):
@@ -14713,20 +14714,41 @@ class DeviceNetworkWorkspace(QFrame):
         self.hide()
 
     def show_workspace(self):
-        self.refresh(scan=True)
         self.setGeometry(self._main_window.rect().adjusted(8, 8, -8, -8))
         self.show()
         self.raise_()
         self.activateWindow()
+        self.refresh(scan=False)
+        threading.Thread(
+            target=self._scan_worker,
+            daemon=True,
+            name="brahma-device-scan",
+        ).start()
+
+    def _scan_worker(self):
+        try:
+            self._manager.scan()
+        except Exception:
+            pass
+        QTimer.singleShot(0, lambda: self.refresh(scan=False) if self.isVisible() else None)
 
     def hide_workspace(self):
         self.hide()
 
     def refresh(self, *, scan: bool = False):
-        try:
-            devices = self._manager.scan() if scan else self._manager.list_devices()
-        except Exception:
+        if scan:
+            self._summary.setText("Scanning supported device adapters…")
+            threading.Thread(
+                target=self._scan_worker,
+                daemon=True,
+                name="brahma-device-scan-explicit",
+            ).start()
             devices = self._manager.list_devices()
+        else:
+            try:
+                devices = self._manager.list_devices()
+            except Exception:
+                devices = []
         counts = {
             "connected": sum(1 for x in devices if x.get("status") == "Connected"),
             "standby": sum(1 for x in devices if x.get("status") == "Standby"),
@@ -14786,11 +14808,27 @@ class DeviceNetworkWorkspace(QFrame):
 
         backend = str(spec.get("backend") or "")
         if backend == "scrcpy":
-            connected = self._manager.connect(device_id)
-            if not connected.get("ok"):
-                panel.attach_message(str(connected.get("error") or "Device is not connected."))
-                return connected
-            panel.start_scrcpy(str(spec.get("serial") or device.serial), str(spec.get("window_title") or f"Brahma • {device.name}"))
+            serial = str(spec.get("serial") or device.serial)
+            window_title = str(spec.get("window_title") or f"Brahma • {device.name}")
+            panel.attach_message("Connecting to Android…")
+
+            def _connect_and_launch():
+                try:
+                    connected = self._manager.connect(device_id)
+                except Exception as exc:
+                    connected = {"ok": False, "error": str(exc)}
+                def _finish():
+                    if not connected.get("ok"):
+                        panel.attach_message(str(connected.get("error") or "Device is not connected."))
+                        return
+                    panel.start_scrcpy(serial, window_title)
+                QTimer.singleShot(0, _finish)
+
+            threading.Thread(
+                target=_connect_and_launch,
+                daemon=True,
+                name=f"brahma-device-connect-{device_id}",
+            ).start()
         elif backend == "web":
             self._load_web_surface(panel, str(spec.get("url") or ""))
         else:
@@ -14817,7 +14855,7 @@ class DeviceNetworkWorkspace(QFrame):
 
     def background_device(self, device_id: str):
         try:
-            self._manager.background(device_id)
+            self._manager.set_mode(device_id, "background")
         except Exception:
             pass
         item = self._panels.get(str(device_id))
@@ -14847,12 +14885,25 @@ class DeviceNetworkWorkspace(QFrame):
         return result
 
     def command_device(self, device_id: str, command: str):
-        try:
-            result = self._manager.command(device_id, command, {})
-        except Exception as exc:
-            result = {"ok": False, "error": str(exc)}
-        self.refresh(scan=False)
+        result = {"ok": True, "queued": True, "command": command}
+        def _run():
+            try:
+                outcome = self._manager.command(device_id, command, {})
+            except Exception as exc:
+                outcome = {"ok": False, "error": str(exc)}
+            QTimer.singleShot(0, lambda: self._after_device_command(device_id, outcome))
+        threading.Thread(
+            target=_run,
+            daemon=True,
+            name=f"brahma-device-command-{device_id}",
+        ).start()
         return result
+
+    def _after_device_command(self, device_id: str, result: dict[str, Any]):
+        self.refresh(scan=False)
+        self._main_window._log_sig.emit(
+            f"SYS: Device command {'completed' if result.get('ok') else 'failed'} • {device_id}"
+        )
 
     def place_device(self, device_id: str, *, x=None, y=None, width=None, height=None):
         item = self._panels.get(str(device_id))
@@ -14876,6 +14927,7 @@ class DeviceNetworkWorkspace(QFrame):
         if not item:
             return
         try:
+            item[0].setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
             item[0].close()
         except Exception:
             pass
