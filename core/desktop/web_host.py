@@ -11,7 +11,7 @@ def normalize_web_url(url: str) -> str:
 
 
 try:
-    from PyQt6.QtCore import QUrl, Qt
+    from PyQt6.QtCore import QTimer, QUrl, Qt
     from PyQt6.QtGui import QFont
     from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget, QApplication
     from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -37,6 +37,7 @@ if _QT_AVAILABLE:
             self._on_closed = on_closed
             self._url = normalize_web_url(url)
             self._accent = str(accent or "#00e5ff")
+            self._last_active_at = __import__("time").monotonic()
 
             self.setWindowFlags(
                 Qt.WindowType.FramelessWindowHint
@@ -183,14 +184,17 @@ if _QT_AVAILABLE:
             except Exception:
                 return False
 
-        def _sync_lifecycle(self) -> None:
+        def _sync_lifecycle(self, *, allow_discard: bool = False) -> None:
             # Qt requires visible pages to remain Active. Hidden/minimized pages
-            # can be Frozen to suspend most DOM/JS task sources.
+            # can be Frozen, and long-idle hidden pages can be Discarded.
             try:
+                import time
                 if self.isVisible() and not self.isMinimized():
+                    self._last_active_at = time.monotonic()
                     self._set_lifecycle("Active")
-                else:
-                    self._set_lifecycle("Frozen")
+                    return
+                idle_for = time.monotonic() - self._last_active_at
+                self._set_lifecycle("Discarded" if allow_discard and idle_for >= 300.0 else "Frozen")
             except Exception:
                 pass
 
@@ -205,6 +209,8 @@ if _QT_AVAILABLE:
                 return False
 
         def showEvent(self, event):
+            import time
+            self._last_active_at = time.monotonic()
             super().showEvent(event)
             QTimer.singleShot(0, self._sync_lifecycle)
 
@@ -247,6 +253,12 @@ class WebApplicationHost:
 
     def __init__(self):
         self._windows: list[WebApplicationWindow] = []
+        self._policy_timer = None
+        if _QT_AVAILABLE:
+            self._policy_timer = QTimer()
+            self._policy_timer.setInterval(10000)
+            self._policy_timer.timeout.connect(self.apply_lifecycle_policy)
+            self._policy_timer.start()
 
     def open(self, url: str, *, accent: str = "#00e5ff") -> dict:
         if not _QT_AVAILABLE:
@@ -305,6 +317,19 @@ class WebApplicationHost:
         window.raise_()
         window.activateWindow()
         return {"ok": True, "type": "web", "embedded": True, "url": target}
+
+    def apply_lifecycle_policy(self) -> int:
+        changed = 0
+        for window in list(self._windows):
+            try:
+                before = window._web.page().lifecycleState()
+                window._sync_lifecycle(allow_discard=True)
+                after = window._web.page().lifecycleState()
+                if before != after:
+                    changed += 1
+            except Exception:
+                continue
+        return changed
 
     def set_low_power(self, enabled: bool, *, discard: bool = False) -> int:
         changed = 0
