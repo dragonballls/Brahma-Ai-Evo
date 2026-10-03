@@ -71,3 +71,8 @@ gradle-8.7-bin.zip
 setup_android_sdk.ps1
 build_apk.ps1
 process_logo.py
+
+config/app_settings.json
+config/discord_bot.json
+config/.desktop_shortcut_created
+config/create_desktop_shortcut.ps1
