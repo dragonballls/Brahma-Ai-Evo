@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from core.user_paths import get_user_data_dir
-from core.runtime_paths import OMNIROUTE_DEFAULT_BASE_URL
+from core.runtime_paths import API_CONFIG_PATH, OMNIROUTE_DEFAULT_BASE_URL
 from .omniroute_setup import OmniRouteProvisioner, default_data_dir
 
 
@@ -84,7 +84,7 @@ class OmniRouteGateway:
             return
         try:
             result = self.provisioner.sync_existing_provider_keys(
-                get_user_data_dir() / "config" / "api_keys.json"
+                API_CONFIG_PATH
             )
             self._credentials_synced = not bool(result.get("skipped"))
         except Exception:
