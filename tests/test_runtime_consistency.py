@@ -455,6 +455,28 @@ class RuntimeConsistencyTests(unittest.TestCase):
             block = source[start: next_def if next_def >= 0 else len(source)]
             self.assertIn("_set_value(", block, method)
 
+    def test_omniroute_has_application_owned_shutdown_cleanup(self):
+        setup = self.read("core/omniroute_setup.py")
+        gateway = self.read("core/omniroute.py")
+        self.assertIn("def stop(self)", setup)
+        self.assertIn("def stop(self)", gateway)
+        self.assertIn("self.provisioner.stop()", gateway)
+        self.assertIn("atexit.register(_gateway.stop)", gateway)
+
+    def test_launcher_does_not_bypass_canonical_runtime(self):
+        source = self.read("start_brahma.vbs")
+        self.assertIn("bootstrap = root &", source)
+        self.assertIn("ElseIf fso.FileExists(bootstrap) Then", source)
+        self.assertNotIn('shell.Run "python.exe ', source)
+        launch_block = source.split("If fso.FileExists(venvPython)", 1)[1].split("ElseIf", 1)[0]
+        self.assertIn("venvPython", launch_block)
+
+    def test_documentation_matches_supported_python_runtime(self):
+        source = self.read("README.md")
+        self.assertIn("Python-3.12-blue", source)
+        self.assertIn("- **Python 3.12**", source)
+        self.assertNotIn("Python 3.11", source)
+
     def test_requirements_do_not_duplicate_package_names(self):
         names = []
         for line in self.read("requirements.txt").splitlines():
