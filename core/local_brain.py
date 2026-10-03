@@ -11,6 +11,7 @@ import threading
 from typing import Dict, Any, List, Optional, Generator
 
 DEFAULT_ENDPOINT = "http://localhost:11434/v1"
+DEFAULT_MODEL = "qwen2.5:3b"
 OLLAMA_BASE = "http://localhost:11434"
 
 CORE_LOCAL_TOOL_NAMES = {
@@ -41,7 +42,7 @@ def convert_schema_to_lowercase(schema: Any) -> Any:
 
 
 class LocalBrain:
-    def __init__(self, endpoint: str = DEFAULT_ENDPOINT, default_model: str = "qwen2.5:3b"):
+    def __init__(self, endpoint: str = DEFAULT_ENDPOINT, default_model: str = DEFAULT_MODEL):
         self.endpoint = endpoint.rstrip("/")
         self.default_model = default_model
         self.enabled = False
