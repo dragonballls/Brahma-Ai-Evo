@@ -508,6 +508,7 @@ class DashboardServer:
         self._clients: set[WebSocket]     = set()
         self._history: list[dict]         = []
         self._command_queue               = asyncio.Queue()
+        self._server                      = None
         self._wake_callback               = None
         self._connect_callback            = None
         self._pending_keys: dict[str, float] = {}
@@ -912,4 +913,15 @@ class DashboardServer:
 
         print(f"[Dashboard] http://{self._ip}:{PORT}")
         print("[Dashboard] Press 'Mobile Connect' in Brahma UI to get the QR code.")
-        await uvicorn.Server(cfg).serve()
+        server = uvicorn.Server(cfg)
+        self._server = server
+        try:
+            await server.serve()
+        finally:
+            self._server = None
+
+    def stop(self) -> None:
+        """Request a graceful shutdown of the local dashboard server."""
+        server = self._server
+        if server is not None:
+            server.should_exit = True
