@@ -29,6 +29,9 @@ class LiveVoiceContractTests(unittest.TestCase):
         self.assertEqual(found, 640)
         # 640 samples = 40 ms at 16 kHz input, and 26.7 ms at 24 kHz output.
 
+    def test_live_affective_dialog_is_enabled(self):
+        self.assertIn("enable_affective_dialog=True", self.main_text)
+
     def test_server_vad_and_start_of_activity_interrupts_are_configured(self):
         self.assertIn("realtime_input_config={", self.main_text)
         self.assertIn('"automatic_activity_detection"', self.main_text)
