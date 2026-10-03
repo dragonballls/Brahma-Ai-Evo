@@ -128,6 +128,15 @@ class VoiceToolExecutionGate:
             if not self._turn_text_parts:
                 self._turn_id += 1
                 self._used_this_turn.clear()
+            # Live transcription can send partial/cumulative fragments. Do not
+            # turn "open chrome" + "open chrome now" into one duplicated command.
+            if self._turn_text_parts:
+                last = self._turn_text_parts[-1]
+                if normalized == last:
+                    return
+                if normalized.startswith(last + " ") or last.startswith(normalized + " "):
+                    self._turn_text_parts[-1] = max((last, normalized), key=len)
+                    return
             self._turn_text_parts.append(normalized)
 
     def allow(self, tool_name: str, args: dict[str, Any] | None = None) -> tuple[bool, str]:
