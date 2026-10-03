@@ -4,7 +4,7 @@ import os
 # Hardware acceleration & WebGL flags for smooth 180fps+ rendering in Chromium
 os.environ.setdefault(
     "QTWEBENGINE_CHROMIUM_FLAGS",
-    "--enable-gpu-rasterization --enable-zero-copy --ignore-gpu-blocklist --enable-accelerated-2d-canvas --enable-webgl --enable-webgl2-compute-context --disable-frame-rate-limit --disable-gpu-vsync --num-raster-threads=4 --use-angle=d3d11 --disable-gpu-driver-bug-workarounds"
+    "--enable-gpu-rasterization --enable-zero-copy --enable-accelerated-2d-canvas --enable-webgl --use-angle=d3d11 --num-raster-threads=2"
 )
 
 try:
@@ -2047,7 +2047,7 @@ class BrahmaLive:
         self._pending_reply_event: dict | None = None
         self._reply_mode = False
         self._attention_lock = threading.Lock()
-        self._attention_monitor = AttentionMonitor(on_event=self._on_external_notification)
+        self._attention_monitor = AttentionMonitor(on_event=self._on_external_notification, interval=5.0)
         try:
             set_speech_sink(self.speak)
         except Exception:
@@ -5391,27 +5391,34 @@ def main():
         except Exception as e:
             print(f"[Brahma Evo] Email daemon initialization notice: {e}")
 
-        def _clipboard_monitor():
-            try:
-                last_clip = pyperclip.paste()
-            except Exception:
-                last_clip = ""
-                
-            while True:
-                time.sleep(1.0)
+        # Clipboard auto-commenting is opt-in. The lightweight ClipboardSentry
+        # remains available without sending copied text to an LLM by default.
+        if config_manager.get_setting("clipboard_auto_comment_enabled", False):
+            def _clipboard_monitor():
                 try:
-                    curr_clip = pyperclip.paste()
-                    if curr_clip != last_clip:
-                        last_clip = curr_clip
-                        text = (curr_clip or "").strip()
-                        if text and len(text) > 3:
-                            reply = _clipboard_gemini_reply(text[:1000])
-                            ui.write_log(f"Brahma Evo (Clipboard): {reply}")
-                            brahma_evo.speak(reply)
+                    last_clip = pyperclip.paste()
                 except Exception:
-                    pass
+                    last_clip = ""
 
-        threading.Thread(target=_clipboard_monitor, daemon=True, name="clipboard-monitor").start()
+                while True:
+                    time.sleep(2.5)
+                    try:
+                        curr_clip = pyperclip.paste()
+                        if curr_clip != last_clip:
+                            last_clip = curr_clip
+                            text = (curr_clip or "").strip()
+                            if len(text) >= 15:
+                                reply = _clipboard_gemini_reply(text[:1000])
+                                ui.write_log(f"Brahma Evo (Clipboard): {reply}")
+                                brahma_evo.speak(reply)
+                    except Exception:
+                        pass
+
+            threading.Thread(
+                target=_clipboard_monitor,
+                daemon=True,
+                name="clipboard-ai-comment",
+            ).start()
 
         try:
             asyncio.run(brahma_evo.run())
