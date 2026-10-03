@@ -11160,6 +11160,8 @@ class OmniRouteEmbeddedPage(QWidget):
         self._started = False
         self._web = None
         self._retry_timer = None
+        self._gateway_retry_lock = threading.Lock()
+        self._gateway_retry_inflight = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 18, 24, 18)
@@ -11282,8 +11284,38 @@ class OmniRouteEmbeddedPage(QWidget):
 
         self._retry_timer = QTimer(self)
         self._retry_timer.setInterval(1500)
-        self._retry_timer.timeout.connect(self._reload)
+        self._retry_timer.timeout.connect(self._retry_gateway_and_reload)
         QTimer.singleShot(300, self._reload)
+
+    def _retry_gateway_and_reload(self):
+        """Retry gateway startup without blocking the Qt GUI thread."""
+        self._reload()
+        with self._gateway_retry_lock:
+            if self._gateway_retry_inflight:
+                return
+            self._gateway_retry_inflight = True
+
+        def worker():
+            try:
+                from core.omniroute import gateway
+                gateway().ensure_ready()
+            except Exception as exc:
+                try:
+                    import logging
+                    logging.getLogger("BrahmaUI").debug(
+                        "OmniRoute retry failed: %s", exc
+                    )
+                except Exception:
+                    pass
+            finally:
+                with self._gateway_retry_lock:
+                    self._gateway_retry_inflight = False
+
+        threading.Thread(
+            target=worker,
+            daemon=True,
+            name="brahma-omniroute-dashboard-retry",
+        ).start()
 
     def _load_finished(self, ok: bool):
         if ok:
