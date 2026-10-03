@@ -5332,34 +5332,43 @@ class BrahmaLive:
 
                 if action == "show" and isinstance(result, dict) and result.get("ok"):
                     ui_args = {
-                        key: args.get(key)
-                        for key in ("x", "y", "width", "height")
-                        if args.get(key) is not None
+                        "device_id": device_id,
+                        **{
+                            key: args.get(key)
+                            for key in ("x", "y", "width", "height")
+                            if args.get(key) is not None
+                        },
                     }
-                    QTimer.singleShot(
-                        0,
-                        lambda did=device_id, kw=ui_args: self.ui._win.show_device_network_panel(did, **kw)
-                        if hasattr(self.ui, "_win") else None,
-                    )
-                    result = dict(result)
-                    result["ui"] = "holographic_device_panel_requested"
+                    try:
+                        self.ui._win.request_device_ui("show", ui_args)
+                        result = dict(result)
+                        result["ui"] = "holographic_device_panel_requested"
+                    except Exception:
+                        pass
                 elif action == "background":
-                    QTimer.singleShot(
-                        0,
-                        lambda did=device_id: self.ui._win.background_device_network_panel(did)
-                        if hasattr(self.ui, "_win") else None,
-                    )
+                    try:
+                        self.ui._win.request_device_ui("background", {"device_id": device_id})
+                    except Exception:
+                        pass
+                elif action in {"scan", "connect", "wake", "rename", "forget", "command"}:
+                    try:
+                        self.ui._win.request_device_ui("refresh", {})
+                    except Exception:
+                        pass
                 elif action == "place":
                     ui_args = {
-                        key: args.get(key)
-                        for key in ("x", "y", "width", "height")
-                        if args.get(key) is not None
+                        "device_id": device_id,
+                        **{
+                            key: args.get(key)
+                            for key in ("x", "y", "width", "height")
+                            if args.get(key) is not None
+                        },
                     }
-                    result = await loop.run_in_executor(
-                        None,
-                        lambda: self.ui._win.place_device_network_panel(device_id, **ui_args)
-                        if hasattr(self.ui, "_win") else {"ok": False, "error": "UI unavailable."},
-                    )
+                    try:
+                        self.ui._win.request_device_ui("place", ui_args)
+                        result = {"ok": True, "queued": True, "device_id": device_id, "geometry": ui_args}
+                    except Exception:
+                        result = {"ok": False, "error": "UI unavailable."}
                 result = json.dumps(result, ensure_ascii=False)
 
             elif name in ("system_diagnostics", "diagnostics", "os_hardware", "hardware_control", "ram_hogs", "kill_process", "brightness_control"):
