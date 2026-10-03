@@ -2462,6 +2462,35 @@ class BrahmaLive:
             pass
         return scope
 
+    def _enqueue_live_input(self, payload: dict) -> None:
+        """Queue microphone frames without allowing backend stalls to grow RAM."""
+        try:
+            self.out_queue.put_nowait(payload)
+        except asyncio.QueueFull:
+            try:
+                self.out_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            try:
+                self.out_queue.put_nowait(payload)
+            except asyncio.QueueFull:
+                pass
+
+    def _enqueue_playback(self, generation: int, chunk: bytes) -> None:
+        """Keep playback latency bounded by discarding the oldest stale frame."""
+        item = (generation, chunk)
+        try:
+            self.audio_in_queue.put_nowait(item)
+        except asyncio.QueueFull:
+            try:
+                self.audio_in_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            try:
+                self.audio_in_queue.put_nowait(item)
+            except asyncio.QueueFull:
+                pass
+
     def _on_ptt(self, held: bool) -> None:
         self._ptt_held = held
 
@@ -5896,7 +5925,7 @@ class BrahmaLive:
                     # the same speech to the separate Gemini Live session.
                     data = np.zeros_like(indata).tobytes()
                     loop.call_soon_threadsafe(
-                        self.out_queue.put_nowait,
+                        self._enqueue_live_input,
                         {"data": data, "mime_type": "audio/pcm"}
                     )
                     return
@@ -6010,8 +6039,8 @@ class BrahmaLive:
                         # but streamed audio chunks contain almost no PCM data.
                         if chunk_size > 8:
                             self.set_speaking(True)
-                            self.audio_in_queue.put_nowait(
-                                (self._playback_generation.current(), response.data)
+                            self._enqueue_playback(
+                                self._playback_generation.current(), response.data
                             )
                         if output_transcript_seen and tiny_audio_chunks >= 20 and turn_audio_bytes < 256:
                             self._voice_audio_degraded = True
@@ -6267,8 +6296,10 @@ class BrahmaLive:
                     async with asyncio.TaskGroup() as tg:
                         self.session        = session
                         self._loop          = asyncio.get_event_loop()
-                        self.audio_in_queue = asyncio.Queue()
-                        self.out_queue      = asyncio.Queue()  # Fix: removed maxsize=10 to prevent dropping packets
+                        # Keep voice queues bounded. A stalled backend must degrade by
+                        # dropping stale audio, never by growing process RAM without limit.
+                        self.audio_in_queue = asyncio.Queue(maxsize=48)
+                        self.out_queue      = asyncio.Queue(maxsize=48)
                         
                         self._live_model_failure_streak = 0
                         self._voice_audio_degraded = False
