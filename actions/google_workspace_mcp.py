@@ -441,6 +441,7 @@ def google_workspace(
 # ── Background Email Polling Daemon ──────────────────────────────────────────
 
 _email_daemon_running = False
+_email_daemon_stop_event = threading.Event()
 _email_daemon_thread: Optional[threading.Thread] = None
 _email_prompt_callback: Optional[Callable[[str, str, str], None]] = None
 _email_last_seen_ids: set[str] = set()
@@ -530,16 +531,15 @@ def _email_daemon_loop(poll_interval: int = 25):
         except Exception as e:
             logger.debug(f"[EmailDaemon] Loop error: {e}")
 
-        for _ in range(poll_interval):
-            if not _email_daemon_running:
-                break
-            time.sleep(1)
+        if _email_daemon_stop_event.wait(timeout=max(1, int(poll_interval))):
+            break
 
 
 def start_email_daemon(poll_interval: int = 25):
     global _email_daemon_running, _email_daemon_thread
     if _email_daemon_running:
         return
+    _email_daemon_stop_event.clear()
     _email_daemon_running = True
     _email_daemon_thread = threading.Thread(target=_email_daemon_loop, args=(poll_interval,), daemon=True)
     _email_daemon_thread.start()
@@ -549,4 +549,5 @@ def start_email_daemon(poll_interval: int = 25):
 def stop_email_daemon():
     global _email_daemon_running
     _email_daemon_running = False
+    _email_daemon_stop_event.set()
     logger.info("[EmailDaemon] Background email daemon stopped.")
