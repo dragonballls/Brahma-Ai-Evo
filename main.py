@@ -2146,7 +2146,7 @@ class BrahmaLive:
 
         while True:
             time.sleep(60.0)
-            if not engine:
+            if getattr(self.ui, "_deep_idle", False) or not engine:
                 continue
             
             try:
