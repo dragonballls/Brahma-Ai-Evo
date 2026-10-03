@@ -7,7 +7,9 @@ import threading
 from pathlib import Path
 import subprocess
 
-GITHUB_REPO = "dragonballls/Brahma-Ai-Evo"
+from core.runtime_paths import GITHUB_OWNER, GITHUB_REPOSITORY
+
+GITHUB_REPO = f"{GITHUB_OWNER}/{GITHUB_REPOSITORY}"
 
 def get_current_version() -> str:
     try:
