@@ -218,6 +218,22 @@ def create_creator_project(args: dict[str, Any]) -> dict[str, Any]:
     data = metadata(goal, analysis, plan, platform)
     script_data = script(goal, analysis, str(args.get("script_length") or "medium"))
     rights = rights_review(analysis, args.get("music_path"))
+    captions_path = None
+    cues = analysis.get("transcript_cues") or []
+    if cues:
+        from core.creator_assets import write_srt
+        captions_path = write_srt(cues, directory / "captions.srt")
+    thumbnail_path = None
+    try:
+        from core.creator_assets import extract_thumbnail
+        thumbnail_path = extract_thumbnail(
+            str(source),
+            str(directory / "thumbnail.jpg"),
+            float(plan.get("thumbnail_timestamp") or 0),
+            str(plan.get("thumbnail_text") or data.get("thumbnail_text") or data.get("title") or ""),
+        )
+    except Exception as exc:
+        logger.warning("Thumbnail generation skipped: %s", exc)
     manifest = {
         "schema_version": 1,
         "project_id": directory.name,
@@ -231,6 +247,8 @@ def create_creator_project(args: dict[str, Any]) -> dict[str, Any]:
         "metadata": data,
         "script": script_data,
         "rights_review": rights,
+        "captions_path": captions_path,
+        "thumbnail_path": thumbnail_path,
         "rendered_video": None,
     }
     manifest_path = write_manifest(directory, manifest)
@@ -243,6 +261,8 @@ def create_creator_project(args: dict[str, Any]) -> dict[str, Any]:
         "metadata": data,
         "script": script_data,
         "rights_review": rights,
+        "captions": captions_path,
+        "thumbnail": thumbnail_path,
     }
 
 def render_creator_project(project: str) -> dict[str, Any]:
