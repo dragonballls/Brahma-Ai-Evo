@@ -1953,6 +1953,48 @@ TOOL_DECLARATIONS = [
         }
     },
     {
+        "name": "device_manager",
+        "description": (
+            "Unified wireless device network for Brahma. Discovers and manages paired phones, tablets, TVs, PCs, "
+            "and other supported devices from one persistent device model. Android uses ADB/scrcpy, Apple TV uses "
+            "pyatv, Matter uses chip-tool capability detection, and generic devices can use an explicit web control "
+            "URL and/or Wake-on-LAN. Use show/background to control whether an in-app device panel is visible. "
+            "Multiple device panels can remain open and be moved/resized independently inside the Brahma holographic UI. "
+            "Do not claim screen mirroring when the selected adapter does not provide an embeddable screen."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "status | scan | capabilities | pair | pair_android | connect | show | background | wake | rename | forget | command | place"
+                },
+                "device_id": {"type": "STRING", "description": "Stable Brahma device identifier."},
+                "name": {"type": "STRING", "description": "Display name when pairing or renaming."},
+                "device_type": {"type": "STRING", "description": "phone | tablet | tv | pc | device"},
+                "backend": {"type": "STRING", "description": "adb | pyatv | matter | manual"},
+                "address": {"type": "STRING", "description": "Network address such as 192.168.1.50:5555."},
+                "serial": {"type": "STRING", "description": "ADB/device serial."},
+                "mac": {"type": "STRING", "description": "MAC address for Wake-on-LAN."},
+                "control_url": {"type": "STRING", "description": "Optional local web-control URL to embed directly in Brahma."},
+                "wake_method": {"type": "STRING", "description": "wol when Wake-on-LAN is configured."},
+                "mode": {"type": "STRING", "description": "visible | background"},
+                "command": {"type": "STRING", "description": "Device command such as home, back, play, pause, volume_up, volume_down, tap, swipe, or text."},
+                "command_payload": {"type": "OBJECT", "description": "Optional structured payload for device commands."},
+                "pairing_code": {"type": "STRING", "description": "Android wireless-debugging pairing code when explicitly pairing."},
+                "capabilities": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "Optional device capability names."},
+                "metadata": {"type": "OBJECT", "description": "Optional adapter metadata, such as WOL broadcast address."},
+                "auto_reconnect": {"type": "BOOLEAN", "description": "Automatically reconnect supported paired devices when possible."},
+                "refresh": {"type": "BOOLEAN", "description": "Force a fresh discovery scan for status."},
+                "x": {"type": "INTEGER", "description": "Device panel X position inside the holographic workspace."},
+                "y": {"type": "INTEGER", "description": "Device panel Y position inside the holographic workspace."},
+                "width": {"type": "INTEGER", "description": "Device panel width."},
+                "height": {"type": "INTEGER", "description": "Device panel height."}
+            },
+            "required": ["action"]
+        }
+    },
+    {
         "name": "auto_heal",
         "description": (
             "Autonomous Self-Healing and Continuous Self-Improvement System. "
@@ -5231,6 +5273,103 @@ class BrahmaLive:
                     )
                 else:
                     result = "Choose status, enable, disable, toggle, open, list_windows, control_window, set_profile, integration_status, apply_layout, android_list, android_open, appletv_scan, matter_help, procgovernor_validate, or winsw_status."
+
+            elif name == "device_manager":
+                from core.desktop.device_manager import device_manager
+
+                action = str(args.get("action") or "status").strip().lower()
+                device_id = str(args.get("device_id") or args.get("target") or "").strip()
+
+                def _device_call():
+                    if action == "status":
+                        return device_manager.status(refresh=bool(args.get("refresh", False)))
+                    if action == "scan":
+                        return {"devices": device_manager.scan()}
+                    if action == "capabilities":
+                        return device_manager.capabilities()
+                    if action == "pair":
+                        return device_manager.pair(
+                            name=str(args.get("name") or "Device"),
+                            device_type=str(args.get("device_type") or "device"),
+                            backend=str(args.get("backend") or "manual"),
+                            address=str(args.get("address") or ""),
+                            serial=str(args.get("serial") or ""),
+                            mac=str(args.get("mac") or ""),
+                            control_url=str(args.get("control_url") or ""),
+                            wake_method=str(args.get("wake_method") or ""),
+                            capabilities=list(args.get("capabilities") or []),
+                            metadata=dict(args.get("metadata") or {}),
+                            auto_reconnect=bool(args.get("auto_reconnect", True)),
+                        )
+                    if action == "pair_android":
+                        return device_manager.pair_android(
+                            str(args.get("address") or ""),
+                            str(args.get("pairing_code") or ""),
+                        )
+                    if not device_id and action not in {"status", "scan", "capabilities", "pair", "pair_android"}:
+                        return {"ok": False, "error": "device_id is required for this action."}
+                    if action == "connect":
+                        return device_manager.connect(device_id)
+                    if action == "show":
+                        return device_manager.show_spec(device_id)
+                    if action == "background":
+                        return device_manager.background(device_id)
+                    if action == "wake":
+                        return device_manager.wake(device_id)
+                    if action == "rename":
+                        return device_manager.rename(device_id, str(args.get("name") or ""))
+                    if action == "forget":
+                        return {"ok": device_manager.forget(device_id), "device_id": device_id}
+                    if action == "command":
+                        return device_manager.command(
+                            device_id,
+                            str(args.get("command") or ""),
+                            dict(args.get("command_payload") or {}),
+                        )
+                    return {"ok": False, "error": f"Unknown device_manager action: {action}"}
+
+                result = await loop.run_in_executor(None, _device_call)
+
+                if action == "show" and isinstance(result, dict) and result.get("ok"):
+                    ui_args = {
+                        "device_id": device_id,
+                        **{
+                            key: args.get(key)
+                            for key in ("x", "y", "width", "height")
+                            if args.get(key) is not None
+                        },
+                    }
+                    try:
+                        self.ui._win.request_device_ui("show", ui_args)
+                        result = dict(result)
+                        result["ui"] = "holographic_device_panel_requested"
+                    except Exception:
+                        pass
+                elif action == "background":
+                    try:
+                        self.ui._win.request_device_ui("background", {"device_id": device_id})
+                    except Exception:
+                        pass
+                elif action in {"scan", "connect", "wake", "rename", "forget", "command"}:
+                    try:
+                        self.ui._win.request_device_ui("refresh", {})
+                    except Exception:
+                        pass
+                elif action == "place":
+                    ui_args = {
+                        "device_id": device_id,
+                        **{
+                            key: args.get(key)
+                            for key in ("x", "y", "width", "height")
+                            if args.get(key) is not None
+                        },
+                    }
+                    try:
+                        self.ui._win.request_device_ui("place", ui_args)
+                        result = {"ok": True, "queued": True, "device_id": device_id, "geometry": ui_args}
+                    except Exception:
+                        result = {"ok": False, "error": "UI unavailable."}
+                result = json.dumps(result, ensure_ascii=False)
 
             elif name in ("system_diagnostics", "diagnostics", "os_hardware", "hardware_control", "ram_hogs", "kill_process", "brightness_control"):
                 from actions.system_diagnostics_mcp import system_diagnostics

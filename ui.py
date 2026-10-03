@@ -33,14 +33,14 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import (
     QAction, QBrush, QColor, QDragEnterEvent, QDropEvent, QFont,
     QIcon, QImage, QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap,
-    QRadialGradient, QShortcut,
+    QRadialGradient, QShortcut, QWindow,
 )
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QColorDialog, QComboBox, QDialog, QFileDialog, QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout,
     QLabel, QLineEdit, QMenu, QMainWindow, QPushButton, QScrollArea, QSizePolicy, QSlider, QTextEdit,
     QGraphicsDropShadowEffect,
     QStyle, QSystemTrayIcon, QVBoxLayout, QWidget, QProgressBar,
-    QStackedWidget, QInputDialog, QMessageBox,
+    QStackedWidget, QInputDialog, QMessageBox, QMdiArea, QMdiSubWindow,
 )
 
 try:
@@ -8933,6 +8933,7 @@ class MainWindow(QMainWindow):
     _confirm_sig = pyqtSignal(str, str, str)
     _memory_overlay_sig = pyqtSignal(str)
     _audio_level_sig = pyqtSignal(float)
+    _device_action_sig = pyqtSignal(object)
 
     def _make_window_icon(self) -> QIcon:
         return _logo_icon()
@@ -9028,6 +9029,16 @@ class MainWindow(QMainWindow):
         self._right_panel = self._build_right_panel_modern()
         body.addWidget(self._right_panel, stretch=0)
 
+        # Unified wireless device workspace. It remains optional and lazy; if an
+        # adapter is unavailable the core Brahma UI continues normally.
+        try:
+            from core.desktop.device_manager import device_manager as _device_manager
+            self._device_manager = _device_manager
+            self._device_network_workspace = DeviceNetworkWorkspace(self, _device_manager)
+        except Exception as exc:
+            self._device_manager = None
+            self._device_network_workspace = None
+
         self._btn_dashboard.clicked.connect(self._on_nav_dashboard)
         self._btn_chat.clicked.connect(self._toggle_right_sidebar)
         self._btn_settings.clicked.connect(self._on_nav_settings)
@@ -9063,6 +9074,7 @@ class MainWindow(QMainWindow):
         self._confirm_sig.connect(self._apply_confirm_overlay)
         self._memory_overlay_sig.connect(self._apply_memory_overlay)
         self._audio_level_sig.connect(self._on_audio_level_sig)
+        self._device_action_sig.connect(self._handle_device_action_signal)
         try:
             from core import confirm as confirm_gate
             confirm_gate.bind(self.show_confirm, self.hide_confirm, self._log_sig.emit)
@@ -9096,6 +9108,85 @@ class MainWindow(QMainWindow):
         sc_left.activated.connect(self._toggle_left_sidebar)
         sc_right = QShortcut(QKeySequence("Ctrl+]"), self)
         sc_right.activated.connect(self._toggle_right_sidebar)
+
+    def request_device_ui(self, action: str, payload: dict | None = None):
+        self._device_action_sig.emit({
+            "action": str(action or ""),
+            "payload": dict(payload or {}),
+        })
+
+    def _handle_device_action_signal(self, request: object):
+        try:
+            data = dict(request or {})
+            action = str(data.get("action") or "")
+            payload = dict(data.get("payload") or {})
+            workspace = getattr(self, "_device_network_workspace", None)
+            if workspace is None:
+                return
+            if action == "show":
+                workspace.show_device(
+                    str(payload.get("device_id") or ""),
+                    x=payload.get("x"),
+                    y=payload.get("y"),
+                    width=payload.get("width"),
+                    height=payload.get("height"),
+                )
+            elif action == "background":
+                workspace.background_device(str(payload.get("device_id") or ""))
+            elif action == "place":
+                workspace.place_device(
+                    str(payload.get("device_id") or ""),
+                    x=payload.get("x"),
+                    y=payload.get("y"),
+                    width=payload.get("width"),
+                    height=payload.get("height"),
+                )
+            elif action == "refresh":
+                workspace.refresh(scan=False)
+        except Exception:
+            pass
+
+    def show_device_network_workspace(self):
+        workspace = getattr(self, "_device_network_workspace", None)
+        if workspace is None:
+            return {"ok": False, "error": "Device Network workspace is unavailable."}
+        workspace.show_workspace()
+        return {"ok": True}
+
+    def show_device_network_panel(self, device_id: str, **geometry):
+        workspace = getattr(self, "_device_network_workspace", None)
+        if workspace is None:
+            return {"ok": False, "error": "Device Network workspace is unavailable."}
+        result = workspace.show_device(
+            str(device_id),
+            x=geometry.get("x"),
+            y=geometry.get("y"),
+            width=geometry.get("width"),
+            height=geometry.get("height"),
+        )
+        return result
+
+    def background_device_network_panel(self, device_id: str):
+        workspace = getattr(self, "_device_network_workspace", None)
+        if workspace is not None:
+            workspace.background_device(str(device_id))
+
+    def place_device_network_panel(self, device_id: str, **geometry):
+        workspace = getattr(self, "_device_network_workspace", None)
+        if workspace is None:
+            return {"ok": False, "error": "Device Network workspace is unavailable."}
+        return workspace.place_device(
+            str(device_id),
+            x=geometry.get("x"),
+            y=geometry.get("y"),
+            width=geometry.get("width"),
+            height=geometry.get("height"),
+        )
+
+    def disconnect_device_network_panel(self, device_id: str):
+        workspace = getattr(self, "_device_network_workspace", None)
+        if workspace is not None:
+            return workspace.disconnect_device(str(device_id))
 
     def _toggle_fullscreen(self):
         if self.isFullScreen():
@@ -9510,6 +9601,11 @@ class MainWindow(QMainWindow):
         if self._overlay and self._overlay.isVisible() and self.centralWidget():
             cw = self.centralWidget()
             self._overlay.setGeometry(0, 0, cw.width(), cw.height())
+        if getattr(self, "_device_network_workspace", None) is not None and self._device_network_workspace.isVisible():
+            geometry = self.frameGeometry()
+            self._device_network_workspace.setGeometry(
+                geometry.adjusted(8, 8, -8, -8)
+            )
         if hasattr(self, '_floating_gesture_card') and self.centralWidget():
             cw = self.centralWidget()
             rw = self._right_panel.width() if hasattr(self, '_right_panel') and self._right_panel.isVisible() and not getattr(self, '_right_collapsed', False) else 0
@@ -14297,6 +14393,613 @@ class _ConnectDeviceCard(QFrame):
         super().mouseReleaseEvent(event)
 
 
+
+
+class _DeviceSubWindow(QMdiSubWindow):
+    def __init__(self, device_id: str, on_background=None, parent=None):
+        super().__init__(parent)
+        self.device_id = str(device_id)
+        self._on_background = on_background
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
+
+    def closeEvent(self, event):
+        if self._on_background:
+            try:
+                self._on_background(self.device_id)
+            except Exception:
+                pass
+        self.hide()
+        event.ignore()
+
+
+class _DevicePanel(QWidget):
+    def __init__(self, workspace, device: dict, parent=None):
+        super().__init__(parent)
+        self.workspace = workspace
+        self.device = dict(device)
+        self.device_id = str(device.get("device_id", ""))
+        self._foreign: QWindow | None = None
+        self._foreign_container: QWidget | None = None
+        self._scrcpy_proc = None
+        self._scrcpy_window_timer = QTimer(self)
+        self._scrcpy_window_timer.timeout.connect(self._poll_scrcpy_window)
+        self._scrcpy_attempts = 0
+
+        self.setStyleSheet("""
+            QWidget#DevicePanelRoot {
+                background: rgba(6, 9, 15, 246);
+                border: 1px solid rgba(0, 229, 255, 0.30);
+                border-radius: 14px;
+            }
+            QLabel { background: transparent; color: #ffffff; }
+            QPushButton {
+                background: rgba(255,255,255,0.05);
+                color: rgba(255,255,255,0.88);
+                border: 1px solid rgba(255,255,255,0.08);
+                border-radius: 8px;
+                padding: 5px 9px;
+            }
+            QPushButton:hover {
+                background: rgba(0,229,255,0.12);
+                border-color: rgba(0,229,255,0.34);
+                color: #ffffff;
+            }
+        """)
+        self.setObjectName("DevicePanelRoot")
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(8)
+
+        header = QHBoxLayout()
+        header.setSpacing(7)
+        icon = QLabel(self._icon())
+        icon.setFont(QFont("Segoe UI Emoji", 16))
+        header.addWidget(icon)
+
+        titles = QVBoxLayout()
+        titles.setSpacing(1)
+        self._title = QLabel(str(device.get("name") or "Device"))
+        self._title.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        self._status = QLabel(str(device.get("status") or "Offline"))
+        self._status.setStyleSheet("color: rgba(255,255,255,0.56); font: 8pt 'Segoe UI';")
+        titles.addWidget(self._title)
+        titles.addWidget(self._status)
+        header.addLayout(titles, 1)
+
+        self._mode_btn = QPushButton("Background")
+        self._mode_btn.clicked.connect(self._background)
+        header.addWidget(self._mode_btn)
+
+        self._wake_btn = QPushButton("Wake")
+        self._wake_btn.clicked.connect(self._wake)
+        self._wake_btn.setVisible(str(device.get("wake_method") or "") == "wol")
+        header.addWidget(self._wake_btn)
+
+        self._disconnect_btn = QPushButton("Disconnect")
+        self._disconnect_btn.clicked.connect(self._disconnect)
+        header.addWidget(self._disconnect_btn)
+        root.addLayout(header)
+
+        self._screen_host = QFrame()
+        self._screen_host.setStyleSheet(
+            "QFrame { background: #020305; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; }"
+        )
+        screen_layout = QVBoxLayout(self._screen_host)
+        screen_layout.setContentsMargins(0, 0, 0, 0)
+        self._screen_layout = screen_layout
+        self._screen_placeholder = QLabel("Preparing device surface…")
+        self._screen_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._screen_placeholder.setStyleSheet("color: rgba(255,255,255,0.48);")
+        screen_layout.addWidget(self._screen_placeholder)
+        root.addWidget(self._screen_host, 1)
+
+        controls = QHBoxLayout()
+        controls.setSpacing(6)
+        self._control_buttons: dict[str, QPushButton] = {}
+        available = ["home", "back", "play", "pause", "volume_down", "volume_up"]
+        for command in available:
+            button = QPushButton(command.replace("_", " ").title())
+            button.setMinimumHeight(30)
+            button.clicked.connect(lambda checked=False, cmd=command: self._command(cmd))
+            self._control_buttons[command] = button
+            controls.addWidget(button)
+        root.addLayout(controls)
+
+        caps = ", ".join(str(x) for x in (device.get("capabilities") or []))
+        self._meta = QLabel(caps or "Status / control only")
+        self._meta.setWordWrap(True)
+        self._meta.setStyleSheet("color: rgba(255,255,255,0.38); font: 8pt 'Segoe UI';")
+        root.addWidget(self._meta)
+
+        self._update_state(device)
+
+    def _icon(self) -> str:
+        return {"phone": "📱", "tablet": "📱", "tv": "📺", "pc": "💻"}.get(
+            str(self.device.get("device_type") or "").lower(), "◈"
+        )
+
+    def _update_state(self, device: dict):
+        self.device = dict(device)
+        self._title.setText(str(device.get("name") or "Device"))
+        status = str(device.get("status") or "Offline")
+        self._status.setText(status)
+        self._wake_btn.setVisible(str(device.get("wake_method") or "") == "wol")
+        self._meta.setText(", ".join(str(x) for x in (device.get("capabilities") or [])) or "Status / control only")
+        self._mode_btn.setText("Background" if str(device.get("mode") or "background") == "visible" else "Show")
+        if status in {"Connected", "Waking"}:
+            self._status.setStyleSheet("color: #35ff75; font: 8pt 'Segoe UI';")
+        elif status == "Standby":
+            self._status.setStyleSheet("color: #ffd166; font: 8pt 'Segoe UI';")
+        else:
+            self._status.setStyleSheet("color: rgba(255,255,255,0.56); font: 8pt 'Segoe UI';")
+
+    def attach_message(self, message: str):
+        self._screen_placeholder.setText(str(message))
+        self._screen_placeholder.show()
+
+    def clear_screen(self):
+        if self._foreign_container is not None:
+            try:
+                self._foreign_container.deleteLater()
+            except Exception:
+                pass
+        self._foreign_container = None
+        self._foreign = None
+
+    def embed_foreign_window(self, hwnd: int) -> bool:
+        if platform.system() != "Windows":
+            self.attach_message("Embedded native Android display requires Windows.")
+            return False
+        try:
+            if WindowManager.is_fullscreen_or_borderless(hwnd):
+                self.attach_message("Android display is fullscreen/borderless; keeping it unhosted for safety.")
+                return False
+            foreign = QWindow.fromWinId(int(hwnd))
+            if foreign is None:
+                raise RuntimeError("Qt could not wrap the Android display window.")
+            container = QWidget.createWindowContainer(foreign, self._screen_host)
+            container.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            container.setMinimumSize(300, 260)
+            container.setStyleSheet("background:#000000; border:none;")
+            self._screen_placeholder.hide()
+            self._screen_layout.addWidget(container, 1)
+            self._foreign = foreign
+            self._foreign_container = container
+            try:
+                WindowManager.focus(hwnd)
+            except Exception:
+                pass
+            return True
+        except Exception as exc:
+            self.attach_message(f"Could not embed the device surface: {exc}")
+            return False
+
+    def start_scrcpy(self, serial: str, title: str):
+        self.clear_screen()
+        info = integrations.info("scrcpy")
+        if not info.installed or not info.path:
+            self.attach_message("scrcpy is not installed. Install/enable the optional Android backend.")
+            return False
+        try:
+            self._scrcpy_proc = subprocess.Popen(
+                [
+                    info.path,
+                    "--serial", str(serial),
+                    "--window-title", str(title),
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            self._scrcpy_attempts = 0
+            self.attach_message("Connecting to Android display…")
+            self._scrcpy_window_timer.start(250)
+            return True
+        except Exception as exc:
+            self.attach_message(f"scrcpy could not start: {exc}")
+            return False
+
+    def _poll_scrcpy_window(self):
+        self._scrcpy_attempts += 1
+        if self._scrcpy_proc is not None and self._scrcpy_proc.poll() is not None:
+            self._scrcpy_window_timer.stop()
+            self.attach_message("Android display process exited before it could be embedded.")
+            return
+        expected = f"Brahma • {self.device.get('name')}"
+        target = next(
+            (item for item in WindowManager.enumerate_windows() if item.title == expected),
+            None,
+        )
+        if target is None:
+            target = next(
+                (item for item in WindowManager.enumerate_windows()
+                 if expected.lower() in item.title.lower()),
+                None,
+            )
+        if target is not None:
+            self._scrcpy_window_timer.stop()
+            if not self.embed_foreign_window(target.hwnd) and self._scrcpy_proc is not None:
+                self._terminate_scrcpy()
+            return
+        if self._scrcpy_attempts >= 24:
+            self._scrcpy_window_timer.stop()
+            self.attach_message("Android display window was not found. No external window was left open.")
+            self._terminate_scrcpy()
+
+    def _terminate_scrcpy(self):
+        proc = self._scrcpy_proc
+        self._scrcpy_proc = None
+        if proc is None:
+            return
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        try:
+            proc.wait(timeout=1.0)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    def _background(self):
+        self.workspace.background_device(self.device_id)
+
+    def _wake(self):
+        self.workspace.wake_device(self.device_id)
+
+    def _disconnect(self):
+        self.workspace.disconnect_device(self.device_id, self)
+
+    def _command(self, command: str):
+        self.workspace.command_device(self.device_id, command)
+
+    def close_visual(self):
+        self.workspace.background_device(self.device_id)
+
+    def closeEvent(self, event):
+        self._scrcpy_window_timer.stop()
+        super().closeEvent(event)
+
+
+class DeviceNetworkWorkspace(QFrame):
+    """Movable, multi-device Brahma surface.
+
+    The workspace is deliberately a Brahma-owned window. Native device display
+    surfaces are reparented into its child panels, so users do not need to
+    manage separate scrcpy windows. Closing a panel switches it to background
+    mode rather than disconnecting the device.
+    """
+
+    def __init__(self, main_window, manager):
+        super().__init__(None)
+        self._main_window = main_window
+        self._manager = manager
+        self._panels: dict[str, tuple[_DeviceSubWindow, _DevicePanel]] = {}
+
+        self.setObjectName("DeviceNetworkWorkspace")
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.Tool
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(18, 18, 18, 18)
+        root.setSpacing(10)
+
+        glass = QFrame()
+        glass.setObjectName("DeviceNetworkGlass")
+        glass.setStyleSheet("""
+            QFrame#DeviceNetworkGlass {
+                background: rgba(4, 7, 12, 236);
+                border: 1px solid rgba(0, 229, 255, 0.28);
+                border-radius: 20px;
+            }
+            QLabel { background: transparent; }
+            QPushButton {
+                background: rgba(255,255,255,0.05);
+                color: #ffffff;
+                border: 1px solid rgba(255,255,255,0.08);
+                border-radius: 9px;
+                padding: 6px 10px;
+            }
+            QPushButton:hover {
+                background: rgba(0,229,255,0.12);
+                border-color: rgba(0,229,255,0.32);
+            }
+        """)
+        glass_lay = QVBoxLayout(glass)
+        glass_lay.setContentsMargins(14, 14, 14, 14)
+        glass_lay.setSpacing(10)
+
+        header = QHBoxLayout()
+        title = QLabel("JARVIS  •  DEVICE NETWORK")
+        title.setFont(QFont("Segoe UI", 13, QFont.Weight.Black))
+        title.setStyleSheet("color:#ffffff; letter-spacing:2px;")
+        header.addWidget(title)
+
+        self._summary = QLabel("No devices")
+        self._summary.setStyleSheet("color:rgba(255,255,255,0.48);")
+        header.addWidget(self._summary)
+        header.addStretch(1)
+
+        scan = QPushButton("Scan")
+        scan.clicked.connect(lambda: self.refresh(scan=True))
+        header.addWidget(scan)
+
+        close = QPushButton("Close")
+        close.clicked.connect(self.hide_workspace)
+        header.addWidget(close)
+        glass_lay.addLayout(header)
+
+        self._mdi = QMdiArea()
+        self._mdi.setViewMode(QMdiArea.ViewMode.SubWindowView)
+        self._mdi.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._mdi.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._mdi.setBackground(QBrush(QColor(0, 0, 0, 0)))
+        self._mdi.setStyleSheet("""
+            QMdiArea { background: transparent; border: none; }
+            QMdiSubWindow {
+                background: rgba(6,9,15,248);
+                border: 1px solid rgba(0,229,255,0.24);
+                border-radius: 14px;
+            }
+        """)
+        glass_lay.addWidget(self._mdi, 1)
+        root.addWidget(glass)
+
+        self._reconnect_timer = QTimer(self)
+        self._reconnect_timer.setInterval(15000)
+        self._reconnect_timer.timeout.connect(self._tick_background)
+        self._reconnect_timer.start()
+        self.hide()
+
+    def show_workspace(self):
+        geometry = self._main_window.frameGeometry()
+        self.setGeometry(geometry.adjusted(8, 8, -8, -8))
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        self.refresh(scan=False)
+        threading.Thread(
+            target=self._scan_worker,
+            daemon=True,
+            name="brahma-device-scan",
+        ).start()
+
+    def _scan_worker(self):
+        try:
+            self._manager.scan()
+        except Exception:
+            pass
+        QTimer.singleShot(0, lambda: self.refresh(scan=False) if self.isVisible() else None)
+
+    def hide_workspace(self):
+        self.hide()
+
+    def refresh(self, *, scan: bool = False):
+        if scan:
+            self._summary.setText("Scanning supported device adapters…")
+            threading.Thread(
+                target=self._scan_worker,
+                daemon=True,
+                name="brahma-device-scan-explicit",
+            ).start()
+            devices = self._manager.list_devices()
+        else:
+            try:
+                devices = self._manager.list_devices()
+            except Exception:
+                devices = []
+        counts = {
+            "connected": sum(1 for x in devices if x.get("status") == "Connected"),
+            "standby": sum(1 for x in devices if x.get("status") == "Standby"),
+        }
+        self._summary.setText(
+            f"{len(devices)} devices  •  {counts['connected']} connected  •  {counts['standby']} standby"
+        )
+        live = {str(x.get("device_id")): x for x in devices}
+        for device_id, (sub, panel) in list(self._panels.items()):
+            device = live.get(device_id)
+            if device:
+                panel._update_state(device)
+
+    def _tick_background(self):
+        try:
+            self._manager.tick_reconnect()
+        except Exception:
+            pass
+        if self.isVisible():
+            self.refresh(scan=False)
+
+    def show_device(self, device_id: str, *, x=None, y=None, width=None, height=None):
+        device = self._manager.get(device_id)
+        if device is None:
+            return {"ok": False, "error": "Device not found."}
+
+        existing = self._panels.get(device_id)
+        if existing:
+            sub, panel = existing
+            sub.show()
+            sub.raise_()
+            if x is not None or y is not None or width is not None or height is not None:
+                self._place_subwindow(sub, x=x, y=y, width=width, height=height)
+            return {"ok": True, "reused": True, "device": device.to_dict()}
+
+        spec = self._manager.show_spec(device_id)
+        if not spec.get("ok"):
+            return spec
+
+        sub = _DeviceSubWindow(device_id, on_background=self.background_device, parent=self._mdi)
+        sub.setWindowTitle(f"Brahma • {device.name}")
+        sub.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        panel = _DevicePanel(self, device.to_dict(), parent=sub)
+        sub.setWidget(panel)
+        self._mdi.addSubWindow(sub)
+        self._panels[device_id] = (sub, panel)
+
+        index = len(self._panels) - 1
+        default_width = int(width or 520)
+        default_height = int(height or 560)
+        default_x = int(x if x is not None else 24 + (index % 3) * 44)
+        default_y = int(y if y is not None else 24 + (index % 3) * 44)
+        sub.resize(max(360, default_width), max(360, default_height))
+        sub.move(default_x, default_y)
+        sub.show()
+        sub.raise_()
+
+        backend = str(spec.get("backend") or "")
+        if backend == "scrcpy":
+            serial = str(spec.get("serial") or device.serial)
+            window_title = str(spec.get("window_title") or f"Brahma • {device.name}")
+            panel.attach_message("Connecting to Android…")
+
+            def _connect_and_launch():
+                try:
+                    connected = self._manager.connect(device_id)
+                except Exception as exc:
+                    connected = {"ok": False, "error": str(exc)}
+                def _finish():
+                    if not connected.get("ok"):
+                        panel.attach_message(str(connected.get("error") or "Device is not connected."))
+                        return
+                    panel.start_scrcpy(serial, window_title)
+                QTimer.singleShot(0, _finish)
+
+            threading.Thread(
+                target=_connect_and_launch,
+                daemon=True,
+                name=f"brahma-device-connect-{device_id}",
+            ).start()
+        elif backend == "web":
+            self._load_web_surface(panel, str(spec.get("url") or ""))
+        else:
+            panel.attach_message("Device control is available; this adapter has no screen stream.")
+        self.show_workspace()
+        return {"ok": True, "device": self._manager.get(device_id).to_dict()}
+
+    def _load_web_surface(self, panel: _DevicePanel, url: str):
+        if not url:
+            panel.attach_message("No web control URL is configured.")
+            return
+        if WEB_ENGINE_AVAILABLE:
+            try:
+                web = QWebEngineView(panel._screen_host)
+                web.setUrl(QUrl(url))
+                panel._screen_placeholder.hide()
+                panel._screen_layout.addWidget(web, 1)
+                panel._foreign_container = web
+                return
+            except Exception as exc:
+                panel.attach_message(f"Web control surface unavailable: {exc}")
+                return
+        panel.attach_message("Qt WebEngine is unavailable for the configured web control surface.")
+
+    def background_device(self, device_id: str):
+        try:
+            self._manager.set_mode(device_id, "background")
+        except Exception:
+            pass
+        item = self._panels.get(str(device_id))
+        if item:
+            item[0].hide()
+        self.refresh(scan=False)
+
+    def disconnect_device(self, device_id: str, panel=None):
+        if panel is not None:
+            try:
+                panel._terminate_scrcpy()
+            except Exception:
+                pass
+        try:
+            result = self._manager.disconnect(device_id)
+        except Exception as exc:
+            result = {"ok": False, "error": str(exc)}
+        self.close_panel(device_id)
+        return result
+
+    def wake_device(self, device_id: str):
+        try:
+            result = self._manager.wake(device_id)
+        except Exception as exc:
+            result = {"ok": False, "error": str(exc)}
+        self.refresh(scan=False)
+        return result
+
+    def command_device(self, device_id: str, command: str):
+        result = {"ok": True, "queued": True, "command": command}
+        def _run():
+            try:
+                outcome = self._manager.command(device_id, command, {})
+            except Exception as exc:
+                outcome = {"ok": False, "error": str(exc)}
+            QTimer.singleShot(0, lambda: self._after_device_command(device_id, outcome))
+        threading.Thread(
+            target=_run,
+            daemon=True,
+            name=f"brahma-device-command-{device_id}",
+        ).start()
+        return result
+
+    def _after_device_command(self, device_id: str, result: dict[str, Any]):
+        self.refresh(scan=False)
+        self._main_window._log_sig.emit(
+            f"SYS: Device command {'completed' if result.get('ok') else 'failed'} • {device_id}"
+        )
+
+    def place_device(self, device_id: str, *, x=None, y=None, width=None, height=None):
+        item = self._panels.get(str(device_id))
+        if not item:
+            return {"ok": False, "error": "Device panel is not open."}
+        self._place_subwindow(item[0], x=x, y=y, width=width, height=height)
+        return {"ok": True, "device_id": str(device_id), "geometry": [item[0].x(), item[0].y(), item[0].width(), item[0].height()]}
+
+    @staticmethod
+    def _place_subwindow(sub, *, x=None, y=None, width=None, height=None):
+        geo = sub.geometry()
+        sub.setGeometry(
+            int(x if x is not None else geo.x()),
+            int(y if y is not None else geo.y()),
+            max(360, int(width if width is not None else geo.width())),
+            max(360, int(height if height is not None else geo.height())),
+        )
+
+    def close_panel(self, device_id: str):
+        item = self._panels.pop(str(device_id), None)
+        if not item:
+            return
+        try:
+            item[0].setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+            item[0].close()
+        except Exception:
+            pass
+        self.refresh(scan=False)
+
+    def refresh_device(self, device_id: str):
+        device = self._manager.get(device_id)
+        if device and device_id in self._panels:
+            self._panels[device_id][1]._update_state(device.to_dict())
+
+    def closeEvent(self, event):
+        self._reconnect_timer.stop()
+        for sub, panel in list(self._panels.values()):
+            try:
+                panel._terminate_scrcpy()
+            except Exception:
+                pass
+            try:
+                sub.close()
+            except Exception:
+                pass
+        self._panels.clear()
+        event.accept()
+
+
 class BrahmaConnectDevicesPage(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -14365,6 +15068,26 @@ class BrahmaConnectDevicesPage(QFrame):
         """)
         self._add_btn.clicked.connect(self._trigger_add_device)
         top_row.addWidget(self._add_btn)
+
+        self._network_btn = QPushButton("Holographic Network")
+        self._network_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._network_btn.setFixedHeight(34)
+        self._network_btn.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        self._network_btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(255,255,255,0.05);
+                color: #ffffff;
+                border: 1px solid rgba(255,255,255,0.10);
+                border-radius: 12px;
+                padding: 0 12px;
+            }
+            QPushButton:hover {
+                background: rgba(0,229,255,0.10);
+                border-color: rgba(0,229,255,0.32);
+            }
+        """)
+        self._network_btn.clicked.connect(self._open_holographic_network)
+        top_row.addWidget(self._network_btn)
         status_wrap.addLayout(top_row)
         self._gateway_meta = QLabel("Port: 8765  ┬╖  Devices: 0")
         self._gateway_meta.setAlignment(Qt.AlignmentFlag.AlignRight)
@@ -14682,6 +15405,17 @@ class BrahmaConnectDevicesPage(QFrame):
         self._onboarding_timer.timeout.connect(self._tick_onboarding)
         self._onboarding_offer = {}
         self._onboarding_pulse = 0
+
+    def _open_holographic_network(self):
+        parent = self.parentWidget()
+        while parent is not None:
+            if hasattr(parent, "show_device_network_workspace"):
+                try:
+                    parent.show_device_network_workspace()
+                except Exception:
+                    pass
+                return
+            parent = parent.parentWidget() if hasattr(parent, "parentWidget") else None
 
     def _service_obj(self):
         return self._service or getattr(self.parentWidget(), "_brahma_connect", None)

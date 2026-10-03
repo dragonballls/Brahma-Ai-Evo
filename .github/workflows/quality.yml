@@ -42,3 +42,5 @@ jobs:
         run: python -m unittest tests.test_performance_brain -v
       - name: Run external desktop integration regressions
         run: python -m unittest tests.test_desktop_integrations -v
+      - name: Run unified device manager regressions
+        run: python -m unittest tests.test_device_manager -v
