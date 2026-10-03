@@ -4,12 +4,33 @@ import json
 import unittest
 from unittest.mock import patch
 
+from actions.video_understanding import _build_prompt, _result_text
 from actions.youtube_video import (
     _parse_timecode,
     _scrape_first_playlist_url,
     _control_video,
 )
 from actions.spotify_controller import _spotify_play_playlist_by_name
+
+
+class VideoUnderstandingTests(unittest.TestCase):
+    def test_prompt_preserves_timestamp_focus_and_visual_audio_scope(self):
+        prompt = _build_prompt("What did the Morse code say?", "4:20", "4:45")
+        self.assertIn("4:20", prompt)
+        self.assertIn("4:45", prompt)
+        self.assertIn("visuals and audio", prompt)
+        self.assertIn("Morse code", prompt)
+
+    def test_result_text_extracts_interactions_text_steps(self):
+        payload = {
+            "steps": [
+                {"content": [{"type": "text", "text": "First finding."}]},
+                {"content": [{"type": "text", "text": "Second finding."}]},
+            ]
+        }
+        result = _result_text(payload)
+        self.assertIn("First finding.", result)
+        self.assertIn("Second finding.", result)
 
 
 class YouTubeMediaControlTests(unittest.TestCase):
