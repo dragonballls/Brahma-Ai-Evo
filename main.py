@@ -6034,7 +6034,10 @@ def _main_impl():
         threading.Thread(target=runner, daemon=True).start()
 
     start_runner()
-    ui.show_main()
+    # Desktop Mode owns the visible Brahma presentation when explicitly enabled.
+    # Do not resurrect the normal application window after its restoration hook.
+    if desktop_controller is None or not desktop_controller.enabled:
+        ui.show_main()
     ui.root.mainloop()
 
 
