@@ -1509,26 +1509,17 @@ def _default_discord_settings() -> dict:
     }
 
 class _SysMetrics:
+    """On-demand system metrics; no permanent polling thread."""
     def __init__(self):
         self.cpu  = 0.0
         self.mem  = 0.0
-        self.net  = 0.0   
-        self.gpu  = -1.0  
-        self.tmp  = -1.0  
+        self.net  = 0.0
+        self.gpu  = -1.0
+        self.tmp  = -1.0
         self._lock = threading.Lock()
         self._last_net = psutil.net_io_counters()
         self._last_net_t = time.time()
-        self._running = True
-        t = threading.Thread(target=self._loop, daemon=True)
-        t.start()
 
-    def _loop(self):
-        while self._running:
-            try:
-                self._update()
-            except Exception:
-                pass
-            time.sleep(1.5)
 
     def _update(self):
         cpu = psutil.cpu_percent(interval=None)
@@ -1666,6 +1657,10 @@ class _SysMetrics:
         return -1.0
 
     def snapshot(self) -> dict:
+        try:
+            self._update()
+        except Exception:
+            pass
         with self._lock:
             return {
                 "cpu": self.cpu,
@@ -8694,13 +8689,13 @@ class MainWindow(QMainWindow):
 
         self._clock_tmr = QTimer(self)
         self._clock_tmr.timeout.connect(self._tick_clock)
-        self._clock_tmr.start(1000)
+        self._clock_tmr.start(10000 if _low_power_ui_enabled() else 1000)
         self._tick_clock()
 
         # Metrik gÃ¼ncelleme timer'Ä±
         self._metric_tmr = QTimer(self)
         self._metric_tmr.timeout.connect(self._update_metrics)
-        self._metric_tmr.start(2000)
+        self._metric_tmr.start(10000 if _low_power_ui_enabled() else 2000)
         self._update_metrics()
 
         self._log_sig.connect(self._on_log_text)
@@ -14524,13 +14519,18 @@ class BrahmaUI:
         except Exception:
             pass
         self._win = MainWindow(face_path)
-        try:
-            from core.updater import UpdateChecker
-            self._updater = UpdateChecker()
-            self._updater.update_available_sig.connect(self._show_update_prompt)
-            self._updater.start()
-        except Exception as e:
-            print(f"Failed to start updater: {e}")
+        self._updater = None
+        if (
+            not _low_power_ui_enabled()
+            and bool(self._load_app_settings().get("background_updates_enabled", True))
+        ):
+            try:
+                from core.updater import UpdateChecker
+                self._updater = UpdateChecker()
+                self._updater.update_available_sig.connect(self._show_update_prompt)
+                self._updater.start()
+            except Exception as e:
+                print(f"Failed to start updater: {e}")
         try:
             self._win._startup_enabled()
         except Exception:
