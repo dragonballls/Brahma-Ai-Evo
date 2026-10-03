@@ -13,7 +13,7 @@ def creator_control(parameters: dict[str, Any] | None = None, player=None, speak
         from core.creator_engine import (
             creator_tools,
             create_creator_project,
-            load_creator_project,
+            read_manifest,
             render_creator_project,
             publish_creator_project,
             refresh_creator_metadata,
@@ -63,7 +63,7 @@ def creator_control(parameters: dict[str, Any] | None = None, player=None, speak
             duration = float(args.get("duration_seconds") or args.get("duration") or 30)
             return record_microphone(output, duration)
         if action == "status":
-            return json.dumps(load_creator_project(str(args.get("project") or ""))[1], ensure_ascii=False)
+            return json.dumps(read_manifest(str(args.get("project") or ""))[1], ensure_ascii=False)
         if action in {"record_start", "record_stop"}:
             from actions.obs_control import obs_control
             return obs_control({"action": action}, player=player, speak=speak)
