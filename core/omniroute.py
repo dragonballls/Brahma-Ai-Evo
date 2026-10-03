@@ -115,6 +115,11 @@ class OmniRouteGateway:
         self._last_check_at = time.monotonic()
         return result
 
+    def mark_credentials_stale(self) -> None:
+        """Invalidate the cached provider-key sync without starting the gateway."""
+        with self._lock:
+            self._credentials_synced = False
+
     def sync_credentials(self) -> dict[str, object]:
         """Re-sync the current user provider-key file into the running gateway."""
         self._credentials_synced = False
