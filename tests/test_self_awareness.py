@@ -73,5 +73,14 @@ class SelfAwarenessTests(unittest.TestCase):
         import core.self_model as module
         self.assertFalse(hasattr(module, "threading"))
 
+
+    def test_feature_wrapper_exposes_identity_actions(self):
+        from features.self_awareness import execute
+        with patch.object(SelfAwareness, "_owner_name", return_value="Alex"), patch.object(SelfAwareness, "_assistant_name", return_value="Brahma"):
+            self.assertTrue(execute(action="snapshot")["success"])
+            self.assertEqual(execute(action="classify", text="you")["entity"], "self")
+            self.assertEqual(execute(action="classify", text="me")["entity"], "user")
+            self.assertIn("Alex", execute(action="answer", text="who am i")["answer"])
+
 if __name__ == "__main__":
     unittest.main()
