@@ -16,6 +16,10 @@ from typing import Any
 from core.user_paths import get_user_data_dir
 
 logger = logging.getLogger("brahma.creator")
+
+class CreatorError(RuntimeError):
+    """Expected Creator pipeline failure."""
+
 CREATOR_ROOT = get_user_data_dir() / "CreatorProjects"
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 
