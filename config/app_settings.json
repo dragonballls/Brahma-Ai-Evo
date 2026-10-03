@@ -21,5 +21,14 @@
     "sound_effects_volume": 75,
     "push_to_talk_enabled": false,
     "offline_mode_enabled": false,
-    "live_model": "gemini-3.8-live"
+    "live_model": "gemini-3.8-live",
+    "low_power_mode": true,
+    "voice_always_on": false,
+    "background_sensorium": false,
+    "background_attention_monitor": false,
+    "background_social_watchers": false,
+    "clipboard_monitor_enabled": false,
+    "startup_briefing_enabled": false,
+    "background_mobile_connect": false,
+    "load_plugins_on_startup": false
 }
