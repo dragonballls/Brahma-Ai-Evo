@@ -1,5 +1,5 @@
 from core.runtime_paths import APP_SETTINGS_PATH
-from core.provider_policy import normalize_provider, is_local
+from core.provider_policy import GEMINI, normalize_provider, is_local
 import json
 import logging
 import requests
@@ -20,7 +20,7 @@ SETTINGS_PATH = APP_SETTINGS_PATH
 
 class UnifiedAIClient:
     def __init__(self):
-        self._provider = "OpenRouter"
+        self._provider = GEMINI
         self._local_url = "http://localhost:11434/v1"
         self._local_model = "llama3.2"
         self.reload_settings()
@@ -33,8 +33,8 @@ class UnifiedAIClient:
             from memory.config_manager import load_settings
             data = load_settings()
             self._provider = normalize_provider(
-                data.get("default_ai_provider", "OpenRouter"),
-                "OpenRouter",
+                data.get("default_ai_provider", GEMINI),
+                GEMINI,
             )
             self._local_url = str(
                 data.get("local_ai_url", "http://localhost:11434/v1")
