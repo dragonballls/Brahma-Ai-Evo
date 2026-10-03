@@ -22,6 +22,7 @@ class IntegrationDiscoveryTests(TestCase):
                 ("scrcpy", "Genymobile/scrcpy"),
                 ("adb", "Android platform tools"),
                 ("pyatv", "postlund/pyatv"),
+                ("bluetooth", "hbldh/bleak"),
                 ("matter", "project-chip/connectedhomeip"),
                 ("winsw", "winsw/winsw"),
             )

@@ -1980,7 +1980,7 @@ TOOL_DECLARATIONS = [
         "description": (
             "Unified wireless device network for Brahma. Discovers and manages paired phones, tablets, TVs, PCs, "
             "and other supported devices from one persistent device model. Android uses ADB/scrcpy, Apple TV uses "
-            "pyatv, Matter uses chip-tool capability detection, and generic devices can use an explicit web control "
+            "pyatv, Matter uses chip-tool capability detection, Bluetooth LE uses Bleak/Windows Runtime, and generic devices can use an explicit web control "
             "URL and/or Wake-on-LAN. Use show/background to control whether an in-app device panel is visible. "
             "Multiple device panels can remain open and be moved/resized independently inside the Brahma holographic UI. "
             "Do not claim screen mirroring when the selected adapter does not provide an embeddable screen."
@@ -1990,20 +1990,20 @@ TOOL_DECLARATIONS = [
             "properties": {
                 "action": {
                     "type": "STRING",
-                    "description": "status | scan | capabilities | pair | pair_android | connect | show | background | wake | rename | forget | command | place"
+                    "description": "status | scan | capabilities | pair | pair_android | pair_bluetooth | connect | show | background | wake | rename | forget | command | place"
                 },
                 "device_id": {"type": "STRING", "description": "Stable Brahma device identifier."},
                 "name": {"type": "STRING", "description": "Display name when pairing or renaming."},
                 "device_type": {"type": "STRING", "description": "phone | tablet | tv | pc | device"},
-                "backend": {"type": "STRING", "description": "adb | pyatv | matter | manual"},
-                "address": {"type": "STRING", "description": "Network address such as 192.168.1.50:5555."},
-                "serial": {"type": "STRING", "description": "ADB/device serial."},
+                "backend": {"type": "STRING", "description": "adb | pyatv | matter | bluetooth_le | manual"},
+                "address": {"type": "STRING", "description": "Network address or Bluetooth LE address."},
+                "serial": {"type": "STRING", "description": "ADB/device serial or Bluetooth LE address."},
                 "mac": {"type": "STRING", "description": "MAC address for Wake-on-LAN."},
                 "control_url": {"type": "STRING", "description": "Optional local web-control URL to embed directly in Brahma."},
                 "wake_method": {"type": "STRING", "description": "wol when Wake-on-LAN is configured."},
                 "mode": {"type": "STRING", "description": "visible | background"},
-                "command": {"type": "STRING", "description": "Device command such as home, back, play, pause, volume_up, volume_down, tap, swipe, or text."},
-                "command_payload": {"type": "OBJECT", "description": "Optional structured payload for device commands."},
+                "command": {"type": "STRING", "description": "Device command; Bluetooth LE supports services, pair, unpair, read, write, connect/probe."},
+                "command_payload": {"type": "OBJECT", "description": "Optional structured payload; Bluetooth read/write uses characteristic_uuid, data, hex_data, and response."},
                 "pairing_code": {"type": "STRING", "description": "Android wireless-debugging pairing code when explicitly pairing."},
                 "capabilities": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "Optional device capability names."},
                 "metadata": {"type": "OBJECT", "description": "Optional adapter metadata, such as WOL broadcast address."},
@@ -5404,7 +5404,12 @@ class BrahmaLive:
                             str(args.get("address") or ""),
                             str(args.get("pairing_code") or ""),
                         )
-                    if not device_id and action not in {"status", "scan", "capabilities", "pair", "pair_android"}:
+                    if action == "pair_bluetooth":
+                        return device_manager.pair_bluetooth(
+                            str(args.get("address") or ""),
+                            str(args.get("name") or ""),
+                        )
+                    if not device_id and action not in {"status", "scan", "capabilities", "pair", "pair_android", "pair_bluetooth"}:
                         return {"ok": False, "error": "device_id is required for this action."}
                     if action == "connect":
                         return device_manager.connect(device_id)

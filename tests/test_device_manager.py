@@ -136,6 +136,72 @@ class DeviceManagerTests(unittest.TestCase):
         self.assertEqual(len(payload), 102)
         self.assertEqual(target, ("192.168.1.255", 9))
 
+    @patch("core.desktop.device_manager.integrations.bluetooth_devices")
+    def test_bluetooth_scan_creates_standby_device(self, bluetooth_devices):
+        bluetooth_devices.return_value = [{
+            "name": "BLE Controller",
+            "address": "11:22:33:44:55:66",
+            "rssi": -48,
+            "service_uuids": ["00001812-0000-1000-8000-00805f9b34fb"],
+            "local_name": "BLE Controller",
+        }]
+        devices = self.manager.scan(include_android=False, include_appletv=False)
+        bluetooth = next(item for item in devices if item["backend"] == "bluetooth_le")
+        self.assertEqual(bluetooth["status"], "Standby")
+        self.assertEqual(bluetooth["device_type"], "controller")
+        self.assertIn("gatt", bluetooth["capabilities"])
+        self.assertEqual(bluetooth["metadata"]["bluetooth"]["rssi"], -48)
+
+    @patch("core.desktop.device_manager.integrations.bluetooth_services")
+    @patch("core.desktop.device_manager.integrations.bluetooth_devices")
+    def test_pair_bluetooth_persists_pairing_state(self, bluetooth_devices, bluetooth_services):
+        bluetooth_devices.return_value = [{
+            "name": "BLE Keyboard",
+            "address": "AA:BB:CC:DD:EE:FF",
+            "rssi": -35,
+            "service_uuids": [],
+        }]
+        bluetooth_services.return_value = {"ok": True, "services": []}
+        with patch(
+            "core.desktop.device_manager.integrations.bluetooth_pair",
+            return_value={"ok": True, "address": "AA:BB:CC:DD:EE:FF", "name": "BLE Keyboard"},
+        ):
+            result = self.manager.pair_bluetooth("AA:BB:CC:DD:EE:FF")
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["device"]["metadata"]["paired"])
+        self.assertEqual(result["device"]["device_type"], "keyboard")
+
+    @patch("core.desktop.device_manager.integrations.bluetooth_gatt_command")
+    def test_bluetooth_gatt_write_forwards_payload(self, bluetooth_gatt_command):
+        bluetooth_gatt_command.return_value = {"ok": True, "bytes_written": 2}
+        device = self.manager.pair(
+            name="BLE Peripheral",
+            device_type="device",
+            address="11:22:33:44:55:66",
+            serial="11:22:33:44:55:66",
+            backend="bluetooth_le",
+            capabilities=["bluetooth_le", "gatt", "pairing"],
+        )
+        result = self.manager.command(
+            device["device_id"],
+            "write",
+            {
+                "characteristic_uuid": "0000abcd-0000-1000-8000-00805f9b34fb",
+                "data": "0102",
+                "hex_data": True,
+                "response": True,
+            },
+        )
+        self.assertTrue(result["ok"])
+        bluetooth_gatt_command.assert_called_once_with(
+            "11:22:33:44:55:66",
+            "write",
+            "0000abcd-0000-1000-8000-00805f9b34fb",
+            data="0102",
+            hex_data=True,
+            response=True,
+        )
+
     def test_forget_is_idempotent(self):
         device = self.manager.pair(name="Phone", device_type="phone", serial="ABC")
         self.assertTrue(self.manager.forget(device["device_id"]))
