@@ -102,6 +102,22 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("def _refresh_credentials", source)
         self.assertIn("self._refresh_credentials()", source)
 
+    def test_omniroute_port_and_url_share_one_source(self):
+        source = self.read("core/runtime_paths.py")
+        setup = self.read("core/omniroute_setup.py")
+        self.assertIn("OMNIROUTE_DEFAULT_PORT = 20128", source)
+        self.assertIn("OMNIROUTE_DEFAULT_BASE_URL = f", source)
+        self.assertIn("DEFAULT_PORT = OMNIROUTE_DEFAULT_PORT", setup)
+        self.assertIn("base_url: str = OMNIROUTE_DEFAULT_BASE_URL", setup)
+        self.assertNotIn("DEFAULT_PORT = 20128", setup)
+
+    def test_local_model_default_is_shared_with_unified_client(self):
+        brain = self.read("core/local_brain.py")
+        client = self.read("llm_client.py")
+        self.assertIn('DEFAULT_MODEL = "qwen2.5:3b"', brain)
+        self.assertIn("from core.local_brain import DEFAULT_ENDPOINT as LOCAL_DEFAULT_ENDPOINT, DEFAULT_MODEL as LOCAL_DEFAULT_MODEL", client)
+        self.assertNotIn('"llama3.2"', client)
+
     def test_omniroute_readiness_is_cached(self):
         from core.omniroute import OmniRouteGateway
 
