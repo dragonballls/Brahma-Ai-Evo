@@ -27,6 +27,9 @@ except ImportError:
 
 from config import get_os, is_windows, is_mac, is_linux
 
+from actions.video_understanding import analyze_youtube, analyze_local_video
+from actions.browser_control import browser_control
+
 
 def _get_base_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -259,10 +262,206 @@ def _scrape_trending(region: str = "TR", max_results: int = 8) -> list[dict]:
         print(f"[YouTube] ⚠️ Trending scrape failed: {e}")
         return []
 
+def _scrape_first_playlist_url(query: str) -> str | None:
+    if not _REQUESTS_OK:
+        return None
+    search_url = (
+        "https://www.youtube.com/results"
+        f"?search_query={quote_plus(query)}&sp=EgIQAw%3D%3D"
+    )
+    try:
+        r = requests.get(search_url, headers=HEADERS, timeout=10)
+        ids = re.findall(r'"playlistId":"([A-Za-z0-9_-]+)"', r.text)
+        seen = set()
+        for playlist_id in ids:
+            if playlist_id in seen:
+                continue
+            seen.add(playlist_id)
+            return f"https://www.youtube.com/playlist?list={playlist_id}"
+    except Exception as exc:
+        print(f"[YouTube] playlist search failed: {exc}")
+    return None
+
+
+def _parse_timecode(value) -> float | None:
+    if value is None or str(value).strip() == "":
+        return None
+    raw = str(value).strip()
+    try:
+        if ":" not in raw:
+            return max(0.0, float(raw))
+        parts = [float(x) for x in raw.split(":")]
+        if len(parts) == 2:
+            return max(0.0, parts[0] * 60 + parts[1])
+        if len(parts) == 3:
+            return max(0.0, parts[0] * 3600 + parts[1] * 60 + parts[2])
+    except (TypeError, ValueError):
+        return None
+    return None
+
+
+def _current_video_url() -> str:
+    try:
+        raw = browser_control({"action": "evaluate", "expression": "window.location.href"}, None, None, None)
+        value = str(raw or "").strip().strip('"').strip("'")
+        return value if _is_valid_youtube_url(value) else ""
+    except Exception:
+        return ""
+
+
+def _control_video(parameters: dict) -> str:
+    command = str(
+        parameters.get("command")
+        or parameters.get("control")
+        or parameters.get("subaction")
+        or "status"
+    ).lower().strip()
+    speed = parameters.get("speed", parameters.get("playback_rate"))
+    position = parameters.get("position", parameters.get("seek"))
+    volume = parameters.get("volume")
+
+    js = ""
+    if command in {"play", "resume"}:
+        js = """(() => { const v=document.querySelector('video'); if(!v) return JSON.stringify({ok:false,error:'No HTML5 video found.'}); v.play(); return JSON.stringify({ok:true,playing:true,currentTime:v.currentTime,rate:v.playbackRate}); })()"""
+    elif command in {"pause", "stop"}:
+        js = """(() => { const v=document.querySelector('video'); if(!v) return JSON.stringify({ok:false,error:'No HTML5 video found.'}); v.pause(); return JSON.stringify({ok:true,playing:false,currentTime:v.currentTime,rate:v.playbackRate}); })()"""
+    elif command in {"toggle", "playpause"}:
+        js = """(() => { const v=document.querySelector('video'); if(!v) return JSON.stringify({ok:false,error:'No HTML5 video found.'}); if(v.paused){v.play();}else{v.pause();} return JSON.stringify({ok:true,playing:!v.paused,currentTime:v.currentTime,rate:v.playbackRate}); })()"""
+    elif command in {"speed", "rate", "set_speed"}:
+        try:
+            rate = float(speed)
+        except (TypeError, ValueError):
+            return "Please provide a numeric playback speed, sir."
+        if rate <= 0 or rate > 16:
+            return "Playback speed must be greater than 0 and no more than 16x, sir."
+        js = f"""(() => {{ const v=document.querySelector('video'); if(!v) return JSON.stringify({{ok:false,error:'No HTML5 video found.'}}); v.playbackRate={rate!r}; return JSON.stringify({{ok:true,rate:v.playbackRate,currentTime:v.currentTime,playing:!v.paused}}); }})()"""
+    elif command in {"seek", "goto", "jump"}:
+        seconds = _parse_timecode(position)
+        if seconds is None:
+            return "Please provide a seek position in seconds or mm:ss, sir."
+        js = f"""(() => {{ const v=document.querySelector('video'); if(!v) return JSON.stringify({{ok:false,error:'No HTML5 video found.'}}); v.currentTime={seconds!r}; return JSON.stringify({{ok:true,currentTime:v.currentTime,rate:v.playbackRate}}); }})()"""
+    elif command in {"volume", "set_volume"}:
+        try:
+            val = float(volume)
+        except (TypeError, ValueError):
+            return "Please provide a volume from 0 to 100, sir."
+        if val < 0 or val > 100:
+            return "Volume must be between 0 and 100, sir."
+        js = f"""(() => {{ const v=document.querySelector('video'); if(!v) return JSON.stringify({{ok:false,error:'No HTML5 video found.'}}); v.volume={val/100!r}; v.muted=false; return JSON.stringify({{ok:true,volume:Math.round(v.volume*100),muted:v.muted}}); }})()"""
+    elif command in {"mute", "unmute"}:
+        muted = command == "mute"
+        js = f"""(() => {{ const v=document.querySelector('video'); if(!v) return JSON.stringify({{ok:false,error:'No HTML5 video found.'}}); v.muted={str(muted).lower()}; return JSON.stringify({{ok:true,muted:v.muted,volume:Math.round(v.volume*100)}}); }})()"""
+    elif command in {"fullscreen", "full_screen"}:
+        js = """(() => { const v=document.querySelector('video'); if(!v) return JSON.stringify({ok:false,error:'No HTML5 video found.'}); const el=v.parentElement || v; (el.requestFullscreen || v.requestFullscreen)?.(); return JSON.stringify({ok:true}); })()"""
+    elif command in {"status", "current"}:
+        js = """(() => { const v=document.querySelector('video'); if(!v) return JSON.stringify({ok:false,error:'No HTML5 video found.'}); return JSON.stringify({ok:true,playing:!v.paused,currentTime:v.currentTime,duration:v.duration,rate:v.playbackRate,volume:Math.round(v.volume*100),muted:v.muted,src:location.href}); })()"""
+    else:
+        return (
+            "Supported video controls are play, pause, toggle, speed, seek, "
+            "volume, mute, unmute, fullscreen, and status, sir."
+        )
+
+    result = browser_control({"action": "evaluate", "expression": js}, None, None, None)
+    raw = str(result or "").strip()
+    if raw.startswith("{") or raw.startswith('"'):
+        try:
+            data = json.loads(raw.strip('"').replace("\\"", '"'))
+            if not data.get("ok"):
+                return str(data.get("error") or "Video control failed.")
+            if "rate" in data:
+                return f"Done, sir. Video speed is {data['rate']}x."
+            if "currentTime" in data and command in {"seek", "goto", "jump"}:
+                return f"Done, sir. Video moved to {data['currentTime']:.1f} seconds."
+            return "Done, sir."
+        except Exception:
+            pass
+    return raw or "Video control completed."
+
+
+def _handle_playlist(parameters: dict, player) -> str:
+    query = str(parameters.get("query") or parameters.get("url") or "").strip()
+    if not query:
+        return "Please tell me the YouTube playlist name or URL, sir."
+    url = query if _is_valid_youtube_url(query) else _scrape_first_playlist_url(query)
+    if not url:
+        return f"I couldn't find a YouTube playlist for '{query}', sir."
+    _open_url(url)
+    if player:
+        player.write_log(f"[YouTube] Playlist: {url}")
+    return f"Playing the YouTube playlist '{query}'."
+
+
+def _handle_control(parameters: dict, player) -> str:
+    url = str(parameters.get("url") or "").strip()
+    if url:
+        if not _is_valid_youtube_url(url):
+            return "That is not a valid YouTube URL, sir."
+        _open_url(url)
+        time.sleep(1.5)
+    current = _current_video_url()
+    if not current:
+        return "I don't currently have a YouTube video open in the JARVIS browser, sir."
+    return _control_video(parameters)
+
+
+def _handle_watch(parameters: dict, player, speak) -> str:
+    url = str(parameters.get("url") or parameters.get("query") or "").strip()
+    file_path = str(parameters.get("file_path") or "").strip()
+    question = str(
+        parameters.get("question")
+        or parameters.get("text")
+        or "Watch this video and tell me what is happening, including important on-screen text and spoken details."
+    ).strip()
+    start_time = str(parameters.get("start_time") or parameters.get("start") or "").strip()
+    end_time = str(parameters.get("end_time") or parameters.get("end") or "").strip()
+
+    try:
+        if url:
+            if not _is_valid_youtube_url(url):
+                return "Please provide a public YouTube URL, sir."
+            if parameters.get("play", False):
+                _open_url(url)
+            result = analyze_youtube(
+                url,
+                question=question,
+                start_time=start_time,
+                end_time=end_time,
+            )
+        elif file_path:
+            result = analyze_local_video(
+                file_path,
+                question=question,
+                start_time=start_time,
+                end_time=end_time,
+            )
+        else:
+            current = _current_video_url()
+            if not current:
+                return "Give me the video URL or open the video in JARVIS first, sir."
+            result = analyze_youtube(
+                current,
+                question=question,
+                start_time=start_time,
+                end_time=end_time,
+            )
+
+        if speak:
+            speak(result)
+        return result
+    except Exception as exc:
+        return f"Video analysis failed, sir: {exc}"
+
+
 def _handle_play(parameters: dict, player) -> str:
-    query = parameters.get("query", "").strip()
+    query = str(parameters.get("query") or parameters.get("url") or "").strip()
     if not query:
         return "Please tell me what you'd like to watch, sir."
+
+    if _is_valid_youtube_url(query):
+        _open_url(query)
+        if player:
+            player.write_log(f"[YouTube] Opening URL: {query}")
+        return f"Playing that YouTube video, sir."
 
     if player:
         player.write_log(f"[YouTube] Searching: {query}")
@@ -290,7 +489,7 @@ def _handle_summarize(parameters: dict, player, speak) -> str:
     if not _TRANSCRIPT_OK:
         return "youtube-transcript-api is not installed. Run: pip install youtube-transcript-api"
 
-    url = _ask_for_url("Please paste the YouTube video URL:")
+    url = str(parameters.get("url") or parameters.get("query") or "").strip() or _ask_for_url("Please paste the YouTube video URL:")
     if not url:
         return "No URL provided, sir. Summary cancelled."
     if not _is_valid_youtube_url(url):
@@ -383,6 +582,12 @@ def _handle_trending(parameters: dict, player, speak) -> str:
 
 _ACTION_MAP = {
     "play":      _handle_play,
+    "playlist":  _handle_playlist,
+    "play_playlist": _handle_playlist,
+    "control":   _handle_control,
+    "watch":     _handle_watch,
+    "analyze":   _handle_watch,
+    "analyze_section": _handle_watch,
     "summarize": _handle_summarize,
     "get_info":  _handle_get_info,
     "trending":  _handle_trending,
@@ -407,7 +612,8 @@ def youtube_video(
     if handler is None:
         return (
             f"Unknown YouTube action: '{action}'. "
-            "Available: play, summarize, get_info, trending."
+            "Available: play, playlist, play_playlist, control, watch, analyze, analyze_section, "
+            "summarize, get_info, trending."
         )
 
     try:
