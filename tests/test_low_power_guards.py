@@ -47,7 +47,7 @@ class LowPowerGuardTests(unittest.TestCase):
         self.assertIn("poll_interval: float = 10.0", sensorium)
         self.assertIn("sleep_for = 30.0 if self.user_idle_seconds >= 120.0 else self.poll_interval", sensorium)
         self.assertIn("interval: float = 5.0", attention)
-        self.assertIn("time.sleep(2.5)", clipboard)
+        self.assertIn("self._wake.wait(2.5)", clipboard)
 
     def test_clipboard_ai_is_opt_in(self):
         main = self.read("main.py")
