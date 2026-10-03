@@ -59,6 +59,19 @@ class LowPowerGuardTests(unittest.TestCase):
         self.assertIn("interval: float = 5.0", attention)
         self.assertIn("self._wake.wait(2.5)", clipboard)
 
+    def test_audio_device_prefetch_is_idempotent_and_generation_safe(self):
+        source = self.read("core/audio_devices.py")
+        self.assertIn("_cache_generation = 0", source)
+        self.assertIn("_prefetch_thread: threading.Thread | None = None", source)
+        self.assertIn("if _prefetch_thread is not None and _prefetch_thread.is_alive()", source)
+        self.assertIn("generation == _cache_generation", source)
+        self.assertIn("_cache_generation += 1", source)
+
+    def test_globe_is_lazy_loaded(self):
+        main = self.read("main.py")
+        self.assertNotIn("GlobeWindow.get_instance(parent=None)", main)
+        self.assertIn("GlobeWindow.get_instance(parent=self.ui._win)", main)
+
     def test_clipboard_ai_is_opt_in(self):
         main = self.read("main.py")
         self.assertIn('get_setting("clipboard_auto_comment_enabled", False)', main)
