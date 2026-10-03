@@ -39,7 +39,7 @@ def get_idle_time_seconds() -> float:
 
 
 class PassiveSensorium:
-    def __init__(self, poll_interval: float = 3.0):
+    def __init__(self, poll_interval: float = 10.0):
         self.poll_interval = poll_interval
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -102,7 +102,10 @@ class PassiveSensorium:
             except Exception as e:
                 # Sensorium must never crash the host process
                 pass
-            time.sleep(self.poll_interval)
+            # Back off while the user is away so passive telemetry does not
+            # keep waking the CPU unnecessarily.
+            sleep_for = 30.0 if self.user_idle_seconds >= 120.0 else self.poll_interval
+            time.sleep(sleep_for)
 
     def _update_telemetry(self):
         # 1. Window & Process

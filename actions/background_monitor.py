@@ -14,6 +14,9 @@ from actions.system_manager import get_system_health
 
 _monitors = {}
 _monitor_lock = threading.Lock()
+_monitor_wakeup = threading.Event()
+_monitor_thread = None
+_monitor_running = False
 _speech_sink = None
 
 def set_monitor_speech_sink(sink_fn):
@@ -21,14 +24,45 @@ def set_monitor_speech_sink(sink_fn):
     _speech_sink = sink_fn
 
 def _monitor_loop():
-    while True:
-        time.sleep(10)
+    global _monitor_running
+    while _monitor_running:
         with _monitor_lock:
+            if not _monitors:
+                _monitor_running = False
+                break
+
             current_time = time.time()
+            due = []
+            next_wait = 30.0
             for m_id, m in list(_monitors.items()):
-                if current_time - m['last_check'] >= m['interval']:
-                    m['last_check'] = current_time
-                    _run_check(m_id, m)
+                remaining = max(0.0, float(m["interval"]) - (current_time - m["last_check"]))
+                next_wait = min(next_wait, remaining)
+                if remaining <= 0.0:
+                    m["last_check"] = current_time
+                    due.append((m_id, dict(m)))
+
+        # Never hold the shared lock during network/system work.
+        for m_id, monitor in due:
+            _run_check(m_id, monitor)
+
+        if not due:
+            _monitor_wakeup.wait(timeout=max(0.25, min(next_wait, 30.0)))
+            _monitor_wakeup.clear()
+
+    _monitor_running = False
+
+def _ensure_monitor_thread() -> None:
+    global _monitor_thread, _monitor_running
+    if _monitor_running and _monitor_thread and _monitor_thread.is_alive():
+        _monitor_wakeup.set()
+        return
+    _monitor_running = True
+    _monitor_thread = threading.Thread(
+        target=_monitor_loop,
+        daemon=True,
+        name="background-monitor",
+    )
+    _monitor_thread.start()
 
 def _run_check(m_id, m):
     try:
@@ -62,16 +96,18 @@ def _run_check(m_id, m):
                 alert_msg = f"Alert: Website {m['target']} appears to be down or unreachable."
 
         if alert_msg:
-            # Alert triggered! Remove monitor and speak.
+            # Alert triggered! Remove monitor atomically, then speak without
+            # holding the monitor lock during callback work.
+            with _monitor_lock:
+                _monitors.pop(m_id, None)
             if _speech_sink:
                 _speech_sink(alert_msg)
-            del _monitors[m_id]
             
     except Exception as e:
         print(f"[Monitor] Error checking {m_id}: {e}")
 
-# Start the daemon loop
-threading.Thread(target=_monitor_loop, daemon=True).start()
+# The worker starts lazily from add_monitor(), so this feature has no
+# permanent polling thread when unused.
 
 def add_monitor(monitor_type: str, target: str, threshold: float, condition: str = "above", interval_sec: int = 60) -> str:
     m_id = f"{monitor_type}_{target}_{int(time.time())}"
@@ -84,6 +120,8 @@ def add_monitor(monitor_type: str, target: str, threshold: float, condition: str
             "interval": interval_sec,
             "last_check": time.time()
         }
+    _ensure_monitor_thread()
+    _monitor_wakeup.set()
     return f"Started monitoring {monitor_type} ({target}) every {interval_sec} seconds."
 
 def get_monitors() -> str:

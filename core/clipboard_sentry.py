@@ -67,7 +67,7 @@ class ClipboardSentry:
             self._last_clip = ""
 
         while self._running:
-            time.sleep(1.2)
+            time.sleep(2.5)
             try:
                 current = (pyperclip.paste() or "").strip()
                 if current and current != self._last_clip:
