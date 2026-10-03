@@ -30,26 +30,56 @@ function Update-Environment {
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
 }
 
-# 3. Check for Python
+# 3. Check for a supported Python 3.12 interpreter
 $PythonExe = $null
-if (Get-Command "py" -ErrorAction SilentlyContinue) { $PythonExe = "py" }
-elseif (Get-Command "python" -ErrorAction SilentlyContinue) { $PythonExe = "python" }
+$PythonArgs = @()
+
+if (Get-Command "py" -ErrorAction SilentlyContinue) {
+    try {
+        & py -3.12 -c "import sys; raise SystemExit(0 if sys.version_info[:2] == (3,12) else 1)" 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            $PythonExe = "py"
+            $PythonArgs = @("-3.12")
+        }
+    } catch {
+        $PythonExe = $null
+    }
+}
+
+if (-not $PythonExe -and (Get-Command "python" -ErrorAction SilentlyContinue)) {
+    try {
+        & python -c "import sys; raise SystemExit(0 if sys.version_info[:2] == (3,12) else 1)" 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            $PythonExe = "python"
+        }
+    } catch {
+        $PythonExe = $null
+    }
+}
 
 if (-not $PythonExe) {
-    Write-Host "Python not found. Downloading Python 3.11.8..." -ForegroundColor Yellow
-    $PythonUrl = "https://www.python.org/ftp/python/3.11.8/python-3.11.8-amd64.exe"
-    $PythonInstaller = "$env:TEMP\python_installer.exe"
+    Write-Host "Python 3.12 not found. Downloading Python 3.12.10..." -ForegroundColor Yellow
+    $PythonUrl = "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe"
+    $PythonInstaller = "$env:TEMP\python-3.12.10-installer.exe"
     Invoke-WebRequest -Uri $PythonUrl -OutFile $PythonInstaller
-    
-    Write-Host "Installing Python (Silent Mode)..." -ForegroundColor Yellow
+
+    Write-Host "Installing Python 3.12.10 (Silent Mode)..." -ForegroundColor Yellow
     Start-Process -FilePath $PythonInstaller -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1 Include_test=0" -Wait
-    
-    Write-Host "Python installed successfully." -ForegroundColor Green
     Update-Environment
+
     $PythonExe = "python"
-} else {
-    Write-Host "Python is already installed: $(Get-Command $PythonExe | Select-Object -ExpandProperty Source)" -ForegroundColor Green
+    try {
+        & $PythonExe -c "import sys; raise SystemExit(0 if sys.version_info[:2] == (3,12) else 1)" 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Installed Python is not Python 3.12."
+        }
+    } catch {
+        throw "Python 3.12 installation could not be verified: $($_.Exception.Message)"
+    }
 }
+
+$PythonDisplay = if ($PythonArgs.Count) { "$PythonExe $($PythonArgs -join ' ')" } else { $PythonExe }
+Write-Host "Using supported Python: $PythonDisplay" -ForegroundColor Green
 
 # 4. Check for Node.js
 if (-not (Get-Command "node" -ErrorAction SilentlyContinue)) {
@@ -75,7 +105,10 @@ $VenvPythonW = Join-Path -Path $VenvDir -ChildPath "Scripts\pythonw.exe"
 if (-not (Test-Path $VenvPython)) {
     Write-Host "Creating Virtual Environment in .venv..." -ForegroundColor Cyan
     if (Test-Path $VenvDir) { Remove-Item -Recurse -Force $VenvDir }
-    Start-Process -FilePath $PythonExe -ArgumentList "-m venv .venv" -Wait -NoNewWindow
+    $venvArgs = @()
+    $venvArgs += $PythonArgs
+    $venvArgs += @("-m", "venv", ".venv")
+    Start-Process -FilePath $PythonExe -ArgumentList $venvArgs -Wait -NoNewWindow
     Write-Host "Virtual Environment created." -ForegroundColor Green
 } else {
     Write-Host "Virtual Environment already exists." -ForegroundColor Green
