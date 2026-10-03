@@ -42,8 +42,16 @@ class UnifiedAIClient:
         payload = {
             "model": self._local_model,
             "messages": messages,
-            "temperature": temperature
+            "temperature": temperature,
         }
+        # Ollama otherwise tends to keep the model resident after a request.
+        # In low-power mode, release it as soon as the response is complete.
+        try:
+            low_power = bool(config_manager.get_setting("low_power_mode", True))
+        except Exception:
+            low_power = True
+        if low_power and self._local_url.startswith(("http://localhost:11434", "http://127.0.0.1:11434")):
+            payload["keep_alive"] = 0
         if response_format:
             payload["response_format"] = response_format
 
