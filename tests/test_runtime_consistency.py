@@ -169,6 +169,14 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("self._stop_event.wait", source)
         self.assertNotIn("time.sleep(sleep_for)", source)
 
+    def test_boot_sentry_runs_after_singleton_import_boundary(self):
+        main = self.read("main.py")
+        self.assertNotIn("import core.boot_sentry", main)
+        self.assertIn("from core.boot_sentry import check_and_recover_on_boot", main)
+        guard_pos = main.index("if not guard.acquire()")
+        boot_pos = main.index("from core.boot_sentry import check_and_recover_on_boot")
+        self.assertGreater(boot_pos, guard_pos)
+
     def test_boot_sentry_uses_patch_age_guard(self):
         source = self.read("core/boot_sentry.py")
         self.assertIn('float(entry.get("timestamp"))', source)
