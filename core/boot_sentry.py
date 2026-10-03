@@ -11,13 +11,13 @@ import shutil
 import sys
 from pathlib import Path
 
-from core.runtime_paths import CONFIG_DIR, FATAL_CRASH_LOG_PATH
+from core.runtime_paths import PATCH_HISTORY_PATH, FATAL_CRASH_LOG_PATH
 
 logger = logging.getLogger("BootSentry")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 CRASH_LOG = FATAL_CRASH_LOG_PATH
-PATCH_HISTORY_FILE = CONFIG_DIR / "patch_history.json"
+PATCH_HISTORY_FILE = PATCH_HISTORY_PATH
 
 
 def check_and_recover_on_boot() -> bool:
