@@ -176,12 +176,15 @@ class _LiveSession:
         self._out_queue: asyncio.Queue | None             = None
         self._audio_in:  asyncio.Queue | None             = None
         self._ready:     threading.Event                  = threading.Event()
+        self._stop_event: threading.Event                 = threading.Event()
         self._player                                      = None
         self._send_lock: asyncio.Lock | None              = None
 
     def start(self, player=None):
         if self._thread and self._thread.is_alive():
             return
+        self._stop_event.clear()
+        self._ready.clear()
         self._player = player
         self._thread = threading.Thread(
             target=self._run_loop, daemon=True, name="VisionSessionThread"
@@ -195,11 +198,18 @@ class _LiveSession:
     def _run_loop(self):
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
-        self._loop.run_until_complete(self._main())
+        try:
+            self._loop.run_until_complete(self._main())
+        finally:
+            self._session = None
+            self._ready.clear()
+            self._loop.close()
+            self._loop = None
+            self._thread = None
 
     async def _main(self):
         self._out_queue = asyncio.Queue(maxsize=30)
-        self._audio_in  = asyncio.Queue()
+        self._audio_in  = asyncio.Queue(maxsize=48)
         self._send_lock = asyncio.Lock()
 
         client = genai.Client(
@@ -220,7 +230,7 @@ class _LiveSession:
             ),
         )
 
-        while True:
+        while not self._stop_event.is_set():
             try:
                 print("[ScreenProcess] [CONNECT] Vision session connecting...")
                 async with client.aio.live.connect(model=LIVE_MODEL, config=config) as session:
@@ -235,12 +245,16 @@ class _LiveSession:
                 print(f"[ScreenProcess] [WARN] Disconnected: {e} — reconnecting...")
                 self._session = None
                 self._ready.clear()
-                await asyncio.sleep(2)
+                if self._stop_event.wait(timeout=2):
+                    break
                 print("[ScreenProcess] [WARN] Reconnect attempt will retry")
 
     async def _send_loop(self):
-        while True:
-            item = await self._out_queue.get()
+        while not self._stop_event.is_set():
+            try:
+                item = await asyncio.wait_for(self._out_queue.get(), timeout=0.5)
+            except asyncio.TimeoutError:
+                continue
             if self._session:
                 image_bytes, mime_type, user_text = item
                 try:
@@ -271,9 +285,26 @@ class _LiveSession:
     async def _recv_loop(self):
         transcript_buf: list[str] = []
         try:
-            async for response in self._session.receive():
+            receive_iter = self._session.receive().__aiter__()
+            while not self._stop_event.is_set():
+                try:
+                    response = await asyncio.wait_for(receive_iter.__anext__(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    continue
+                except StopAsyncIteration:
+                    break
                 if response.data:
-                    await self._audio_in.put(response.data)
+                    try:
+                        self._audio_in.put_nowait(response.data)
+                    except asyncio.QueueFull:
+                        try:
+                            self._audio_in.get_nowait()
+                        except asyncio.QueueEmpty:
+                            pass
+                        try:
+                            self._audio_in.put_nowait(response.data)
+                        except asyncio.QueueFull:
+                            pass
                 sc = response.server_content
                 if not sc:
                     continue
@@ -297,7 +328,8 @@ class _LiveSession:
             transcript_buf = []
             if self._player and hasattr(self._player, "set_scanning"):
                 self._player.set_scanning(False, "")
-            await asyncio.sleep(0.3)
+            if not self._stop_event.is_set():
+                await asyncio.sleep(0.3)
 
     async def _play_loop(self):
         stream = sd.RawOutputStream(
@@ -308,8 +340,11 @@ class _LiveSession:
         )
         stream.start()
         try:
-            while True:
-                chunk = await self._audio_in.get()
+            while not self._stop_event.is_set():
+                try:
+                    chunk = await asyncio.wait_for(self._audio_in.get(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    continue
                 await asyncio.to_thread(stream.write, chunk)
         except Exception as e:
             print(f"[ScreenProcess] [ERR] Play error: {e}")
@@ -333,10 +368,36 @@ class _LiveSession:
             print("[ScreenProcess] [ERR] Out queue is not initialized")
             return
         print(f"[ScreenProcess] enqueueing payload: {len(image_bytes)} bytes, mime={mime_type}, text={user_text[:40]}")
-        asyncio.run_coroutine_threadsafe(
-            self._out_queue.put((image_bytes, mime_type, user_text)),
-            self._loop
-        )
+        item = (image_bytes, mime_type, user_text)
+
+        def enqueue() -> None:
+            if self._stop_event.is_set() or self._out_queue is None:
+                return
+            try:
+                self._out_queue.put_nowait(item)
+            except asyncio.QueueFull:
+                try:
+                    self._out_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+                try:
+                    self._out_queue.put_nowait(item)
+                except asyncio.QueueFull:
+                    pass
+
+        self._loop.call_soon_threadsafe(enqueue)
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        loop = self._loop
+        if loop and loop.is_running():
+            loop.call_soon_threadsafe(lambda: None)
+        thread = self._thread
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=3.0)
+        self._thread = None
+        self._session = None
+        self._loop = None
 
     def is_ready(self) -> bool:
         return self._session is not None
@@ -355,6 +416,13 @@ def _ensure_started(player=None):
             _started = True
         elif player is not None:
             _live._player = player
+
+
+def stop_screen_processor() -> None:
+    global _started
+    with _start_lock:
+        _started = False
+        _live.stop()
 
 
 def screen_process(
