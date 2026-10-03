@@ -353,6 +353,9 @@ class OmniRouteProvisioner:
             "groq_api_key": "groq",
             "xai_api_key": "xai",
             "cerebras_api_key": "cerebras",
+            "deepseek_api_key": "deepseek",
+            "mistral_api_key": "mistral",
+            "cohere_api_key": "cohere",
         }
         for field, provider in fields.items():
             key = str(payload.get(field) or "").strip()

@@ -11167,6 +11167,69 @@ class SystemConnectivityPage(QWidget):
         )
         lay1.addWidget(self._gemini_row)
         lay1.addWidget(self._or_row)
+
+        # Additional cloud providers used by OmniRoute's multi-model intelligence pool.
+        provider_pool = self._card(
+            "Advanced Cloud Intelligence Pool",
+            "Add optional provider keys. Brahma keeps them locally and OmniRoute can use them for smart routing, fallback, and multi-model reasoning."
+        )
+        pool_lay = provider_pool.layout()
+        for provider_id, label, field in (
+            ("openai", "OpenAI", "openai_api_key"),
+            ("anthropic", "Anthropic", "anthropic_api_key"),
+            ("groq", "Groq", "groq_api_key"),
+            ("xai", "xAI", "xai_api_key"),
+            ("cerebras", "Cerebras", "cerebras_api_key"),
+            ("deepseek", "DeepSeek", "deepseek_api_key"),
+            ("mistral", "Mistral", "mistral_api_key"),
+            ("cohere", "Cohere", "cohere_api_key"),
+        ):
+            row = QHBoxLayout()
+            label_widget = QLabel(label)
+            label_widget.setMinimumWidth(82)
+            key_input = QLineEdit()
+            key_input.setEchoMode(QLineEdit.EchoMode.Password)
+            key_input.setPlaceholderText("Optional API key")
+            key_input.setText((self._api_defaults.get(field) or "").strip())
+            save_btn = QPushButton("Save")
+            test_btn = QPushButton("Test")
+            status_lbl = QLabel("Configured" if key_input.text().strip() else "Not configured")
+            status_lbl.setStyleSheet(f"color: {C.GREEN if key_input.text().strip() else C.TEXT_DIM}; font-size: 10px;")
+            save_btn.clicked.connect(
+                lambda _checked=False, p=provider_id, f=field, inp=key_input, st=status_lbl:
+                    self._save_cloud_provider_key(p, f, inp.text(), st)
+            )
+            test_btn.clicked.connect(
+                lambda _checked=False, p=provider_id, inp=key_input, st=status_lbl:
+                    self._test_cloud_provider_key(p, inp.text(), st)
+            )
+            row.addWidget(label_widget)
+            row.addWidget(key_input, 1)
+            row.addWidget(save_btn)
+            row.addWidget(test_btn)
+            row.addWidget(status_lbl)
+            pool_lay.addLayout(row)
+
+        intel_row = QHBoxLayout()
+        intel_row.addWidget(QLabel("Intelligence Mode"))
+        self._intelligence_mode_combo = QComboBox()
+        self._intelligence_mode_combo.addItems(["Smart", "Fast", "Off"])
+        saved_intel_mode = str(self._load_app_settings().get("intelligence_mode", "smart")).lower()
+        self._intelligence_mode_combo.setCurrentText({"smart": "Smart", "fast": "Fast", "off": "Off"}.get(saved_intel_mode, "Smart"))
+        self._intelligence_mode_combo.currentTextChanged.connect(
+            lambda text: self._set_setting("intelligence_mode", text.lower())
+        )
+        intel_row.addWidget(self._intelligence_mode_combo, 1)
+        pool_lay.addLayout(intel_row)
+
+        consensus = self._mk_toggle(
+            "Enable multi-model reasoning + final synthesis",
+            bool(self._load_app_settings().get("intelligence_orchestration_enabled", True)),
+            lambda checked: self._set_setting("intelligence_orchestration_enabled", bool(checked)),
+        )
+        pool_lay.addWidget(consensus)
+        lay.addWidget(provider_pool)
+
         controls = QHBoxLayout()
         controls.setSpacing(12)
         self._default_provider = QComboBox()
@@ -12554,6 +12617,53 @@ class SystemConnectivityPage(QWidget):
     def _open_api_keys(self):
         if self._ctrl() and hasattr(self._ctrl(), "_win"):
             self._ctrl()._win._show_setup(self._ctrl()._win._load_api_defaults())
+
+    def _save_cloud_provider_key(self, provider: str, field: str, key: str, status_lbl):
+        key = (key or "").strip()
+        data = self._load_api_defaults()
+        data[field] = key
+        try:
+            os.makedirs(CONFIG_DIR, exist_ok=True)
+            API_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+            status_lbl.setText("Saved locally")
+            status_lbl.setStyleSheet(f"color: {C.GREEN if key else C.TEXT_DIM}; font-size: 10px;")
+            # Mark the running gateway stale so the newly saved provider is picked up
+            # on its next request without blocking the settings UI.
+            try:
+                from core.omniroute import gateway
+                gateway()._credentials_synced = False
+            except Exception:
+                pass
+            if self._ctrl() and hasattr(self._ctrl(), "write_log"):
+                self._ctrl().write_log(
+                    f"SYS: {provider} cloud credential {'saved' if key else 'cleared'}."
+                )
+        except Exception as exc:
+            status_lbl.setText("Save failed")
+            status_lbl.setStyleSheet(f"color: {C.RED}; font-size: 10px;")
+            if self._ctrl() and hasattr(self._ctrl(), "write_log"):
+                self._ctrl().write_log(f"ERR: {provider} credential save failed: {exc}")
+
+    def _test_cloud_provider_key(self, provider: str, key: str, status_lbl):
+        key = (key or "").strip() or str(self._load_api_defaults().get(f"{provider}_api_key") or "").strip()
+        if not key:
+            status_lbl.setText("Key required")
+            status_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: 10px;")
+            return
+        status_lbl.setText("Testing...")
+        status_lbl.setStyleSheet(f"color: {C.ACC}; font-size: 10px;")
+        def worker():
+            try:
+                from core.omniroute import gateway
+                gateway().provisioner.configure_provider(provider, key)
+                result = gateway().test_provider(provider)
+                msg = f"SYS: {provider} test {'passed' if result.get('ok') else 'failed'}."
+            except Exception as exc:
+                msg = f"SYS: {provider} test failed: {exc}"
+            if self._ctrl() and hasattr(self._ctrl(), "write_log"):
+                self._ctrl().write_log(msg)
+
+        threading.Thread(target=worker, name=f"brahma-provider-test-{provider}", daemon=True).start()
 
     def _test_provider(self, setting_key: str):
         if setting_key == "gemini":

@@ -319,12 +319,11 @@ def _gemini_text_reply(prompt: str) -> str:
     # OmniRoute-backed cloud path is preferred. Direct Gemini remains the
     # compatibility fallback if the local gateway cannot be started.
     try:
-        return openrouter_client.chat(
+        return openrouter_client.intelligent_chat(
             prompt,
             system=system_prompt,
-            model="auto",
-            max_tokens=4096,
-            temperature=0.6,
+            context=prompt,
+            profile=None,
         )
     except Exception:
         client = genai.Client(
@@ -3985,12 +3984,13 @@ class BrahmaLive:
                         output="Processing on OpenRouter...",
                         percent=50,
                     )
-                    reply = openrouter_client.chat(
+                    reply = openrouter_client.intelligent_chat(
                         request_text,
                         system=(
                             "You are Brahma Evo, a concise, helpful desktop assistant. "
                             "Reply naturally and briefly. Do not mention internal implementation details."
                         ),
+                        context=memory_ctx,
                     )
                     print("[BRAHMA EVO] 🌐 OpenRouter answered successfully!")
                 except Exception as e_or:

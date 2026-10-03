@@ -313,14 +313,13 @@ Additional Context: {context_hints}
         # direct Gemini sequence remains as a compatibility fallback.
         try:
             from llm_client import client as unified_client
-            raw = unified_client.chat(
-                prompt=prompt,
+            data = unified_client.intelligent_json(
+                prompt,
                 system=system_instructions,
+                profile="coding",
                 max_tokens=8192,
-                temperature=0.2,
             )
-            data = cls._parse_json_response(raw)
-            if isinstance(data.get("manifest"), dict) and isinstance(data.get("code"), str):
+            if isinstance(data, dict) and isinstance(data.get("manifest"), dict) and isinstance(data.get("code"), str):
                 data["success"] = True
                 return data
         except Exception as exc:
@@ -384,18 +383,17 @@ Critical Repair Instructions:
         # repair remains unchanged as fallback.
         try:
             from llm_client import client as unified_client
-            raw = unified_client.chat(
-                prompt=prompt,
+            data = unified_client.intelligent_json(
+                prompt,
                 system=(
                     "You are repairing a Python skill generated for Brahma AI. "
                     "Return ONLY JSON in the form {\"code\": \"fully corrected runnable Python code\"}. "
                     "Preserve the requested behavior and existing safety constraints."
                 ),
+                profile="coding",
                 max_tokens=8192,
-                temperature=0.1,
             )
-            data = cls._parse_json_response(raw)
-            if isinstance(data.get("code"), str):
+            if isinstance(data, dict) and isinstance(data.get("code"), str):
                 data["success"] = True
                 return data
         except Exception as exc:

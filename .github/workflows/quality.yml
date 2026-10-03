@@ -28,3 +28,5 @@ jobs:
         run: python tests/test_universal_agent.py
       - name: Run God’s Eye globe regressions
         run: python tests/test_gods_eye_globe.py
+      - name: Run multi-model intelligence regressions
+        run: python tests/test_intelligence_orchestrator.py
