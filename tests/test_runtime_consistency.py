@@ -177,6 +177,32 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("self._reconnect_timer.start()", source)
         self.assertIn("self._reconnect_timer.stop()", source)
 
+    def test_runtime_api_config_is_lock_protected_and_atomic(self):
+        source = self.read("config/__init__.py")
+        self.assertIn("threading.RLock()", source)
+        self.assertIn("with _CONFIG_LOCK:", source)
+        self.assertIn('temp.replace(API_CONFIG_PATH)', source)
+
+    def test_settings_hub_uses_canonical_page_navigation(self):
+        source = self.read("ui.py")
+        self.assertIn('SettingsHubPage(lambda page: self._set_page(page))', source)
+        self.assertIn('"home")', source)
+        self.assertIn('"devices")', source)
+        self.assertIn('"settings")', source)
+        self.assertIn('"omniroute")', source)
+        self.assertNotIn("target_idx", source)
+
+    def test_provider_key_changes_invalidate_omniroute_sync_cache(self):
+        gateway_source = self.read("core/omniroute.py")
+        ui_source = self.read("ui.py")
+        self.assertIn("def mark_credentials_stale(self)", gateway_source)
+        self.assertIn("gateway().mark_credentials_stale()", ui_source)
+
+    def test_openrouter_401_is_not_swallowed_as_generic_error(self):
+        source = self.read("or_client.py")
+        self.assertIn("except PermissionError:", source)
+        self.assertIn("            except PermissionError:\n                raise", source)
+
     def test_requirements_do_not_duplicate_package_names(self):
         names = []
         for line in self.read("requirements.txt").splitlines():
