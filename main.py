@@ -1,4 +1,5 @@
 from core.user_paths import get_user_data_dir
+from core.runtime_paths import API_CONFIG_PATH, STARTUP_LOG_PATH, FATAL_CRASH_LOG_PATH
 import os
 
 # Efficient GPU/WebGL configuration; the visualizer controls its own adaptive frame rate.
@@ -124,9 +125,8 @@ def get_base_dir():
 
 
 BASE_DIR        = get_base_dir()
-API_CONFIG_PATH = get_user_data_dir() / "config" / "api_keys.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
-STARTUP_LOG     = Path(os.environ.get("LOCALAPPDATA", str(BASE_DIR))) / "Brahma Evo" / "startup.log"
+STARTUP_LOG     = STARTUP_LOG_PATH
 LIVE_MODEL = os.environ.get("BRAHMA_LIVE_MODEL", "models/gemini-3.8-live")
 _LIVE_FALLBACK_MODELS = tuple(
     model.strip()
@@ -6755,7 +6755,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        fatal_path = STARTUP_LOG.parent / "FATAL_CRASH.log"
+        fatal_path = FATAL_CRASH_LOG_PATH
         try:
             fatal_path.parent.mkdir(parents=True, exist_ok=True)
             with fatal_path.open("w", encoding="utf-8") as f:
