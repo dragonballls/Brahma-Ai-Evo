@@ -4,6 +4,9 @@ import sys
 
 cwd = os.path.abspath(os.getcwd())
 
+omniroute_runtime = os.path.join(cwd, "build_vendor", "omniroute_runtime")
+runtime_datas = [(omniroute_runtime, "omniroute_runtime")] if os.path.isdir(omniroute_runtime) else []
+
 a = Analysis(
     [os.path.join(cwd, 'main.py')],
     pathex=[],
@@ -23,7 +26,7 @@ a = Analysis(
         (os.path.join(cwd, 'README.md'), '.'),
         (os.path.join(cwd, 'requirements.txt'), '.'),
         (os.path.join(cwd, 'version.txt'), '.')
-    ],
+    ] + runtime_datas,
     hiddenimports=[
         'mediapipe', 'cv2', 'instagrapi', 'google.genai', 'PyQt6', 'PyQt6.QtWebEngineCore',
         'PyQt6.QtWebEngineWidgets', 'PyQt6.QtWebChannel', 'pyautogui', 'sounddevice',

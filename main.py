@@ -312,20 +312,31 @@ def _extract_gemini_text(response) -> str:
 
 
 def _gemini_text_reply(prompt: str) -> str:
-    client = genai.Client(
-        api_key=_get_api_key(),
-        http_options={"api_version": "v1beta"},
-    )
     system_prompt = (
         "You are Brahma Evo, a concise, helpful desktop assistant. "
         "Reply naturally and briefly. Do not mention internal implementation details."
     )
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=f"{system_prompt}\n\nUser: {prompt}",
-        config={"temperature": 0.6},
-    )
-    return _extract_gemini_text(response)
+    # OmniRoute-backed cloud path is preferred. Direct Gemini remains the
+    # compatibility fallback if the local gateway cannot be started.
+    try:
+        return openrouter_client.chat(
+            prompt,
+            system=system_prompt,
+            model="auto",
+            max_tokens=4096,
+            temperature=0.6,
+        )
+    except Exception:
+        client = genai.Client(
+            api_key=_get_api_key(),
+            http_options={"api_version": "v1beta"},
+        )
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=f"{system_prompt}\n\nUser: {prompt}",
+            config={"temperature": 0.6},
+        )
+        return _extract_gemini_text(response)
 
 
 def _ig_gemini_reply(username: str, text: str) -> str:
@@ -763,6 +774,61 @@ TOOL_DECLARATIONS = [
             },
             "required": ["description"]
         }
+    },
+    {
+        "name": "omniroute",
+        "description": (
+            "Manage Brahma's built-in local OmniRoute gateway. It provides one local "
+            "OpenAI-compatible cloud endpoint and routes through configured provider credentials. "
+            "Use only for OmniRoute status, provider synchronization, or provider testing."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "status | sync_existing_keys | test_provider",
+                },
+                "provider": {
+                    "type": "STRING",
+                    "description": "Provider identifier for test_provider.",
+                },
+            },
+            "required": ["action"],
+        },
+    },
+    {
+        "name": "self_coding",
+        "description": (
+            "Guarded autonomous coding for Brahma itself. 'preview' creates an isolated named "
+            "checkpoint branch, lets Brahma's existing coding engine implement the goal, runs "
+            "verification, and leaves the verified work pending. 'approve' explicitly promotes "
+            "one pending checkpoint to main. 'undo' safely discards a pending checkpoint or "
+            "reverts an approved checkpoint. 'list' shows durable checkpoints. Never approve "
+            "without an explicit user request."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "preview | approve | undo | list",
+                },
+                "goal": {
+                    "type": "STRING",
+                    "description": "The coding improvement to implement for preview.",
+                },
+                "checkpoint": {
+                    "type": "STRING",
+                    "description": "Checkpoint ID for approve or undo.",
+                },
+                "max_passes": {
+                    "type": "INTEGER",
+                    "description": "Verified coding passes, 1-3 (default 1).",
+                },
+            },
+            "required": ["action"],
+        },
     },
     {
         "name": "background_monitor",
@@ -2213,6 +2279,153 @@ class BrahmaLive:
             stop_native_speech()
         except Exception:
             pass
+        # Exact control-plane commands for the two new integrations. These
+        # are deliberately narrow so a misheard sentence cannot approve, undo,
+        # or launch self-coding accidentally.
+        lower_exact = re.sub(r"\s+", " ", text.lower()).strip()
+
+        if lower_exact in {"omniroute status", "check omniroute", "check omniroute status"}:
+            from core.omniroute import gateway
+            status = gateway().status()
+            self.ui.write_log(
+                f"OmniRoute: {'ready' if status.get('available') else 'unavailable'} "
+                f"v{status.get('version') or '?'} @ {status.get('base_url')}"
+            )
+            self.speak(
+                "OmniRoute is ready." if status.get("available")
+                else "OmniRoute is not ready."
+            )
+            self.ui.set_state("LISTENING")
+            return
+
+        if lower_exact in {"sync omniroute keys", "sync omniroute api keys", "sync omniroute providers"}:
+            def _sync_omni():
+                try:
+                    from core.omniroute import gateway
+                    result = gateway().provisioner.sync_existing_provider_keys(
+                        get_user_data_dir() / "config" / "api_keys.json"
+                    )
+                    self.ui.write_log(f"[OmniRoute] Provider sync: {result}")
+                    self.speak(
+                        f"OmniRoute provider sync finished. "
+                        f"{len(result.get('configured', []))} configured."
+                    )
+                except Exception as exc:
+                    self.ui.write_log(f"ERR: OmniRoute provider sync failed: {exc}")
+                    self.speak("OmniRoute provider sync failed.")
+                finally:
+                    self.ui.set_state("LISTENING")
+            threading.Thread(target=_sync_omni, daemon=True, name="omniroute-sync").start()
+            return
+
+        m = re.fullmatch(r"(?:test )?omniroute provider ([a-z0-9_.-]+)", lower_exact)
+        if m:
+            provider = m.group(1)
+            def _test_omni():
+                try:
+                    from core.omniroute import gateway
+                    result = gateway().test_provider(provider)
+                    self.ui.write_log(f"[OmniRoute] Provider test: {result}")
+                    self.speak(
+                        f"OmniRoute provider test {'passed' if result.get('ok') else 'failed'} for {provider}."
+                    )
+                except Exception as exc:
+                    self.ui.write_log(f"ERR: OmniRoute provider test failed: {exc}")
+                    self.speak("OmniRoute provider test failed.")
+                finally:
+                    self.ui.set_state("LISTENING")
+            threading.Thread(target=_test_omni, daemon=True, name="omniroute-test").start()
+            return
+
+        m = re.fullmatch(r"(?:self[- ]code|self[- ]coding|code yourself|improve yourself(?: by)?)\s+(.+)", text, flags=re.IGNORECASE)
+        if m:
+            goal = m.group(1).strip()
+            self.ui.begin_task_workspace(
+                text,
+                ["Create isolated checkpoint", "Implement requested code change", "Run Brahma verification", "Leave checkpoint pending for approval"],
+                source=source or "local",
+            )
+            def _preview_self_code():
+                try:
+                    from core.self_coding import SelfCodingAgent
+                    result = SelfCodingAgent().preview(goal, max_passes=1)
+                    self.ui.write_log(f"[SelfCoding] {json.dumps(result, ensure_ascii=False)}")
+                    self.speak(
+                        f"Self-coding preview completed. Checkpoint {result.get('checkpoint_id')} "
+                        "is pending approval."
+                    )
+                    self.ui.finish_task_workspace(
+                        f"Checkpoint {result.get('checkpoint_id')} is ready for explicit approval.",
+                        "Self-coding preview verified.",
+                        100,
+                    )
+                except Exception as exc:
+                    self.ui.write_log(f"ERR: Self-coding preview failed safely: {exc}")
+                    self.speak("Self-coding preview failed safely. No main branch change was published.")
+                    self.ui.finish_task_workspace(str(exc), "Self-coding preview failed.", 0)
+                finally:
+                    self.ui.set_state("LISTENING")
+            threading.Thread(target=_preview_self_code, daemon=True, name="self-coding-preview").start()
+            return
+
+        m = re.fullmatch(r"(?:approve|promote) (?:self[- ]coding )?checkpoint ([a-z0-9._-]+)", lower_exact)
+        if m:
+            checkpoint = m.group(1)
+            def _approve_self_code():
+                try:
+                    from core.self_coding import SelfCodingAgent
+                    promoted = SelfCodingAgent().approve(checkpoint)
+                    self.ui.write_log(f"[SelfCoding] Approved {checkpoint} -> {promoted}")
+                    self.speak(f"Checkpoint {checkpoint} was approved and promoted.")
+                    self.ui.finish_task_workspace(
+                        f"Checkpoint {checkpoint} promoted to main at {promoted}.",
+                        "Self-coding approved.",
+                        100,
+                    )
+                except Exception as exc:
+                    self.ui.write_log(f"ERR: Self-coding approval failed safely: {exc}")
+                    self.speak("Self-coding approval was refused safely.")
+                    self.ui.finish_task_workspace(str(exc), "Self-coding approval refused.", 0)
+                finally:
+                    self.ui.set_state("LISTENING")
+            threading.Thread(target=_approve_self_code, daemon=True, name="self-coding-approve").start()
+            return
+
+        m = re.fullmatch(r"undo (?:self[- ]coding )?checkpoint ([a-z0-9._-]+)", lower_exact)
+        if m:
+            checkpoint = m.group(1)
+            def _undo_self_code():
+                try:
+                    from core.self_coding import SelfCodingAgent
+                    result = SelfCodingAgent().undo(checkpoint)
+                    self.ui.write_log(f"[SelfCoding] Undone {checkpoint}: {result}")
+                    self.speak(f"Checkpoint {checkpoint} was undone.")
+                    self.ui.finish_task_workspace(
+                        f"Checkpoint {checkpoint} undone.",
+                        "Self-coding undo completed.",
+                        100,
+                    )
+                except Exception as exc:
+                    self.ui.write_log(f"ERR: Self-coding undo failed safely: {exc}")
+                    self.speak("Self-coding undo was refused safely.")
+                    self.ui.finish_task_workspace(str(exc), "Self-coding undo refused.", 0)
+                finally:
+                    self.ui.set_state("LISTENING")
+            threading.Thread(target=_undo_self_code, daemon=True, name="self-coding-undo").start()
+            return
+
+        if lower_exact in {"list self coding checkpoints", "list self-coding checkpoints", "self coding checkpoints"}:
+            try:
+                from core.self_coding import SelfCodingAgent
+                checkpoints = SelfCodingAgent().list_checkpoints()
+                self.ui.write_log(f"[SelfCoding] {json.dumps(checkpoints, ensure_ascii=False)}")
+                self.speak(f"There are {len(checkpoints)} self-coding checkpoints.")
+            except Exception as exc:
+                self.ui.write_log(f"ERR: Self-coding checkpoint list failed: {exc}")
+                self.speak("I could not read the self-coding checkpoints.")
+            self.ui.set_state("LISTENING")
+            return
+
         # allow plugins to handle the incoming text command first
         try:
             pm = getattr(self, "plugin_manager", None)
@@ -4090,6 +4303,12 @@ class BrahmaLive:
             parts.append(mem_str)
         parts.append(sys_prompt)
         parts.append(
+            "Cloud text reasoning is routed through the local OmniRoute gateway when available. "
+            "Use the existing direct-provider fallback only when OmniRoute is unavailable. "
+            "For self-coding requests, use the self_coding tool and keep preview, approval, and undo "
+            "as separate explicit actions. Never approve a checkpoint unless the user explicitly asks."
+        )
+        parts.append(
             "Wake-word mode: if the microphone is muted, only an explicit 'Brahma Evo' phrase "
             "(optionally preceded by 'hey', 'hi', or 'hello') can activate the assistant. Never wake "
             "on a generic 'hey', 'hi', or 'hello' by itself. After activation, wait for the actual "
@@ -4622,6 +4841,71 @@ class BrahmaLive:
                     return types.FunctionResponse(id=fc.id, name=name, response={"result": result})
                 else:
                     result = "Choose start, take_over, or hang_up."
+            elif name == "omniroute":
+                action = (args.get("action") or "status").strip().lower()
+                from core.omniroute import gateway
+                omni = gateway()
+                if action == "status":
+                    result = json.dumps(omni.status(), ensure_ascii=False)
+                elif action == "sync_existing_keys":
+                    from core.user_paths import get_user_data_dir
+                    result = json.dumps(
+                        omni.provisioner.sync_existing_provider_keys(
+                            get_user_data_dir() / "config" / "api_keys.json"
+                        ),
+                        ensure_ascii=False,
+                    )
+                elif action == "test_provider":
+                    provider = (args.get("provider") or "").strip()
+                    if not provider:
+                        result = "A provider is required for test_provider."
+                    else:
+                        result = json.dumps(omni.test_provider(provider), ensure_ascii=False)
+                else:
+                    result = "Choose status, sync_existing_keys, or test_provider."
+            elif name == "self_coding":
+                action = (args.get("action") or "list").strip().lower()
+                agent = __import__("core.self_coding", fromlist=["SelfCodingAgent"]).SelfCodingAgent()
+                try:
+                    if action == "preview":
+                        goal = (args.get("goal") or "").strip()
+                        if not goal:
+                            result = "A self-coding goal is required."
+                        else:
+                            result_obj = await loop.run_in_executor(
+                                None,
+                                lambda: agent.preview(
+                                    goal,
+                                    max_passes=int(args.get("max_passes") or 1),
+                                ),
+                            )
+                            result = json.dumps(result_obj, ensure_ascii=False)
+                    elif action == "approve":
+                        checkpoint = (args.get("checkpoint") or "").strip()
+                        if not checkpoint:
+                            result = "A checkpoint ID is required."
+                        else:
+                            promoted = await loop.run_in_executor(
+                                None,
+                                lambda: agent.approve(checkpoint),
+                            )
+                            result = f"Self-coding checkpoint {checkpoint} approved and promoted to main at {promoted}."
+                    elif action == "undo":
+                        checkpoint = (args.get("checkpoint") or "").strip()
+                        if not checkpoint:
+                            result = "A checkpoint ID is required."
+                        else:
+                            undone = await loop.run_in_executor(
+                                None,
+                                lambda: agent.undo(checkpoint),
+                            )
+                            result = f"Self-coding checkpoint {checkpoint} {undone}."
+                    elif action == "list":
+                        result = json.dumps(agent.list_checkpoints(), ensure_ascii=False)
+                    else:
+                        result = "Choose preview, approve, undo, or list."
+                except Exception as exc:
+                    result = f"Self-coding action failed safely: {exc}"
             elif name == "skill_forge":
                 action = (args.get("action") or "forge").lower().strip()
                 from core.dynamic_registry import DynamicToolRegistry

@@ -1,0 +1,397 @@
+"""Guarded self-coding for Brahma Evo.
+
+Ported from the proven JARVIS checkpoint model and adapted to Brahma's existing
+BrahmaDevAgent. Coding runs only from a clean attached Git branch, verifies
+before commit, creates a durable pending checkpoint, and requires explicit
+approval before main is changed.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+import os
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+from typing import Any
+
+
+class SelfCodingError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class Checkpoint:
+    checkpoint_id: str
+    branch: str
+    baseline: str
+    base_branch: str
+    commits: tuple[str, ...]
+    created_at: str
+    state: str
+    promoted_sha: str | None = None
+    undo_commits: tuple[str, ...] = ()
+
+
+class SelfCodingAgent:
+    def __init__(self, repo: Path | None = None) -> None:
+        self.repo = self._resolve_repo(repo)
+        if not self.repo.is_dir():
+            raise SelfCodingError(f"Repository does not exist: {self.repo}")
+
+    @staticmethod
+    def _resolve_repo(repo: Path | None) -> Path:
+        if repo:
+            return Path(repo).expanduser().resolve()
+
+        env_repo = os.environ.get("BRAHMA_SELF_CODING_REPO", "").strip()
+        candidates: list[Path] = []
+        if env_repo:
+            candidates.append(Path(env_repo).expanduser())
+
+        here = Path(__file__).resolve()
+        candidates.extend([here.parent.parent, Path.cwd()])
+        for candidate in candidates:
+            for parent in (candidate, *candidate.parents):
+                if (parent / ".git").is_dir():
+                    return parent.resolve()
+
+        raise SelfCodingError(
+            "No real Git checkout was found. Set BRAHMA_SELF_CODING_REPO "
+            "to the Brahma-Ai-Evo working tree before using self-coding."
+        )
+
+    @property
+    def checkpoint_dir(self) -> Path:
+        return self.repo / ".git" / "brahma-checkpoints"
+
+    def _run(self, args: list[str] | tuple[str, ...], timeout: int = 900) -> subprocess.CompletedProcess[str]:
+        try:
+            return subprocess.run(
+                list(args),
+                cwd=self.repo,
+                text=True,
+                capture_output=True,
+                timeout=timeout,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise SelfCodingError(f"Command failed to start: {args[0]}") from exc
+
+    def _git(self, *args: str, timeout: int = 120) -> subprocess.CompletedProcess[str]:
+        return self._run(("git", *args), timeout=timeout)
+
+    def _branch(self) -> str:
+        result = self._git("rev-parse", "--abbrev-ref", "HEAD")
+        if result.returncode != 0:
+            raise SelfCodingError(result.stderr.strip() or "Unable to determine Git branch.")
+        value = result.stdout.strip()
+        if not value or value == "HEAD":
+            raise SelfCodingError("Self-coding requires an attached Git branch.")
+        return value
+
+    def validate_repo(self) -> None:
+        if not (self.repo / ".git").exists():
+            raise SelfCodingError("Self-coding requires a real Git repository.")
+        root = self._git("rev-parse", "--show-toplevel")
+        if root.returncode != 0 or Path(root.stdout.strip()).resolve() != self.repo:
+            raise SelfCodingError("Configured self-coding root is not the Git repository root.")
+        status = self._git("status", "--porcelain")
+        if status.returncode != 0:
+            raise SelfCodingError(status.stderr.strip() or "Unable to inspect Git status.")
+        if status.stdout.strip():
+            raise SelfCodingError("Repository is not clean; self-coding refuses to overwrite existing work.")
+        self._branch()
+
+    @staticmethod
+    def _slug(goal: str) -> str:
+        value = re.sub(r"[^a-z0-9]+", "-", goal.casefold()).strip("-")
+        return (value[:40].rstrip("-") or "change")
+
+    def _new_branch(self, goal: str) -> tuple[str, str, str]:
+        head = self._git("rev-parse", "HEAD")
+        if head.returncode != 0:
+            raise SelfCodingError("Unable to read the baseline commit.")
+        baseline = head.stdout.strip()
+        base_branch = self._branch()
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        branch = f"agent/checkpoint/{stamp}-{self._slug(goal)}-{baseline[:8]}"
+        result = self._git("switch", "-c", branch)
+        if result.returncode != 0:
+            raise SelfCodingError(result.stderr.strip() or "Unable to create checkpoint branch.")
+        return branch, baseline, base_branch
+
+    def _path(self, checkpoint_id: str) -> Path:
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", checkpoint_id):
+            raise SelfCodingError("Invalid checkpoint id.")
+        return self.checkpoint_dir / f"{checkpoint_id}.json"
+
+    def _save(self, checkpoint: Checkpoint) -> None:
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        self._path(checkpoint.checkpoint_id).write_text(
+            json.dumps(
+                {
+                    "checkpoint_id": checkpoint.checkpoint_id,
+                    "branch": checkpoint.branch,
+                    "baseline": checkpoint.baseline,
+                    "base_branch": checkpoint.base_branch,
+                    "commits": list(checkpoint.commits),
+                    "created_at": checkpoint.created_at,
+                    "state": checkpoint.state,
+                    "promoted_sha": checkpoint.promoted_sha,
+                    "undo_commits": list(checkpoint.undo_commits),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    def _load(self, checkpoint_id: str) -> Checkpoint:
+        data = json.loads(self._path(checkpoint_id).read_text(encoding="utf-8"))
+        return Checkpoint(
+            checkpoint_id=str(data["checkpoint_id"]),
+            branch=str(data["branch"]),
+            baseline=str(data["baseline"]),
+            base_branch=str(data["base_branch"]),
+            commits=tuple(str(x) for x in data.get("commits", [])),
+            created_at=str(data["created_at"]),
+            state=str(data["state"]),
+            promoted_sha=data.get("promoted_sha"),
+            undo_commits=tuple(str(x) for x in data.get("undo_commits", [])),
+        )
+
+    def list_checkpoints(self) -> list[dict[str, Any]]:
+        if not self.checkpoint_dir.is_dir():
+            return []
+        output: list[dict[str, Any]] = []
+        for path in sorted(self.checkpoint_dir.glob("*.json"), reverse=True):
+            try:
+                item = json.loads(path.read_text(encoding="utf-8"))
+                output.append(
+                    {
+                        "checkpoint_id": item.get("checkpoint_id"),
+                        "state": item.get("state"),
+                        "branch": item.get("branch"),
+                        "baseline": item.get("baseline"),
+                        "promoted_sha": item.get("promoted_sha"),
+                        "created_at": item.get("created_at"),
+                    }
+                )
+            except Exception:
+                continue
+        return output
+
+    @staticmethod
+    def _coding_prompt(goal: str) -> str:
+        return f"""You are Brahma Evo's guarded implementation agent.
+
+Goal: {goal}
+
+Rules:
+- Work ONLY inside this Git repository.
+- Read the existing code and tests before editing.
+- Preserve all existing behavior unless this goal explicitly requires a change.
+- Never access, print, copy, or modify API keys, tokens, private keys, browser profiles, or files outside the repository.
+- Do not weaken authentication, permissions, safety guards, low-power behavior, or existing tests.
+- Prefer small, reversible changes.
+- Add or update tests for behavioral changes.
+- Run the relevant repository tests before reporting success.
+- Do NOT create Git commits, switch branches, push, or reset the repository; the outer checkpoint controller owns Git state.
+- Never claim success when verification fails.
+- Do not commit secrets or machine-specific configuration.
+- Keep the existing architecture coherent; reuse existing modules instead of making duplicate systems.
+
+Implement the goal directly in the current repository and leave the working tree ready for verification."""
+    
+    def _verify(self) -> None:
+        commands = (
+            (sys.executable, "-m", "compileall", "-q", "actions", "core", "features", "memory", "plugins", "smart_home", "main.py", "ui.py"),
+            (sys.executable, "tests/test_low_power_guards.py"),
+        )
+        optional_voice = self.repo / "tests" / "test_voice_guards.py"
+        if optional_voice.is_file():
+            commands += ((sys.executable, str(optional_voice)),)
+        for command in commands:
+            result = self._run(command, timeout=900)
+            if result.returncode != 0:
+                output = (result.stdout + "\n" + result.stderr).strip()
+                raise SelfCodingError(
+                    f"Verification failed for {' '.join(str(x) for x in command)}.\n{output[-12000:]}"
+                )
+
+    def _rollback(self, baseline: str, branch: str, base_branch: str) -> None:
+        self._git("reset", "--hard", baseline)
+        self._git("clean", "-fd")
+        current = self._branch()
+        if current == branch:
+            self._git("switch", base_branch)
+        self._git("branch", "-D", branch)
+        status = self._git("status", "--porcelain")
+        if status.stdout.strip():
+            raise SelfCodingError("Rollback left the repository dirty.")
+
+    def preview(self, goal: str, *, max_passes: int = 1) -> dict[str, Any]:
+        goal = str(goal or "").strip()
+        if not goal:
+            raise SelfCodingError("A non-empty self-coding goal is required.")
+        if max_passes < 1 or max_passes > 3:
+            raise SelfCodingError("max_passes must be between 1 and 3.")
+
+        self.validate_repo()
+        branch, baseline, base_branch = self._new_branch(goal)
+        checkpoint_id = branch.split("/", 2)[-1]
+        created_at = datetime.now(timezone.utc).isoformat()
+        commits: list[str] = []
+        try:
+            for _ in range(max_passes):
+                from actions.brahma_dev_agent import run_dev_agent
+                result = run_dev_agent(
+                    {
+                        "description": self._coding_prompt(goal),
+                        "workspace_path": str(self.repo),
+                    }
+                )
+                if isinstance(result, str) and result.lower().startswith(("error:", "failed:")):
+                    raise SelfCodingError(result)
+                self._verify()
+                status = self._git("status", "--porcelain")
+                if status.returncode != 0 or not status.stdout.strip():
+                    raise SelfCodingError("Coding pass produced no verified repository change.")
+                add = self._git("add", "--all")
+                if add.returncode != 0:
+                    raise SelfCodingError(add.stderr.strip() or "Unable to stage coding changes.")
+                commit = self._git(
+                    "commit",
+                    "-m",
+                    f"self-coding: {self._slug(goal)}",
+                    timeout=300,
+                )
+                if commit.returncode != 0:
+                    raise SelfCodingError(commit.stderr.strip() or "Unable to create checkpoint commit.")
+                head = self._git("rev-parse", "HEAD")
+                if head.returncode != 0:
+                    raise SelfCodingError("Unable to record checkpoint commit.")
+                commits.append(head.stdout.strip())
+
+            checkpoint = Checkpoint(
+                checkpoint_id=checkpoint_id,
+                branch=branch,
+                baseline=baseline,
+                base_branch=base_branch,
+                commits=tuple(commits),
+                created_at=created_at,
+                state="pending",
+            )
+            self._save(checkpoint)
+            return {
+                "success": True,
+                "state": "pending",
+                "checkpoint_id": checkpoint_id,
+                "branch": branch,
+                "baseline": baseline,
+                "commits": commits,
+                "message": "Verified checkpoint created; explicit approval is required before main changes.",
+            }
+        except Exception as exc:
+            try:
+                self._rollback(baseline, branch, base_branch)
+            except Exception as rollback_exc:
+                raise SelfCodingError(f"Self-coding failed and rollback also failed: {rollback_exc}") from exc
+            raise SelfCodingError(f"Self-coding failed safely: {exc}") from exc
+
+    def approve(self, checkpoint_id: str) -> str:
+        checkpoint = self._load(checkpoint_id)
+        if checkpoint.state != "pending":
+            raise SelfCodingError(f"Checkpoint is not pending: {checkpoint.state}")
+        self.validate_repo()
+        head = self._git("rev-parse", checkpoint.branch)
+        if head.returncode != 0 or head.stdout.strip() != checkpoint.commits[-1]:
+            raise SelfCodingError("Checkpoint branch metadata does not match its current head.")
+        fetched = self._git("fetch", "origin", "main", timeout=300)
+        if fetched.returncode != 0:
+            raise SelfCodingError(fetched.stderr.strip() or "Unable to fetch remote main.")
+        remote = self._git("rev-parse", "refs/remotes/origin/main")
+        local = self._git("rev-parse", "refs/heads/main")
+        if remote.returncode != 0 or local.returncode != 0:
+            raise SelfCodingError("Unable to inspect main before approval.")
+        if remote.stdout.strip() != checkpoint.baseline or local.stdout.strip() != checkpoint.baseline:
+            raise SelfCodingError("main changed since preview; refusing promotion.")
+        previous = self._branch()
+        self._save(Checkpoint(**{**checkpoint.__dict__, "state": "promoting"}))
+        switched = self._git("switch", "main")
+        if switched.returncode != 0:
+            self._save(checkpoint)
+            raise SelfCodingError(switched.stderr.strip() or "Unable to switch to main.")
+        merged = self._git("merge", "--ff-only", checkpoint.branch, timeout=300)
+        if merged.returncode != 0:
+            self._git("switch", previous)
+            self._save(checkpoint)
+            raise SelfCodingError(merged.stderr.strip() or "Unable to promote checkpoint.")
+        promoted = self._git("rev-parse", "HEAD")
+        promoted_sha = promoted.stdout.strip()
+        pushed = self._git("push", "origin", "main", timeout=300)
+        if pushed.returncode != 0:
+            self._git("reset", "--hard", checkpoint.baseline)
+            self._git("switch", previous)
+            self._save(checkpoint)
+            raise SelfCodingError(pushed.stderr.strip() or "Approval publish failed safely.")
+        approved = Checkpoint(
+            **{**checkpoint.__dict__, "state": "approved", "promoted_sha": promoted_sha}
+        )
+        self._save(approved)
+        return promoted_sha
+
+    def undo(self, checkpoint_id: str) -> str:
+        checkpoint = self._load(checkpoint_id)
+        self.validate_repo()
+        if checkpoint.state == "pending":
+            current = self._branch()
+            if current == checkpoint.branch:
+                self._git("switch", checkpoint.base_branch)
+            self._git("branch", "-D", checkpoint.branch)
+            undone = Checkpoint(**{**checkpoint.__dict__, "state": "undone"})
+            self._save(undone)
+            return "undone"
+        if checkpoint.state != "approved" or not checkpoint.promoted_sha:
+            raise SelfCodingError(f"Checkpoint cannot be undone from state {checkpoint.state}")
+        fetched = self._git("fetch", "origin", "main", timeout=300)
+        if fetched.returncode != 0:
+            raise SelfCodingError(fetched.stderr.strip() or "Unable to fetch remote main.")
+        remote = self._git("rev-parse", "refs/remotes/origin/main")
+        local = self._git("rev-parse", "refs/heads/main")
+        if remote.returncode != 0 or local.returncode != 0:
+            raise SelfCodingError("Unable to inspect main before undo.")
+        if remote.stdout.strip() != checkpoint.promoted_sha or local.stdout.strip() != checkpoint.promoted_sha:
+            raise SelfCodingError("main changed after approval; refusing to undo unrelated work.")
+        current = self._branch()
+        self._git("switch", "main")
+        undo_commits: list[str] = []
+        try:
+            for commit in reversed(checkpoint.commits):
+                reverted = self._git("revert", "--no-edit", commit, timeout=300)
+                if reverted.returncode != 0:
+                    self._git("revert", "--abort")
+                    raise SelfCodingError(reverted.stderr.strip() or f"Unable to revert {commit}.")
+                head = self._git("rev-parse", "HEAD")
+                undo_commits.append(head.stdout.strip())
+            pushed = self._git("push", "origin", "main", timeout=300)
+            if pushed.returncode != 0:
+                self._git("reset", "--hard", checkpoint.promoted_sha)
+                self._git("switch", current)
+                raise SelfCodingError(pushed.stderr.strip() or "Unable to publish checkpoint undo.")
+            undone = Checkpoint(
+                **{**checkpoint.__dict__, "state": "undone", "undo_commits": tuple(undo_commits)}
+            )
+            self._save(undone)
+            return "undone"
+        except Exception:
+            try:
+                if self._branch() == "main":
+                    self._git("reset", "--hard", checkpoint.promoted_sha)
+                self._git("switch", current)
+            except Exception:
+                pass
+            raise

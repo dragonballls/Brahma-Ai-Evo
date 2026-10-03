@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 import requests
+from core.omniroute import gateway as _omniroute_gateway
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("openrouter_client")
@@ -89,6 +90,7 @@ class OpenRouterClient:
             "HTTP-Referer":  "https://github.com/brahma-ai",
             "X-Title":       "Brahma Evo",
         }
+        self._omniroute = _omniroute_gateway()
 
     def _is_rate_limited(self, model: str) -> bool:
         ts = _rate_limited.get(model)
@@ -105,6 +107,58 @@ class OpenRouterClient:
             f"[OpenRouter] Rate limited: {model} — "
             f"cooling down for {RATE_LIMIT_COOLDOWN}s"
         )
+
+    def _omniroute_enabled(self) -> bool:
+        import os
+        return os.environ.get("BRAHMA_OMNIROUTE_ENABLED", "1").strip().lower() not in {
+            "0", "false", "no", "off"
+        }
+
+    def _call_omniroute(
+        self,
+        messages: list[dict],
+        model: Optional[str] = None,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        temperature: float = DEFAULT_TEMPERATURE,
+        response_format: Optional[dict] = None,
+    ) -> Optional[str]:
+        if not self._omniroute_enabled() or not self._omniroute.ensure_ready():
+            return None
+        payload: dict = {
+            "model": model or "auto",
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if response_format:
+            payload["response_format"] = response_format
+        headers = {"Content-Type": "application/json"}
+        import os
+        omni_key = os.environ.get("BRAHMA_OMNIROUTE_API_KEY", "").strip()
+        if omni_key:
+            headers["Authorization"] = f"Bearer {omni_key}"
+        try:
+            response = requests.post(
+                self._omniroute.base_url + "/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=REQUEST_TIMEOUT,
+            )
+            if response.status_code != 200:
+                logger.warning(f"[OmniRoute] HTTP {response.status_code}; using direct provider fallback")
+                return None
+            data = response.json()
+            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            if isinstance(content, list):
+                content = "".join(
+                    str(item.get("text", ""))
+                    for item in content
+                    if isinstance(item, dict)
+                )
+            return str(content).strip() if content else None
+        except Exception as exc:
+            logger.warning(f"[OmniRoute] request failed; using direct provider fallback: {exc}")
+            return None
 
     def _call(
         self,
@@ -189,14 +243,17 @@ class OpenRouterClient:
         temperature: float = DEFAULT_TEMPERATURE,
         response_format: Optional[dict] = None,
     ) -> str:
-        if model and not self._is_rate_limited(model):
+        # OmniRoute routing aliases are local-gateway names, not valid direct
+        # OpenRouter model IDs. Never send them to the direct fallback pool.
+        direct_model = model if model and not model.startswith("auto") else None
+        if direct_model and not self._is_rate_limited(direct_model):
             try:
-                result = self._call(model, messages, max_tokens, temperature, response_format)
+                result = self._call(direct_model, messages, max_tokens, temperature, response_format)
                 if result:
                     return result
                 logger.info(
                     f"[OpenRouter] Requested model failed, "
-                    f"falling back to pool: {model}"
+                    f"falling back to pool: {direct_model}"
                 )
             except PermissionError:
                 raise
@@ -232,6 +289,14 @@ class OpenRouterClient:
             messages.extend(history)
         messages.append({"role": "user", "content": prompt})
 
+        omni_result = self._call_omniroute(
+            messages,
+            model=model or "auto",
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        if omni_result:
+            return omni_result
         return self._call_with_fallback(
             TEXT_MODELS, messages, model, max_tokens, temperature
         )
@@ -250,9 +315,17 @@ class OpenRouterClient:
             {"role": "system", "content": system},
             {"role": "user",   "content": prompt},
         ]
-        raw = self._call_with_fallback(
-            TEXT_MODELS, messages, model, max_tokens, temperature=0.2
+        raw = self._call_omniroute(
+            messages,
+            model=model or "auto",
+            max_tokens=max_tokens,
+            temperature=0.2,
+            response_format={"type": "json_object"},
         )
+        if not raw:
+            raw = self._call_with_fallback(
+                TEXT_MODELS, messages, model, max_tokens, temperature=0.2
+            )
 
         clean = raw.strip()
         if clean.startswith("```"):
@@ -298,6 +371,14 @@ class OpenRouterClient:
                 ],
             },
         ]
+        omni_result = self._call_omniroute(
+            messages,
+            model=model or "auto",
+            max_tokens=max_tokens,
+            temperature=0.2,
+        )
+        if omni_result:
+            return omni_result
         return self._call_with_fallback(
             VISION_MODELS, messages, model, max_tokens, temperature=0.2
         )
@@ -333,18 +414,31 @@ class OpenRouterClient:
         temperature: float = DEFAULT_TEMPERATURE,
     ) -> str:
     
+        omni_result = self._call_omniroute(
+            messages,
+            model=model or "auto",
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        if omni_result:
+            return omni_result
         return self._call_with_fallback(
             TEXT_MODELS, messages, model, max_tokens, temperature
         )
 
     def available_models(self) -> dict:
-        return {
+        info = {
             "text_models":   TEXT_MODELS,
             "vision_models": VISION_MODELS,
             "rate_limited":  list(_rate_limited.keys()),
             "total_text":    len(TEXT_MODELS),
             "total_vision":  len(VISION_MODELS),
         }
+        try:
+            info["omniroute"] = self._omniroute.status()
+        except Exception:
+            info["omniroute"] = {"available": False, "reason": "status unavailable"}
+        return info
 
 client = OpenRouterClient()
 

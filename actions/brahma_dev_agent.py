@@ -312,7 +312,20 @@ class BrahmaDevAgent:
         return calls
 
     def _call_llm(self) -> str:
-        """Dispatches conversation to Gemini directly with model fallback and rate-limit retries."""
+        """Prefer OmniRoute's coding route, then retain the existing direct-provider fallbacks."""
+        try:
+            from llm_client import client as ai_client
+            response = ai_client.multi_turn(
+                self.history,
+                model="auto/coding",
+                max_tokens=8192,
+                temperature=0.2,
+            )
+            if response:
+                return response.strip()
+        except Exception as exc:
+            logger.warning(f"[BrahmaDev] OmniRoute coding route failed: {exc}")
+
         try:
             with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
                 keys = json.load(f)

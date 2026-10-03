@@ -17,8 +17,10 @@ jobs:
         with:
           python-version: "3.12"
       - name: Compile Python sources
-        run: python -m compileall -q actions core features memory plugins smart_home main.py ui.py
+        run: python -m compileall -q actions core features memory plugins smart_home scripts main.py ui.py
       - name: Run low-power guards
         run: python tests/test_low_power_guards.py
       - name: Run voice safety regressions
         run: python tests/test_voice_guards.py
+      - name: Run OmniRoute and self-coding regressions
+        run: python tests/test_omniroute_self_coding.py
