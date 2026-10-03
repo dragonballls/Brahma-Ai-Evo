@@ -108,7 +108,7 @@ class UnifiedAIClient:
 
     def vision(self, prompt: str, image_b64: str, mime: str = "image/png", system: str = "Analyze the image.", model: Optional[str] = None, max_tokens: int = 1024) -> str:
         self.reload_settings()
-        if self._provider == "Local":
+        if self._is_local_provider():
             messages = [
                 {"role": "system", "content": system},
                 {
@@ -128,7 +128,7 @@ class UnifiedAIClient:
 
     def vision_from_file(self, prompt: str, image_path: str, system: str = "Analyze the image.", model: Optional[str] = None, max_tokens: int = 1024) -> str:
         self.reload_settings()
-        if self._provider == "Local":
+        if self._is_local_provider():
             import base64
             path = Path(image_path)
             mime_map = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif"}
@@ -141,7 +141,7 @@ class UnifiedAIClient:
 
     def multi_turn(self, messages: list[dict], model: Optional[str] = None, max_tokens: int = 4096, temperature: float = 0.7) -> str:
         self.reload_settings()
-        if self._provider == "Local":
+        if self._is_local_provider():
             result = self._local_chat_completion(messages, temperature)
             if result:
                 return result
@@ -197,7 +197,7 @@ class UnifiedAIClient:
     ) -> dict:
         """Use multi-model cloud reasoning for structured generation."""
         self.reload_settings()
-        if self._provider == "Local" or bool(self._provider and self._provider.lower() == "local"):
+        if self._is_local_provider():
             return self.chat_json(prompt, system=system, max_tokens=max_tokens)
         from core.intelligence_orchestrator import orchestrator
         return orchestrator.respond_json(
