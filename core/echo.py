@@ -192,7 +192,7 @@ class EchoGuard:
             pass          # never let bookkeeping disturb playback
 
     def is_user_speech(self, pcm, sr: int, level: float,
-                       when: float | None = None) -> bool:
+                       when: float | None = None, *, fast: bool = False) -> bool:
         """True if this microphone block is a different voice, not our echo."""
         try:
             if level < _MIN_LEVEL:
@@ -254,7 +254,13 @@ class EchoGuard:
             # thing it is watching for.
             warming = len(self._residuals) < _WARMUP
             thr = self.threshold
+            # During the first second of playback the normal echo model is
+            # intentionally conservative. Duplex barge-in needs a fast path,
+            # so a clearly non-echo residual can interrupt before calibration
+            # completes. The caller still debounces it across two audio blocks.
             speech = (not warming) and best_res >= thr
+            if warming and fast and best_res >= max(_MIN_USER, 0.24):
+                return True
 
             if speech:
                 self._run += 1
