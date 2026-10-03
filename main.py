@@ -92,6 +92,7 @@ from smart_home.service import SmartHomeService
 from plugin_manager import PluginManager
 from updater import restart_application, update_from_github
 from core.single_instance import SingleInstance
+from core.voice_guard import VoiceCommandGate, VoiceToolExecutionGate
 
 try:
     from dashboard.server import DashboardServer
@@ -535,22 +536,17 @@ def _looks_like_daily_briefing_request(text: str) -> bool:
 
 def _wakeword_detected(text: str) -> bool:
     t = re.sub(r"[^a-z0-9\s]+", " ", (text or "").lower())
-    words = [w for w in t.split() if w]
-    if not words:
+    compact = re.sub(r"\s+", " ", t).strip()
+    if not compact:
         return False
+    # Generic "hey/hi/hello" must never wake Brahma from ambient conversation.
     phrases = (
         "brahma evo",
         "hey brahma evo",
         "hi brahma evo",
         "hello brahma evo",
-        "hey",
-        "hi",
-        "hello",
     )
-    compact = " ".join(words)
-    if compact in phrases or any(p in compact for p in phrases):
-        return True
-    return any(word in {"brahma evo", "hey", "hi", "hello"} for word in words)
+    return any(compact == phrase or compact.startswith(phrase + " ") for phrase in phrases)
 
 
 def _build_task_plan(text: str) -> list[str]:
@@ -2051,6 +2047,8 @@ class BrahmaLive:
         self._is_speaking   = False
         self._speaking_lock = threading.Lock()
         self._use_openrouter_first = False
+        self._voice_command_gate = VoiceCommandGate()
+        self._voice_tool_gate = VoiceToolExecutionGate()
         self._pending_attention: dict | None = None
         self._pending_reply_event: dict | None = None
         self._reply_mode = False
@@ -2199,6 +2197,11 @@ class BrahmaLive:
         text = (text or "").strip()
         if not text:
             return
+        if (source or "local").strip().lower() == "mic":
+            if not self._voice_command_gate.accept(text):
+                self.ui.write_log("SYS: Duplicate/noise voice command ignored.")
+                self.ui.set_state("LISTENING")
+                return
         if len(text) > 4:
             threading.Thread(
                 target=_update_memory_async,
