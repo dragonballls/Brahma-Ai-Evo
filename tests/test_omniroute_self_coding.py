@@ -92,13 +92,16 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
         self.assertIn("command = self.command_argv(for_start=True)", source)
         self.assertIn('if for_start and "--no-open" not in command:', source)
 
-    def test_embedded_dashboard_does_not_reload_forever(self):
+    def test_embedded_dashboard_is_first_class_page(self):
         source = Path(ROOT / "ui.py").read_text(encoding="utf-8")
-        self.assertIn("def _open_omniroute_dashboard(self):", source)
-        self.assertIn("if existing.isVisible():", source)
-        self.assertIn("retry_timer.stop()", source)
-        self.assertIn('QTimer.singleShot(300, lambda: web.load(url))', source)
-        self.assertIn('"OmniRoute dashboard connected"', source)
+        self.assertIn("class OmniRouteEmbeddedPage(QWidget):", source)
+        self.assertIn("self._omniroute_page = OmniRouteEmbeddedPage()", source)
+        self.assertIn("self._center_stack.addWidget(self._omniroute_page)", source)
+        self.assertIn("stack.setCurrentIndex(5)", source)
+        self.assertIn("def _start_gateway(self):", source)
+        self.assertIn("self._retry_timer", source)
+        self.assertIn('"OmniRoute connected"', source)
+        self.assertNotIn("QDialog(self.window())", source)
 
     def test_omniroute_is_local_and_lazy(self):
         from core.omniroute import OmniRouteGateway
