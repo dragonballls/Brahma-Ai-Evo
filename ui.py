@@ -11203,6 +11203,9 @@ class OmniRouteEmbeddedPage(QWidget):
 
     def _back_to_settings(self):
         win = self.window()
+        if hasattr(win, "_set_page"):
+            win._set_page("settings")
+            return
         stack = getattr(win, "_center_stack", None)
         page = getattr(win, "_settings_hub_page", None)
         if stack is not None and page is not None:
@@ -13361,7 +13364,10 @@ class SystemConnectivityPage(QWidget):
             if self._ctrl() and hasattr(self._ctrl(), "write_log"):
                 self._ctrl().write_log("ERR: OmniRoute page is unavailable.")
             return
-        stack.setCurrentWidget(page)
+        if hasattr(win, "_set_page"):
+            win._set_page("omniroute")
+        else:
+            stack.setCurrentWidget(page)
 
     def _save_cloud_provider_key(self, provider: str, field: str, key: str, status_lbl):
         key = (key or "").strip()
