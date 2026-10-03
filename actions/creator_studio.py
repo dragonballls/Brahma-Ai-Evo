@@ -1,69 +1,56 @@
-"""Brahma EVO AI Creator Studio."""
+"""Conversational entry point for Brahma Creator Studio."""
 from __future__ import annotations
+
 import json
-import logging
-import os
-import shutil
-import subprocess
-import textwrap
-import webbrowser
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
-from core.user_paths import get_user_data_dir
 
-logger = logging.getLogger("brahma.creator")
-CREATOR_ROOT = get_user_data_dir() / "CreatorProjects"
-VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
-AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
-YOUTUBE_SCOPES = [
-    "https://www.googleapis.com/auth/youtube.upload",
-    "https://www.googleapis.com/auth/youtube",
-]
 
-class CreatorError(RuntimeError):
-    """Expected creator-pipeline failure."""
-
-@dataclass(frozen=True)
-class MediaInfo:
-    path: str
-    duration: float
-    width: int
-    height: int
-    has_audio: bool
-    video_codec: str
-    audio_codec: str
-    def to_dict(self) -> dict[str, Any]:
-        return self.__dict__.copy()
-
-def _which(name: str) -> str | None:
-    return shutil.which(name)
-
-def _run(command: list[str], timeout: int = 1800) -> subprocess.CompletedProcess[str]:
+def creator_control(parameters: dict[str, Any] | None = None, player=None, speak=None) -> str:
+    args = dict(parameters or {})
+    action = str(args.get("action") or "tools").strip().lower()
     try:
-        return subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise CreatorError(f"Media command failed to start: {exc}") from exc
-
-def _require_ffmpeg() -> str:
-    exe = _which("ffmpeg")
-    if not exe:
-        raise CreatorError("FFmpeg is not installed or is not on PATH.")
-    return exe
-
-def _require_ffprobe() -> str:
-    exe = _wich("ffprobe")
-    if not exe:
-        raise CreatorError("FFprobe is not installed or is not on PATH.")
-    return exe
-
-def _json_from_text(raw: str) -> dict[str, Any]:
-    raw = (raw or "").strip()
-    if raw.startswith("```"):
-        parts = raw.split("```")
-        if len(parts) >= 2:
-            raw = parts[1]
-            if raw.lstrip().startswith("json"):
-                raw = raw.lstrip()[4:]
-    start, end = raw.find("{
+        from core.creator_engine import (
+            creator_tools,
+            create_creator_project,
+            load_creator_project,
+            render_creator_project,
+            publish_creator_project,
+            refresh_creator_metadata,
+            creator_script,
+            creator_rights_review,
+        )
+        if action == "tools":
+            return json.dumps(creator_tools(), ensure_ascii=False)
+        if action in {"create", "plan"}:
+            return json.dumps(create_creator_project(args), ensure_ascii=False)
+        if action == "render":
+            return json.dumps(render_creator_project(str(args.get("project") or "")), ensure_ascii=False)
+        if action == "publish":
+            return json.dumps(
+                publish_creator_project(
+                    str(args.get("project") or ""),
+                    privacy=str(args.get("privacy") or "private"),
+                    playlist_id=args.get("playlist_id"),
+                ),
+                ensure_ascii=False,
+            )
+        if action == "metadata":
+            return json.dumps(refresh_creator_metadata(str(args.get("project") or "")), ensure_ascii=False)
+        if action == "script":
+            return json.dumps(
+                creator_script(
+                    str(args.get("project") or ""),
+                    length=str(args.get("length") or "medium"),
+                ),
+                ensure_ascii=False,
+            )
+        if action == "rights_review":
+            return json.dumps(creator_rights_review(str(args.get("project") or "")), ensure_ascii=False)
+        if action == "status":
+            return json.dumps(load_creator_project(str(args.get("project") or ""))[1], ensure_ascii=False)
+        if action in {"record_start", "record_stop"}:
+            from actions.obs_control import obs_control
+            return obs_control({"action": action}, player=player, speak=speak)
+        return "Creator Studio supports tools, create, render, publish, metadata, script, rights_review, status, record_start, and record_stop."
+    except Exception as exc:
+        return f"Creator Studio failed: {exc}"
