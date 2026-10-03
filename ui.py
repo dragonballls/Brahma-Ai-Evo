@@ -2520,6 +2520,14 @@ class TaskCard(QFrame):
         self.setObjectName("TaskCard")
         self._active = False
         self._workspace_locked = False
+        self._mission_mode = False
+        self._mission_id = None
+        self._mission_finished_seen_at = None
+        self._mission_state_path = get_user_data_dir() / "missions" / "missions.json"
+        self._mission_tmr = QTimer(self)
+        self._mission_tmr.setInterval(1000)
+        self._mission_tmr.timeout.connect(self._refresh_autonomous_mission)
+        self._mission_tmr.start()
         self.setStyleSheet(
             f"""
             QFrame#TaskCard {{
@@ -2597,12 +2605,169 @@ class TaskCard(QFrame):
         )
         lay.addWidget(self._bar)
 
+        timing = QHBoxLayout()
+        timing.setSpacing(10)
+        self._elapsed_lbl = QLabel("Elapsed: 00:00")
+        self._elapsed_lbl.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        self._elapsed_lbl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
+        self._eta_lbl = QLabel("ETA: —")
+        self._eta_lbl.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        self._eta_lbl.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+        timing.addWidget(self._elapsed_lbl)
+        timing.addStretch()
+        timing.addWidget(self._eta_lbl)
+        lay.addLayout(timing)
+
         self._foot = QLabel("Working on it...")
         self._foot.setFont(QFont("Segoe UI", 9))
         self._foot.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
         lay.addWidget(self._foot)
 
+    @staticmethod
+    def _format_duration(seconds: float | None) -> str:
+        if seconds is None:
+            return "—"
+        total = max(0, int(seconds))
+        days, rem = divmod(total, 86400)
+        hours, rem = divmod(rem, 3600)
+        minutes, secs = divmod(rem, 60)
+        if days:
+            return f"{days}d {hours:02d}:{minutes:02d}:{secs:02d}"
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+    def _load_latest_mission(self) -> dict | None:
+        try:
+            if not self._mission_state_path.exists():
+                return None
+            raw = json.loads(self._mission_state_path.read_text(encoding="utf-8"))
+            missions = raw.get("missions", {}) if isinstance(raw, dict) else {}
+            if not isinstance(missions, dict) or not missions:
+                return None
+            items = [m for m in missions.values() if isinstance(m, dict)]
+            if not items:
+                return None
+            items.sort(key=lambda m: float(m.get("created_at") or 0), reverse=True)
+            return items[0]
+        except Exception:
+            return None
+
+    def _show_mission_note(self, mission: dict):
+        self._mission_mode = True
+        self._mission_id = mission.get("mission_id")
+        self._active = True
+        self._workspace_locked = False
+
+        status = str(mission.get("status") or "pending").replace("_", " ").title()
+        goal = str(mission.get("goal") or "Autonomous mission")
+        until = str(mission.get("until") or "").strip()
+        duration = mission.get("duration_seconds")
+        started = mission.get("started_at")
+        deadline = mission.get("deadline")
+        finished = mission.get("finished_at")
+
+        self._title.setText("AUTONOMOUS MISSION")
+        self._command_lbl.setText(f"Mission: {goal}")
+        if until:
+            self._plan_lbl.setText(f"Completion condition: {until}")
+        elif duration is not None:
+            self._plan_lbl.setText(
+                f"Time limit: {self._format_duration(float(duration))} • "
+                "Brahma will continue working until the time limit or successful completion."
+            )
+        else:
+            self._plan_lbl.setText("Completion condition: continue until Brahma verifies the goal is complete.")
+
+        now = time.time()
+        elapsed = max(0.0, now - float(started)) if started else 0.0
+
+        if duration is not None:
+            total = max(1.0, float(duration))
+            remaining = max(0.0, total - elapsed)
+            pct = 100 if status.lower() in {"completed", "timed out", "failed", "interrupted"} else min(99, max(0, int((elapsed / total) * 100)))
+            self._bar.setRange(0, 100)
+            self._bar.setValue(pct)
+            self._pct.setText(f"{pct}%")
+            self._eta_lbl.setText(
+                "Time left: " + self._format_duration(remaining)
+                if status.lower() not in {"completed", "timed out", "failed", "interrupted"}
+                else "Time left: 00:00:00"
+            )
+        else:
+            pct = 100 if status.lower() == "completed" else 0
+            if status.lower() in {"running", "pending", "cancelling"}:
+                self._bar.setRange(0, 0)
+                self._pct.setText("LIVE")
+                self._eta_lbl.setText("ETA: estimating…")
+            else:
+                self._bar.setRange(0, 100)
+                self._bar.setValue(pct)
+                self._pct.setText(f"{pct}%")
+                self._eta_lbl.setText("ETA: verified complete" if pct == 100 else f"ETA: {status}")
+
+        self._elapsed_lbl.setText(f"Elapsed: {self._format_duration(elapsed)}")
+        self._status_lbl.setText(f"Status: {status}")
+        last_result = str(mission.get("last_result") or "").strip()
+        error = str(mission.get("error") or "").strip()
+        self._output_lbl.setText(
+            f"Latest result: {last_result[-700:]}"
+            if last_result else
+            (f"Latest issue: {error[-700:]}" if error else "Latest result: Brahma is working…")
+        )
+
+        if deadline and status.lower() in {"running", "pending", "cancelling"}:
+            try:
+                from datetime import datetime
+                finish_at = datetime.fromtimestamp(float(deadline)).strftime("%I:%M %p")
+                self._foot.setText(f"Ends at {finish_at} • Mission {self._mission_id}")
+            except Exception:
+                self._foot.setText(f"Mission {self._mission_id}")
+        elif until and status.lower() in {"running", "pending", "cancelling"}:
+            self._foot.setText(f"Runs until verified completion • Mission {self._mission_id}")
+        else:
+            self._foot.setText(f"Mission {self._mission_id} • {status}")
+
+        self.show()
+
+    def _clear_mission_mode(self):
+        self._mission_mode = False
+        self._mission_id = None
+        self._mission_finished_seen_at = None
+        self._bar.setRange(0, 100)
+        self._bar.setValue(0)
+        self._elapsed_lbl.setText("Elapsed: 00:00")
+        self._eta_lbl.setText("ETA: —")
+
+    def _refresh_autonomous_mission(self):
+        mission = self._load_latest_mission()
+        if not mission:
+            if self._mission_mode:
+                self._clear_mission_mode()
+                if not self._active:
+                    self.hide()
+            return
+
+        mission_id = mission.get("mission_id")
+        status = str(mission.get("status") or "").lower()
+        final_states = {"completed", "timed_out", "failed", "interrupted", "cancelled"}
+
+        if status in final_states:
+            if self._mission_mode and self._mission_id == mission_id:
+                now = time.time()
+                if self._mission_finished_seen_at is None:
+                    self._mission_finished_seen_at = now
+                self._show_mission_note(mission)
+                if now - self._mission_finished_seen_at >= 8.0:
+                    self._clear_mission_mode()
+                    self.hide()
+            return
+
+        if status in {"running", "pending", "cancelling"}:
+            self._mission_finished_seen_at = None
+            self._show_mission_note(mission)
+
     def set_task(self, title: str, desc: str, percent: int):
+        if self._mission_mode:
+            return
         if self._workspace_locked:
             return
         if self._active:
@@ -2628,6 +2793,8 @@ class TaskCard(QFrame):
         return "Plan:\n" + "\n".join(f"• {item}" for item in items)
 
     def start_workspace(self, command: str, plan: list[str] | str | None = None, source: str = "local"):
+        if self._mission_mode:
+            self._clear_mission_mode()
         self._active = True
         self._workspace_locked = False
         self._title.setText("Task Workspace")
@@ -2643,6 +2810,8 @@ class TaskCard(QFrame):
     def update_workspace(self, *, title: str | None = None, command: str | None = None, plan: list[str] | str | None = None,
                          status: str | None = None, output: str | None = None, percent: int | None = None,
                          footer: str | None = None):
+        if self._mission_mode:
+            return
         if title:
             self._title.setText(title)
         if command:
@@ -2676,6 +2845,8 @@ class TaskCard(QFrame):
         QTimer.singleShot(5000, self.clear_workspace)
 
     def clear_workspace(self):
+        if self._mission_mode:
+            self._clear_mission_mode()
         self._active = False
         self._workspace_locked = False
         self._title.setText("Ready")
