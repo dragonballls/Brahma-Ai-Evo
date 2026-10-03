@@ -99,8 +99,9 @@ def analyze_source(source: str, goal: str) -> dict[str, Any]:
 def plan_edit(goal: str, analysis: dict[str, Any], platform: str, target_length: str) -> dict[str, Any]:
     prompt = (
         "Build a deterministic editing manifest for this real video. Return ONLY JSON with keys "
-        "style, keep_segments, audio_cleanup, normalize_audio, add_captions, music_mood, "
-        "music_volume, thumbnail_timestamp, thumbnail_text, notes. keep_segments is an array of "
+        "style, aspect_ratio, effect_profile, fade_in_seconds, fade_out_seconds, keep_segments, "
+        "audio_cleanup, normalize_audio, add_captions, music_mood, music_volume, music_ducking, "
+        "thumbnail_timestamp, thumbnail_text, notes. keep_segments is an array of "
         "objects with start,end,speed,reason. Use only timestamps present in the analysis. "
         "An empty list means preserve the complete source. "
         f"platform={platform}; target_length={target_length or 'natural'}; goal={goal}; "
@@ -112,6 +113,10 @@ def plan_edit(goal: str, analysis: dict[str, Any], platform: str, target_length:
         logger.warning("Edit planning failed: %s", exc)
         return {
             "style": "clean",
+            "aspect_ratio": "9:16" if platform in {"youtube_short", "tiktok", "instagram_reel", "reels"} else "16:9",
+            "effect_profile": "clean",
+            "fade_in_seconds": 0,
+            "fade_out_seconds": 0,
             "keep_segments": [],
             "audio_cleanup": True,
             "normalize_audio": True,
