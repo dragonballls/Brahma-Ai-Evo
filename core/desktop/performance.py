@@ -26,6 +26,10 @@ class PerformanceSnapshot:
     foreground_title: str
     foreground_exe: str
     game_active: bool
+    gpu_memory_used_mb: float | None = None
+    gpu_memory_total_mb: float | None = None
+    gpu_temperature_c: float | None = None
+    gpu_power_w: float | None = None
 
 
 @dataclass(frozen=True)
@@ -62,7 +66,7 @@ class AdaptivePerformanceEngine:
         self._last_trim: dict[tuple[int, float], float] = {}
         self._min_adjustment_interval = 20.0
         self._min_trim_interval = 180.0
-        self._gpu_cache: tuple[float, float] = (0.0, -1.0)
+        self._gpu_cache: tuple[float, dict[str, Any] | None] = (0.0, None)
         self.last_decision: PerformanceDecision | None = None
         self.last_snapshot: PerformanceSnapshot | None = None
         self.action_count = 0
@@ -74,16 +78,17 @@ class AdaptivePerformanceEngine:
         self.profile = normalized
         return normalized
 
-    def _gpu_percent(self) -> float | None:
+    def _gpu_stats(self) -> dict[str, Any] | None:
         now = time.monotonic()
         cached_at, cached = self._gpu_cache
         if now - cached_at < 10.0:
-            return None if cached < 0 else cached
+            return dict(cached) if cached else None
+
         try:
             completed = subprocess.run(
                 [
                     "nvidia-smi",
-                    "--query-gpu=utilization.gpu",
+                    "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw",
                     "--format=csv,noheader,nounits",
                 ],
                 capture_output=True,
@@ -92,18 +97,37 @@ class AdaptivePerformanceEngine:
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             if completed.returncode == 0:
-                values = [
-                    float(line.strip())
-                    for line in completed.stdout.splitlines()
-                    if line.strip()
-                ]
-                if values:
-                    value = max(0.0, min(100.0, sum(values) / len(values)))
-                    self._gpu_cache = (now, value)
-                    return value
+                rows = []
+                for line in completed.stdout.splitlines():
+                    values = [part.strip() for part in line.split(",")]
+                    if len(values) < 5:
+                        continue
+                    try:
+                        rows.append({
+                            "gpu_percent": float(values[0]),
+                            "memory_used_mb": float(values[1]),
+                            "memory_total_mb": float(values[2]),
+                            "temperature_c": float(values[3]),
+                            "power_w": float(values[4]),
+                        })
+                    except (TypeError, ValueError):
+                        continue
+                if rows:
+                    # Conservative aggregate across adapters: average utilization/
+                    # temperature and sum memory/power for a whole-system view.
+                    stats = {
+                        "gpu_percent": max(0.0, min(100.0, sum(r["gpu_percent"] for r in rows) / len(rows))),
+                        "gpu_memory_used_mb": sum(r["memory_used_mb"] for r in rows),
+                        "gpu_memory_total_mb": sum(r["memory_total_mb"] for r in rows),
+                        "gpu_temperature_c": max(r["temperature_c"] for r in rows),
+                        "gpu_power_w": sum(r["power_w"] for r in rows),
+                    }
+                    self._gpu_cache = (now, stats)
+                    return dict(stats)
         except Exception:
             pass
-        self._gpu_cache = (now, -1.0)
+
+        self._gpu_cache = (now, None)
         return None
 
     def snapshot(self) -> PerformanceSnapshot:
@@ -125,17 +149,21 @@ class AdaptivePerformanceEngine:
         cpu = float(psutil.cpu_percent(interval=None))
         memory = psutil.virtual_memory()
         foreground = WindowManager.foreground()
-        gpu = self._gpu_percent()
+        gpu = self._gpu_stats()
         snap = PerformanceSnapshot(
             timestamp=time.time(),
             cpu_percent=cpu,
             memory_percent=float(memory.percent),
             memory_available_mb=float(memory.available) / (1024 * 1024),
-            gpu_percent=gpu,
+            gpu_percent=float(gpu["gpu_percent"]) if gpu else None,
             foreground_pid=foreground.pid if foreground else None,
             foreground_title=foreground.title if foreground else "",
             foreground_exe=foreground.exe if foreground else "",
             game_active=is_game_window(foreground),
+            gpu_memory_used_mb=float(gpu["gpu_memory_used_mb"]) if gpu else None,
+            gpu_memory_total_mb=float(gpu["gpu_memory_total_mb"]) if gpu else None,
+            gpu_temperature_c=float(gpu["gpu_temperature_c"]) if gpu else None,
+            gpu_power_w=float(gpu["gpu_power_w"]) if gpu else None,
         )
         self.last_snapshot = snap
         self._observe_visible_processes(snap.foreground_pid)
@@ -221,7 +249,9 @@ class AdaptivePerformanceEngine:
         elif self.profile == "performance":
             decision = PerformanceDecision(
                 mode="performance",
-                pressure="high" if snapshot.cpu_percent >= 92 or snapshot.memory_percent >= 88 else "normal",
+                pressure="high" if snapshot.cpu_percent >= 92 or snapshot.memory_percent >= 88 or (
+                    snapshot.gpu_percent is not None and snapshot.gpu_percent >= 95.0
+                ) else "normal",
                 game_active=False,
                 reduce_background_work=snapshot.cpu_percent >= 85 or snapshot.memory_percent >= 82,
                 prioritize_foreground=True,
@@ -236,10 +266,12 @@ class AdaptivePerformanceEngine:
                 mode="adaptive" if self.profile == "adaptive" else "balanced",
                 pressure=pressure,
                 game_active=False,
-                reduce_background_work=pressure in {"high", "elevated"},
+                reduce_background_work=pressure in {"high", "elevated"} or (
+                    snapshot.gpu_percent is not None and snapshot.gpu_percent >= 92.0
+                ),
                 prioritize_foreground=False,
                 trim_background_memory=pressure == "high",
-                reason="Adaptive policy reacts only after sustained resource pressure.",
+                reason="Adaptive policy reacts to sustained CPU/RAM/GPU pressure and preserves foreground quality.",
             )
         self.last_decision = decision
         return decision
