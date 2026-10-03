@@ -4016,8 +4016,15 @@ class BrahmaLive:
                     if not prompt_txt:
                         prompt_txt = "You are Brahma Evo, the autonomous desktop operating system."
 
+                    emotional_prompt = ""
+                    try:
+                        from core.emotional_controller import emotional_controller
+                        emotional_prompt = emotional_controller.prompt_block(request_text)
+                    except Exception:
+                        pass
                     system_prompt = (
                         f"{prompt_txt}\n\n"
+                        f"{emotional_prompt}\n"
                         "CRITICAL OPERATING SYSTEM DIRECTIVE:\n"
                         "- You have FULL DIRECT ACCESS and authority over this Windows PC via your tools.\n"
                         "- NEVER state that you are a text-based AI, that you cannot perform automations, or that you lack real-time access.\n"
@@ -4348,6 +4355,12 @@ class BrahmaLive:
             "IMPORTANT: Do NOT speak an unprompted generic greeting (like 'Thank you, how can I help you?') upon connecting. "
             "Remain completely silent until the user speaks to you or asks a question."
         )
+
+        try:
+            from core.emotional_controller import emotional_controller
+            parts.append(emotional_controller.prompt_block())
+        except Exception:
+            pass
 
         parts.append(
             "VOICE INTERACTION MODE:\n"
