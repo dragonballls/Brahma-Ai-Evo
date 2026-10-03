@@ -268,6 +268,9 @@ class DesktopModeController:
 
     def open(self, target: str, *, embed: bool = False) -> dict[str, Any]:
         value = str(target or "").strip()
+        if not value:
+            return {"ok": False, "error": "No application or URL supplied."}
+
         if value.startswith(("http://", "https://", "www.")):
             accent = "#00e5ff"
             try:
@@ -277,9 +280,57 @@ class DesktopModeController:
                 pass
             url = value if "://" in value else f"https://{value}"
             return web_application_host.open(url, accent=accent)
-        if embed:
-            return native_window_host.host(value)
-        return application_host.open(value)
+
+        if not embed:
+            return application_host.open(value)
+
+        # Launch/reuse the actual application first, then wait briefly for its
+        # top-level HWND. Hosting a process that has not created a window yet
+        # would otherwise fail immediately for games and normal GUI apps.
+        baseline = {
+            item.pid
+            for item in WindowManager.enumerate_windows()
+            if item.pid
+        }
+        launch_result = application_host.open(value)
+        if not launch_result.get("ok"):
+            return launch_result
+
+        window = application_host.find_after_launch(
+            value,
+            baseline_pids=baseline,
+            timeout=6.0,
+        )
+        if window is None:
+            return {
+                **launch_result,
+                "embedded": False,
+                "embedding": "window-not-found",
+                "message": "Application launched, but its window could not be safely hosted yet.",
+            }
+
+        hosted = native_window_host.host(str(window.hwnd))
+        if hosted.get("ok"):
+            return {
+                **launch_result,
+                **hosted,
+                "embedded": True,
+            }
+
+        # Safe fallback: never kill or repeatedly reparent a program that refused
+        # native hosting. The real process remains open normally.
+        return {
+            **launch_result,
+            "embedded": False,
+            "embedding": "fallback-external",
+            "window": {
+                "hwnd": window.hwnd,
+                "pid": window.pid,
+                "title": window.title,
+                "exe": window.exe,
+            },
+            "message": hosted.get("error") or "Native hosting was not compatible; application remains external.",
+        }
 
     def host_native(self, target: str) -> dict[str, Any]:
         return native_window_host.host(target)
