@@ -127,7 +127,7 @@ BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = get_user_data_dir() / "config" / "api_keys.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
 STARTUP_LOG     = Path(os.environ.get("LOCALAPPDATA", str(BASE_DIR))) / "Brahma Evo" / "startup.log"
-LIVE_MODEL          = "models/gemini-2.5-flash-native-audio-preview-12-2025"
+LIVE_MODEL          = os.environ.get("BRAHMA_LIVE_MODEL", "models/gemini-3.8-live")
 CHANNELS            = 1
 SEND_SAMPLE_RATE    = 16000
 RECEIVE_SAMPLE_RATE = 24000
@@ -6198,15 +6198,29 @@ class BrahmaLive:
                         pass
                     
             except Exception as e:
-                print(f"[BRAHMA EVO] ⚠️ {e}")
+                print(f"[BRAHMA EVO] ⚠️ Live session failed: {e}")
+                tb = traceback.format_exc()
                 traceback.print_exc()
+                _startup_log(
+                    "[LIVE] session/task failure: "
+                    f"{type(e).__name__}: {e}\n{tb}"
+                )
+                try:
+                    self.ui.write_log(
+                        f"ERR: Live voice session failed — {type(e).__name__}: {e}"
+                    )
+                except Exception:
+                    pass
                 if _is_gemini_limit_error(e):
                     self._use_openrouter_first = True
                 self.session = None
                 self._loop = None
             self.set_speaking(False)
-            self.ui.set_state("LISTENING")
+            # Do not present a false LISTENING state while the Live session is
+            # actually disconnected/reconnecting.
+            self.ui.set_state("THINKING")
             print("[BRAHMA EVO] 🔄 Reconnecting in 5s...")
+            _startup_log("[LIVE] reconnecting in 5s")
             await asyncio.sleep(5)
 
 def _main_impl():
