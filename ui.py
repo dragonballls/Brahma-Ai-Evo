@@ -171,6 +171,33 @@ class C:
             except Exception:
                 pass
 
+class _ActivityFilter(QObject):
+    """Wake Brahma immediately on meaningful local user interaction."""
+    _WAKE_EVENTS = {
+        QEvent.Type.MouseButtonPress,
+        QEvent.Type.MouseButtonRelease,
+        QEvent.Type.KeyPress,
+        QEvent.Type.Wheel,
+        QEvent.Type.TouchBegin,
+        QEvent.Type.TouchEnd,
+        QEvent.Type.InputMethod,
+        QEvent.Type.Shortcut,
+        QEvent.Type.WindowActivate,
+    }
+
+    def __init__(self, owner):
+        super().__init__()
+        self._owner = owner
+
+    def eventFilter(self, obj, event):
+        try:
+            if event.type() in self._WAKE_EVENTS:
+                self._owner._note_user_activity()
+        except Exception:
+            pass
+        return False
+
+
 try:
     if APP_SETTINGS_FILE.exists():
         with open(APP_SETTINGS_FILE, "r", encoding="utf-8") as f:
@@ -320,6 +347,22 @@ class BackgroundWidget(QWidget):
                 page = self._web_view.page()
                 if page:
                     page.runJavaScript(f"if(window.setBrahmaState) window.setBrahmaState('{st}');")
+            except Exception:
+                pass
+
+    def set_deep_idle(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        try:
+            self._state_sig.disconnect(self._do_set_ai_state) if False else None
+        except Exception:
+            pass
+        if self._web_view:
+            try:
+                page = self._web_view.page()
+                if page:
+                    page.runJavaScript(
+                        f"if(window.setDeepIdle) window.setDeepIdle({str(enabled).lower()});"
+                    )
             except Exception:
                 pass
 
@@ -1476,16 +1519,30 @@ class _SysMetrics:
         self._last_net = psutil.net_io_counters()
         self._last_net_t = time.time()
         self._running = True
-        t = threading.Thread(target=self._loop, daemon=True)
+        self._paused = False
+        self._resume_event = threading.Event()
+        t = threading.Thread(target=self._loop, daemon=True, name="brahma-sys-metrics")
         t.start()
+
+    def pause(self):
+        self._paused = True
+
+    def resume(self):
+        self._paused = False
+        self._resume_event.set()
 
     def _loop(self):
         while self._running:
+            if self._paused:
+                self._resume_event.wait()
+                self._resume_event.clear()
+                continue
             try:
                 self._update()
             except Exception:
                 pass
-            time.sleep(5.0)
+            self._resume_event.wait(5.0)
+            self._resume_event.clear()
 
     def _update(self):
         cpu = psutil.cpu_percent(interval=None)
@@ -4166,6 +4223,7 @@ class InlineChatWorkspace(QFrame):
         pass
 
     def set_state(self, state: str):
+        self._current_ai_state = (state or "idle").strip().lower()
         if hasattr(self, "_footer_status") and self._footer_status:
             status_text = {
                 "listening": "Listening to your voice...",
@@ -14203,6 +14261,15 @@ class BrahmaUI:
     def __init__(self, face_path: str, size=None, *, show_immediately: bool = True):
         self._app = QApplication.instance() or QApplication(sys.argv)
         self._app.setStyle("Fusion")
+        self._deep_idle = False
+        self._deep_idle_after_s = 120.0
+        self._deep_idle_handlers: tuple = (None, None)
+        self._activity_filter = _ActivityFilter(self)
+        self._app.installEventFilter(self._activity_filter)
+        self._deep_idle_tmr = QTimer()
+        self._deep_idle_tmr.setInterval(10000)
+        self._deep_idle_tmr.timeout.connect(self._check_deep_idle)
+        self._deep_idle_tmr.start()
         self._app.setQuitOnLastWindowClosed(False)
         self._app.setApplicationDisplayName("Brahma Evo")
         self._app.setWindowIcon(self._make_app_icon())
@@ -14849,10 +14916,95 @@ class BrahmaUI:
         self._win.on_chat_event = cb
 
     def set_state(self, state: str):
+        self.wake_from_deep_idle()
         self._win._state_sig.emit(state)
 
     def set_audio_level(self, level: float):
         self._win.set_audio_level(level)
+
+    def set_deep_idle_handlers(self, on_enter=None, on_exit=None):
+        self._deep_idle_handlers = (on_enter, on_exit)
+
+    def wake_from_deep_idle(self):
+        self._note_user_activity(force_wake=True)
+
+    @staticmethod
+    def _system_idle_seconds():
+        if _OS != "Windows":
+            return None
+        try:
+            import ctypes
+
+            class LASTINPUTINFO(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", ctypes.c_uint),
+                    ("dwTime", ctypes.c_uint),
+                ]
+
+            info = LASTINPUTINFO()
+            info.cbSize = ctypes.sizeof(LASTINPUTINFO)
+            if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+                return None
+            now_tick = ctypes.windll.kernel32.GetTickCount()
+            elapsed_ms = (now_tick - int(info.dwTime)) & 0xFFFFFFFF
+            return elapsed_ms / 1000.0
+        except Exception:
+            return None
+
+    def _note_user_activity(self, force_wake=False):
+        self._last_user_activity = time.monotonic()
+        if force_wake or self._deep_idle:
+            self._set_deep_idle(False)
+
+    def _deep_idle_allowed(self):
+        if not hasattr(self, "_current_ai_state"):
+            return True
+        return self._current_ai_state not in {
+            "thinking", "speaking", "executing", "working", "processing", "error"
+        }
+
+    def _check_deep_idle(self):
+        try:
+            idle_s = self._system_idle_seconds()
+            if idle_s is None:
+                idle_s = time.monotonic() - getattr(self, "_last_user_activity", time.monotonic())
+            if self._deep_idle:
+                if idle_s < 3.0:
+                    self._set_deep_idle(False)
+            elif idle_s >= self._deep_idle_after_s and self._deep_idle_allowed():
+                self._set_deep_idle(True)
+        except Exception:
+            pass
+
+    def _set_deep_idle(self, enabled):
+        enabled = bool(enabled)
+        if enabled == self._deep_idle:
+            return
+        self._deep_idle = enabled
+        try:
+            bg = getattr(self._win, "_bg_widget", None)
+            if bg is not None:
+                bg.set_deep_idle(enabled)
+        except Exception:
+            pass
+        try:
+            if enabled:
+                _metrics.pause()
+                if hasattr(self._win, "_metric_tmr"):
+                    self._win._metric_tmr.stop()
+            else:
+                _metrics.resume()
+                if hasattr(self._win, "_metric_tmr") and not self._win._metric_tmr.isActive():
+                    self._win._metric_tmr.start(5000)
+                    self._win._update_metrics()
+        except Exception:
+            pass
+        callback = self._deep_idle_handlers[0 if enabled else 1]
+        if callback:
+            try:
+                callback()
+            except Exception:
+                pass
 
     def write_log(self, text: str):
         self._win._log_sig.emit(text)
