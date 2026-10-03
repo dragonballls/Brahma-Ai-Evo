@@ -1933,7 +1933,7 @@ TOOL_DECLARATIONS = [
             "properties": {
                 "action": {
                     "type": "STRING",
-                    "description": "status | enable | disable | toggle | open | host_window | list_windows | control_window | set_profile"
+                    "description": "status | enable | disable | toggle | open | host_window | list_windows | control_window | set_profile | integration_status | apply_layout | android_list | android_open | appletv_scan | matter_help | procgovernor_validate | winsw_status"
                 },
                 "target": {"type": "STRING", "description": "Application, URL, window title, PID/HWND, or executable target."},
                 "window_action": {"type": "STRING", "description": "focus | minimize | maximize | restore | close | move | resize | dock"},
@@ -1944,7 +1944,10 @@ TOOL_DECLARATIONS = [
                 "x": {"type": "INTEGER", "description": "Window X coordinate for move/resize/dock."},
                 "y": {"type": "INTEGER", "description": "Window Y coordinate for move/resize/dock."},
                 "width": {"type": "INTEGER", "description": "Window width for resize/dock."},
-                "height": {"type": "INTEGER", "description": "Window height for resize/dock."}
+                "height": {"type": "INTEGER", "description": "Window height for resize/dock."},
+                "layout": {"type": "STRING", "description": "Optional PowerToys FancyZones layout name or UUID."},
+                "serial": {"type": "STRING", "description": "Android device serial for scrcpy."},
+                "config_path": {"type": "STRING", "description": "Configuration/XML path for ProcGovernor or WinSW validation/status."}
             },
             "required": ["action"]
         }
@@ -5184,8 +5187,50 @@ class BrahmaLive:
                         ),
                         ensure_ascii=False,
                     )
+                elif action == "integration_status":
+                    from core.desktop.integrations import integrations
+                    result = json.dumps(integrations.status(), ensure_ascii=False)
+                elif action == "apply_layout":
+                    from core.desktop.integrations import integrations
+                    monitor = args.get("monitor")
+                    monitor_value = int(monitor) if str(monitor or "").strip().lstrip("-").isdigit() else None
+                    result = json.dumps(
+                        integrations.apply_fancyzones_layout(
+                            str(args.get("layout") or "columns").strip(),
+                            monitor=monitor_value,
+                        ),
+                        ensure_ascii=False,
+                    )
+                elif action == "android_list":
+                    from core.desktop.integrations import integrations
+                    result = json.dumps(integrations.android_devices(), ensure_ascii=False)
+                elif action == "android_open":
+                    from core.desktop.integrations import integrations
+                    serial = str(args.get("serial") or args.get("target") or "").strip()
+                    result = json.dumps(
+                        integrations.open_android(serial, title=f"Brahma • {serial}" if serial else None),
+                        ensure_ascii=False,
+                    )
+                elif action == "appletv_scan":
+                    from core.desktop.integrations import integrations
+                    result = json.dumps(integrations.apple_tv_scan(), ensure_ascii=False)
+                elif action == "matter_help":
+                    from core.desktop.integrations import integrations
+                    result = json.dumps(integrations.matter_help(), ensure_ascii=False)
+                elif action == "procgovernor_validate":
+                    from core.desktop.integrations import integrations
+                    result = json.dumps(
+                        integrations.procgovernor_validate(str(args.get("config_path") or args.get("target") or "")),
+                        ensure_ascii=False,
+                    )
+                elif action == "winsw_status":
+                    from core.desktop.integrations import integrations
+                    result = json.dumps(
+                        integrations.winsw_status(str(args.get("config_path") or args.get("target") or "")),
+                        ensure_ascii=False,
+                    )
                 else:
-                    result = "Choose status, enable, disable, toggle, open, list_windows, control_window, or set_profile."
+                    result = "Choose status, enable, disable, toggle, open, list_windows, control_window, set_profile, integration_status, apply_layout, android_list, android_open, appletv_scan, matter_help, procgovernor_validate, or winsw_status."
 
             elif name in ("system_diagnostics", "diagnostics", "os_hardware", "hardware_control", "ram_hogs", "kill_process", "brightness_control"):
                 from actions.system_diagnostics_mcp import system_diagnostics
