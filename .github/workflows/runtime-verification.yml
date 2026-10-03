@@ -1,0 +1,179 @@
+name: Brahma Evo runtime verification
+
+on:
+  push:
+    branches: ["verify/runtime-suite"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-runtime:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install application dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
+
+      - name: Compile all Python sources
+        shell: pwsh
+        run: |
+          python -m compileall -q actions agent brahma_connect core features memory plugins smart_home scripts main.py ui.py or_client.py llm_client.py workspace_store.py
+
+      - name: Run complete test suite
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests -p "test_*.py" -v
+
+      - name: Prepare and verify pinned OmniRoute runtime
+        shell: pwsh
+        run: |
+          python scripts/prepare_omniroute_runtime.py build_vendor\omniroute_runtime
+          $runtime = Join-Path $PWD "build_vendor\omniroute_runtime"
+          $node = Join-Path $runtime "node.exe"
+          $entry = Join-Path $runtime "node_modules\omniroute\bin\omniroute.mjs"
+          & $node $entry --version
+          if ($LASTEXITCODE -ne 0) { throw "OmniRoute CLI version check failed." }
+
+      - name: Start OmniRoute and test local API
+        shell: pwsh
+        env:
+          BRAHMA_OMNIROUTE_ENABLED: "1"
+        run: |
+          $runtime = Join-Path $PWD "build_vendor\omniroute_runtime"
+          $node = Join-Path $runtime "node.exe"
+          $entry = Join-Path $runtime "node_modules\omniroute\bin\omniroute.mjs"
+          $env:DATA_DIR = Join-Path $PWD "omniroute-ci-data"
+          $env:PORT = "20128"
+          New-Item -ItemType Directory -Force -Path $env:DATA_DIR | Out-Null
+          $proc = Start-Process -FilePath $node -ArgumentList @($entry, "--no-open", "--port", "20128") -WorkingDirectory $runtime -WindowStyle Hidden -PassThru
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 60; $i++) {
+              Start-Sleep -Milliseconds 500
+              try {
+                $resp = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:20128/v1/models" -TimeoutSec 2
+                if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 500) {
+                  $ready = $true
+                  Write-Host "OmniRoute HTTP endpoint responded with status $($resp.StatusCode)."
+                  Write-Host $resp.Content.Substring(0, [Math]::Min(1000, $resp.Content.Length))
+                  break
+                }
+              } catch {}
+              if ($proc.HasExited) {
+                throw "OmniRoute exited before its local API became reachable."
+              }
+            }
+            if (-not $ready) { throw "OmniRoute local API did not become reachable within 30 seconds." }
+          } finally {
+            if (-not $proc.HasExited) {
+              Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+              Wait-Process -Id $proc.Id -Timeout 10 -ErrorAction SilentlyContinue
+            }
+          }
+
+      - name: Verify voice and camera runtime paths
+        shell: pwsh
+        run: |
+          python -c "import sounddevice, pyaudio, cv2, mediapipe; print('voice/camera modules import: PASS')"
+          python -c "import sounddevice as sd; print('Input devices:', len(sd.query_devices(kind='input').reshape(-1) if hasattr(sd.query_devices(kind='input'),'reshape') else []))" 2>$null
+          python -c "import sounddevice as sd; d=sd.query_devices(); ins=[x for x in d if x.get('max_input_channels',0)>0]; outs=[x for x in d if x.get('max_output_channels',0)>0]; print(f'Audio input devices exposed: {len(ins)}'); print(f'Audio output devices exposed: {len(outs)}'); print([x.get('name') for x in ins]); print([x.get('name') for x in outs])"
+          python -c "import cv2; found=[]; [found.append(i) for i in range(3) if (lambda c,i=i: (lambda ok: (c.release(), ok)[1])(c.isOpened()))(cv2.VideoCapture(i))]; print('Camera indices that opened:', found); print('No hardware camera exposed on hosted runner.' if not found else 'Camera hardware path opened successfully on hosted runner.')"
+
+      - name: Build Brahma Evo EXE
+        shell: pwsh
+        run: |
+          pyinstaller installer\BrahmaEvo.spec --noconfirm
+          if (-not (Test-Path "dist\BrahmaEvo\BrahmaEvo.exe")) { throw "BrahmaEvo.exe was not produced." }
+          Get-Item "dist\BrahmaEvo\BrahmaEvo.exe" | Format-List FullName,Length
+          Get-FileHash "dist\BrahmaEvo\BrahmaEvo.exe" -Algorithm SHA256
+
+      - name: Smoke test Brahma Evo native window
+        shell: pwsh
+        env:
+          BRAHMA_OMNIROUTE_ENABLED: "0"
+        run: |
+          Add-Type @"
+          using System;
+          using System.Text;
+          using System.Runtime.InteropServices;
+          public static class WindowProbe {
+              public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+              [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+              [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+              [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+              [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+              public static string FindVisibleWindow(uint pid) {
+                  string found = "";
+                  EnumWindows((hWnd, lParam) => {
+                      uint owner;
+                      GetWindowThreadProcessId(hWnd, out owner);
+                      if (owner == pid && IsWindowVisible(hWnd)) {
+                          var sb = new StringBuilder(512);
+                          GetWindowText(hWnd, sb, sb.Capacity);
+                          found = hWnd.ToString() + "|" + sb.ToString();
+                          return false;
+                      }
+                      return true;
+                  }, IntPtr.Zero);
+                  return found;
+              }
+          }
+          "@
+          $exe = (Resolve-Path "dist\BrahmaEvo\BrahmaEvo.exe").Path
+          $p = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -WindowStyle Hidden -PassThru
+          try {
+            $window = ""
+            for ($i = 0; $i -lt 90; $i++) {
+              Start-Sleep -Milliseconds 500
+              $p.Refresh()
+              if ($p.HasExited) {
+                throw "BrahmaEvo.exe exited during startup with code $($p.ExitCode)."
+              }
+              $window = [WindowProbe]::FindVisibleWindow([uint32]$p.Id)
+              if ($window) {
+                Write-Host "Native window detected: $window"
+                break
+              }
+            }
+            if (-not $window) {
+              throw "BrahmaEvo.exe stayed alive but no visible native window was created within 45 seconds."
+            }
+          } finally {
+            if (-not $p.HasExited) {
+              Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+              Wait-Process -Id $p.Id -Timeout 10 -ErrorAction SilentlyContinue
+            }
+          }
+
+      - name: Build and smoke-test Setup Wizard
+        shell: pwsh
+        env:
+          BRAHMA_OMNIROUTE_ENABLED: "0"
+        run: |
+          pyinstaller installer\BrahmaEvo_Setup.spec --noconfirm
+          if (-not (Test-Path "dist\BrahmaEvo_Setup\BrahmaEvo_Setup.exe")) { throw "Setup wizard was not produced." }
+          $p = Start-Process -FilePath (Resolve-Path "dist\BrahmaEvo_Setup\BrahmaEvo_Setup.exe") -WorkingDirectory (Resolve-Path "dist\BrahmaEvo_Setup") -WindowStyle Hidden -PassThru
+          try {
+            Start-Sleep -Seconds 5
+            $p.Refresh()
+            if ($p.HasExited) { throw "Setup wizard exited immediately with code $($p.ExitCode)." }
+          } finally {
+            if (-not $p.HasExited) {
+              Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+              Wait-Process -Id $p.Id -Timeout 10 -ErrorAction SilentlyContinue
+            }
+          }
