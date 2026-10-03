@@ -4158,9 +4158,10 @@ class BrahmaLive:
     def trigger_barge_in(self):
         """Immediately interrupts AI speech playback and switches state to LISTENING."""
         with self._speaking_lock:
-            if not self._is_speaking:
-                return
             self._is_speaking = False
+
+        self._barge_in_gate.reset()
+        self._playback_generation.bump()
 
         try:
             from actions.attention_monitor import stop_native_speech
@@ -4348,6 +4349,19 @@ class BrahmaLive:
             "Remain completely silent until the user speaks to you or asks a question."
         )
 
+        parts.append(
+            "VOICE INTERACTION MODE:\n"
+            "- Operate as a continuous hands-free, full-duplex conversational assistant. The microphone remains available while you are speaking.\n"
+            "- Treat detected user speech as an immediate interruption: stop the current response, listen to the new utterance, and do not finish the old sentence.\n"
+            "- Prefer natural turn-taking over rigid AI-talks-then-user-talks alternation. Brief overlaps are acceptable; prioritize the current speaker.\n"
+            "- Use natural pauses, pacing, sentence rhythm, emphasis, intonation, and subtle emotional variation rather than flat text-to-speech reading.\n"
+            "- Sound calm, intelligent, polished, articulate, confident, subtle, and futuristic, with an understated sophisticated delivery.\n"
+            "- Adapt delivery to context: professional for information, conversational for normal dialogue, warmer for acknowledgement, curious for exploration, focused for urgency, and lightly playful for appropriate humor.\n"
+            "- Use occasional natural backchannels such as \"mm-hmm\", \"uh-huh\", \"yeah\", or \"right\" only when contextually appropriate. Do not insert them mechanically or repeatedly.\n"
+            "- Avoid repetitive filler, canned acknowledgements, exaggerated emotion, monotone reading, and verbal descriptions of punctuation.\n"
+            "- When the user begins speaking over you, yield immediately. Their new speech takes priority over unfinished output.\n"
+        )
+
         tool_declarations = list(TOOL_DECLARATIONS)
         declared_names = {tool.get("name") for tool in tool_declarations}
         try:
@@ -4363,6 +4377,17 @@ class BrahmaLive:
             response_modalities=["AUDIO"],
             output_audio_transcription={},
             input_audio_transcription={},
+            # Automatic VAD supplies continuous activity detection and server-side
+            # barge-in. 100 ms prefix padding avoids clipping speech onset; 650 ms
+            # silence keeps normal conversational pauses intact.
+            realtime_input_config={
+                "automatic_activity_detection": {
+                    "disabled": False,
+                    "prefix_padding_ms": 100,
+                    "silence_duration_ms": 650,
+                },
+                "activity_handling": "START_OF_ACTIVITY_INTERRUPTS",
+            },
             system_instruction="\n".join(parts),
             tools=[{"function_declarations": tool_declarations}],
             session_resumption=types.SessionResumptionConfig(handle=getattr(self, '_resume_handle', None)),
@@ -5393,10 +5418,18 @@ class BrahmaLive:
 
                     if response.data:
                         self.set_speaking(True)
-                        self.audio_in_queue.put_nowait(response.data)
+                        self.audio_in_queue.put_nowait(
+                            (self._playback_generation.current(), response.data)
+                        )
 
                     if response.server_content:
                         sc = response.server_content
+
+                        if getattr(sc, "interrupted", False):
+                            # Server VAD is authoritative. Drop all buffered
+                            # output from the interrupted generation immediately.
+                            self.trigger_barge_in()
+                            self.ui.set_state("LISTENING")
 
                         if sc.output_transcription and sc.output_transcription.text:
                             self.set_speaking(True)
@@ -5451,6 +5484,7 @@ class BrahmaLive:
                                     daemon=True
                                 ).start()
                             self._voice_tool_gate.finish_turn()
+                            self._barge_in_gate.reset()
 
                     if response.tool_call:
                         self.ui.set_state("EXECUTING")
@@ -5501,7 +5535,13 @@ class BrahmaLive:
         stream.start()
         try:
             while True:
-                chunk = await self.audio_in_queue.get()
+                item = await self.audio_in_queue.get()
+                if isinstance(item, tuple) and len(item) == 2:
+                    generation, chunk = item
+                    if generation != self._playback_generation.current():
+                        continue
+                else:
+                    chunk = item
                 try:
                     pcm = np.frombuffer(chunk, dtype=np.int16)
                     lvl = float(np.sqrt(np.mean(np.square(pcm, dtype=np.float32))))
@@ -5593,7 +5633,7 @@ class BrahmaLive:
                         except Exception:
                             pass
                         self.ui.set_state("LISTENING")
-                        self.ui.write_log("SYS: Brahma Evo online.")
+                        self.ui.write_log("SYS: Brahma Evo online — continuous hands-free duplex voice active.")
 
                         tg.create_task(self._send_realtime())
                         tg.create_task(self._listen_audio())
