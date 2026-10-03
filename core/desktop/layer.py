@@ -171,6 +171,17 @@ class DesktopLayer(QMainWindow):
         except Exception:
             pass
 
+    def set_render_quality(self, level: str) -> None:
+        value = str(level or "full").lower()
+        if value not in {"full", "balanced", "low"}:
+            value = "full"
+        try:
+            self._web.page().runJavaScript(
+                f"if(window.setRenderQuality) window.setRenderQuality('{value}');"
+            )
+        except Exception:
+            pass
+
     def hideEvent(self, event):
         try:
             if self._desktop_host.attached:
