@@ -1,4 +1,4 @@
-from core.user_paths import get_user_data_dir
+from core.runtime_paths import CONFIG_DIR
 import email
 import imaplib
 import json
@@ -25,7 +25,6 @@ def _get_base_dir() -> Path:
     return Path(__file__).resolve().parent.parent
 
 BASE_DIR = _get_base_dir()
-CONFIG_DIR = get_user_data_dir() / "config"
 EMAIL_KEY_FILE = CONFIG_DIR / ".email_key"
 EMAIL_CREDENTIALS_FILE = CONFIG_DIR / "email_credentials.json"
 GOOGLE_WORKSPACE_CRED_FILE = CONFIG_DIR / "google_workspace_credentials.json"
@@ -523,16 +522,21 @@ def _email_poll_cycle():
 
 
 def _email_daemon_loop(poll_interval: int = 25):
-    global _email_daemon_running
+    global _email_daemon_running, _email_daemon_thread
     logger.info("[EmailDaemon] Background email watcher loop running.")
-    while _email_daemon_running:
-        try:
-            _email_poll_cycle()
-        except Exception as e:
-            logger.debug(f"[EmailDaemon] Loop error: {e}")
+    try:
+        while _email_daemon_running:
+            try:
+                _email_poll_cycle()
+            except Exception as e:
+                logger.debug(f"[EmailDaemon] Loop error: {e}")
 
-        if _email_daemon_stop_event.wait(timeout=max(1, int(poll_interval))):
-            break
+            if _email_daemon_stop_event.wait(timeout=max(1, int(poll_interval))):
+                break
+    finally:
+        _email_daemon_running = False
+        if _email_daemon_thread is threading.current_thread():
+            _email_daemon_thread = None
 
 
 def start_email_daemon(poll_interval: int = 25):
@@ -547,7 +551,12 @@ def start_email_daemon(poll_interval: int = 25):
 
 
 def stop_email_daemon():
-    global _email_daemon_running
+    global _email_daemon_running, _email_daemon_thread
     _email_daemon_running = False
     _email_daemon_stop_event.set()
+    thread = _email_daemon_thread
+    if thread and thread.is_alive() and thread is not threading.current_thread():
+        thread.join(timeout=2.0)
+    if thread and not thread.is_alive():
+        _email_daemon_thread = None
     logger.info("[EmailDaemon] Background email daemon stopped.")
