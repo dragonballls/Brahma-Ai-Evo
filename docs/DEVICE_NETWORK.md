@@ -21,8 +21,24 @@ The device network normalizes devices into a common record:
 | Matter device | chip-tool capability bridge | Backend-specific | Backend-specific |
 | Generic PC/TV | explicit web control URL | Yes when URL supplies a UI | Backend-specific |
 | WOL-capable device | Wake-on-LAN | N/A | Wake |
+| Bluetooth LE peripheral | Bleak / Windows Runtime | No | Discovery, pairing, GATT services, on-demand GATT read/write |
 
 The holographic workspace uses movable/resizable Brahma-owned panels. Android scrcpy windows are reparented into those panels when safe; Brahma does not intentionally leave a separate scrcpy window open after a successful embed.
+
+## Bluetooth LE
+
+Bluetooth is integrated as a first-class adapter in the same Device Network workspace. Brahma discovers nearby BLE peripherals and normalizes them into persistent device records using their Bluetooth address.
+
+The Bluetooth adapter supports:
+- nearby BLE discovery with device name, address, RSSI, and advertised service UUIDs
+- explicit OS-level pairing/unpairing when the peripheral supports it
+- on-demand GATT service/characteristic enumeration
+- explicit GATT characteristic reads and writes
+- the same movable/resizable holographic device panels, although BLE does not provide a screen stream
+
+Bluetooth connections are intentionally short-lived for discovery and GATT operations. Brahma does not keep every nearby BLE peripheral continuously connected, which avoids unnecessary radio/battery/resource usage. A discovered device therefore appears as **Standby**, not **Connected**; a successful GATT operation reports an on-demand connection.
+
+The current implementation uses the optional `bleak` package and its Windows Runtime backend. BLE and Bluetooth Classic are different transports; this adapter does not claim generic Classic-device control unless another supported adapter is added.
 
 ## Modes
 
@@ -50,6 +66,6 @@ Examples include "Show my phone.", "Keep my phone connected in the background.",
 
 ## Reference projects and reuse policy
 
-The implementation follows the repository's GitHub-first policy. scrcpy is the native Android display/control backend; its current connection documentation supports multiple devices selected by serial, including TCP/IP serials. Android-Web-Control is a reference for a browser-native WebRTC/WebCodecs/ADB surface and is not copied wholesale. pyatv provides Apple TV/AirPlay control but is not an Apple TV screen-mirroring backend. connectedhomeip/chip-tool is the Matter controller reference/backend. Home Assistant Core is the architectural reference for normalized device/entity abstraction.
+The implementation follows the repository's GitHub-first policy. For Bluetooth LE, Bleak is used as the thin Windows Runtime adapter rather than vendoring a full Bluetooth stack. scrcpy is the native Android display/control backend; its current connection documentation supports multiple devices selected by serial, including TCP/IP serials. Android-Web-Control is a reference for a browser-native WebRTC/WebCodecs/ADB surface and is not copied wholesale. pyatv provides Apple TV/AirPlay control but is not an Apple TV screen-mirroring backend. connectedhomeip/chip-tool is the Matter controller reference/backend. Home Assistant Core is the architectural reference for normalized device/entity abstraction.
 
 No third-party project is automatically downloaded, elevated, or made a hard startup dependency.
