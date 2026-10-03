@@ -36,6 +36,7 @@ class DesktopModeController:
         self._show_overlay = False
         self._use_workerw = False
         self._last_workspace_identity = ""
+        self._last_workspace_geometry: tuple[int, int, int, int] | None = None
         self._last_workspace_persist_at = 0.0
 
     def _ensure_layer(self) -> DesktopLayer:
@@ -239,33 +240,103 @@ class DesktopModeController:
             return self.status()
 
     def _reconcile_workspace(self, snapshot: dict[str, Any]) -> None:
-        foreground_pid = snapshot.get("foreground_pid")
         foreground = WindowManager.foreground()
-        if not foreground:
+        if not foreground or not foreground.visible or not foreground.title:
             return
+
         identity = f"{foreground.exe}:{foreground.title}".strip(":")
         now = time.time()
-        # Avoid turning the adaptive governor into a disk writer. Persist only
-        # when the focused application changes or after a long heartbeat.
-        if identity == self._last_workspace_identity and now - self._last_workspace_persist_at < 30.0:
-            return
-        self.workspace.upsert_window(
-            "main",
-            {
-                "identity": identity,
-                "title": foreground.title,
-                "exe": foreground.exe,
-                "last_seen": now,
-                "game": is_game_window(foreground),
-                "x": None,
-                "y": None,
-                "width": None,
-                "height": None,
-            },
-        )
+        rect = WindowManager.get_rect(foreground.hwnd)
+        is_surface = bool(rect and rect[2] - rect[0] >= 160 and rect[3] - rect[1] >= 120)
+        try:
+            fullscreen = WindowManager.is_fullscreen_or_borderless(foreground.hwnd)
+        except Exception:
+            fullscreen = False
+
+        stored_geometry = None
+        try:
+            state = self.workspace.snapshot()
+            windows = state.get("workspaces", {}).get("main", {}).get("windows", [])
+            for item in windows if isinstance(windows, list) else []:
+                if str(item.get("identity") or "") != identity:
+                    continue
+                values = [item.get("x"), item.get("y"), item.get("width"), item.get("height")]
+                if all(isinstance(value, int) and not isinstance(value, bool) for value in values):
+                    stored_geometry = tuple(int(value) for value in values)
+                break
+        except Exception:
+            pass
+
+        if is_surface and not fullscreen and rect is not None:
+            geometry = (int(rect[0]), int(rect[1]), int(rect[2] - rect[0]), int(rect[3] - rect[1]))
+        else:
+            geometry = stored_geometry
+
+        geometry_changed = geometry != self._last_workspace_geometry
+        identity_changed = identity != self._last_workspace_identity
+        if not identity_changed:
+            if not geometry_changed and now - self._last_workspace_persist_at < 30.0:
+                return
+            if geometry_changed and now - self._last_workspace_persist_at < 5.0:
+                return
+
+        self.workspace.upsert_window("main", {
+            "identity": identity,
+            "title": foreground.title,
+            "exe": foreground.exe,
+            "last_seen": now,
+            "game": is_game_window(foreground),
+            "x": geometry[0] if geometry else None,
+            "y": geometry[1] if geometry else None,
+            "width": geometry[2] if geometry else None,
+            "height": geometry[3] if geometry else None,
+        })
         self._last_workspace_identity = identity
+        self._last_workspace_geometry = geometry
         self._last_workspace_persist_at = now
 
+    def restore_workspace_geometry(self) -> int:
+        """Restore saved windowed geometry for an unambiguous live user window."""
+        restored = 0
+        try:
+            state = self.workspace.snapshot()
+            saved = state.get("workspaces", {}).get("main", {}).get("windows", [])
+            if not isinstance(saved, list):
+                return restored
+            live = WindowManager.enumerate_windows()
+        except Exception:
+            return restored
+
+        for item in saved:
+            if not isinstance(item, dict):
+                continue
+            exe = str(item.get("exe") or "").strip().lower()
+            title = str(item.get("title") or "").strip()
+            values = [item.get("x"), item.get("y"), item.get("width"), item.get("height")]
+            if not exe or not title or not all(isinstance(value, int) and not isinstance(value, bool) for value in values):
+                continue
+            x, y, width, height = (int(value) for value in values)
+            if not (-20000 <= x <= 20000 and -20000 <= y <= 20000):
+                continue
+            if not (160 <= width <= 10000 and 120 <= height <= 10000):
+                continue
+            matches = [
+                window for window in live
+                if window.visible and not window.minimized
+                and window.exe.lower() == exe and window.title.strip() == title
+                and not is_game_window(window)
+            ]
+            if len(matches) != 1:
+                continue
+            window = matches[0]
+            try:
+                if WindowManager.is_fullscreen_or_borderless(window.hwnd):
+                    continue
+            except Exception:
+                continue
+            if WindowManager.set_position(window.hwnd, x, y, width, height):
+                restored += 1
+        return restored
     def open(self, target: str, *, embed: bool = False) -> dict[str, Any]:
         value = str(target or "").strip()
         if not value:
