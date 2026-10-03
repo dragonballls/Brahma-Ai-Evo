@@ -54,7 +54,9 @@ class RuntimeConsistencyTests(unittest.TestCase):
             store = WorkspaceStore(Path(td) / "workspace.sqlite3")
             convo = store.create_conversation("Consistency Test")
             store.append_message(convo, "user", "hello")
+            self.assertTrue(store.conversation_has_messages(convo))
             store.delete_conversation(convo)
+            self.assertFalse(store.conversation_exists(convo))
 
             conn = sqlite3.connect(Path(td) / "workspace.sqlite3")
             try:
