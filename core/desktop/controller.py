@@ -188,6 +188,12 @@ class DesktopModeController:
                     visible=self._show_overlay,
                 )
                 self.layer.restack()
+            # Hidden/minimized web panels can be frozen safely while a game is
+            # foreground; visible panels remain Active per Qt's lifecycle rules.
+            try:
+                web_application_host.set_low_power(game_mode, discard=False)
+            except Exception:
+                pass
             self._reconcile_workspace(snapshot)
             return self.status()
 
@@ -251,5 +257,6 @@ class DesktopModeController:
             "last_error": self.last_error,
             "performance": self.performance.status(),
             "web_panels": web_application_host.status(),
+            "web_lifecycle": web_application_host.lifecycle_status(),
         }
         return result
