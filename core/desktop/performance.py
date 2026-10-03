@@ -282,25 +282,35 @@ class AdaptivePerformanceEngine:
             return
         if psutil is None:
             return
+
         with self._lock:
-            tracked = list(self._original_priority.items())
-        for (pid, created), priority in tracked:
+            tracked_priority = list(self._original_priority.items())
+            tracked_memory = list(self._original_memory_priority.items())
+
+        for (pid, created), priority in tracked_priority:
             try:
                 proc = psutil.Process(pid)
                 if abs(float(proc.create_time()) - created) > 0.5:
                     continue
-                if WindowManager.is_user_process(proc) and WindowManager.set_priority(proc, priority):
+                if not WindowManager.is_user_process(proc):
+                    continue
+                if WindowManager.set_priority(proc, priority):
                     with self._lock:
                         self._original_priority.pop((pid, created), None)
                         self._managed_target.pop((pid, created), None)
+            except Exception:
+                continue
+
+        for (pid, created), priority in tracked_memory:
             try:
                 proc = psutil.Process(pid)
-                if abs(float(proc.create_time()) - created) <= 0.5 and WindowManager.is_user_process(proc):
-                    if WindowManager.set_memory_priority(pid, self._original_memory_priority.get((pid, created), 5)):
-                        with self._lock:
-                            self._original_memory_priority.pop((pid, created), None)
-            except Exception:
-                pass
+                if abs(float(proc.create_time()) - created) > 0.5:
+                    continue
+                if not WindowManager.is_user_process(proc):
+                    continue
+                if WindowManager.set_memory_priority(pid, priority):
+                    with self._lock:
+                        self._original_memory_priority.pop((pid, created), None)
             except Exception:
                 continue
 
