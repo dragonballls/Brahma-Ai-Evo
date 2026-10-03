@@ -22,6 +22,15 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Read canonical runtime contract
+        id: runtime
+        shell: pwsh
+        run: |
+          $node = python -c "from core.runtime_contract import NODE_VERSION; print(NODE_VERSION)"
+          $omni = python -c "from core.runtime_contract import OMNIROUTE_VERSION; print(OMNIROUTE_VERSION)"
+          "NODE_VERSION=$node" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "OMNIROUTE_VERSION=$omni" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
@@ -45,8 +54,10 @@ jobs:
         shell: pwsh
         run: |
           $manifest = Get-Content build_vendor/omniroute_runtime/runtime-manifest.txt -Raw
-          if ($manifest -notmatch "node=24.21.0") { throw "Unexpected Node runtime manifest." }
-          if ($manifest -notmatch "omniroute=3.8.50") { throw "Unexpected OmniRoute version." }
+          $nodeVersion = "${{ steps.runtime.outputs.NODE_VERSION }}"
+          $omniVersion = "${{ steps.runtime.outputs.OMNIROUTE_VERSION }}"
+          if ($manifest -notmatch "node=$nodeVersion") { throw "Unexpected Node runtime manifest." }
+          if ($manifest -notmatch "omniroute=$omniVersion") { throw "Unexpected OmniRoute version." }
           if (-not (Test-Path "build_vendor/omniroute_runtime/node.exe")) { throw "Bundled Node runtime missing." }
           if (-not (Test-Path "build_vendor/omniroute_runtime/node_modules/omniroute/bin/omniroute.mjs")) { throw "Bundled OmniRoute entrypoint missing." }
 
