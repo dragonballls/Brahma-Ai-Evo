@@ -30,7 +30,7 @@ PLUGIN = {
     "name": "spotify_controller",
     "description": (
         "Plays and controls music via Google Chrome and Spotify. Supports actions: "
-        "'search_play' (play any song/artist), 'play', 'pause', 'toggle', 'next', "
+        "'search_play' (play any song/artist), 'play_playlist' (play a playlist by name), 'play', 'pause', 'toggle', 'next', "
         "'previous', 'volume_up', 'volume_down', 'mute', 'open_spotify', 'get_now_playing', "
         "'get_playlists', 'get_queue', 'get_devices', 'auth'."
     ),
@@ -199,6 +199,41 @@ def _find_and_click_spotify_play_button() -> bool:
         return True
     except Exception:
         return False
+def _spotify_play_playlist_by_name(query: str, device_id: str | None = None) -> str:
+    clean = str(query or "").strip()
+    if not clean:
+        return "Tell me the Spotify playlist name, sir."
+
+    found = _spotify_mcp_call("searchSpotify", {
+        "query": clean,
+        "type": "playlist",
+        "limit": 5,
+    })
+    if not found.get("success"):
+        return f"Spotify playlist search failed: {found.get('error') or found.get('output')}"
+
+    playlist_id = None
+    playlist_name = clean
+    output = found.get("output", "")
+    match = re.search(r'ID:\s*([A-Za-z0-9]+)', output)
+    if match:
+        playlist_id = match.group(1)
+        quoted = re.search(r'\d+\.\s*"([^"]+)"', output)
+        if quoted:
+            playlist_name = quoted.group(1).strip()
+
+    if not playlist_id:
+        return f"I couldn't find a Spotify playlist named '{clean}', sir."
+
+    args = {"uri": f"spotify:playlist:{playlist_id}"}
+    if device_id:
+        args["deviceId"] = device_id
+    played = _spotify_mcp_call("playMusic", args)
+    if not played.get("success"):
+        return f"Spotify playlist playback failed: {played.get('error') or played.get('output')}"
+    return f'Playing the Spotify playlist "{playlist_name}".'
+
+ 
 def spotify_controller(
     parameters: dict,
     response: str | None = None,
@@ -214,7 +249,7 @@ def spotify_controller(
     query = p.get("query", "").strip()
 
     mcp_extended_actions = {
-        "auth", "login", "authenticate", "setup", "search_play", "play_song", "play_music",
+        "auth", "login", "authenticate", "setup", "search_play", "play_song", "play_music", "play_playlist",
         "start", "resume", "pause", "stop", "next", "previous", "set_volume", "volume",
         "volume_up", "volume_down", "get_now_playing", "get_playlists", "get_queue", "get_devices",
     }
@@ -421,6 +456,11 @@ def _spotify_mcp_action(parameters: dict) -> str:
         return "Started Spotify authorization in your browser."
     if not is_spotify_configured():
         return "Spotify MCP is not configured. Add clientId and clientSecret to the local spotify-config.json, then authenticate."
+
+    if action in ("play_playlist", "playlist"):
+        if not query:
+            return "Tell me the Spotify playlist name, sir."
+        return _spotify_play_playlist_by_name(query, device_id=device_id)
 
     if action in ("search_play", "play_song", "play_music", "start"):
         if not query:
