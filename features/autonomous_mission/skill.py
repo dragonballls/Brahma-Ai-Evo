@@ -6,6 +6,8 @@ import threading
 import time
 import uuid
 from pathlib import Path
+
+import psutil
 from typing import Any
 
 try:
@@ -29,6 +31,12 @@ def _load() -> None:
         saved = data.get("missions", {})
         if isinstance(saved, dict):
             _MISSIONS = saved
+            # Daemon mission workers do not survive an application restart.
+            for mission in _MISSIONS.values():
+                if mission.get("status") in {"running", "pending", "cancelling"}:
+                    mission["status"] = "interrupted"
+                    mission["error"] = "Brahma Evo restarted before this mission finished."
+            _save()
     except Exception:
         _MISSIONS = {}
 
@@ -118,7 +126,6 @@ def _check_completion(
     if mode == "memory_below":
         try:
             threshold = float(mission.get("completion_target"))
-            import psutil
             return float(psutil.virtual_memory().percent) <= threshold
         except Exception:
             return False
