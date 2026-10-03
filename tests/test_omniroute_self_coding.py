@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -15,6 +17,7 @@ from core.omniroute_setup import (
     detect_provider_from_key,
 )
 from core.self_coding import Checkpoint, SelfCodingAgent
+from core.github_research import GitHubResearchClient, _result_score
 
 
 class OmniRouteSelfCodingTests(unittest.TestCase):
@@ -103,6 +106,105 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
         gateway = OmniRouteGateway()
         self.assertEqual(gateway.base_url, "http://127.0.0.1:20128/v1")
         self.assertFalse(gateway._ready)
+
+
+    def test_github_research_ranks_and_synthesizes_multiple_sources(self):
+        client = GitHubResearchClient()
+        repos = [
+            {
+                "full_name": "example/permissive",
+                "description": "websocket reference implementation",
+                "stargazers_count": 100,
+                "forks_count": 20,
+                "updated_at": "2026-09-20T00:00:00Z",
+                "license": {"spdx_id": "MIT", "name": "MIT License"},
+                "html_url": "https://github.com/example/permissive",
+            },
+            {
+                "full_name": "example/copyleft",
+                "description": "websocket alternative",
+                "stargazers_count": 500,
+                "forks_count": 100,
+                "updated_at": "2026-09-20T00:00:00Z",
+                "license": {"spdx_id": "AGPL-3.0", "name": "GNU AGPL"},
+                "html_url": "https://github.com/example/copyleft",
+            },
+            {
+                "full_name": "example/third",
+                "description": "another websocket implementation",
+                "stargazers_count": 50,
+                "forks_count": 10,
+                "updated_at": "2026-09-20T00:00:00Z",
+                "license": {"spdx_id": "Apache-2.0", "name": "Apache License 2.0"},
+                "html_url": "https://github.com/example/third",
+            },
+        ]
+        code = [
+            {
+                "repository": repos[0],
+                "path": "src/websocket.py",
+                "score": 100.0,
+                "html_url": "https://github.com/example/permissive/blob/main/src/websocket.py",
+            },
+            {
+                "repository": repos[1],
+                "path": "server/websocket.py",
+                "score": 99.0,
+                "html_url": "https://github.com/example/copyleft/blob/main/server/websocket.py",
+            },
+            {
+                "repository": repos[2],
+                "path": "lib/websocket.py",
+                "score": 98.0,
+                "html_url": "https://github.com/example/third/blob/main/lib/websocket.py",
+            },
+        ]
+        with (
+            patch.object(client, "search_repositories", side_effect=[repos, []]),
+            patch.object(client, "search_code", return_value=code),
+        ):
+            result = client.research_goal("add websocket reconnect handling", repo_limit=8, code_limit=12)
+
+        self.assertTrue(result["available"])
+        self.assertGreaterEqual(len(result["repositories"]), 3)
+        self.assertEqual(result["code_matches"][0]["repository"], "example/permissive")
+        self.assertIn("GITHUB-FIRST RESEARCH PREFLIGHT", client.format_dossier(result))
+        self.assertGreaterEqual(_result_score(repos[0], 100.0, 4), _result_score(repos[1], 99.0, 3))
+
+    def test_github_first_edit_guard_requires_multiple_sources(self):
+        from actions.brahma_dev_agent import BrahmaDevAgent
+
+        with tempfile.TemporaryDirectory() as tmp:
+            agent = BrahmaDevAgent(tmp)
+            blocked_before_research = agent._execute_tool(
+                "FileWrite",
+                {"file_path": "demo.txt", "content": "hello"},
+            )
+            self.assertIn("GitHub-first guard", blocked_before_research)
+
+            agent.github_research_done = True
+            agent.github_required_sources = 2
+            blocked_with_one = agent._execute_tool(
+                "FileWrite",
+                {"file_path": "demo.txt", "content": "hello"},
+            )
+            self.assertIn("2 viable repositories", blocked_with_one)
+
+            agent.github_inspected_repos.update({"a/repo", "b/repo"})
+            written = agent._execute_tool(
+                "FileWrite",
+                {"file_path": "demo.txt", "content": "hello"},
+            )
+            self.assertIn("Successfully wrote", written)
+            self.assertEqual(Path(tmp, "demo.txt").read_text(encoding="utf-8"), "hello")
+
+    def test_github_tools_are_exposed_to_brahma_dev(self):
+        source = Path(ROOT / "actions" / "brahma_dev_agent.py").read_text(encoding="utf-8")
+        self.assertIn("GitHubSearch", source)
+        self.assertIn("GitHubRead", source)
+        self.assertIn("GitHubRepo", source)
+        self.assertIn("_github_research_preflight", source)
+        self.assertIn("self.github_required_sources = min(3", source)
 
 
 if __name__ == "__main__":
