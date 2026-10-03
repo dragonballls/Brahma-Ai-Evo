@@ -62,11 +62,21 @@ def creator_control(parameters: dict[str, Any] | None = None, player=None, speak
             output = str(args.get("output") or (Path.home() / "Desktop" / "brahma_creator_recording.wav"))
             duration = float(args.get("duration_seconds") or args.get("duration") or 30)
             return record_microphone(output, duration)
+        if action == "voiceover":
+            from core.creator_voice import generate_voiceover
+            output = str(args.get("output") or (Path.home() / "Desktop" / "brahma_creator_voiceover.mp3"))
+            text_value = str(args.get("text") or args.get("script") or args.get("request") or "").strip()
+            return generate_voiceover(
+                text_value,
+                output,
+                voice=str(args.get("voice") or "en-US-GuyNeural"),
+                rate=str(args.get("rate") or "+0%"),
+            )
         if action == "status":
             return json.dumps(read_manifest(str(args.get("project") or ""))[1], ensure_ascii=False)
         if action in {"record_start", "record_stop"}:
             from actions.obs_control import obs_control
             return obs_control({"action": action}, player=player, speak=speak)
-        return "Creator Studio supports tools, create/plan, produce, render, publish, metadata, script, rights_review, music_search, record_audio, status, record_start, and record_stop."
+        return "Creator Studio supports tools, create/plan, produce, render, publish, metadata, script, rights_review, music_search, record_audio, voiceover, status, record_start, and record_stop."
     except Exception as exc:
         return f"Creator Studio failed: {exc}"
