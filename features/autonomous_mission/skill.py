@@ -382,6 +382,13 @@ def launch_worker(mission_id: str) -> str:
             return {"kind": "terminal", "status": mission.get("status")}
         if _worker_alive(mission):
             return {"kind": "alive", "pid": mission.get("worker_pid")}
+        launching_at = mission.get("worker_launching_at")
+        if launching_at:
+            try:
+                if time.time() - float(launching_at) <= _LOCK_STALE_SECONDS:
+                    return {"kind": "launching"}
+            except (TypeError, ValueError):
+                pass
         mission["worker_launching_at"] = time.time()
         mission["worker_launch_nonce"] = uuid.uuid4().hex[:12]
         if mission.get("status") == "cancelling" and not mission.get("cancel_requested"):
@@ -395,6 +402,8 @@ def launch_worker(mission_id: str) -> str:
         return f"Mission {mission_id} is already {reservation['status']}."
     if reservation["kind"] == "alive":
         return f"Mission {mission_id} already has an external worker (PID {reservation['pid']})."
+    if reservation["kind"] == "launching":
+        return f"Mission {mission_id} is already being launched by another recovery supervisor."
 
     ok, pid, error = _launch_worker_process(mission_id)
 
@@ -747,9 +756,17 @@ def start_mission(
         })
     )
 
+    recovery_installed = bool(recovery.get("installed")) if isinstance(recovery, dict) else False
+    if os.name == "nt" and recovery_installed:
+        recovery_note = "Windows logon and periodic recovery supervision is installed."
+    elif os.name == "nt":
+        recovery_note = "Windows recovery-task registration could not be confirmed; Brahma startup recovery remains available."
+    else:
+        recovery_note = "Process-independent mission state remains recoverable by the host application's startup supervisor."
+
     return (
         f"Started autonomous mission {mission_id} in an external worker. "
-        f"It can continue after Brahma restarts and is scheduled for recovery after Windows logon/reboot."
+        f"{recovery_note}"
     )
 
 
@@ -834,8 +851,9 @@ def recover_active_missions() -> dict[str, Any]:
                 continue
 
         if not _worker_alive(mission):
-            launch_worker(mission_id)
-            launched.append(mission_id)
+            launch_result = launch_worker(mission_id)
+            if launch_result.startswith("External worker launched for mission"):
+                launched.append(mission_id)
 
     return {
         "launched": launched,
