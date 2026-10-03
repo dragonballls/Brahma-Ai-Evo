@@ -1,16 +1,21 @@
 """Multi-model cloud reasoning for Brahma Evo."""
 from __future__ import annotations
-import json, logging, time
+import json, logging, time, threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Optional
 from core.user_paths import get_user_data_dir
+from core.runtime_paths import APP_SETTINGS_PATH
 from or_client import client as cloud_client
 
 log=logging.getLogger("BrahmaIntelligence")
 ROOT=Path(__file__).resolve().parent.parent
 REPO_CFG=ROOT/"config"/"intelligence.json"
 USER_CFG=get_user_data_dir()/"config"/"intelligence.json"
+_CFG_LOCK = threading.RLock()
+_CFG_CACHE = None
+_RUNTIME_CACHE = None
+
 DEFAULTS={
     "enabled": True, "default_profile":"smart", "simple_profile":"fast",
     "parallel_workers":4, "max_specialists":2, "max_context_chars":14000, "simple_max_chars":220,
@@ -32,30 +37,58 @@ def merge(a:dict,b:dict)->dict:
     for k,v in b.items(): out[k]=merge(out[k],v) if isinstance(v,dict) and isinstance(out.get(k),dict) else v
     return out
 
-def load_config()->dict:
-    cfg=dict(DEFAULTS)
-    for p in (REPO_CFG,USER_CFG):
+def _mtime_ns(path: Path):
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return None
+
+
+def _runtime_settings() -> dict:
+    global _RUNTIME_CACHE
+    mtime = _mtime_ns(APP_SETTINGS_PATH)
+    with _CFG_LOCK:
+        if _RUNTIME_CACHE is not None and _RUNTIME_CACHE[0] == mtime:
+            return dict(_RUNTIME_CACHE[1])
         try:
-            if p.is_file():
-                d=json.loads(p.read_text(encoding="utf-8"))
-                if isinstance(d,dict): cfg=merge(cfg,d)
-        except Exception as e: log.warning("intelligence config load failed: %s",e)
-    return cfg
+            from memory.config_manager import load_settings
+            data = load_settings()
+        except Exception:
+            data = {}
+        result = dict(data) if isinstance(data, dict) else {}
+        _RUNTIME_CACHE = (mtime, result)
+        return dict(result)
+
+
+def load_config()->dict:
+    global _CFG_CACHE
+    mtimes = (_mtime_ns(REPO_CFG), _mtime_ns(USER_CFG))
+    with _CFG_LOCK:
+        if _CFG_CACHE is not None and _CFG_CACHE[0] == mtimes:
+            return dict(_CFG_CACHE[1])
+
+        cfg=dict(DEFAULTS)
+        for p in (REPO_CFG,USER_CFG):
+            try:
+                if p.is_file():
+                    d=json.loads(p.read_text(encoding="utf-8"))
+                    if isinstance(d,dict): cfg=merge(cfg,d)
+            except Exception as e: log.warning("intelligence config load failed: %s",e)
+        _CFG_CACHE = (mtimes, cfg)
+        return dict(cfg)
 
 def allowed()->bool:
-    p=get_user_data_dir()/"config"/"app_settings.json"
-    try:
-        d=json.loads(p.read_text(encoding="utf-8"))
-        return not bool(d.get("offline_mode_enabled",False)) and d.get("intelligence_mode")!="off" and bool(d.get("intelligence_orchestration_enabled",True))
-    except Exception:return True
+    d = _runtime_settings()
+    return (
+        not bool(d.get("offline_mode_enabled", False))
+        and d.get("intelligence_mode") != "off"
+        and bool(d.get("intelligence_orchestration_enabled", True))
+    )
+
 
 def _runtime_intelligence_mode() -> str:
-    p = get_user_data_dir() / "config" / "app_settings.json"
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-        return str(data.get("intelligence_mode", "smart") or "smart").strip().lower()
-    except Exception:
-        return "smart"
+    data = _runtime_settings()
+    return str(data.get("intelligence_mode", "smart") or "smart").strip().lower()
 
 
 def profile_for(prompt:str,requested:Optional[str],cfg:dict)->str:
