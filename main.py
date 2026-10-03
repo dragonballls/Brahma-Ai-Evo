@@ -38,9 +38,9 @@ from core.lazy_import import lazy_module, lazy_attr
 from core import undo as undo_stack
 from memory import config_manager
 from memory.memory_manager import search_memory
-from core.sensorium import sensorium
-from core.protocols import protocols
-from core.local_brain import local_brain
+sensorium = lazy_attr("core.sensorium", "sensorium")
+protocols = lazy_attr("core.protocols", "protocols")
+local_brain = lazy_attr("core.local_brain", "local_brain")
 import core.boot_sentry
 import asyncio
 import threading
@@ -2070,7 +2070,7 @@ class BrahmaLive:
 
     def __init__(self, ui: BrahmaUI, dashboard=None, dashboard_started: bool = False, enable_dashboard: bool = True):
         self.ui             = ui
-        self._smart_home    = SmartHomeService()
+        self._smart_home    = None
         self.session        = None
         self.audio_in_queue = None
         self.out_queue      = None
@@ -2083,31 +2083,30 @@ class BrahmaLive:
         self._pending_reply_event: dict | None = None
         self._reply_mode = False
         self._attention_lock = threading.Lock()
-        self._attention_monitor = AttentionMonitor(on_event=self._on_external_notification)
-        try:
-            set_speech_sink(self.speak)
-        except Exception:
-            pass
-            
-        try:
-            from actions.background_monitor import set_monitor_speech_sink
-            set_monitor_speech_sink(self.speak)
-        except Exception as e:
-            print(f"[Main] Failed to init background monitor: {e}")
+        self._attention_monitor = None
+        if not _low_power_mode():
+            try:
+                self._attention_monitor = AttentionMonitor(on_event=self._on_external_notification)
+                set_speech_sink(self.speak)
+            except Exception:
+                self._attention_monitor = None
+
+            try:
+                from actions.background_monitor import set_monitor_speech_sink
+                set_monitor_speech_sink(self.speak)
+            except Exception as e:
+                print(f"[Main] Failed to init background monitor: {e}")
         self._meeting_lock = threading.Lock()
         self._meeting_active = False
         self._meeting_event: dict | None = None
-        self._meeting_assistant = MeetingAssistant(
-            on_update=self._on_meeting_update,
-            on_state=self._on_meeting_state,
-        )
+        self._meeting_assistant = None
         self._phone_active = False
         self._dashboard = dashboard if dashboard is not None else (DashboardServer() if (enable_dashboard and DashboardServer is not None) else None)
         self._dashboard_started = bool(dashboard_started and self._dashboard is not None)
         self.ui.on_text_command = self._on_text_command
         self.ui.on_attention_action = self._on_attention_action
         self.ui.on_remote_clicked = self._make_remote_key
-        self._echo = EchoGuard()
+        self._echo = None
         self._resume_handle = None
         self._ptt = None
         self._ptt_held = False
@@ -2138,6 +2137,19 @@ class BrahmaLive:
                 target=self._idle_speech_loop, daemon=True, name="idle-proactive"
             )
             self._idle_speech_thread.start()
+
+    def _get_smart_home_service(self):
+        if self._smart_home is None:
+            self._smart_home = SmartHomeService()
+        return self._smart_home
+
+    def _get_meeting_assistant(self):
+        if self._meeting_assistant is None:
+            self._meeting_assistant = MeetingAssistant(
+                on_update=self._on_meeting_update,
+                on_state=self._on_meeting_state,
+            )
+        return self._meeting_assistant
 
     def set_push_to_talk(self, enabled: bool) -> str:
         self._ptt_enabled = bool(enabled)
@@ -2438,7 +2450,7 @@ class BrahmaLive:
         try:
             from smart_home.smart_device_manager import SmartDeviceManager
             sd_mgr = SmartDeviceManager()
-            devices = self._smart_home.list_devices()
+            devices = self._get_smart_home_service().list_devices()
             routed_text_home = sd_mgr.route_command(text, devices)
             if routed_text_home != text:
                 print(f"[BRAHMA EVO] Redirection: '{text}' -> '{routed_text_home}'")
@@ -2911,7 +2923,7 @@ class BrahmaLive:
         has_smart_word = any(word in normalized for word in smart_home_words)
         if not has_smart_word:
             try:
-                for d in self._smart_home.list_devices():
+                for d in self._get_smart_home_service().list_devices():
                     d_name = str(d.get("name", "")).lower()
                     d_room = str(d.get("room", "")).lower()
                     if (d_name and d_name in normalized) or (d_room and d_room in normalized):
@@ -2923,7 +2935,7 @@ class BrahmaLive:
         if not has_smart_word:
             return False
         try:
-            result = self._smart_home.execute_command(text)
+            result = self._get_smart_home_service().execute_command(text)
             detail = str(result.get("detail") or "Smart-home command completed.")
             title = f"Smart Home: {result.get('action', 'control')}"
             plan = [
@@ -3248,8 +3260,8 @@ class BrahmaLive:
         with self._meeting_lock:
             self._meeting_active = True
             self._meeting_event = event
-        self.ui.set_meeting_mode(True, title, summary, "Listening for questions on screen...", self._meeting_assistant.latest_speech())
-        self._meeting_assistant.start(title=title, context=summary)
+        self.ui.set_meeting_mode(True, title, summary, "Listening for questions on screen...", self._get_meeting_assistant().latest_speech())
+        self._get_meeting_assistant().start(title=title, context=summary)
         self.ui.write_log(f"SYS: Meeting mode enabled for {app}.")
 
     def _stop_meeting_mode(self, reason: str = "Meeting mode stopped."):
@@ -3258,7 +3270,7 @@ class BrahmaLive:
             self._meeting_active = False
             self._meeting_event = None
         if was_active:
-            self._meeting_assistant.stop()
+            self._get_meeting_assistant().stop()
             self.ui.set_meeting_mode(False, "", "", "")
             self.ui.write_log(f"SYS: {reason}")
 
@@ -4558,7 +4570,7 @@ class BrahmaLive:
 
             elif name == "smart_home_control":
                 command_text = str(args.get("command") or "").strip()
-                r = await loop.run_in_executor(None, lambda: self._smart_home.execute_command(command_text))
+                r = await loop.run_in_executor(None, lambda: self._get_smart_home_service().execute_command(command_text))
                 result = str((r or {}).get("detail") or "Smart-home command completed.")
 
             elif name in ("smart_organizer", "desktop_organizer"):
@@ -5182,6 +5194,13 @@ class BrahmaLive:
         app_settings = config_manager.load_settings()
         low_power = _low_power_mode(app_settings)
         if bool(app_settings.get("background_attention_monitor", not low_power)):
+            if self._attention_monitor is None:
+                self._attention_monitor = AttentionMonitor(on_event=self._on_external_notification)
+                try:
+                    set_speech_sink(self.speak)
+                except Exception:
+                    pass
+            if self._attention_monitor is not None:
             self._attention_monitor.start()
         try:
             self.ui.boot_set_step_status("Start attention monitor", "done")
@@ -5429,7 +5448,8 @@ def main():
                 except Exception as exc:
                     print(f"[Sensorium Speak Error]: {exc}")
 
-        sensorium.register_interjection_handler(_proactive_sensorium_voice)
+        if bool(app_settings.get("background_sensorium", not low_power)):
+            sensorium.register_interjection_handler(_proactive_sensorium_voice)
         try:
             if plugin_manager is not None:
                 brahma_evo.plugin_manager = plugin_manager
