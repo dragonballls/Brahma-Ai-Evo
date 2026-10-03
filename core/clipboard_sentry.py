@@ -20,17 +20,25 @@ class ClipboardSentry:
         self._callback = callback
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        self._wake = threading.Event()
         self._last_clip = ""
+        self._last_callback_at = 0.0
 
     def start(self):
         if self._running:
             return
         self._running = True
-        self._thread = threading.Thread(target=self._monitor_loop, daemon=True)
+        self._wake.clear()
+        self._thread = threading.Thread(
+            target=self._monitor_loop,
+            daemon=True,
+            name="clipboard-sentry",
+        )
         self._thread.start()
 
     def stop(self):
         self._running = False
+        self._wake.set()
 
     def _classify_content(self, text: str) -> Optional[str]:
         text = text.strip()
@@ -38,7 +46,11 @@ class ClipboardSentry:
             return None
 
         # Check for python / node / java traceback
-        if "Traceback (most recent call last):" in text or "Exception:" in text or "Error:" in text and "\n" in text:
+        if (
+            "Traceback (most recent call last):" in text
+            or "Exception:" in text
+            or ("Error:" in text and "\n" in text)
+        ):
             return "error_traceback"
 
         # Check for JSON
@@ -67,13 +79,26 @@ class ClipboardSentry:
             self._last_clip = ""
 
         while self._running:
-            time.sleep(2.5)
+            # Keep the existing lightweight polling fallback, but wake instantly
+            # when stop() is called instead of leaving a worker sleeping.
+            if self._wake.wait(2.5):
+                break
             try:
                 current = (pyperclip.paste() or "").strip()
-                if current and current != self._last_clip:
-                    self._last_clip = current
-                    category = self._classify_content(current)
-                    if category and self._callback:
-                        self._callback(category, current)
+                if not current or current == self._last_clip:
+                    continue
+                self._last_clip = current
+                # Avoid retaining or processing enormous clipboard payloads.
+                if len(current) > 100_000:
+                    continue
+                category = self._classify_content(current)
+                now = time.monotonic()
+                if (
+                    category
+                    and self._callback
+                    and (now - self._last_callback_at) >= 0.75
+                ):
+                    self._last_callback_at = now
+                    self._callback(category, current)
             except Exception:
                 pass
