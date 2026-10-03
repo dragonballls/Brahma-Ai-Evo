@@ -5317,6 +5317,47 @@ def main():
             enable_dashboard=dashboard_enabled,
         )
 
+        # Deep idle suspends nonessential polling/rendering without disconnecting
+        # the live microphone/AI path that preserves hands-free wake behavior.
+        def _enter_deep_idle():
+            try:
+                brahma_evo._attention_monitor.stop()
+            except Exception:
+                pass
+            try:
+                sensorium.stop()
+            except Exception:
+                pass
+            try:
+                clip_sentry = getattr(ui, "_clip_sentry", None)
+                if clip_sentry is not None:
+                    clip_sentry.stop()
+            except Exception:
+                pass
+            _startup_log("deep idle entered: passive services suspended")
+
+        def _exit_deep_idle():
+            try:
+                sensorium.start()
+            except Exception:
+                pass
+            try:
+                brahma_evo._attention_monitor.start()
+            except Exception:
+                pass
+            try:
+                clip_sentry = getattr(ui, "_clip_sentry", None)
+                if clip_sentry is not None:
+                    clip_sentry.start()
+            except Exception:
+                pass
+            _startup_log("deep idle exited: passive services resumed")
+
+        try:
+            ui.set_deep_idle_handlers(_enter_deep_idle, _exit_deep_idle)
+        except Exception as exc:
+            _startup_log(f"deep idle handler wiring failed: {exc}")
+
         # Wire proactive voice to Sensorium
         def _proactive_sensorium_voice(alert_type: str, meta: dict):
             spoken_text = meta.get("speech")
@@ -5401,6 +5442,9 @@ def main():
                     last_clip = ""
 
                 while True:
+                    if getattr(ui, "_deep_idle", False):
+                        time.sleep(15.0)
+                        continue
                     time.sleep(2.5)
                     try:
                         curr_clip = pyperclip.paste()
