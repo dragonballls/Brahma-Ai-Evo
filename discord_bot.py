@@ -5,8 +5,6 @@ import asyncio
 import json
 import logging
 from collections import deque
-import subprocess
-import sys
 import threading
 from pathlib import Path
 from typing import Callable, Optional
