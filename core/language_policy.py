@@ -17,7 +17,6 @@ def prompt_block() -> str:
 - Once explicitly switched, remain in that language until the user explicitly requests another language or explicitly asks to switch back.
 - Keep technical identifiers, code, commands, filenames, URLs, and quoted text exactly as needed; do not translate them unless requested.
 - Never mix languages for style, emphasis, filler, emotion, or speech realism when no language switch was explicitly requested.
-- Never mix languages for emotion, fillers, emphasis, or style without an explicit language request.
 """
 
 
@@ -32,7 +31,6 @@ def is_language_switch_request(text: str) -> bool:
         "answer in ",
         "reply in ",
         "respond in ",
-        "use the ",
         "switch to ",
         "change to ",
         "talk in ",
