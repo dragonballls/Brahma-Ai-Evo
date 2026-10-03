@@ -4549,8 +4549,14 @@ class BrahmaLive:
                 result = r or "Done."
 
             elif name == "open_app":
-                r = await loop.run_in_executor(None, lambda: open_app(parameters=args, response=None, player=self.ui))
-                result = r or f"Opened {args.get('app_name')}."
+                target = str(args.get("app_name") or args.get("target") or "").strip()
+                desktop_controller = self._desktop_controller or getattr(self.ui, "_desktop_controller", None)
+                if desktop_controller is not None and getattr(desktop_controller, "enabled", False) and target:
+                    r = await loop.run_in_executor(None, lambda: desktop_controller.open(target))
+                    result = json.dumps(r, ensure_ascii=False) if isinstance(r, dict) else (r or f"Opened {target}.")
+                else:
+                    r = await loop.run_in_executor(None, lambda: open_app(parameters=args, response=None, player=self.ui))
+                    result = r or f"Opened {target or args.get('app_name')}."
                 
             elif name == "check_instagram_messages":
                 self.ui.write_log("SYS: Checking Instagram messages...")
