@@ -1020,16 +1020,21 @@ TOOL_DECLARATIONS = [
     {
         "name": "open_app",
         "description": (
-            "Opens any application on the Windows computer. "
-            "Use this whenever the user asks to open, launch, or start any app, "
-            "website, or program. Always call this tool — never just say you opened it."
+            "Opens any application, website, or program on the Windows computer. "
+            "When Brahma Desktop Mode is active and the user explicitly asks to put the "
+            "application inside Brahma, set embed=true. If native embedding is incompatible, "
+            "Brahma safely keeps the real application running as a managed Windows window."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
                 "app_name": {
                     "type": "STRING",
-                    "description": "Exact name of the application (e.g. 'WhatsApp', 'Chrome', 'Spotify')"
+                    "description": "Exact name of the application (e.g. 'WhatsApp', 'Chrome', 'Spotify', 'Minecraft', 'Roblox')"
+                },
+                "embed": {
+                    "type": "BOOLEAN",
+                    "description": "When Desktop Mode is active, attempt to host the real application inside a Brahma workspace panel."
                 }
             },
             "required": ["app_name"]
@@ -4554,7 +4559,11 @@ class BrahmaLive:
                 target = str(args.get("app_name") or args.get("target") or "").strip()
                 desktop_controller = self._desktop_controller or getattr(self.ui, "_desktop_controller", None)
                 if desktop_controller is not None and getattr(desktop_controller, "enabled", False) and target:
-                    r = await loop.run_in_executor(None, lambda: desktop_controller.open(target))
+                    embed = bool(args.get("embed", False))
+                    r = await loop.run_in_executor(
+                        None,
+                        lambda: desktop_controller.open(target, embed=embed),
+                    )
                     result = json.dumps(r, ensure_ascii=False) if isinstance(r, dict) else (r or f"Opened {target}.")
                 else:
                     r = await loop.run_in_executor(None, lambda: open_app(parameters=args, response=None, player=self.ui))
