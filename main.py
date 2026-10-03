@@ -1120,6 +1120,26 @@ TOOL_DECLARATIONS = [
         }
     },
     {
+        "name": "settings_control",
+        "description": (
+            "Conversational Brahma settings manager. ALWAYS use this tool when the user asks JARVIS to "
+            "configure, change, enable, disable, switch, set, or adjust a Brahma setting or wants JARVIS "
+            "to do it for them instead of navigating Settings manually. The user can describe the desired "
+            "outcome naturally; this tool maps the request to supported settings, validates it, persists it, "
+            "and reports what changed. Use action 'configure' for a natural-language request, 'status' to "
+            "inspect current settings, or 'catalog' to see supported settings. Do not use this tool for "
+            "arbitrary filesystem edits."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "configure | status | catalog"},
+                "request": {"type": "STRING", "description": "Natural-language setting request, e.g. 'turn off startup animation', 'make Brahma lighter on my PC', or 'use OpenRouter by default'"},
+            },
+            "required": ["action"]
+        }
+    },
+    {
         "name": "youtube_video",
         "description": (
             "Controls YouTube and video playback. Use for playing videos and playlists, "
@@ -4883,6 +4903,31 @@ class BrahmaLive:
                 r = await loop.run_in_executor(None, lambda: reminder(parameters=args, response=None, player=self.ui))
                 result = r or "Reminder set."
 
+            elif name == "settings_control":
+                from core.settings_agent import apply as apply_settings, status as settings_status, catalog as settings_catalog
+                action = str(args.get("action") or "configure").strip().lower()
+                if action == "status":
+                    result = json.dumps(settings_status(), ensure_ascii=False)
+                elif action == "catalog":
+                    result = json.dumps(settings_catalog(), ensure_ascii=False)
+                else:
+                    request_text = str(args.get("request") or "").strip()
+                    if not request_text:
+                        result = "Tell me what you want JARVIS to change, sir."
+                    else:
+                        outcome = await loop.run_in_executor(None, lambda: apply_settings(request_text))
+                        result = str(outcome.get("message") or outcome)
+                        if outcome.get("ok"):
+                            # Refresh runtime provider configuration immediately where supported.
+                            try:
+                                openrouter_client.reload_settings()
+                            except Exception:
+                                pass
+                            try:
+                                if hasattr(self.ui, "refresh"):
+                                    self.ui.refresh()
+                            except Exception:
+                                pass
             elif name == "youtube_video":
                 r = await loop.run_in_executor(None, lambda: youtube_video(parameters=args, response=None, player=self.ui, speak=self.speak))
                 result = r or "Done."
