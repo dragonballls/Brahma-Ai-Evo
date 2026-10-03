@@ -168,6 +168,54 @@ if _QT_AVAILABLE:
             except Exception:
                 return False
 
+        def _set_lifecycle(self, state_name: str) -> bool:
+            try:
+                page = self._web.page()
+                lifecycle = getattr(page, "LifecycleState", None)
+                setter = getattr(page, "setLifecycleState", None)
+                if lifecycle is None or setter is None:
+                    return False
+                state = getattr(lifecycle, state_name, None)
+                if state is None:
+                    return False
+                setter(state)
+                return True
+            except Exception:
+                return False
+
+        def _sync_lifecycle(self) -> None:
+            # Qt requires visible pages to remain Active. Hidden/minimized pages
+            # can be Frozen to suspend most DOM/JS task sources.
+            try:
+                if self.isVisible() and not self.isMinimized():
+                    self._set_lifecycle("Active")
+                else:
+                    self._set_lifecycle("Frozen")
+            except Exception:
+                pass
+
+        def set_low_power(self, enabled: bool, *, discard: bool = False) -> bool:
+            try:
+                if not enabled:
+                    return self._set_lifecycle("Active")
+                if self.isVisible() and not self.isMinimized():
+                    return False
+                return self._set_lifecycle("Discarded" if discard else "Frozen")
+            except Exception:
+                return False
+
+        def showEvent(self, event):
+            super().showEvent(event)
+            QTimer.singleShot(0, self._sync_lifecycle)
+
+        def hideEvent(self, event):
+            self._set_lifecycle("Frozen")
+            super().hideEvent(event)
+
+        def changeEvent(self, event):
+            super().changeEvent(event)
+            QTimer.singleShot(0, self._sync_lifecycle)
+
         def _on_url_changed(self, qurl: QUrl):
             self._url = qurl.toString()
             try:
@@ -283,6 +331,34 @@ class WebApplicationHost:
                     "visible": window.isVisible(),
                     "minimized": window.isMinimized(),
                     "lifecycle": state,
+                })
+            except Exception:
+                continue
+        return result
+
+    def set_low_power(self, enabled: bool, *, discard: bool = False) -> int:
+        changed = 0
+        for window in list(self._windows):
+            try:
+                if window.set_low_power(bool(enabled), discard=discard):
+                    changed += 1
+            except RuntimeError:
+                continue
+        return changed
+
+    def lifecycle_status(self) -> list[dict]:
+        result = []
+        for window in list(self._windows):
+            try:
+                page = window._web.page()
+                current = getattr(page, "lifecycleState", None)
+                if callable(current):
+                    current = current()
+                result.append({
+                    "url": window._url,
+                    "visible": bool(window.isVisible()),
+                    "minimized": bool(window.isMinimized()),
+                    "lifecycle": getattr(current, "name", str(current)),
                 })
             except Exception:
                 continue
