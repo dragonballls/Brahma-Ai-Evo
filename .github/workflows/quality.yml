@@ -16,6 +16,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install lightweight test dependency
+        run: python -m pip install requests
       - name: Compile Python sources
         run: python -m compileall -q actions core features memory plugins smart_home scripts main.py ui.py
       - name: Run low-power guards
