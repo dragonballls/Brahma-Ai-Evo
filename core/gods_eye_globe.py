@@ -95,7 +95,7 @@ def build_globe_payload(eye: Any) -> dict[str, object]:
             )
         )
 
-    family_locations = eye.family_locations()
+    family_locations = eye.family_locations() if hasattr(eye, "family_locations") else []
     for index, item in enumerate(family_locations):
         point = _point(item)
         if point is None or not bool(item.get("authorized", True)):
@@ -151,7 +151,7 @@ def build_globe_payload(eye: Any) -> dict[str, object]:
         "sensor_state": sensor_state,
         "current_source": current.source,
         "current_accuracy_m": current.accuracy_m,
-        "provider_status": [eye.family_provider_status()],
+        "provider_status": [eye.family_provider_status()] if hasattr(eye, "family_provider_status") else [],
         "connected_device_count": len(eye.provider_locations()),
         "family_count": len(family_locations),
         "locator_count": len(locators),
