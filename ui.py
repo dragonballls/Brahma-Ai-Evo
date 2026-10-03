@@ -11243,12 +11243,14 @@ class OmniRouteEmbeddedPage(QWidget):
             try:
                 from urllib.parse import urlsplit
                 from core.omniroute import gateway
-                parsed = urlsplit(gateway().base_url)
+                from core.runtime_paths import OMNIROUTE_DEFAULT_BASE_URL
+                parsed = urlsplit(gateway().base_url or OMNIROUTE_DEFAULT_BASE_URL)
                 scheme = parsed.scheme or "http"
-                authority = parsed.netloc or "127.0.0.1:20128"
+                authority = parsed.netloc or urlsplit(OMNIROUTE_DEFAULT_BASE_URL).netloc
                 self._web.load(QUrl(f"{scheme}://{authority}/"))
             except Exception:
-                self._web.load(QUrl("http://127.0.0.1:20128/"))
+                from core.runtime_paths import OMNIROUTE_DEFAULT_BASE_URL
+                self._web.load(QUrl(OMNIROUTE_DEFAULT_BASE_URL.replace("/v1", "")))
 
     def _start_gateway(self):
         self._ensure_view()
@@ -12465,15 +12467,14 @@ class SystemConnectivityPage(QWidget):
             import json
             import shutil
             from pathlib import Path
-            with open(API_FILE, "r", encoding="utf-8") as f:
-                d = json.load(f)
-            d["instagram_username"] = ""
-            d["instagram_password"] = ""
-            d["instagram_sessionid"] = ""
-            d["instagram_user_id"] = ""
-            d["instagram_browser_authenticated"] = False
-            with open(API_FILE, "w", encoding="utf-8") as f:
-                json.dump(d, f, indent=4)
+            from config import save_config
+            save_config({
+                "instagram_username": "",
+                "instagram_password": "",
+                "instagram_sessionid": "",
+                "instagram_user_id": "",
+                "instagram_browser_authenticated": False,
+            })
                 
             session_path = CONFIG_DIR / "ig_session.json"
             if session_path.exists():
@@ -12721,16 +12722,16 @@ class SystemConnectivityPage(QWidget):
         
         # Save credentials temporarily
         try:
-            with open(API_FILE, "r", encoding="utf-8") as f:
-                d = json.load(f)
-        except Exception:
-            d = {}
-            
-        d["instagram_username"] = username
-        d["instagram_password"] = password
-        
-        with open(API_FILE, "w", encoding="utf-8") as f:
-            json.dump(d, f, indent=4)
+            from config import save_config
+            save_config({
+                "instagram_username": username,
+                "instagram_password": password,
+            })
+        except Exception as exc:
+            self._ig_connect_btn.setEnabled(True)
+            self._ig_connect_btn.setText("Connect (Password)")
+            QMessageBox.critical(self, "Error", f"Could not save Instagram settings: {exc}")
+            return
             
         self._ig_worker = self.IGLoginWorker(username, password)
         self._ig_worker.finished_success.connect(self._ig_login_success)
