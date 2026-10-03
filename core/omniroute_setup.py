@@ -21,7 +21,7 @@ import urllib.parse
 import urllib.request
 
 
-OMNIROUTE_VERSION = "3.8.51"
+OMNIROUTE_VERSION = "3.8.50"
 NODE_VERSION = "24.21.0"
 OMNIROUTE_PACKAGE = f"omniroute@{OMNIROUTE_VERSION}"
 DEFAULT_PORT = 20128
