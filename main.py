@@ -4421,6 +4421,7 @@ class BrahmaLive:
 
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
+            enable_affective_dialog=True,
             output_audio_transcription={},
             input_audio_transcription={},
             # Automatic VAD supplies continuous activity detection and server-side
