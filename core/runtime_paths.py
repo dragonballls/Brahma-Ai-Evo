@@ -16,6 +16,8 @@ IDENTITY_PATH = CONFIG_DIR / "identity.json"
 DISCORD_SETTINGS_PATH = CONFIG_DIR / "discord_bot.json"
 STARTUP_LOG_PATH = LOG_DIR / "startup.log"
 FATAL_CRASH_LOG_PATH = LOG_DIR / "FATAL_CRASH.log"
+PATCH_HISTORY_PATH = CONFIG_DIR / "patch_history.json"
+PATCH_BACKUPS_DIR = CONFIG_DIR / "patch_backups"
 
 GITHUB_OWNER = "dragonballls"
 GITHUB_REPOSITORY = "Brahma-Ai-Evo"
