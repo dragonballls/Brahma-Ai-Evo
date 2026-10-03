@@ -8933,6 +8933,7 @@ class MainWindow(QMainWindow):
     _confirm_sig = pyqtSignal(str, str, str)
     _memory_overlay_sig = pyqtSignal(str)
     _audio_level_sig = pyqtSignal(float)
+    _device_action_sig = pyqtSignal(object)
 
     def _make_window_icon(self) -> QIcon:
         return _logo_icon()
@@ -9073,6 +9074,7 @@ class MainWindow(QMainWindow):
         self._confirm_sig.connect(self._apply_confirm_overlay)
         self._memory_overlay_sig.connect(self._apply_memory_overlay)
         self._audio_level_sig.connect(self._on_audio_level_sig)
+        self._device_action_sig.connect(self._handle_device_action_signal)
         try:
             from core import confirm as confirm_gate
             confirm_gate.bind(self.show_confirm, self.hide_confirm, self._log_sig.emit)
@@ -9106,6 +9108,35 @@ class MainWindow(QMainWindow):
         sc_left.activated.connect(self._toggle_left_sidebar)
         sc_right = QShortcut(QKeySequence("Ctrl+]"), self)
         sc_right.activated.connect(self._toggle_right_sidebar)
+
+    def request_device_ui(self, action: str, payload: dict | None = None):
+        self._device_action_sig.emit({
+            "action": str(action or ""),
+            "payload": dict(payload or {}),
+        })
+
+    def _handle_device_action_signal(self, request: object):
+        try:
+            data = dict(request or {})
+            action = str(data.get("action") or "")
+            payload = dict(data.get("payload") or {})
+            workspace = getattr(self, "_device_network_workspace", None)
+            if workspace is None:
+                return
+            if action == "show":
+                workspace.show_device(
+                    str(payload.get("device_id") or ""),
+                    x=payload.get("x"),
+                    y=payload.get("y"),
+                    width=payload.get("width"),
+                    height=payload.get("height"),
+                )
+            elif action == "background":
+                workspace.background_device(str(payload.get("device_id") or ""))
+            elif action == "refresh":
+                workspace.refresh(scan=False)
+        except Exception:
+            pass
 
     def show_device_network_workspace(self):
         workspace = getattr(self, "_device_network_workspace", None)
