@@ -12,6 +12,7 @@ from .layer import DesktopLayer
 from .performance import AdaptivePerformanceEngine
 from .workspace import WorkspaceStore
 from .window_manager import WindowManager, is_game_window
+from .web_host import web_application_host
 
 
 class DesktopModeController:
@@ -201,7 +202,19 @@ class DesktopModeController:
         self._last_workspace_persist_at = now
 
     def open(self, target: str) -> dict[str, Any]:
-        return application_host.open(target)
+        value = str(target or "").strip()
+        if value.startswith(("http://", "https://", "www.")):
+            accent = "#00e5ff"
+            try:
+                # Keep web panels aligned with the active Brahma theme when the
+                # UI exposes its centralized theme object.
+                import ui as ui_module
+                accent = str(getattr(getattr(ui_module, "C", None), "ACC", accent) or accent)
+            except Exception:
+                pass
+            url = value if "://" in value else f"https://{value}"
+            return web_application_host.open(url, accent=accent)
+        return application_host.open(value)
 
     def windows(self) -> list[dict[str, Any]]:
         return application_host.list_windows()
@@ -217,5 +230,6 @@ class DesktopModeController:
             "show_performance_overlay": self._show_overlay,
             "last_error": self.last_error,
             "performance": self.performance.status(),
+            "web_panels": web_application_host.status(),
         }
         return result
