@@ -5225,6 +5225,17 @@ class BrahmaLive:
         gemini_key = _get_api_key()
         configured_provider = str(app_settings.get("default_ai_provider", "Gemini") or "Gemini")
 
+        # In Low Power Mode the expensive always-on Gemini Live transport stays
+        # dormant. Text/tool requests still use cloud providers on demand.
+        if low_power and not bool(app_settings.get("voice_always_on", False)):
+            self.ui.write_log(
+                "SYS: Low Power Mode active — always-on microphone/Live transport is dormant. "
+                "Text, tools, cloud LLMs, and on-demand features remain available."
+            )
+            self.ui.set_state("IDLE")
+            while True:
+                await asyncio.sleep(3600)
+
         # OpenRouter/Local can operate without a Gemini key for text commands.
         # Do not enter a pointless reconnect loop when Gemini Live is unavailable.
         if not gemini_key and configured_provider in {"OpenRouter", "Local"}:
