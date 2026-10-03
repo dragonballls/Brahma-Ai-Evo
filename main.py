@@ -67,6 +67,7 @@ from actions.computer_settings import computer_settings
 from actions.screen_processor  import screen_process
 from actions.meeting_assistant import MeetingAssistant
 from actions.youtube_video     import youtube_video
+from actions.obs_control    import obs_control
 from actions.desktop           import desktop_control
 from actions.browser_control   import browser_control
 from actions.file_controller   import file_controller
@@ -1138,6 +1139,61 @@ TOOL_DECLARATIONS = [
             },
             "required": ["action"]
         }
+    },
+    {
+        "name": "obs_control",
+        "description": (
+            "Native conversational control for OBS Studio through obs-websocket 5.x. "
+            "ALWAYS use this tool for OBS requests: inspect status, switch/create/rename scenes, "
+            "show/hide sources, move or resize sources such as a webcam, rotate sources, update OBS "
+            "text/title overlays, control mixer volume/mute, start/stop/pause recording, start/stop "
+            "streaming, configure transitions, and inspect or set OBS stream-service settings. "
+            "Understand natural requests and fill the structured fields. Default OBS endpoint is "
+            "127.0.0.1:4455. Use action='configure' when connection details need to be supplied. "
+            "Passwords are sensitive: never repeat them in normal responses."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": (
+                        "status | configure | scene_list | scene_current | scene_switch | scene_create | "
+                        "scene_remove | scene_rename | source_list | source_show | source_hide | source_move | "
+                        "source_resize | source_rotate | source_text | audio_get | audio_volume | audio_mute | "
+                        "audio_unmute | audio_toggle_mute | stream_start | stream_stop | stream_status | "
+                        "record_start | record_stop | record_pause | record_status | transition | "
+                        "service_settings_get | service_settings_set"
+                    ),
+                },
+                "request": {"type": "STRING", "description": "Optional natural-language description of the requested OBS change."},
+                "host": {"type": "STRING", "description": "OBS WebSocket host, normally 127.0.0.1."},
+                "port": {"type": "INTEGER", "description": "OBS WebSocket port, normally 4455."},
+                "password": {"type": "STRING", "description": "OBS WebSocket password. Treat as secret and never repeat it."},
+                "clear_password": {"type": "BOOLEAN", "description": "Remove the saved OBS WebSocket password."},
+                "scene": {"type": "STRING", "description": "OBS scene name."},
+                "scene_name": {"type": "STRING", "description": "Alias for scene."},
+                "new_name": {"type": "STRING", "description": "New scene name for scene_rename."},
+                "source": {"type": "STRING", "description": "OBS source/input name, e.g. Webcam, Game Capture, Mic/Aux."},
+                "source_name": {"type": "STRING", "description": "Alias for source."},
+                "position": {"type": "STRING", "description": "top-left | top-right | bottom-left | bottom-right | center."},
+                "x": {"type": "NUMBER", "description": "Exact OBS source X position in canvas coordinates."},
+                "y": {"type": "NUMBER", "description": "Exact OBS source Y position in canvas coordinates."},
+                "width": {"type": "NUMBER", "description": "Target source width in pixels; preserves aspect ratio when height is omitted."},
+                "height": {"type": "NUMBER", "description": "Target source height in pixels; preserves aspect ratio when width is omitted."},
+                "scale_x": {"type": "NUMBER", "description": "Exact OBS X scale."},
+                "scale_y": {"type": "NUMBER", "description": "Exact OBS Y scale."},
+                "rotation": {"type": "NUMBER", "description": "Source rotation in degrees."},
+                "text": {"type": "STRING", "description": "New value for an OBS text input/source."},
+                "title": {"type": "STRING", "description": "Alias for text when updating an OBS text source."},
+                "volume": {"type": "NUMBER", "description": "OBS input volume from 0 to 100."},
+                "transition": {"type": "STRING", "description": "OBS transition name."},
+                "duration_ms": {"type": "INTEGER", "description": "Transition duration in milliseconds."},
+                "service_type": {"type": "STRING", "description": "OBS stream service type for service_settings_set."},
+                "service_settings": {"type": "OBJECT", "description": "OBS stream service settings object for service_settings_set."},
+            },
+            "required": [],
+        },
     },
     {
         "name": "youtube_video",
@@ -4928,6 +4984,13 @@ class BrahmaLive:
                                     self.ui.refresh()
                             except Exception:
                                 pass
+            elif name == "obs_control":
+                r = await loop.run_in_executor(
+                    None,
+                    lambda: obs_control(parameters=args, player=self.ui, speak=self.speak)
+                )
+                result = r or "OBS command completed."
+
             elif name == "youtube_video":
                 r = await loop.run_in_executor(None, lambda: youtube_video(parameters=args, response=None, player=self.ui, speak=self.speak))
                 result = r or "Done."
