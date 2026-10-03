@@ -344,6 +344,14 @@ class DeviceManager:
         base = serial or address or normalized_mac or name
         device_id = f"{device_type}:{_safe_id(base)}"
         existing = self._devices.get(device_id)
+        requested_caps = list(capabilities or [])
+        if backend == "adb" and not requested_caps:
+            requested_caps = [
+                "screen", "touch", "keyboard", "clipboard",
+                "media", "background_connection",
+            ]
+        elif backend == "pyatv" and not requested_caps:
+            requested_caps = ["remote", "media", "keyboard", "background_connection"]
         record = DeviceRecord(
             device_id=device_id,
             name=name,
@@ -357,7 +365,7 @@ class DeviceManager:
             wake_method=str(wake_method or "").strip().lower(),
             mode=existing.mode if existing else "background",
             auto_reconnect=bool(auto_reconnect),
-            capabilities=sorted(set(capabilities or (existing.capabilities if existing else []))),
+            capabilities=sorted(set(requested_caps or (existing.capabilities if existing else []))),
             metadata=dict(metadata or (existing.metadata if existing else {})),
             last_seen=existing.last_seen if existing else 0.0,
             added_at=existing.added_at if existing else _now(),
