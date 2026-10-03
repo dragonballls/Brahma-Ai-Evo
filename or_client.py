@@ -129,7 +129,7 @@ DEFAULT_TEMPERATURE   = 0.7
 REQUEST_TIMEOUT       = 60   # seconds per request
 MAX_RETRIES_PER_MODEL = 2    # attempts before moving to next model
 RETRY_DELAY           = 2    # seconds between retries
-RATE_LIMIT_COOLDOWN   = 60   # seconds before retrying a rate-limited model
+RATE_LIMIT_COOLDOWN   = 60   # default seconds before retrying a rate-limited model
 MODEL_CATALOG_URL      = "https://openrouter.ai/api/v1/models"
 MODEL_CATALOG_TTL      = 900
 FREE_ROUTER_MODEL      = "openrouter/free"
@@ -221,7 +221,7 @@ class OpenRouterClient:
         headers = {
             "Authorization": f"Bearer {candidate}",
             "Accept": "application/json",
-            "HTTP-Referer": "https://github.com/brahma-ai",
+            "HTTP-Referer": "https://github.com/dragonballls/Brahma-Ai-Evo",
             "X-Title": "Brahma Evo",
         }
         try:
@@ -264,17 +264,23 @@ class OpenRouterClient:
             ts = _rate_limited.get(model)
             if ts is None:
                 return False
-            if time.time() - ts > RATE_LIMIT_COOLDOWN:
+            if time.time() > ts:
                 _rate_limited.pop(model, None)
                 return False
             return True
 
-    def _mark_rate_limited(self, model: str) -> None:
+    def _mark_rate_limited(self, model: str, retry_after: float | None = None) -> None:
+        cooldown = RATE_LIMIT_COOLDOWN
+        if retry_after is not None:
+            try:
+                cooldown = max(1, min(float(retry_after), 900))
+            except (TypeError, ValueError):
+                cooldown = RATE_LIMIT_COOLDOWN
         with _rate_limit_lock:
-            _rate_limited[model] = time.time()
+            _rate_limited[model] = time.time() + cooldown
         logger.warning(
             f"[OpenRouter] Rate limited: {model} — "
-            f"cooling down for {RATE_LIMIT_COOLDOWN}s"
+            f"cooling down for {cooldown:.0f}s"
         )
 
     def _call(
@@ -327,8 +333,15 @@ class OpenRouterClient:
                     )
 
                 if resp.status_code == 429:
-                    self._mark_rate_limited(model)
+                    retry_after = resp.headers.get("Retry-After")
+                    self._mark_rate_limited(model, retry_after)
                     return None
+
+                if resp.status_code == 402:
+                    raise RuntimeError(
+                        f"[OpenRouter] Payment/credit requirement (402) for model {model}. "
+                        "Check your OpenRouter credits, limits, or selected model."
+                    )
 
                 if resp.status_code == 200:
                     try:
