@@ -511,6 +511,124 @@
             box-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
         }
 
+        /* God's Eye */
+        .gods-eye-card {
+            position: absolute;
+            top: 88px;
+            left: 12px;
+            width: 300px;
+            max-height: 360px;
+            background: rgba(5, 12, 26, 0.94);
+            border: 1px solid rgba(34, 211, 238, 0.42);
+            border-radius: 16px;
+            padding: 12px;
+            box-shadow: 0 16px 36px rgba(0, 0, 0, 0.62), 0 0 24px rgba(34, 211, 238, 0.08);
+            z-index: 36;
+            pointer-events: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            backdrop-filter: blur(10px);
+        }
+        .gods-eye-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+        .gods-eye-title {
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            color: #cffafe;
+        }
+        .gods-eye-state {
+            font-size: 9px;
+            color: #67e8f9;
+        }
+        .gods-eye-summary {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
+        }
+        .gods-eye-metric {
+            background: rgba(34, 211, 238, 0.06);
+            border: 1px solid rgba(34, 211, 238, 0.12);
+            border-radius: 9px;
+            padding: 6px 8px;
+        }
+        .gods-eye-metric-label {
+            font-size: 8px;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+        .gods-eye-metric-value {
+            margin-top: 2px;
+            font-size: 10px;
+            color: #e2e8f0;
+            font-weight: 700;
+        }
+        .gods-eye-list {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            overflow-y: auto;
+            max-height: 235px;
+            padding-right: 2px;
+        }
+        .gods-eye-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 8px;
+            border-radius: 9px;
+            border: 1px solid rgba(255,255,255,0.07);
+            background: rgba(255,255,255,0.025);
+            cursor: pointer;
+        }
+        .gods-eye-item:hover {
+            border-color: rgba(34, 211, 238, 0.35);
+            background: rgba(34, 211, 238, 0.08);
+        }
+        .gods-eye-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex: 0 0 auto;
+            box-shadow: 0 0 10px currentColor;
+        }
+        .gods-eye-item-main {
+            min-width: 0;
+            flex: 1;
+        }
+        .gods-eye-item-label {
+            font-size: 10px;
+            color: #e2e8f0;
+            font-weight: 700;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .gods-eye-item-meta {
+            margin-top: 1px;
+            font-size: 8px;
+            color: #64748b;
+        }
+        .gods-eye-refresh {
+            background: rgba(34, 211, 238, 0.10);
+            border: 1px solid rgba(34, 211, 238, 0.25);
+            color: #67e8f9;
+            border-radius: 7px;
+            padding: 4px 8px;
+            font-size: 9px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .gods-eye-refresh:hover {
+            background: rgba(34, 211, 238, 0.18);
+        }
+
         /* Tactical Cards */
         .intel-card {
             position: absolute;
@@ -719,6 +837,30 @@
         <div class="intel-list" id="poi-list"></div>
     </div>
 
+    <!-- God's Eye Live Locator Card -->
+    <div class="gods-eye-card" id="gods-eye-card">
+        <div class="gods-eye-header">
+            <div>
+                <div class="gods-eye-title">◉ GOD'S EYE // GLOBAL LOCATORS</div>
+                <div class="gods-eye-state" id="gods-eye-state">Initializing secure location context…</div>
+            </div>
+            <button class="gods-eye-refresh" onclick="requestGodsEyeRefresh()">Refresh</button>
+        </div>
+        <div class="gods-eye-summary">
+            <div class="gods-eye-metric">
+                <div class="gods-eye-metric-label">Active Feeds</div>
+                <div class="gods-eye-metric-value" id="gods-eye-feed-count">0</div>
+            </div>
+            <div class="gods-eye-metric">
+                <div class="gods-eye-metric-label">Sensor State</div>
+                <div class="gods-eye-metric-value" id="gods-eye-sensor-state">WAITING</div>
+            </div>
+        </div>
+        <div class="gods-eye-list" id="gods-eye-list">
+            <div style="font-size:9px;color:#64748b;padding:6px 2px;">Waiting for God’s Eye telemetry…</div>
+        </div>
+    </div>
+
     <!-- Route Telemetry HUD Card -->
     <div class="route-card" id="route-card">
         <div class="card-header">
@@ -843,6 +985,13 @@
         let activeRouteData = null;
         let activeLocationData = null;
         let activeFlights = [];
+
+        // God’s Eye locator layer (ported from the verified JARVIS design)
+        let godsEyeData = null;
+        let godsEyeGroup3D = null;
+        let godsEyeNodes3D = [];
+        let godsEyeLayer2D = null;
+        let godsEyeAutoFocusDone = false;
 
         // ==========================================
         // 1. THREE.JS 3D EARTH INITIALIZATION
@@ -1041,6 +1190,7 @@
                 mapDiv.style.display = 'block';
 
                 init2DMap();
+                if (godsEyeData) godsEyeRender2D();
                 setTimeout(() => { if (map2D) map2D.invalidateSize(); }, 50);
 
                 if (mode === "STREET") {
@@ -1153,6 +1303,17 @@
             if (locationMarker) {
                 const s = 1.0 + 0.25 * Math.sin(t * 1.5);
                 locationMarker.scale.set(s, s, s);
+            }
+
+            if (godsEyeNodes3D.length) {
+                godsEyeNodes3D.forEach((node, idx) => {
+                    const phase = t * 1.7 + idx * 0.55;
+                    const pulse = 1.0 + 0.20 * (0.5 + 0.5 * Math.sin(phase));
+                    const ringPulse = 0.82 + 0.32 * (0.5 + 0.5 * Math.sin(phase * 0.82));
+                    if (node.userData.core) node.userData.core.scale.setScalar(0.92 + 0.10 * Math.sin(phase));
+                    if (node.userData.ring) node.userData.ring.scale.setScalar(pulse);
+                    if (node.userData.halo) node.userData.halo.scale.setScalar(ringPulse);
+                });
             }
 
             // Real-time High Refresh FPS Telemetry
@@ -2092,6 +2253,192 @@
             }
         }
 
+        // ==========================================
+        // GOD'S EYE GLOBAL LOCATOR LAYER
+        // ==========================================
+        function godsEyeColor(kind) {
+            const k = String(kind || "device").toLowerCase();
+            if (k === "current") return 0x22d3ee;
+            if (k === "phone") return 0xa78bfa;
+            if (k === "family") return 0xf472b6;
+            if (k === "saved") return 0x34d399;
+            return 0x60a5fa;
+        }
+
+        function godsEyeCssColor(kind) {
+            const n = godsEyeColor(kind);
+            return "#" + n.toString(16).padStart(6, "0");
+        }
+
+        function godsEyeClear3D() {
+            if (!godsEyeGroup3D || !scene) return;
+            scene.remove(godsEyeGroup3D);
+            godsEyeGroup3D.traverse((obj) => {
+                if (obj.geometry) obj.geometry.dispose();
+                if (obj.material) {
+                    if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+                    else obj.material.dispose();
+                }
+            });
+            godsEyeGroup3D = null;
+            godsEyeNodes3D = [];
+        }
+
+        function godsEyeRender3D(locators) {
+            if (!scene) return;
+            godsEyeClear3D();
+            godsEyeGroup3D = new THREE.Group();
+            godsEyeGroup3D.name = "GodsEyeLocators";
+
+            for (const item of (Array.isArray(locators) ? locators : []).slice(0, 80)) {
+                const lat = Number(item.latitude);
+                const lon = Number(item.longitude);
+                if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) continue;
+                if (item.authorized === false) continue;
+
+                const radius = GLOBE_RADIUS + 1.0;
+                const pos = latLonToVector3(lat, lon, radius);
+                const color = godsEyeColor(item.kind);
+
+                const node = new THREE.Group();
+                node.position.copy(pos);
+                node.lookAt(pos.clone().multiplyScalar(2.0));
+                node.userData = { id: item.id, lat, lon, label: item.label || "Locator", kind: item.kind || "device" };
+
+                const core = new THREE.Mesh(
+                    new THREE.SphereGeometry(0.9, 10, 10),
+                    new THREE.MeshBasicMaterial({ color })
+                );
+
+                const ring = new THREE.Mesh(
+                    new THREE.RingGeometry(1.6, 2.35, 20),
+                    new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity: 0.85 })
+                );
+
+                const halo = new THREE.Mesh(
+                    new THREE.RingGeometry(2.8, 3.15, 20),
+                    new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity: 0.28 })
+                );
+
+                node.add(core);
+                node.add(ring);
+                node.add(halo);
+                node.userData.core = core;
+                node.userData.ring = ring;
+                node.userData.halo = halo;
+                godsEyeNodes3D.push(node);
+                godsEyeGroup3D.add(node);
+            }
+            scene.add(godsEyeGroup3D);
+        }
+
+        function godsEyeRender2D() {
+            if (!map2D) return;
+            if (!godsEyeLayer2D) godsEyeLayer2D = L.layerGroup().addTo(map2D);
+            godsEyeLayer2D.clearLayers();
+
+            const locators = (godsEyeData && Array.isArray(godsEyeData.locators)) ? godsEyeData.locators : [];
+            for (const item of locators) {
+                if (item.authorized === false) continue;
+                const lat = Number(item.latitude), lon = Number(item.longitude);
+                if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+                const color = godsEyeCssColor(item.kind);
+                const marker = L.circleMarker([lat, lon], {
+                    radius: item.kind === "current" ? 7 : 5,
+                    color,
+                    fillColor: color,
+                    fillOpacity: 0.28,
+                    weight: 2
+                }).addTo(godsEyeLayer2D);
+                const accuracy = Number(item.accuracy_m);
+                const accText = Number.isFinite(accuracy) ? " · ±" + Math.round(accuracy) + "m" : "";
+                marker.bindPopup(
+                    "<div style=\"font:700 11px Segoe UI,sans-serif;color:#cffafe;\">◉ " +
+                    escapeHtml(item.label || "Locator") +
+                    "</div><div style=\"font:9px Segoe UI,sans-serif;color:#64748b;margin-top:3px;\">" +
+                    escapeHtml(String(item.kind || "device")) + accText +
+                    "</div>"
+                );
+            }
+        }
+
+        function godsEyeFocus(item) {
+            if (!item) return;
+            const lat = Number(item.latitude), lon = Number(item.longitude);
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+            if (currentMode === "3D") flyTo(lat, lon, 175);
+            else if (map2D) map2D.flyTo([lat, lon], 8);
+        }
+
+        function escapeHtml(value) {
+            return String(value == null ? "" : value)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        function setGodsEyeData(data) {
+            godsEyeData = (data && typeof data === "object") ? data : { locators: [] };
+            const locators = Array.isArray(godsEyeData.locators) ? godsEyeData.locators : [];
+            const state = document.getElementById("gods-eye-state");
+            const count = document.getElementById("gods-eye-feed-count");
+            const sensor = document.getElementById("gods-eye-sensor-state");
+            const list = document.getElementById("gods-eye-list");
+
+            if (state) state.innerText = godsEyeData.authorized_current
+                ? "Current location authorized · structured provider context active"
+                : "No authorized current-location feed · showing available locators";
+            if (count) count.innerText = String(locators.length);
+            if (sensor) sensor.innerText = String(godsEyeData.sensor_state || "UNKNOWN").replaceAll("-", " ").toUpperCase();
+
+            if (list) {
+                list.innerHTML = "";
+                if (!locators.length) {
+                    list.innerHTML = '<div style="font-size:9px;color:#64748b;padding:6px 2px;">No authorized locator feeds are available.</div>';
+                } else {
+                    for (const item of locators.slice(0, 50)) {
+                        const row = document.createElement("div");
+                        row.className = "gods-eye-item";
+                        row.innerHTML =
+                            '<span class="gods-eye-dot" style="color:' + godsEyeCssColor(item.kind) + ';background:' + godsEyeCssColor(item.kind) + ';"></span>' +
+                            '<div class="gods-eye-item-main">' +
+                            '<div class="gods-eye-item-label">' + escapeHtml(item.label || "Locator") + '</div>' +
+                            '<div class="gods-eye-item-meta">' +
+                            escapeHtml(String(item.kind || "device")) + " · " +
+                            Number(item.latitude).toFixed(4) + "°, " + Number(item.longitude).toFixed(4) + "°" +
+                            '</div></div>';
+                        row.onclick = () => godsEyeFocus(item);
+                        list.appendChild(row);
+                    }
+                }
+            }
+
+            godsEyeRender3D(locators);
+            godsEyeRender2D();
+
+            const current = godsEyeData.current || {};
+            const point = current.point || null;
+            if (!godsEyeAutoFocusDone && godsEyeData.authorized_current && point && Number.isFinite(Number(point.latitude)) && Number.isFinite(Number(point.longitude))) {
+                godsEyeAutoFocusDone = true;
+                if (currentMode === "3D") flyTo(Number(point.latitude), Number(point.longitude), 235);
+            }
+        }
+
+        function requestGodsEyeRefresh() {
+            try {
+                if (window.qtBridge && window.qtBridge.requestGodsEyeRefresh) {
+                    window.qtBridge.requestGodsEyeRefresh();
+                } else {
+                    const state = document.getElementById("gods-eye-state");
+                    if (state) state.innerText = "Refresh is available when the desktop bridge is connected";
+                }
+            } catch (e) {
+                console.warn("God’s Eye refresh request unavailable", e);
+            }
+        }
+
         function toggleSpin() {
             autoSpin = !autoSpin;
             const btn = document.getElementById('btn-spin');
@@ -2157,6 +2504,8 @@
             togglePoiRadar: () => togglePoiCard(),
             flyTo: (lat, lon, dist) => flyTo(lat, lon, dist),
             setFlights: (flights) => setFlights(flights),
+            setGodsEyeData: (data) => setGodsEyeData(data),
+            requestGodsEyeRefresh: () => requestGodsEyeRefresh(),
             clearRoute: () => hideRouteCard(),
             switchMode: (m) => switchMode(m),
             resetView: () => resetView(),

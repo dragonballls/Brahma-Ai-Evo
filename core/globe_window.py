@@ -32,6 +32,7 @@ try:
 except Exception:
     pass
 
+from core.gods_eye import GodsEye
 from actions.geospatial_globe import (
     geocode_location,
     calculate_great_circle_route,
@@ -50,6 +51,7 @@ class GlobeBridge(QObject):
     """Bridge for communication between WebGL JavaScript and PyQt6."""
     close_requested = pyqtSignal()
     view_updated = pyqtSignal(dict)
+    gods_eye_refresh_requested = pyqtSignal()
 
     @pyqtSlot()
     def closeGlobe(self):
@@ -62,6 +64,10 @@ class GlobeBridge(QObject):
             self.view_updated.emit(data)
         except Exception:
             pass
+
+    @pyqtSlot()
+    def requestGodsEyeRefresh(self):
+        self.gods_eye_refresh_requested.emit()
 
 
 class GlobeWindow(QWidget):
@@ -94,6 +100,7 @@ class GlobeWindow(QWidget):
         self._bridge = GlobeBridge()
         self._bridge.close_requested.connect(self.hide)
         self._bridge.view_updated.connect(self._on_view_updated)
+        self._bridge.gods_eye_refresh_requested.connect(self.refresh_gods_eye)
         self._last_view_data = {}
         self._web_view = None
         self._is_fullscreen = False
@@ -109,6 +116,9 @@ class GlobeWindow(QWidget):
         self._pending_earthquakes = None
         self._pending_nearby = None
         self._pending_radar = None
+        self._pending_gods_eye = None
+        self._gods_eye_refresh_lock = threading.Lock()
+        self._gods_eye_refreshing = False
 
         # Cross-thread command signal router
         self._cmd_sig.connect(self._handle_cmd)
@@ -287,6 +297,10 @@ class GlobeWindow(QWidget):
             rd = self._pending_radar
             self._pending_radar = None
             QTimer.singleShot(300, lambda: self._do_weather_radar(rd))
+        if self._pending_gods_eye is not None:
+            ge = self._pending_gods_eye
+            self._pending_gods_eye = None
+            QTimer.singleShot(300, lambda: self._do_gods_eye(ge))
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -433,10 +447,12 @@ class GlobeWindow(QWidget):
             self._do_nearby(payload.get("data"))
         elif action == "weather_radar":
             self._do_weather_radar(payload.get("data"))
+        elif action == "gods_eye_data":
+            self._do_gods_eye(payload.get("data"))
         elif action == "close":
             self.hide()
 
-    def _do_open(self, focus_location: Optional[str] = None, mode: Optional[str] = None):
+    def _do_open(self, focus_location: Optional[str] = None, mode: Optional[str] = None, *, load_gods_eye: bool = True):
         self._position_overlay()
         self.show()
         self.raise_()
@@ -448,6 +464,8 @@ class GlobeWindow(QWidget):
                 self._web_view.page().runJavaScript(f"if (window.BrahmaGlobe && window.BrahmaGlobe.switchMode) window.BrahmaGlobe.switchMode('{mode}');")
         elif mode:
             self._pending_mode = mode
+        if load_gods_eye and mode in (None, "3D"):
+            self.refresh_gods_eye()
         if focus_location:
             QTimer.singleShot(600, lambda: self.fly_to(focus_location))
 
@@ -532,8 +550,63 @@ class GlobeWindow(QWidget):
             js_call = f"if (window.BrahmaGlobe) window.BrahmaGlobe.toggleWeatherRadar({json.dumps(data)});"
             self._web_view.page().runJavaScript(js_call)
 
+    def _do_gods_eye(self, data: Optional[dict]):
+        """Render the structured God’s Eye payload in the existing 3D/2D globe surface."""
+        self._do_open(load_gods_eye=False)
+        if not self._is_page_loaded:
+            self._pending_gods_eye = data or {}
+            return
+        if self._web_view:
+            payload = json.dumps(data or {})
+            js_call = (
+                "if (window.BrahmaGlobe && window.BrahmaGlobe.setGodsEyeData) "
+                f"window.BrahmaGlobe.setGodsEyeData({payload});"
+            )
+            self._web_view.page().runJavaScript(js_call)
+
+    def refresh_gods_eye(self) -> None:
+        """Refresh God’s Eye off the GUI thread and push only validated data to WebGL."""
+        with self._gods_eye_refresh_lock:
+            if self._gods_eye_refreshing:
+                return
+            self._gods_eye_refreshing = True
+
+        def _worker():
+            try:
+                payload = GodsEye().globe_payload()
+            except Exception as exc:
+                payload = {
+                    "schema_version": 3,
+                    "surface": "gods-eye",
+                    "authorized_current": False,
+                    "current": {
+                        "point": None,
+                        "accuracy_m": None,
+                        "permitted": False,
+                        "source": f"unavailable:{type(exc).__name__}",
+                    },
+                    "sensor_state": "sensor-status-unavailable",
+                    "current_source": "unavailable",
+                    "current_accuracy_m": None,
+                    "provider_status": [],
+                    "locator_count": 0,
+                    "locators": [],
+                }
+            finally:
+                with self._gods_eye_refresh_lock:
+                    self._gods_eye_refreshing = False
+            self._cmd_sig.emit({"action": "gods_eye_data", "data": payload})
+
+        threading.Thread(target=_worker, daemon=True, name="gods-eye-refresh").start()
+
+    def show_gods_eye(self) -> dict[str, object]:
+        """Refresh God’s Eye and open the globe on the God’s Eye surface."""
+        self.open_globe(mode="3D")
+        self.refresh_gods_eye()
+        return {"surface": "gods-eye", "status": "refreshing"}
+
     def open_globe(self, focus_location: Optional[str] = None, mode: Optional[str] = None):
-        """Open the 3D HoloGlobe display safely from any thread."""
+        """Open the 3D HoloGlobe display safely from any thread; God’s Eye is loaded by default."""
         if threading.current_thread() is threading.main_thread():
             self._do_open(focus_location, mode)
         else:
