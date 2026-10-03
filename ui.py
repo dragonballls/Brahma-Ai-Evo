@@ -277,6 +277,10 @@ class BackgroundWidget(QWidget):
             self._web_view.loadFinished.connect(self._on_web_loaded)
 
             file_url = QUrl.fromLocalFile(str(html_path.resolve()))
+            if not _low_power_ui_enabled() or os.environ.get("BRAHMA_EXPERIMENTAL_HOLO_RENDER") == "1":
+                file_url.setQuery("power=full")
+            else:
+                file_url.setQuery("power=low")
             self._web_view.load(file_url)
 
             w = max(self.width(), 800)
