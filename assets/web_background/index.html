@@ -730,7 +730,7 @@
         composer.render();
         lastRenderMs = now;
       }
-      renderTimer = window.setTimeout(renderLoop, Math.max(50, frameDelay));
+      renderTimer = window.setTimeout(renderLoop, Math.max(20, frameDelay));
     }
 
     function onWindowResize() {
