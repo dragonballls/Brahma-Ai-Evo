@@ -36,3 +36,5 @@ jobs:
         run: python -m unittest tests.test_pc_health_and_missions -v
       - name: Run Brahma desktop environment regressions
         run: python -m unittest tests.test_desktop_environment -v
+      - name: Run embedded web workspace regressions
+        run: python -m unittest tests.test_desktop_web_host -v
