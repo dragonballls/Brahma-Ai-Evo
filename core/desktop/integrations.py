@@ -138,6 +138,7 @@ class ThirdPartyIntegrationHub:
         chip_tool = _windows_executable(["chip-tool.exe", "chip-tool"])
         winsw = _windows_executable(["WinSW-x64.exe", "WinSW.exe", "winsw.exe", "winsw"])
         pyatv_installed = importlib.util.find_spec("pyatv") is not None
+        bleak_installed = importlib.util.find_spec("bleak") is not None
 
         return {
             "procgovernor": IntegrationInfo(
@@ -177,6 +178,10 @@ class ThirdPartyIntegrationHub:
             "pyatv": IntegrationInfo(
                 "pyatv", "postlund/pyatv", python_module=pyatv_installed,
                 notes="Lazy-loaded Apple TV/AirPlay discovery and remote control.",
+            ),
+            "bluetooth": IntegrationInfo(
+                "bluetooth", "hbldh/bleak", python_module=bleak_installed,
+                notes="Optional Bluetooth Low Energy discovery, pairing, and GATT control via Windows Runtime.",
             ),
             "matter": IntegrationInfo(
                 "matter", "project-chip/connectedhomeip", "chip-tool.exe",
@@ -438,6 +443,274 @@ class ThirdPartyIntegrationHub:
                 "device_info": str(getattr(config, "device_info", "") or ""),
             })
         return results
+
+    def bluetooth_devices(self, *, timeout: float = 5.0) -> list[dict[str, Any]]:
+        """Discover nearby Bluetooth Low Energy peripherals without requiring pairing."""
+        if importlib.util.find_spec("bleak") is None:
+            return []
+
+        async def _scan() -> list[dict[str, Any]]:
+            from bleak import BleakScanner
+
+            timeout_value = max(1.0, min(float(timeout), 15.0))
+            try:
+                discovered = await BleakScanner.discover(
+                    timeout=timeout_value,
+                    return_adv=True,
+                )
+                items = discovered.items()
+            except TypeError:
+                devices = await BleakScanner.discover(timeout=timeout_value)
+                items = ((device, None) for device in devices)
+
+            results: list[dict[str, Any]] = []
+            for device, advertisement in items:
+                address = str(getattr(device, "address", "") or "").strip()
+                if not address:
+                    continue
+                name = (
+                    str(getattr(device, "name", "") or "").strip()
+                    or str(getattr(advertisement, "local_name", "") or "").strip()
+                    or "Bluetooth LE Device"
+                )
+                rssi = getattr(advertisement, "rssi", getattr(device, "rssi", None))
+                try:
+                    rssi = int(rssi) if rssi is not None else None
+                except (TypeError, ValueError):
+                    rssi = None
+                service_uuids = [
+                    str(item).lower()
+                    for item in (getattr(advertisement, "service_uuids", None) or [])
+                    if str(item).strip()
+                ]
+                results.append({
+                    "name": name,
+                    "address": address,
+                    "rssi": rssi,
+                    "service_uuids": sorted(set(service_uuids)),
+                    "local_name": str(getattr(advertisement, "local_name", "") or ""),
+                })
+            return results
+
+        try:
+            return asyncio.run(_scan())
+        except RuntimeError:
+            return []
+        except Exception:
+            return []
+
+    @staticmethod
+    async def _bleak_find_device(address: str, timeout: float):
+        from bleak import BleakScanner
+
+        target = str(address or "").strip().lower()
+        if not target:
+            return None
+
+        try:
+            discovered = await BleakScanner.discover(
+                timeout=max(1.0, min(float(timeout), 15.0)),
+                return_adv=True,
+            )
+            for device, _advertisement in discovered.items():
+                if str(getattr(device, "address", "") or "").lower() == target:
+                    return device
+        except TypeError:
+            discovered = await BleakScanner.discover(
+                timeout=max(1.0, min(float(timeout), 15.0))
+            )
+            for device in discovered:
+                if str(getattr(device, "address", "") or "").lower() == target:
+                    return device
+        return None
+
+    def bluetooth_pair(self, address: str, *, timeout: float = 30.0) -> dict[str, Any]:
+        """Pair a BLE peripheral through the platform Bluetooth stack."""
+        if importlib.util.find_spec("bleak") is None:
+            return {"ok": False, "error": "Bleak is not installed."}
+
+        async def _pair() -> dict[str, Any]:
+            from bleak import BleakClient
+
+            device = await self._bleak_find_device(address, min(timeout, 15.0))
+            if device is None:
+                return {"ok": False, "error": f"Bluetooth device '{address}' is not currently discoverable."}
+            client = BleakClient(device, timeout=max(5.0, float(timeout)))
+            try:
+                await client.pair()
+                return {
+                    "ok": True,
+                    "address": str(getattr(device, "address", "") or address),
+                    "name": str(getattr(device, "name", "") or ""),
+                }
+            finally:
+                try:
+                    if client.is_connected:
+                        await client.disconnect()
+                except Exception:
+                    pass
+
+        try:
+            return asyncio.run(_pair())
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def bluetooth_unpair(self, address: str) -> dict[str, Any]:
+        """Unpair a BLE peripheral on platforms that expose native unpairing."""
+        if importlib.util.find_spec("bleak") is None:
+            return {"ok": False, "error": "Bleak is not installed."}
+
+        async def _unpair() -> dict[str, Any]:
+            from bleak import BleakClient
+
+            device = await self._bleak_find_device(address, 8.0)
+            if device is None:
+                return {"ok": False, "error": f"Bluetooth device '{address}' is not currently discoverable."}
+            client = BleakClient(device, timeout=10.0)
+            try:
+                await client.unpair()
+                return {"ok": True, "address": str(getattr(device, "address", "") or address)}
+            finally:
+                try:
+                    if client.is_connected:
+                        await client.disconnect()
+                except Exception:
+                    pass
+
+        try:
+            return asyncio.run(_unpair())
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def bluetooth_services(self, address: str, *, timeout: float = 12.0) -> dict[str, Any]:
+        """Connect briefly, enumerate GATT services/characteristics, then disconnect."""
+        if importlib.util.find_spec("bleak") is None:
+            return {"ok": False, "error": "Bleak is not installed."}
+
+        async def _services() -> dict[str, Any]:
+            from bleak import BleakClient
+
+            device = await self._bleak_find_device(address, min(timeout, 15.0))
+            if device is None:
+                return {"ok": False, "error": f"Bluetooth device '{address}' is not currently discoverable."}
+            client = BleakClient(device, timeout=max(5.0, float(timeout)))
+            try:
+                await client.connect()
+                services: list[dict[str, Any]] = []
+                for service in client.services:
+                    characteristics: list[dict[str, Any]] = []
+                    for characteristic in service.characteristics:
+                        characteristics.append({
+                            "uuid": str(getattr(characteristic, "uuid", "") or ""),
+                            "description": str(getattr(characteristic, "description", "") or ""),
+                            "properties": sorted(
+                                {str(item) for item in (getattr(characteristic, "properties", None) or [])}
+                            ),
+                        })
+                    services.append({
+                        "uuid": str(getattr(service, "uuid", "") or ""),
+                        "description": str(getattr(service, "description", "") or ""),
+                        "characteristics": characteristics,
+                    })
+                return {
+                    "ok": True,
+                    "address": str(getattr(device, "address", "") or address),
+                    "name": str(getattr(device, "name", "") or ""),
+                    "services": services,
+                }
+            finally:
+                try:
+                    if client.is_connected:
+                        await client.disconnect()
+                except Exception:
+                    pass
+
+        try:
+            return asyncio.run(_services())
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def bluetooth_gatt_command(
+        self,
+        address: str,
+        action: str,
+        characteristic_uuid: str,
+        *,
+        data: str = "",
+        hex_data: bool = False,
+        response: bool = False,
+        timeout: float = 12.0,
+    ) -> dict[str, Any]:
+        """Perform one explicit GATT read/write, using a short-lived connection."""
+        if importlib.util.find_spec("bleak") is None:
+            return {"ok": False, "error": "Bleak is not installed."}
+        action = str(action or "").strip().lower()
+        characteristic_uuid = str(characteristic_uuid or "").strip().lower()
+        if action not in {"read", "write"}:
+            return {"ok": False, "error": "Bluetooth GATT action must be read or write."}
+        if not characteristic_uuid:
+            return {"ok": False, "error": "characteristic_uuid is required."}
+
+        async def _command() -> dict[str, Any]:
+            from bleak import BleakClient
+
+            device = await self._bleak_find_device(address, min(timeout, 15.0))
+            if device is None:
+                return {"ok": False, "error": f"Bluetooth device '{address}' is not currently discoverable."}
+            client = BleakClient(device, timeout=max(5.0, float(timeout)))
+            try:
+                await client.connect()
+                target = None
+                for service in client.services:
+                    for characteristic in service.characteristics:
+                        if str(getattr(characteristic, "uuid", "") or "").lower() == characteristic_uuid:
+                            target = characteristic
+                            break
+                    if target is not None:
+                        break
+                if target is None:
+                    return {"ok": False, "error": f"GATT characteristic '{characteristic_uuid}' was not found."}
+
+                if action == "read":
+                    value = await client.read_gatt_char(target)
+                    raw = bytes(value)
+                    try:
+                        text_value = raw.decode("utf-8")
+                    except UnicodeDecodeError:
+                        text_value = ""
+                    return {
+                        "ok": True,
+                        "address": str(getattr(device, "address", "") or address),
+                        "characteristic_uuid": characteristic_uuid,
+                        "hex": raw.hex(),
+                        "text": text_value,
+                    }
+
+                if hex_data:
+                    try:
+                        raw = bytes.fromhex(str(data or "").replace(" ", ""))
+                    except ValueError:
+                        return {"ok": False, "error": "hex_data was requested but data is not valid hexadecimal."}
+                else:
+                    raw = str(data or "").encode("utf-8")
+                await client.write_gatt_char(target, raw, response=bool(response))
+                return {
+                    "ok": True,
+                    "address": str(getattr(device, "address", "") or address),
+                    "characteristic_uuid": characteristic_uuid,
+                    "bytes_written": len(raw),
+                }
+            finally:
+                try:
+                    if client.is_connected:
+                        await client.disconnect()
+                except Exception:
+                    pass
+
+        try:
+            return asyncio.run(_command())
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
 
     def matter_available(self) -> bool:
         return self.info("matter").installed
