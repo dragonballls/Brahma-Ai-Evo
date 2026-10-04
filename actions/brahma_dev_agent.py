@@ -431,9 +431,8 @@ class BrahmaDevAgent:
             logger.warning(f"[BrahmaDev] OmniRoute coding route failed: {exc}")
 
         try:
-            with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-                keys = json.load(f)
-            gemini_key = keys.get("gemini_api_key", "").strip()
+            from config import get_api_key
+            gemini_key = get_api_key("Gemini")
 
             if gemini_key:
                 import time
@@ -484,8 +483,8 @@ class BrahmaDevAgent:
 
         # Check if openrouter key actually exists before falling back
         try:
-            with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-                or_key = json.load(f).get("openrouter_api_key", "").strip()
+            from config import get_api_key
+            or_key = get_api_key("OpenRouter")
             if or_key:
                 from or_client import client as direct_or_client
                 return direct_or_client.multi_turn(self.history, temperature=0.2)
