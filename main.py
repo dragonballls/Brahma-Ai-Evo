@@ -4695,6 +4695,21 @@ class BrahmaLive:
                         focus_core=True
                     )
                     msg = res.get("choices", [{}])[0].get("message", {})
+                    # Keep the low-power core tool set as the default. Escalate to
+                    # the full registry only when an action request received no
+                    # answer/tool call from the focused pass.
+                    if (
+                        not str(msg.get("content") or "").strip()
+                        and not msg.get("tool_calls")
+                        and _looks_like_action_request(text)
+                    ):
+                        res = local_brain.chat_complete(
+                            messages,
+                            model=local_model_target,
+                            tools=TOOL_DECLARATIONS,
+                            focus_core=False,
+                        )
+                    msg = res.get("choices", [{}])[0].get("message", {})
                     tool_calls = msg.get("tool_calls")
                     if tool_calls:
                         for tc in tool_calls:
