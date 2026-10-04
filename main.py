@@ -3602,7 +3602,7 @@ class BrahmaLive:
         # real-time channel; it must never become a single point of failure for chat.
         threading.Thread(
             target=self._fallback_reply,
-            args=(text, memory_ctx),
+            args=(text, memory_ctx, source or "local"),
             daemon=True,
             name="text-command-agent",
         ).start()
@@ -4448,7 +4448,44 @@ class BrahmaLive:
             except Exception as e:
                 return f"Tool execution failed: {e}"
 
-    def _fallback_reply(self, text: str, memory_ctx: str = ""):
+    def _deliver_assistant_reply(
+        self,
+        reply: str,
+        *,
+        source: str = "local",
+        task_status: str = "Reply delivered.",
+    ) -> str:
+        """Deliver one assistant response through the canonical chat + voice surface."""
+        reply = (reply or "").strip() or "I’m ready, sir."
+        event_source = (source or "local").strip() or "local"
+
+        try:
+            self.ui.record_chat_event({
+                "role": "assistant",
+                "text": reply,
+                "source": event_source,
+            })
+        except Exception as exc:
+            self.ui.write_log(f"ERR: Failed to persist assistant chat response — {exc}")
+
+        try:
+            acknowledge = getattr(self.ui, "acknowledge_chat_response", None)
+            if acknowledge:
+                acknowledge()
+        except Exception:
+            pass
+
+        self.ui.write_log(f"CHAT: Brahma Evo: {reply}")
+        if not getattr(self.ui, "muted", False):
+            self.speak(reply, proactive=True, use_live=False)
+        else:
+            self.ui.set_state("LISTENING")
+        try:
+            self.ui.finish_task_workspace(reply, task_status, 100)
+        except Exception:
+            pass
+        return reply
+    def _fallback_reply(self, text: str, memory_ctx: str = "", source: str = "local"):
         try:
             self.ui.set_state("THINKING")
             try:
@@ -4682,18 +4719,7 @@ class BrahmaLive:
                     print(f"[BRAHMA EVO] 🔒 Local Brain offline safety net answered ({local_model_target})!")
                 except Exception as e_net:
                     print(f"[BRAHMA EVO] ⚠️ Offline Local Brain fallback failed: {e_net}")
-            reply = (reply or "").strip()
-            if not reply:
-                reply = "I’m ready, sir."
-            self.ui.write_log(f"Brahma Evo: {reply}")
-            if not getattr(self.ui, "muted", False):
-                self.speak(reply, proactive=True, use_live=False)
-            try:
-                self.ui.finish_task_workspace(reply, "Reply delivered.", 100)
-            except Exception:
-                pass
-            if not self.ui.muted:
-                self.ui.set_state("LISTENING")
+            self._deliver_assistant_reply(reply, source=source)
         except Exception as e:
             msg = f"Fallback reply failed: {e}"
             print(f"[BRAHMA EVO] ⚠️ {msg}")
