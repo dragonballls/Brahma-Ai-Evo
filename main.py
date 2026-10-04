@@ -4742,9 +4742,16 @@ class BrahmaLive:
                         emotional_prompt = emotional_controller.prompt_block(request_text)
                     except Exception:
                         pass
+                    language_directive = ""
+                    try:
+                        from core.language_policy import prompt_block as language_prompt_block
+                        language_directive = language_prompt_block()
+                    except Exception:
+                        pass
                     system_prompt = (
                         f"{prompt_txt}\n\n"
                         f"{emotional_prompt}\n"
+                        f"{language_directive}\n"
                         "CRITICAL OPERATING SYSTEM DIRECTIVE:\n"
                         "- You have FULL DIRECT ACCESS and authority over this Windows PC via your tools.\n"
                         "- NEVER state that you are a text-based AI, that you cannot perform automations, or that you lack real-time access.\n"
@@ -4893,8 +4900,21 @@ class BrahmaLive:
             # 5. Ultimate offline safety net: Local Brain fallback
             if not reply and local_brain.is_available():
                 try:
+                    safety_language = ""
+                    try:
+                        from core.language_policy import prompt_block as language_prompt_block
+                        safety_language = language_prompt_block()
+                    except Exception:
+                        pass
                     safety_messages = [
-                        {"role": "system", "content": "You are Brahma Evo, the autonomous desktop operating system. You control this PC. Never claim you cannot do automations."},
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are Brahma Evo, the autonomous desktop operating system. "
+                                "You control this PC. Never claim you cannot do automations.\n\n"
+                                f"{safety_language}"
+                            ),
+                        },
                         {"role": "user", "content": request_text},
                     ]
                     res = local_brain.chat_complete(
