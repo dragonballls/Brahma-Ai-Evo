@@ -106,7 +106,7 @@ class CrashResilienceTests(unittest.TestCase):
     def test_installer_creates_supervised_desktop_and_startup_paths(self):
         source = (ROOT / "installer" / "install_wizard.py").read_text(encoding="utf-8")
         self.assertIn("supervisor_path", source)
-        self.assertIn("SpecialFolders("Startup")", source)
+        self.assertIn('SpecialFolders("Startup")', source)
         self.assertIn("Brahma Evo.lnk", source)
 
     def test_build_pipeline_builds_and_validates_supervisor(self):
