@@ -398,7 +398,39 @@ def _gemini_tool_reply(
         api_key=api_key,
         http_options={"api_version": "v1beta"},
     )
-    tool = types.Tool(function_declarations=TOOL_DECLARATIONS)
+
+    def lower_schema(value):
+        if isinstance(value, dict):
+            return {
+                key: (str(item).lower() if key == "type" and isinstance(item, str)
+                      else lower_schema(item))
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [lower_schema(item) for item in value]
+        return value
+
+    declarations = []
+    for declaration in TOOL_DECLARATIONS:
+        if not isinstance(declaration, dict):
+            continue
+        name = str(declaration.get("name") or "").strip()
+        if not name:
+            continue
+        declarations.append(
+            types.FunctionDeclaration(
+                name=name,
+                description=str(declaration.get("description") or ""),
+                parameters_json_schema=lower_schema(
+                    declaration.get("parameters") or {
+                        "type": "object",
+                        "properties": {},
+                    }
+                ),
+            )
+        )
+
+    tool = types.Tool(function_declarations=declarations)
     config = types.GenerateContentConfig(
         system_instruction=system_prompt,
         tools=[tool],
@@ -415,57 +447,76 @@ def _gemini_tool_reply(
         )
     ]
 
-    for _ in range(max(1, int(max_rounds))):
-        response = client.models.generate_content(
-            model=os.environ.get("BRAHMA_TEXT_GEMINI_MODEL", "gemini-2.5-flash"),
-            contents=contents,
-            config=config,
-        )
-        function_calls = list(getattr(response, "function_calls", None) or [])
-        if not function_calls:
-            text = _extract_gemini_text(response)
-            if text:
-                return text
-            raise RuntimeError("Gemini returned an empty response.")
+    models = (
+        os.environ.get("BRAHMA_TEXT_GEMINI_MODEL", "gemini-2.5-flash"),
+        "gemini-3.8-flash",
+        "gemini-flash-latest",
+    )
+    last_error = None
 
-        candidate_content = None
+    for model_name in models:
+        if not model_name:
+            continue
         try:
-            candidates = getattr(response, "candidates", None) or []
-            if candidates:
-                candidate_content = getattr(candidates[0], "content", None)
-        except Exception:
-            candidate_content = None
-        if candidate_content is not None:
-            contents.append(candidate_content)
-
-        function_parts = []
-        for index, call in enumerate(function_calls):
-            name = str(getattr(call, "name", "") or "").strip()
-            args = dict(getattr(call, "args", None) or {})
-            call_id = str(getattr(call, "id", "") or f"gemini_tool_{index}")
-            if not name:
-                result = "Gemini returned a tool call without a name."
-            else:
-                try:
-                    result = tool_executor(name, args)
-                except Exception as exc:
-                    result = f"Tool '{name}' failed: {exc}"
-            function_parts.append(
-                types.Part.from_function_response(
-                    name=name or "unknown",
-                    response={"result": str(result)},
-                    id=call_id,
+            working_contents = list(contents)
+            for _ in range(max(1, int(max_rounds))):
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=working_contents,
+                    config=config,
                 )
-            )
+                function_calls = list(getattr(response, "function_calls", None) or [])
+                if not function_calls:
+                    text = _extract_gemini_text(response)
+                    if text:
+                        return text
+                    raise RuntimeError("Gemini returned an empty response.")
 
-        contents.append(
-            types.Content(
-                role="user",
-                parts=function_parts,
-            )
-        )
+                candidate_content = None
+                try:
+                    candidates = getattr(response, "candidates", None) or []
+                    if candidates:
+                        candidate_content = getattr(candidates[0], "content", None)
+                except Exception:
+                    candidate_content = None
+                if candidate_content is not None:
+                    working_contents.append(candidate_content)
 
-    raise RuntimeError("Gemini tool-calling reached its safety round limit without a final response.")
+                function_parts = []
+                for index, call in enumerate(function_calls):
+                    name = str(getattr(call, "name", "") or "").strip()
+                    args = dict(getattr(call, "args", None) or {})
+                    call_id = str(getattr(call, "id", "") or f"gemini_tool_{index}")
+                    if not name:
+                        result = "Gemini returned a tool call without a name."
+                    else:
+                        try:
+                            result = tool_executor(name, args)
+                        except Exception as exc:
+                            result = f"Tool '{name}' failed: {exc}"
+                    function_parts.append(
+                        types.Part.from_function_response(
+                            name=name or "unknown",
+                            response={"result": str(result)},
+                            id=call_id,
+                        )
+                    )
+
+                working_contents.append(
+                    types.Content(
+                        role="tool",
+                        parts=function_parts,
+                    )
+                )
+
+            raise RuntimeError(
+                "Gemini tool-calling reached its safety round limit without a final response."
+            )
+        except Exception as exc:
+            last_error = exc
+            continue
+
+    raise RuntimeError(f"Gemini tool routing failed: {last_error}")
 
 
 def _cloud_tool_reply(
