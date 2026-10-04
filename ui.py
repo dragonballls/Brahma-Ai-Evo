@@ -9969,6 +9969,12 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+    def _acknowledge_chat_source(self) -> None:
+        """Consume one pending command source after an explicit assistant event."""
+        if self._chat_source_queue:
+            self._chat_source_queue.popleft()
+
+
     def _deliver_chat_event(self, event: object) -> None:
         if self.on_chat_event:
             try:
@@ -16765,6 +16771,14 @@ class BrahmaUI:
             self._win._emit_chat_event(event or {})
         except Exception:
             pass
+
+    def acknowledge_chat_response(self):
+        """Retire the source marker consumed by a canonical assistant reply."""
+        try:
+            self._win._acknowledge_chat_source()
+        except Exception:
+            pass
+
 
     def set_clipboard_ai_handler(self, handler):
         self._clipboard_ai_handler = handler
