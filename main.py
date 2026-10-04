@@ -924,6 +924,49 @@ TOOL_DECLARATIONS = [
         },
     },
     {
+        "name": "agent_tasks",
+        "description": (
+            "Inspect Brahma's persistent agent-task ledger. It records heartbeat-style task "
+            "runs, verification evidence, blocked/failed work, and completion history without "
+            "starting a separate service."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "recent | recover_stale",
+                },
+                "limit": {
+                    "type": "INTEGER",
+                    "description": "Number of recent records to return (default 20).",
+                },
+            },
+            "required": ["action"],
+        },
+    },
+    {
+        "name": "software_harnesses",
+        "description": (
+            "Inspect agent-native software harnesses available to Brahma. Harnesses provide "
+            "deterministic, inspectable application interfaces with structured output."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "list | match",
+                },
+                "request": {
+                    "type": "STRING",
+                    "description": "Optional task/application description to match.",
+                },
+            },
+            "required": ["action"],
+        },
+    },
+    {
         "name": "background_monitor",
         "description": (
             "Sets up a background monitor to check crypto prices, system RAM/CPU, or website uptime. "
@@ -5809,6 +5852,27 @@ class BrahmaLive:
                         result = "Choose status, scan_now, pause, or resume."
                 except Exception as exc:
                     result = f"Evolution action failed safely: {exc}"
+            elif name == "agent_tasks":
+                from core.agent_task_ledger import ledger
+                action = (args.get("action") or "recent").strip().lower()
+                if action == "recent":
+                    limit = int(args.get("limit") or 20)
+                    result = json.dumps(ledger.recent(limit), ensure_ascii=False)
+                elif action == "recover_stale":
+                    recovered = ledger.recover_stale()
+                    result = json.dumps({"recovered": recovered}, ensure_ascii=False)
+                else:
+                    result = "Choose recent or recover_stale."
+            elif name == "software_harnesses":
+                from core.software_harness import software_harnesses
+                action = (args.get("action") or "list").strip().lower()
+                request = str(args.get("request") or "").strip()
+                if action == "list":
+                    result = json.dumps(software_harnesses.discover(), ensure_ascii=False)
+                elif action == "match":
+                    result = json.dumps(software_harnesses.match(request), ensure_ascii=False)
+                else:
+                    result = "Choose list or match."
             elif name == "universal_task":
                 request = str(args.get("request") or "").strip()
                 context = str(args.get("context") or "").strip()
