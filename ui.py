@@ -12548,14 +12548,10 @@ class SystemConnectivityPage(QWidget):
             if not hasattr(self, "_ig_status_lbl"):
                 return
             from pathlib import Path
-            import json
-            api_keys = API_FILE
+            from config import get_config
             username = ""
-            d = {}
-            if api_keys.exists():
-                with open(api_keys, "r", encoding="utf-8") as f:
-                    d = json.load(f)
-                    username = d.get("instagram_username", "")
+            d = get_config()
+            username = str(d.get("instagram_username") or "")
 
             is_browser_auth = bool(d.get("instagram_browser_authenticated") and d.get("instagram_sessionid"))
             if is_browser_auth:
