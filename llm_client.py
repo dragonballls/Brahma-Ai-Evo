@@ -228,6 +228,15 @@ class UnifiedAIClient:
     ) -> str:
         """Use the cloud multi-model intelligence layer while preserving Local mode."""
         self.reload_settings()
+        # Capability-status requests are deterministic so Brahma never invents an intelligence score.
+        try:
+            from core.intellect_meter import answer_intellect_query
+            intellect_answer = answer_intellect_query(prompt)
+            if intellect_answer:
+                return intellect_answer
+        except Exception as exc:
+            logger.debug("[IntellectMeter] status lookup skipped: %s", exc)
+
         # Ground every conversational cloud/local call in the same functional
         # self-model so "I/me/you/my phone" and action-state claims stay distinct.
         try:
