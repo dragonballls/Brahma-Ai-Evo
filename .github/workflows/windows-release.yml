@@ -70,6 +70,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Test-Path "dist/BrahmaEvo/BrahmaEvo.exe")) { throw "BrahmaEvo.exe was not produced." }
 
+      - name: Build recovery supervisor
+        shell: pwsh
+        run: |
+          python -m PyInstaller installer/BrahmaEvo_Supervisor.spec --noconfirm --distpath dist/BrahmaEvo
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path "dist/BrahmaEvo/BrahmaEvo_Supervisor.exe")) { throw "Recovery supervisor was not produced." }
+
       - name: Build setup wizard
         shell: pwsh
         run: |
@@ -136,6 +143,7 @@ jobs:
         run: |
           $files = @(
             "dist/BrahmaEvo/BrahmaEvo.exe",
+            "dist/BrahmaEvo/BrahmaEvo_Supervisor.exe",
             "dist/BrahmaEvo_Setup.exe"
           )
           Get-FileHash $files -Algorithm SHA256 |
