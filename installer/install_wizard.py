@@ -57,37 +57,49 @@ class InstallThread(QThread):
             self.progress.emit(80)
             self.status.emit("Creating shortcuts...")
             
-            # Create Desktop Shortcut
+            # Launch Brahma through the independent supervisor so an unexpected
+            # application crash can be repaired/restarted without user intervention.
             exe_path = os.path.join(self.target_dir, 'BrahmaEvo.exe')
-            if os.path.exists(exe_path):
+            supervisor_path = os.path.join(self.target_dir, 'BrahmaEvoSupervisor.exe')
+            launch_path = supervisor_path if os.path.exists(supervisor_path) else exe_path
+
+            if os.path.exists(launch_path):
                 shell = win32com.client.Dispatch("WScript.Shell")
-                
-                # Dynamically resolve Desktop path (handles OneDrive, moved folders, etc.)
+
+                # Dynamically resolve Desktop path (handles OneDrive, moved folders, etc.).
                 desktop = shell.SpecialFolders("Desktop")
                 shortcut_path = os.path.join(desktop, "Brahma Evo.lnk")
-                
-                try:
-                    shortcut = shell.CreateShortCut(shortcut_path)
-                    shortcut.Targetpath = exe_path
+
+                def _write_shortcut(path):
+                    shortcut = shell.CreateShortCut(path)
+                    shortcut.Targetpath = launch_path
                     shortcut.WorkingDirectory = self.target_dir
                     shortcut.IconLocation = os.path.join(self.target_dir, 'assets', 'Brahma_Lite_Logo.ico')
-                    shortcut.WindowStyle = 1 # Normal window
+                    shortcut.WindowStyle = 1
                     shortcut.save()
+
+                try:
+                    _write_shortcut(shortcut_path)
                 except Exception as e:
                     print(f"Failed to create desktop shortcut: {e}")
-                
-                # Start menu (dynamically resolve Programs path)
+
+                # Start menu shortcut.
                 try:
                     start_menu = shell.SpecialFolders("Programs")
                     shortcut_path_sm = os.path.join(start_menu, "Brahma Evo.lnk")
-                    shortcut_sm = shell.CreateShortCut(shortcut_path_sm)
-                    shortcut_sm.Targetpath = exe_path
-                    shortcut_sm.WorkingDirectory = self.target_dir
-                    shortcut_sm.IconLocation = os.path.join(self.target_dir, 'assets', 'Brahma_Lite_Logo.ico')
-                    shortcut_sm.WindowStyle = 1
-                    shortcut_sm.save()
+                    _write_shortcut(shortcut_path_sm)
                 except Exception as e:
                     print(f"Failed to create start menu shortcut: {e}")
+
+                # Keep the supervisor running after Windows logon. This provides
+                # crash recovery after reboot without a visible console window.
+                if os.path.exists(supervisor_path):
+                    try:
+                        startup = shell.SpecialFolders("Startup")
+                        startup_shortcut = os.path.join(startup, "Brahma Evo.lnk")
+                        _write_shortcut(startup_shortcut)
+                    except Exception as e:
+                        print(f"Failed to create startup shortcut: {e}")
 
             self.progress.emit(100)
             self.status.emit("Installation Complete!")
