@@ -151,6 +151,12 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("self.local_model_pull_update.emit(chunk)", source)
         self.assertNotIn('pull_model_async("qwen2.5:3b", lambda chunk: _populate_models())', source)
 
+    def test_local_brain_reloads_persisted_endpoint_and_model(self):
+        source = (self.root / "core" / "local_brain.py").read_text(encoding="utf-8")
+        self.assertIn("def reload_settings(self) -> None:", source)
+        self.assertIn('settings.get("local_ai_url")', source)
+        self.assertIn('settings.get("local_ai_model")', source)
+        self.assertIn("self.reload_settings()", source)
     def test_local_model_default_is_shared_with_unified_client(self):
         brain = self.read("core/local_brain.py")
         client = self.read("llm_client.py")
