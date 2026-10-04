@@ -37,8 +37,8 @@ class LiveVoiceContractTests(unittest.TestCase):
         self.assertNotIn("enable_affective_dialog=", self.main_text)
 
     def test_live_model_ladder_has_current_primary_and_fallbacks(self):
-        self.assertIn('models/gemini-3.8-live', self.main_text)
-        self.assertIn('models/gemini-3.1-flash-live-preview', self.main_text)
+        self.assertIn('LIVE_MODEL = os.environ.get("BRAHMA_LIVE_MODEL", "gemini-3.8-live")', self.main_text)
+        self.assertIn('gemini-3.1-flash-live-preview', self.main_text)
         self.assertIn('models/gemini-2.5-flash-native-audio-preview-12-2025', self.main_text)
         self.assertIn("LIVE_MODEL_CANDIDATES", self.main_text)
         self.assertIn("_live_model_index", self.main_text)
