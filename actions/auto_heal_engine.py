@@ -44,6 +44,10 @@ PROTECTED_CORE_FILES = {
     "requirements.txt",
     "version.txt",
     "install_wizard.py",
+    # The crash-recovery layer must remain independently runnable; it cannot
+    # safely patch its own supervisor/recovery mechanism at runtime.
+    "process_supervisor.py",
+    "crash_recovery.py",
 }
 
 
