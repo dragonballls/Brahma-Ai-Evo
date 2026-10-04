@@ -1,4 +1,3 @@
-from core.user_paths import get_user_data_dir
 import json
 import re
 import sys
@@ -13,7 +12,6 @@ def get_base_dir() -> Path:
 
 
 BASE_DIR        = get_base_dir()
-API_CONFIG_PATH = get_user_data_dir() / "config" / "api_keys.json"
 
 
 class ErrorDecision(Enum):
@@ -51,8 +49,8 @@ Return ONLY valid JSON:
 
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    from core.gemini_runtime import get_api_key
+    return get_api_key()
 
 
 def analyze_error(
@@ -79,11 +77,6 @@ def analyze_error(
             "user_message": str
         }
     """
-    import warnings
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=FutureWarning)
-        import google.generativeai as genai
-
     if attempt >= max_attempts:
         print(f"[ErrorHandler] ⚠️ Max attempts reached for step {step.get('step')} — forcing replan")
         return {
@@ -94,11 +87,7 @@ def analyze_error(
             "user_message":  "Trying a different approach, sir."
         }
 
-    genai.configure(api_key=_get_api_key())
-    model = genai.GenerativeModel(
-        model_name="gemini-3.1-flash-lite",
-        system_instruction=ERROR_ANALYST_PROMPT
-    )
+    from core.gemini_runtime import generate_json
 
     prompt = f"""Failed step:
 Tool: {step.get('tool')}
@@ -112,10 +101,12 @@ Error:
 Attempt number: {attempt}"""
 
     try:
-        response = model.generate_content(prompt)
-        text     = response.text.strip()
-        text     = re.sub(r"```(?:json)?", "", text).strip().rstrip("`").strip()
-
+        result = generate_json(
+            prompt,
+            system_instruction=ERROR_ANALYST_PROMPT,
+            model_name="gemini-3.8-flash",
+            max_output_tokens=2048,
+        )
         result = json.loads(text)
         decision_str = result.get("decision", "replan").lower()
         decision_map = {
@@ -152,13 +143,7 @@ def generate_fix(step: dict, error: str, fix_suggestion: str) -> dict:
 
     Returns a modified step dict.
     """
-    import warnings
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=FutureWarning)
-        import google.generativeai as genai
-
-    genai.configure(api_key=_get_api_key())
-    model = genai.GenerativeModel(model_name="gemini-2.5-flash")
+    from core.gemini_runtime import generate_text
 
     prompt = f"""A task step failed. Generate a replacement step.
 
@@ -174,8 +159,13 @@ Write a Python script that accomplishes the same goal differently.
 Return ONLY the Python code, no explanation."""
 
     try:
-        response = model.generate_content(prompt)
-        code = response.text.strip()
+        code = generate_text(
+            prompt,
+            system_instruction="You are Brahma Evo's safe task-repair agent. Return ONLY Python code.",
+            model_name="gemini-3.8-flash",
+            max_output_tokens=4096,
+            temperature=0.1,
+        )
         code = re.sub(r"```(?:python)?", "", code).strip().rstrip("`").strip()
 
         return {
