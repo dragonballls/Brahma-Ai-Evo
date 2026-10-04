@@ -534,23 +534,23 @@ def _cloud_tool_reply(
 
     try:
         if candidate == "Gemini":
-                return _gemini_tool_reply(
-                    prompt,
-                    system_prompt,
-                    tool_executor,
-                )
-            return openrouter_client.chat_with_tools(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-                tools=TOOL_DECLARATIONS,
-                tool_executor=tool_executor,
-                model="auto",
-                max_tokens=8192,
-                temperature=0.35,
-                max_rounds=6,
+            return _gemini_tool_reply(
+                prompt,
+                system_prompt,
+                tool_executor,
             )
+        return openrouter_client.chat_with_tools(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            tools=TOOL_DECLARATIONS,
+            tool_executor=tool_executor,
+            model="auto",
+            max_tokens=8192,
+            temperature=0.35,
+            max_rounds=6,
+        )
     except Exception as exc:
         errors.append(f"{candidate}: {exc}")
 
