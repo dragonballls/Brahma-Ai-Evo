@@ -67,19 +67,8 @@ def _open_file(path: Path) -> None:
 
 
 def _get_api_key() -> str:
-    candidates = [
-        Path(__file__).resolve().parent.parent / "config" / "api_keys.json",
-        Path.cwd() / "config" / "api_keys.json",
-    ]
-    for cp in candidates:
-        if cp.exists():
-            try:
-                data = json.loads(cp.read_text(encoding="utf-8"))
-                if "gemini_api_key" in data:
-                    return data["gemini_api_key"]
-            except Exception:
-                pass
-    return ""
+    from core.gemini_runtime import get_api_key
+    return get_api_key()
 
 
 def _parse_json_arg(value, fallback):
@@ -402,25 +391,13 @@ def synthesize_deep_report(goal_or_topic: str, title: str, research_notes: str =
     Synthesizes an exhaustive, 10-chapter technical research monograph
     using high-speed Gemini-3.1-flash-lite in two cohesive passes.
     """
-    api_key = _get_api_key()
-    if not api_key:
+    try:
+        from core.gemini_runtime import create_model
+        model = create_model("gemini-3.8-flash")
+    except Exception as exc:
+        print(f"[PDF Tools] [!] Gemini initialization failed: {exc}")
         return ""
-
-    import google.generativeai as genai
-    genai.configure(api_key=api_key)
-
-    model_names = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-flash-latest"]
-    model = None
-    for name in model_names:
-        try:
-            model = genai.GenerativeModel(name)
-            break
-        except Exception:
-            continue
-
-    if not model:
-        return ""
-
+    
     print(f"[PDF Tools] [*] Synthesizing exhaustive research monograph on: {title}...")
 
     prompts = [
@@ -505,7 +482,6 @@ Write substantial, deeply technical paragraphs under every subsection. Ensure al
             print(f"[PDF Tools] [!] Part {idx+1} generation failed: {e}")
 
     return "\n\n".join(parts)
-
 
 def _render_title_page(story, pdf, title: str, subtitle: str | None, styles, author: str | None = None):
     story.append(pdf["Spacer"](1, 1.8 * pdf["inch"]))
