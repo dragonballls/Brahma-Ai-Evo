@@ -71,7 +71,7 @@ jobs:
           python -c "from pathlib import Path; import sys; root=Path('build_vendor/omniroute_runtime'); sys.path.insert(0, str(Path('.').resolve())); from scripts.prepare_omniroute_runtime import _healthy; raise SystemExit(0 if _healthy(root) else 1)"
 
       - name: Cache verified OmniRoute runtime
-        if: success() && ${{ steps.omni-cache.outputs.cache-hit != 'true' }}
+        if: ${{ success() && steps.omni-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: build_vendor/omniroute_runtime
