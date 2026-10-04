@@ -4890,12 +4890,38 @@ class BrahmaLive:
             msg = f"Fallback reply failed: {e}"
             print(f"[BRAHMA EVO] ⚠️ {msg}")
             self.ui.write_log(f"ERR: {msg}")
+            failure_reply = (
+                "I couldn't complete that request. "
+                "The available execution paths did not return a verified result."
+            )
             try:
-                self.ui.finish_task_workspace(msg, "Reply failed.", 100)
+                self.ui.record_chat_event({
+                    "role": "assistant",
+                    "text": failure_reply,
+                    "source": source or "local",
+                })
             except Exception:
                 pass
-            if not self.ui.muted:
-                self.ui.set_state("LISTENING")
+            try:
+                acknowledge = getattr(self.ui, "acknowledge_chat_response", None)
+                if acknowledge:
+                    acknowledge()
+            except Exception:
+                pass
+            try:
+                if not self.ui.muted:
+                    self.speak(failure_reply, proactive=True, use_live=False)
+            except Exception:
+                pass
+            try:
+                self.ui.finish_task_workspace(failure_reply, "Reply failed.", 0)
+            except Exception:
+                pass
+            try:
+                if self.ui.muted:
+                    self.ui.set_state("LISTENING")
+            except Exception:
+                pass
 
     def set_speaking(self, value: bool):
         with self._speaking_lock:
