@@ -383,6 +383,139 @@ class OpenRouterClient:
                 time.sleep(RETRY_DELAY)
         return {}
 
+    def _call_omniroute_tool_capable(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        tool_executor,
+        model: Optional[str] = None,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        temperature: float = DEFAULT_TEMPERATURE,
+        max_rounds: int = 6,
+    ) -> Optional[str]:
+        """Run tool calling through the local OmniRoute gateway before direct fallback."""
+        if not self._omniroute_enabled() or not self._omniroute.ensure_ready():
+            return None
+
+        normalized_messages = [dict(message) for message in messages]
+        normalized_tools = self._normalize_tools(tools)
+        if not normalized_tools:
+            return None
+        declared_names = {
+            str(item.get("function", {}).get("name") or "").strip()
+            for item in normalized_tools
+        }
+        declared_names.discard("")
+
+        headers = {"Content-Type": "application/json"}
+        import os
+        omni_key = os.environ.get("BRAHMA_OMNIROUTE_API_KEY", "").strip()
+        if omni_key:
+            headers["Authorization"] = f"Bearer {omni_key}"
+
+        for round_index in range(max(1, int(max_rounds))):
+            payload = {
+                "model": model or "auto",
+                "messages": normalized_messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "tools": normalized_tools,
+                "tool_choice": "auto",
+            }
+            try:
+                response = requests.post(
+                    self._omniroute.base_url + "/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=REQUEST_TIMEOUT,
+                )
+            except Exception as exc:
+                logger.warning(f"[OmniRoute] tool request failed; using direct provider fallback: {exc}")
+                return None
+
+            if response.status_code in {401, 403, 404, 429, 500, 502, 503, 504}:
+                logger.warning(
+                    f"[OmniRoute] tool request HTTP {response.status_code}; "
+                    "using direct provider fallback"
+                )
+                return None
+            if response.status_code != 200:
+                logger.warning(
+                    f"[OmniRoute] tool request unexpected HTTP {response.status_code}; "
+                    "using direct provider fallback"
+                )
+                return None
+
+            try:
+                data = response.json()
+            except Exception as exc:
+                logger.warning(f"[OmniRoute] invalid tool response JSON: {exc}")
+                return None
+
+            message = data.get("choices", [{}])[0].get("message", {}) or {}
+            content = message.get("content", "")
+            if isinstance(content, list):
+                content = "".join(
+                    str(item.get("text", ""))
+                    for item in content
+                    if isinstance(item, dict) and item.get("text")
+                )
+
+            tool_calls = message.get("tool_calls") or []
+            if not tool_calls:
+                text = str(content or "").strip()
+                if text:
+                    return text
+                finish_reason = str(
+                    data.get("choices", [{}])[0].get("finish_reason") or ""
+                )
+                if finish_reason == "length":
+                    continue
+                return None
+
+            normalized_messages.append({
+                "role": "assistant",
+                "content": content,
+                "tool_calls": tool_calls,
+            })
+
+            for index, call in enumerate(tool_calls):
+                fn = call.get("function", {}) if isinstance(call, dict) else {}
+                name = str(fn.get("name") or "").strip()
+                raw_args = fn.get("arguments", {})
+                if isinstance(raw_args, str):
+                    try:
+                        args = json.loads(raw_args) if raw_args.strip() else {}
+                        result = None
+                    except json.JSONDecodeError as exc:
+                        args = {}
+                        result = f"Tool arguments were invalid JSON: {exc}"
+                elif isinstance(raw_args, dict):
+                    args = raw_args
+                    result = None
+                else:
+                    args = {}
+                    result = "The model returned invalid tool arguments."
+
+                if not name:
+                    result = "The model returned a tool call without a name."
+                elif name not in declared_names:
+                    result = f"The model requested an undeclared tool: {name}."
+                elif result is None:
+                    try:
+                        result = tool_executor(name, args)
+                    except Exception as exc:
+                        result = f"Tool '{name}' failed: {exc}"
+
+                call_id = str(call.get("id") or f"omni_tool_{round_index}_{index}")
+                normalized_messages.append({
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": str(result),
+                })
+
+        return None
+
     def chat_with_tools(
         self,
         messages: list[dict],
@@ -393,7 +526,19 @@ class OpenRouterClient:
         temperature: float = DEFAULT_TEMPERATURE,
         max_rounds: int = 6,
     ) -> str:
-        """Run a bounded OpenAI-compatible tool-calling conversation with local tool execution."""
+        """Run a bounded OmniRoute-first tool-calling conversation with direct fallback."""
+        omni_result = self._call_omniroute_tool_capable(
+            messages=messages,
+            tools=tools,
+            tool_executor=tool_executor,
+            model=model or "auto",
+            max_tokens=max_tokens,
+            temperature=temperature,
+            max_rounds=max_rounds,
+        )
+        if omni_result:
+            return omni_result
+
         normalized_messages = [dict(message) for message in messages]
         candidates = []
         if model and not model.startswith("auto"):
@@ -424,7 +569,8 @@ class OpenRouterClient:
             content = message.get("content", "")
             if isinstance(content, list):
                 content = "".join(
-                    str(item.get("text", "")) for item in content
+                    str(item.get("text", ""))
+                    for item in content
                     if isinstance(item, dict) and item.get("text")
                 )
             last_content = str(content or "").strip()
@@ -474,7 +620,6 @@ class OpenRouterClient:
                 normalized_messages.append({
                     "role": "tool",
                     "tool_call_id": call_id,
-                    "name": name or "unknown",
                     "content": str(result),
                 })
 
