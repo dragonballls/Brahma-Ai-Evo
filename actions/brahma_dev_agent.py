@@ -1,4 +1,5 @@
 from core.user_paths import get_user_data_dir
+from core.runtime_paths import API_CONFIG_PATH, APP_SETTINGS_PATH
 from core.github_research import GitHubResearchClient
 import os
 import re
@@ -19,8 +20,7 @@ def get_base_dir() -> Path:
     return Path(__file__).resolve().parent.parent
 
 BASE_DIR = get_base_dir()
-API_CONFIG_PATH = get_user_data_dir() / "config" / "api_keys.json"
-SETTINGS_PATH = get_user_data_dir() / "config" / "app_settings.json"
+SETTINGS_PATH = APP_SETTINGS_PATH
 
 # ==============================================================================
 # NATIVE CLAUDE-CODE TOOLS (REBRANDED FOR BRAHMA DEV)
