@@ -92,7 +92,15 @@ jobs:
           if (-not (Test-Path "dist/BrahmaEvoSupervisor.exe")) { throw "BrahmaEvoSupervisor.exe was not produced." }
           Copy-Item "dist/BrahmaEvoSupervisor.exe" "dist/BrahmaEvo/BrahmaEvoSupervisor.exe" -Force
 
+      - name: Restore cached Brahma Evo payload
+        id: payload-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: dist/BrahmaEvoPayload.zip
+          key: windows-payload-${{ hashFiles('dist/BrahmaEvo/**') }}
+
       - name: Pack verified Brahma Evo payload
+        if: ${{ steps.payload-cache.outputs.cache-hit != 'true' }}
         shell: pwsh
         run: |
           python scripts/pack_windows_payload.py dist/BrahmaEvo dist/BrahmaEvoPayload.zip
@@ -104,6 +112,13 @@ jobs:
         run: |
           python scripts/pack_windows_payload.py dist/BrahmaEvo dist/BrahmaEvoPayload.zip --verify
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Cache verified Brahma Evo payload
+        if: ${{ success() && steps.payload-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: dist/BrahmaEvoPayload.zip
+          key: windows-payload-${{ hashFiles('dist/BrahmaEvo/**') }}
 
       - name: Build setup wizard
         shell: pwsh
@@ -146,14 +161,14 @@ jobs:
         run: |
           if (-not (Test-Path "dist/BrahmaEvo_Setup.exe")) { throw "Setup wizard missing." }
           if (-not (Test-Path "dist/BrahmaEvoPayload.zip")) { throw "Setup payload archive missing." }
-          python scripts/pack_windows_payload.py dist/BrahmaEvo dist/BrahmaEvoPayload.zip --verify
+          if ((Get-Item "dist/BrahmaEvoPayload.zip").Length -le 0) { throw "Setup payload archive is empty." }
 
       - name: Smoke-test setup wizard
         shell: pwsh
         run: |
           $exe = (Resolve-Path "dist/BrahmaEvo_Setup.exe").Path
           $proc = Start-Process -FilePath $exe -PassThru
-          Start-Sleep -Seconds 8
+          Start-Sleep -Seconds 5
           if ($proc.HasExited) {
             $exitCode = $proc.ExitCode
             throw "BrahmaEvo_Setup.exe exited during launch smoke test with code $exitCode."
@@ -169,7 +184,8 @@ jobs:
             "dist/BrahmaEvo/BrahmaEvo.exe",
             "dist/BrahmaEvo/BrahmaEvoSupervisor.exe",
             "dist/BrahmaEvoSupervisor.exe",
-            "dist/BrahmaEvo_Setup.exe"
+            "dist/BrahmaEvo_Setup.exe",
+            "dist/BrahmaEvoPayload.zip"
           )
           Get-FileHash $files -Algorithm SHA256 |
             ForEach-Object { "$($_.Hash)  $($_.Path)" } |
@@ -179,8 +195,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Brahma-Evo-Windows-App-${{ github.run_number }}
+          compression-level: 0
           path: |
-            dist/BrahmaEvo
+            dist/BrahmaEvoPayload.zip
+            dist/BrahmaEvo/BrahmaEvo.exe
+            dist/BrahmaEvo/BrahmaEvoSupervisor.exe
             dist/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
@@ -189,8 +208,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Brahma-Evo-Windows-Installer-${{ github.run_number }}
+          compression-level: 0
           path: |
             dist/BrahmaEvo_Setup.exe
+            dist/BrahmaEvoPayload.zip
             dist/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
