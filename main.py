@@ -502,9 +502,12 @@ def _gemini_tool_reply(
                         )
                     )
 
+                # Gemini's documented manual function-calling flow appends
+                # FunctionResponse parts as a user turn before requesting the
+                # model's final response.
                 working_contents.append(
                     types.Content(
-                        role="tool",
+                        role="user",
                         parts=function_parts,
                     )
                 )
