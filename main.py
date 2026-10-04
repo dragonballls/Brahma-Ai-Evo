@@ -46,6 +46,7 @@ import subprocess
 import sys
 import time
 import traceback
+import hashlib
 import os
 import pyperclip
 from pathlib import Path
@@ -2511,6 +2512,11 @@ class BrahmaLive:
         self._use_openrouter_first = False
         self._voice_command_gate = VoiceCommandGate()
         self._voice_tool_gate = VoiceToolExecutionGate()
+        # Conversational self-repair coordination. A single runtime failure is
+        # healed in the background once, while duplicate copies of the same
+        # traceback are coalesced so one bug cannot spawn competing patches.
+        self._auto_heal_lock = threading.Lock()
+        self._auto_heal_active: set[str] = set()
         self._barge_in_gate = BargeInGate(required_blocks=2, minimum_level=40.0)
         self._playback_generation = PlaybackGeneration()
         self._pending_attention: dict | None = None
@@ -2573,6 +2579,81 @@ class BrahmaLive:
         ]
         self._idle_speech_thread = threading.Thread(target=self._idle_speech_loop, daemon=True)
         self._idle_speech_thread.start()
+
+    def _schedule_conversational_auto_heal(self, traceback_text: str, *, source: str = "") -> None:
+        """Automatically diagnose/repair a detected first-party runtime error.
+
+        This is deliberately asynchronous so the current conversation can keep
+        responding while AutoHeal analyzes and validates a surgical patch.
+        Duplicate traceback signatures are coalesced until the first attempt
+        finishes. Protected/unrecognized failures are simply reported by AutoHeal
+        without modifying source.
+        """
+        text = str(traceback_text or "").strip()
+        if not text:
+            return
+
+        # Normalize volatile line/path details enough to coalesce repeated copies
+        # of the same exception while retaining the actual exception and frames.
+        normalized = re.sub(r"line \d+", "line <n>", text)
+        normalized = re.sub(r"0x[0-9a-fA-F]+", "0x<addr>", normalized)
+        signature = hashlib.sha256(normalized.encode("utf-8", errors="replace")).hexdigest()[:16]
+
+        with self._auto_heal_lock:
+            if signature in self._auto_heal_active:
+                return
+            self._auto_heal_active.add(signature)
+
+        def _heal() -> None:
+            try:
+                from actions.auto_heal_engine import AutoHealEngine
+                AutoHealEngine.record_last_error(text)
+                context = (
+                    "Automatic conversational recovery. "
+                    f"Failure source: {source or 'runtime operation'}. "
+                    "Repair only a genuine first-party software defect; do not "
+                    "change behavior merely to mask transient external failures."
+                )
+                try:
+                    self.speak("I hit a software issue. I’m diagnosing it and checking for a safe repair now.")
+                except Exception:
+                    pass
+                result = AutoHealEngine.heal_traceback(text, context_notes=context)
+                try:
+                    self.ui.write_log(f"[AutoHeal] Conversational recovery: {result}")
+                except Exception:
+                    pass
+
+                if result.get("success"):
+                    try:
+                        self.speak(
+                            "I found the problem and applied a validated repair. "
+                            "The previous version was backed up."
+                        )
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        self.speak(
+                            "I found the error, but it did not pass my safe auto-repair checks, "
+                            "so I left the code unchanged."
+                        )
+                    except Exception:
+                        pass
+            except Exception as exc:
+                try:
+                    self.ui.write_log(f"[AutoHeal] Conversational recovery failed: {exc}")
+                except Exception:
+                    pass
+            finally:
+                with self._auto_heal_lock:
+                    self._auto_heal_active.discard(signature)
+
+        threading.Thread(
+            target=_heal,
+            daemon=True,
+            name="brahma-conversational-autoheal",
+        ).start()
 
     def stop_background_services(self) -> None:
         """Stop Brahma-owned passive workers and local input hooks during application exit."""
@@ -6233,6 +6314,12 @@ class BrahmaLive:
                 AutoHealEngine.record_last_error(tb_str)
             except Exception:
                 pass
+            # The error is now repaired proactively while the conversation
+            # continues; the main tool response still returns immediately.
+            self._schedule_conversational_auto_heal(
+                tb_str,
+                source=f"tool:{name}",
+            )
             self.speak_error(name, e)
 
         try:
