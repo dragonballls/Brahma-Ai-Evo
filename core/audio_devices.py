@@ -262,6 +262,20 @@ def is_bluetooth_device_name(name: str) -> bool:
     return any(token in low for token in _BLUETOOTH_HINTS)
 
 
+def default_device_name(kind: str) -> str:
+    """Return the current host-default device name for input or output."""
+    try:
+        import sounddevice as sd
+        default = sd.default.device
+        idx = default[0] if kind == "input" else default[1]
+        if idx is None or int(idx) < 0:
+            return ""
+        return _device_name(int(idx))
+    except Exception as exc:
+        print(f"[Audio] default_device_name({kind}) failed: {exc}")
+        return ""
+
+
 def _device_name(idx: int) -> str:
     try:
         import sounddevice as sd
@@ -299,7 +313,7 @@ def resolve_voice_input(input_name: str, output_name: str):
     Bluetooth cannot do stereo playback while its microphone is open.
     """
     wanted = (input_name or "").strip()
-    output = (output_name or "").strip()
+    output = (output_name or "").strip() or default_device_name("output")
     normal = resolve(wanted, "input") if wanted else None
 
     # No selected Bluetooth output: preserve the user's microphone choice.
