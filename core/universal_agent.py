@@ -16,6 +16,8 @@ import json
 from typing import Any
 
 from core.dynamic_registry import DynamicToolRegistry
+from core.memory_reflection import reflective_memory
+from core.software_harness import software_harnesses
 
 
 def _result_text(result: Any) -> str:
@@ -70,6 +72,8 @@ def run(request: str, *, context: str = "", max_repair_attempts: int = 2) -> dic
     from core.skill_forge import SkillForge
 
     synthesis_context = (
+        "Agent-native harness context:\n" + software_harnesses.context_for(request) + "\n\n" +
+        "Reflective memory context:\n" + reflective_memory.reflect(request) + "\n\n" +
         "This is an automatic last-resort capability expansion. "
         "Prefer Brahma's existing native tools when possible. "
         "Do not create unrestricted shell execution, credential extraction, "

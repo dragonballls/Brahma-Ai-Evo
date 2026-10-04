@@ -924,6 +924,49 @@ TOOL_DECLARATIONS = [
         },
     },
     {
+        "name": "agent_tasks",
+        "description": (
+            "Inspect Brahma's persistent agent-task ledger. It records heartbeat-style task "
+            "runs, verification evidence, blocked/failed work, and completion history without "
+            "starting a separate service."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "recent | recover_stale",
+                },
+                "limit": {
+                    "type": "INTEGER",
+                    "description": "Number of recent records to return (default 20).",
+                },
+            },
+            "required": ["action"],
+        },
+    },
+    {
+        "name": "software_harnesses",
+        "description": (
+            "Inspect agent-native software harnesses available to Brahma. Harnesses provide "
+            "deterministic, inspectable application interfaces with structured output."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "list | match",
+                },
+                "request": {
+                    "type": "STRING",
+                    "description": "Optional task/application description to match.",
+                },
+            },
+            "required": ["action"],
+        },
+    },
+    {
         "name": "background_monitor",
         "description": (
             "Sets up a background monitor to check crypto prices, system RAM/CPU, or website uptime. "
@@ -5809,6 +5852,27 @@ class BrahmaLive:
                         result = "Choose status, scan_now, pause, or resume."
                 except Exception as exc:
                     result = f"Evolution action failed safely: {exc}"
+            elif name == "agent_tasks":
+                from core.agent_task_ledger import ledger
+                action = (args.get("action") or "recent").strip().lower()
+                if action == "recent":
+                    limit = int(args.get("limit") or 20)
+                    result = json.dumps(ledger.recent(limit), ensure_ascii=False)
+                elif action == "recover_stale":
+                    recovered = ledger.recover_stale()
+                    result = json.dumps({"recovered": recovered}, ensure_ascii=False)
+                else:
+                    result = "Choose recent or recover_stale."
+            elif name == "software_harnesses":
+                from core.software_harness import software_harnesses
+                action = (args.get("action") or "list").strip().lower()
+                request = str(args.get("request") or "").strip()
+                if action == "list":
+                    result = json.dumps(software_harnesses.discover(), ensure_ascii=False)
+                elif action == "match":
+                    result = json.dumps(software_harnesses.match(request), ensure_ascii=False)
+                else:
+                    result = "Choose list or match."
             elif name == "universal_task":
                 request = str(args.get("request") or "").strip()
                 context = str(args.get("context") or "").strip()
@@ -6222,7 +6286,11 @@ class BrahmaLive:
             traceback.print_exc()
             try:
                 from actions.auto_heal_engine import AutoHealEngine
-                AutoHealEngine.record_last_error(tb_str)
+                AutoHealEngine.auto_heal_runtime_error(
+                    tb_str,
+                    context_notes=f"Tool execution failed while handling the user's request. Tool={name}.",
+                    notify=lambda msg: self.ui.write_log(f"[AutoHeal] {msg}"),
+                )
             except Exception:
                 pass
             self.speak_error(name, e)
@@ -6962,6 +7030,35 @@ class BrahmaLive:
                 break
             await asyncio.sleep(5)
 
+def _install_auto_heal_exception_hooks() -> None:
+    """Route uncaught background-thread exceptions into the guarded healer."""
+    try:
+        import threading
+        from actions.auto_heal_engine import AutoHealEngine
+
+        previous_hook = getattr(threading, "excepthook", None)
+
+        def _hook(args):
+            try:
+                tb = "".join(traceback.format_exception(args.exc_type, args.exc_value, args.exc_traceback))
+                AutoHealEngine.auto_heal_runtime_error(
+                    tb,
+                    context_notes=f"Uncaught exception in background thread {getattr(args.thread, 'name', 'unknown')}.",
+                    notify=lambda msg: _startup_log(f"[AUTOHEAL] {msg}"),
+                )
+            except Exception:
+                pass
+            if previous_hook:
+                try:
+                    previous_hook(args)
+                except Exception:
+                    pass
+
+        threading.excepthook = _hook
+    except Exception:
+        pass
+
+
 def _main_impl():
     global _SINGLE_INSTANCE_GUARD
     _startup_log("main entered")
@@ -7416,29 +7513,18 @@ def _main_impl():
     if desktop_controller is None or not desktop_controller.enabled:
         ui.show_main()
 
-    # CI-only packaged smoke tests need a deterministic clean exit after the
-    # application has initialized. This is never enabled during normal use.
+    # Packaged Windows smoke tests need an explicit readiness signal rather than
+    # inferring successful startup solely from process lifetime.
     if BRAHMA_EVO_TEST_MODE:
-        try:
-            test_exit_seconds = max(
-                1.0,
-                float(os.environ.get("BRAHMA_EVO_TEST_AUTO_EXIT_SECONDS", "5")),
-            )
-        except (TypeError, ValueError):
-            test_exit_seconds = 5.0
-
-        def _finish_packaged_smoke_test():
-            _startup_log("packaged smoke-test auto-exit")
+        smoke_marker = os.environ.get("BRAHMA_EVO_SMOKE_MARKER", "").strip()
+        if smoke_marker:
             try:
-                ui.root.quit()
-            except Exception:
-                pass
-            try:
-                ui.root.destroy()
-            except Exception:
-                pass
-
-        threading.Timer(test_exit_seconds, _finish_packaged_smoke_test).start()
+                marker_path = Path(smoke_marker).expanduser()
+                marker_path.parent.mkdir(parents=True, exist_ok=True)
+                marker_path.write_text("ready\n", encoding="utf-8")
+                _startup_log(f"packaged smoke-test readiness marker written: {marker_path}")
+            except Exception as exc:
+                _startup_log(f"packaged smoke-test readiness marker failed: {exc}")
 
     ui.root.mainloop()
 
@@ -7461,11 +7547,21 @@ def main():
             _startup_log("BootSentry recovered the previous patched state before startup.")
     except Exception as exc:
         _startup_log(f"BootSentry recovery check skipped: {exc}")
+    completed = False
     try:
         _main_impl()
+        completed = True
     finally:
         guard.release()
         _SINGLE_INSTANCE_GUARD = None
+
+    # A clean shutdown invalidates any older fatal-crash evidence. Crash paths
+    # skip this block and the outer __main__ handler records the fresh traceback.
+    if completed:
+        try:
+            FATAL_CRASH_LOG_PATH.unlink(missing_ok=True)
+        except Exception as exc:
+            _startup_log(f"could not clear stale fatal crash log: {exc}")
 
 if __name__ == "__main__":
     import sys

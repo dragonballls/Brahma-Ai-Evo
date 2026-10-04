@@ -231,6 +231,13 @@ class UnifiedAIClient:
         # Ground every conversational cloud/local call in the same functional
         # self-model so "I/me/you/my phone" and action-state claims stay distinct.
         try:
+            from core.memory_reflection import reflective_memory
+            reflection = reflective_memory.reflect(prompt, limit=6)
+            if reflection:
+                system = system.rstrip() + "\n\n" + reflection
+        except Exception:
+            pass
+        try:
             from core.self_model import self_awareness
             system = system.rstrip() + "\n\n" + self_awareness.prompt_block(prompt)
         except Exception:

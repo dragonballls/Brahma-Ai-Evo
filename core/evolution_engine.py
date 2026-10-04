@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from core.github_research import GitHubResearchClient
+from core.agent_task_ledger import AgentTaskLedger
 from core.user_paths import get_user_data_dir
 
 logger = logging.getLogger("BrahmaEvolution")
@@ -88,6 +89,7 @@ class EvolutionEngine:
         self._state_lock = threading.Lock()
         self._state_path = get_user_data_dir() / "evolution" / "state.json"
         self._state = self._load_state()
+        self.task_ledger = AgentTaskLedger()
 
     @property
     def interval_seconds(self) -> int:
@@ -192,6 +194,12 @@ class EvolutionEngine:
     def start(self) -> bool:
         if self._thread and self._thread.is_alive():
             return False
+        try:
+            recovered = self.task_ledger.recover_stale()
+            if recovered:
+                logger.info("Recovered %d stale agent-task records.", recovered)
+        except Exception:
+            pass
         self._stop.clear()
         self._wake.clear()
         self._thread = threading.Thread(
@@ -472,7 +480,23 @@ class EvolutionEngine:
                 self._notify(f"Evolution scan skipped safely: {reason}.")
                 return {"success": False, "status": "skipped", "reason": reason}
 
+            task_id = self.task_ledger.create(
+                "Continuous evolution heartbeat",
+                "Research current GitHub sources and stage one safe, verified Brahma improvement.",
+                source="evolution_engine",
+                metadata={"force": bool(force)},
+            )
+            self.task_ledger.heartbeat(task_id, state="running", evidence="Repository readiness check passed.")
+
             research = self._research_domains()
+            self.task_ledger.heartbeat(
+                task_id,
+                state="running",
+                evidence=(
+                    "Research completed across %d domains; %d repositories found."
+                    % (len(research), sum(len(x["result"].get("repositories", [])) for x in research))
+                ),
+            )
             self._set_state(
                 last_cycle_at=_utc_now(),
                 last_error=None,
@@ -487,8 +511,9 @@ class EvolutionEngine:
             fresh = [item for item in opportunities if not self._has_seen_goal(item["goal"])]
             if not fresh:
                 self._set_state(last_success_at=_utc_now())
+                self.task_ledger.complete(task_id, evidence="No new high-confidence candidate met the safety threshold.")
                 self._notify("Evolution scan complete: no new high-confidence improvement met the safety threshold.")
-                return {"success": True, "status": "no_candidate"}
+                return {"success": True, "status": "no_candidate", "task_id": task_id}
 
             # Stage only the highest-confidence opportunity. This prevents a
             # background process from building a queue of competing branches.
@@ -508,6 +533,11 @@ class EvolutionEngine:
                 return_to_base=True,
             )
             self._record_candidate(best, state="pending", checkpoint=checkpoint)
+            self.task_ledger.complete(
+                task_id,
+                evidence="Verified checkpoint %s created; main unchanged." % checkpoint.get("checkpoint_id"),
+                metadata={"checkpoint_id": checkpoint.get("checkpoint_id"), "goal": best["goal"]},
+            )
             self._set_state(last_success_at=_utc_now())
             self._notify(
                 f"Evolution candidate verified and checkpointed: {checkpoint.get('checkpoint_id')}. "
@@ -518,8 +548,14 @@ class EvolutionEngine:
                 "status": "pending",
                 "candidate": best,
                 "checkpoint": checkpoint,
+                "task_id": task_id,
             }
         except Exception as exc:
+            if "task_id" in locals():
+                try:
+                    self.task_ledger.fail(task_id, str(exc))
+                except Exception:
+                    pass
             self._set_state(last_error=str(exc), last_cycle_at=_utc_now())
             self._notify(f"Evolution cycle stopped safely: {exc}")
             return {"success": False, "status": "error", "error": str(exc)}

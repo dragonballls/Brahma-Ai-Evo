@@ -22,6 +22,8 @@ from typing import Any
 
 import requests
 
+from core.capability_sources import matching_sources
+
 API_BASE = "https://api.github.com"
 API_VERSION = "2026-03-10"
 DEFAULT_TIMEOUT = 12
@@ -244,6 +246,30 @@ class GitHubResearchClient:
                 errors.append(str(exc))
                 break
 
+        # Curated high-value sources are explicit research seeds. They never
+        # bypass the normal GitHub ranking/licence checks and are not executable
+        # dependencies.
+        curated = matching_sources(text)
+        for source in curated[:8]:
+            name = str(source.get("repository") or "").strip()
+            if not name:
+                continue
+            try:
+                repo = self.get_repository(name)
+            except GitHubResearchError:
+                repo = {
+                    "full_name": name,
+                    "html_url": f"https://github.com/{name}",
+                    "description": f"Curated research source: {', '.join(source.get('patterns', []))}",
+                    "stargazers_count": 0,
+                    "forks_count": 0,
+                    "updated_at": None,
+                    "license": {"spdx_id": source.get("license", "unknown")},
+                }
+            repo["brahma_curated"] = True
+            repo["brahma_patterns"] = list(source.get("patterns") or ())
+            repo_items.append(repo)
+
         try:
             code_items = self.search_code(keyword_query, topn=code_limit)
         except GitHubResearchError as exc:
@@ -302,7 +328,14 @@ class GitHubResearchClient:
                     "score": round(_result_score(repo, match_scores.get(name, 0.0), match_counts.get(name, 0)), 2),
                 }
             )
-        ranked.sort(key=lambda item: item["score"], reverse=True)
+        curated_names = {str(x.get("repository") or "") for x in curated}
+        ranked.sort(
+            key=lambda item: (
+                1 if item.get("repository") in curated_names else 0,
+                item["score"],
+            ),
+            reverse=True,
+        )
 
         matches = []
         seen_match_keys: set[str] = set()
@@ -332,6 +365,7 @@ class GitHubResearchClient:
             "terms": terms,
             "repositories": ranked[:repo_limit],
             "code_matches": matches,
+            "curated_sources": curated[:8],
             "errors": errors[:3],
         }
         self._cache_put(digest, result)
@@ -363,6 +397,15 @@ class GitHubResearchClient:
             )
             if repo.get("description"):
                 lines.append(f"   {repo['description']}")
+
+        curated = result.get("curated_sources") or []
+        if curated:
+            lines.extend(["", "Curated research sources:"])
+            for idx, source in enumerate(curated[:8], 1):
+                lines.append(
+                    f"{idx}. {source.get('repository')} | license={source.get('license')} | "
+                    f"patterns={', '.join(source.get('patterns') or ())}"
+                )
 
         lines.extend(["", "Relevant code-file matches to inspect:"])
         for idx, match in enumerate(result.get("code_matches", [])[:12], 1):

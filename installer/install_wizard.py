@@ -57,8 +57,10 @@ class InstallThread(QThread):
             self.progress.emit(80)
             self.status.emit("Creating shortcuts...")
             
-            # Create Desktop Shortcut
-            exe_path = os.path.join(self.target_dir, 'BrahmaEvo.exe')
+            # Create shortcuts to the external recovery supervisor whenever present.
+            exe_path = os.path.join(self.target_dir, 'BrahmaEvo_Supervisor.exe')
+            if not os.path.exists(exe_path):
+                exe_path = os.path.join(self.target_dir, 'BrahmaEvo.exe')
             if os.path.exists(exe_path):
                 shell = win32com.client.Dispatch("WScript.Shell")
                 
@@ -88,6 +90,19 @@ class InstallThread(QThread):
                     shortcut_sm.save()
                 except Exception as e:
                     print(f"Failed to create start menu shortcut: {e}")
+
+                # Windows logon startup keeps the external recovery process alive after reboot.
+                try:
+                    startup_dir = shell.SpecialFolders("Startup")
+                    startup_link = os.path.join(startup_dir, "Brahma Evo Recovery.lnk")
+                    startup_shortcut = shell.CreateShortCut(startup_link)
+                    startup_shortcut.Targetpath = exe_path
+                    startup_shortcut.WorkingDirectory = self.target_dir
+                    startup_shortcut.IconLocation = os.path.join(self.target_dir, 'assets', 'Brahma_Lite_Logo.ico')
+                    startup_shortcut.WindowStyle = 1
+                    startup_shortcut.save()
+                except Exception as e:
+                    print(f"Failed to create startup shortcut: {e}")
 
             self.progress.emit(100)
             self.status.emit("Installation Complete!")
@@ -301,7 +316,9 @@ class InstallWizard(QWidget):
         self.lbl_status.setStyleSheet("color: #ff4444;")
         
     def launch_app(self):
-        exe_path = os.path.join(self.install_path, 'BrahmaEvo.exe')
+        exe_path = os.path.join(self.install_path, 'BrahmaEvo_Supervisor.exe')
+        if not os.path.exists(exe_path):
+            exe_path = os.path.join(self.install_path, 'BrahmaEvo.exe')
         if os.path.exists(exe_path):
             os.startfile(exe_path)
         self.close()

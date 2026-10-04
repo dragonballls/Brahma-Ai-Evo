@@ -16,6 +16,7 @@ import py_compile
 import re
 import shutil
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -44,6 +45,7 @@ PROTECTED_CORE_FILES = {
     "requirements.txt",
     "version.txt",
     "install_wizard.py",
+    "recovery_supervisor.py",
 }
 
 
@@ -201,6 +203,12 @@ class SafetySandbox:
 class AutoHealEngine:
     """Orchestrates error analysis, hotfix synthesis, verification, and application."""
 
+    # Runtime-triggered healing is deliberately deduplicated and serialized so
+    # repeated failures cannot spawn an unbounded patch storm.
+    _auto_lock = threading.RLock()
+    _auto_inflight: set[str] = set()
+    _auto_recent: Dict[str, float] = {}
+    AUTO_HEAL_COOLDOWN_SECONDS = 300.0
     _last_error: Optional[str] = None
 
     @classmethod
@@ -218,6 +226,75 @@ class AutoHealEngine:
         """Returns recent patch history."""
         history = SafetySandbox._load_history()
         return list(reversed(history))[:limit]
+
+    @classmethod
+    def _error_fingerprint(cls, traceback_text: str) -> str:
+        import hashlib
+        parsed = TracebackAnalyzer.parse(traceback_text)
+        material = "|".join(
+            str(parsed.get(key) or "")
+            for key in ("target_file", "line_number", "exception_type", "exception_message")
+        )
+        return hashlib.sha256(material.encode("utf-8", "replace")).hexdigest()[:20]
+
+    @classmethod
+    def auto_heal_runtime_error(
+        cls,
+        traceback_text: str,
+        *,
+        context_notes: str = "",
+        notify: Optional[Callable[[str], None]] = None,
+    ) -> Dict[str, Any]:
+        """Schedule one guarded background repair for a runtime exception."""
+        tb = str(traceback_text or "").strip()
+        if not tb:
+            return {"success": False, "status": "ignored", "message": "No traceback."}
+        cls.record_last_error(tb)
+        fingerprint = cls._error_fingerprint(tb)
+        now = time.time()
+        with cls._auto_lock:
+            previous = cls._auto_recent.get(fingerprint, 0.0)
+            if fingerprint in cls._auto_inflight:
+                return {"success": False, "status": "inflight", "fingerprint": fingerprint}
+            if now - previous < cls.AUTO_HEAL_COOLDOWN_SECONDS:
+                return {"success": False, "status": "cooldown", "fingerprint": fingerprint}
+            cls._auto_inflight.add(fingerprint)
+            cls._auto_recent[fingerprint] = now
+
+        def _worker() -> None:
+            try:
+                result = cls.heal_traceback(
+                    tb,
+                    context_notes=(
+                        "Automatic runtime self-healing was triggered while Brahma was actively running. "
+                        "Make the smallest safe first-party fix possible; preserve existing interfaces.\n"
+                        + str(context_notes or "")
+                    ),
+                )
+                if notify:
+                    message = (
+                        "Automatic self-healing completed: "
+                        + str(result.get("message") or "patch applied.")
+                        if result.get("success")
+                        else "Automatic self-healing could not safely apply a fix: "
+                        + str(result.get("message") or result.get("error") or "unknown error")
+                    )
+                    try:
+                        notify(message)
+                    except Exception:
+                        pass
+            except Exception:
+                logger.exception("Automatic runtime self-healing failed.")
+            finally:
+                with cls._auto_lock:
+                    cls._auto_inflight.discard(fingerprint)
+
+        threading.Thread(
+            target=_worker,
+            daemon=True,
+            name="brahma-auto-heal",
+        ).start()
+        return {"success": True, "status": "scheduled", "fingerprint": fingerprint}
 
     @classmethod
     def heal_traceback(
@@ -381,7 +458,22 @@ Output ONLY a strict JSON object with these exact keys:
 }}
 Do NOT include markdown fences outside the JSON. Return only the valid JSON object.
 """
-        # 1. Primary: Google Gemini (Native directly via google.genai)
+        # 1. Primary: OmniRoute-backed unified cloud client.
+        try:
+            from llm_client import client as unified_client
+            data = unified_client.chat_json(
+                prompt,
+                system="You are an expert Python auto-patching engineer. Return ONLY the requested JSON.",
+                model="auto",
+                max_tokens=3500,
+            )
+            if isinstance(data, dict) and "target_chunk" in data and "replacement_chunk" in data:
+                data["success"] = True
+                return data
+        except Exception as unified_err:
+            logger.warning("[AutoHeal] Unified cloud synthesis unavailable: %s", unified_err)
+
+        # 2. Compatibility fallback: direct Gemini.
         gemini_key = _get_gemini_api_key()
         if gemini_key:
             try:
@@ -410,7 +502,7 @@ Do NOT include markdown fences outside the JSON. Return only the valid JSON obje
             except Exception as g_err:
                 logger.warning(f"[AutoHeal] Gemini synthesis failed: {g_err}")
 
-        # 2. Fallback: Unified AI Client (llm_client.py)
+        # 3. Fallback: Unified AI Client (llm_client.py)
         try:
             from llm_client import client as unified_client
             resp_text = unified_client.chat(prompt, temperature=0.1)
@@ -425,7 +517,7 @@ Do NOT include markdown fences outside the JSON. Return only the valid JSON obje
         except Exception as u_err:
             logger.warning(f"[AutoHeal] Unified AI client fallback failed: {u_err}")
 
-        # 3. Fallback: OpenRouter client
+        # 4. Fallback: OpenRouter client
         try:
             import or_client
             resp_text = or_client.chat(prompt, system="You are an expert Python auto-patching engineer. Return strict JSON.")

@@ -26,6 +26,8 @@ jobs:
         run: python -m compileall -q .
       - name: Run whole-repository integrity scanner
         run: python -m unittest tests.test_repository_integrity -v
+      - name: Run auto-heal and crash-recovery regressions
+        run: python -m unittest tests.test_auto_heal_runtime tests.test_recovery_supervisor -v
       - name: Run low-power guards
         run: python -m unittest tests.test_low_power_guards -v
       - name: Run runtime consistency regressions

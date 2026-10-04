@@ -15892,10 +15892,13 @@ class BrahmaConnectDevicesPage(QFrame):
         self.refresh(force=True)
 
 class _RootShim:
+    """Small Tk-compatible facade used by the rest of Brahma while running on Qt."""
     def __init__(self, app: QApplication):
         self._app = app
+
     def mainloop(self):
         self._app.exec()
+
     def protocol(self, *_):
         pass
 
