@@ -528,17 +528,15 @@ def _cloud_tool_reply(
     provider: str,
     tool_executor,
 ) -> str:
-    """Route a cloud action through exactly the selected provider."""
+    """Route one cloud action through the canonical selected provider."""
     candidate = normalize_provider(provider)
-    errors = []
-
-    try:
-        if candidate == "Gemini":
-            return _gemini_tool_reply(
-                prompt,
-                system_prompt,
-                tool_executor,
-            )
+    if candidate == "Gemini":
+        return _gemini_tool_reply(
+            prompt,
+            system_prompt,
+            tool_executor,
+        )
+    if candidate == "OpenRouter":
         return openrouter_client.chat_with_tools(
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -551,12 +549,7 @@ def _cloud_tool_reply(
             temperature=0.35,
             max_rounds=6,
         )
-    except Exception as exc:
-        errors.append(f"{candidate}: {exc}")
-
-    raise RuntimeError("Cloud tool routing failed. " + " | ".join(errors))
-
-
+    raise RuntimeError(f"Unsupported cloud provider: {candidate}")
 def _ig_gemini_reply(username: str, text: str) -> str:
     system_prompt = (
         "You are Brahma Evo, an AI personal assistant acting on behalf of your user. "
