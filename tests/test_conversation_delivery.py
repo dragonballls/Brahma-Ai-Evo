@@ -59,6 +59,24 @@ class ConversationDeliveryTests(unittest.TestCase):
 
         self.assertEqual(result, "Direct fallback answer")
 
+    def test_multi_model_reasoning_is_available_only_as_text_recovery(self):
+        from pathlib import Path
+
+        main = Path("main.py").read_text(encoding="utf-8")
+        self.assertIn("def _looks_like_action_request(text: str) -> bool:", main)
+        self.assertIn("from core.intelligence_orchestrator import orchestrator", main)
+        self.assertIn("Multi-model Intelligence", main)
+        self.assertIn("not _looks_like_action_request(text)", main)
+        self.assertIn('"intelligence_orchestration_enabled"', Path("core/intelligence_orchestrator.py").read_text(encoding="utf-8"))
+
+    def test_action_requests_are_kept_on_tool_capable_path(self):
+        from pathlib import Path
+
+        main = Path("main.py").read_text(encoding="utf-8")
+        helper = main.split("def _looks_like_action_request", 1)[1].split("def _build_task_plan", 1)[0]
+        for phrase in ("open ", "run ", "send ", "delete ", "control ", "fix "):
+            self.assertIn(phrase, helper)
+
     def test_openrouter_tool_loop_executes_tool_and_returns_final_text(self):
         client = UnifiedAIClient()
         client._provider = "OpenRouter"
