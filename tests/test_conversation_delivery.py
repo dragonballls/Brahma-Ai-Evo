@@ -185,6 +185,13 @@ class ConversationDeliveryTests(unittest.TestCase):
         self.assertIn("self.speak(reply, proactive=True, use_live=False)", source)
         self.assertIn("def _speak_native(self, text: str, profile)", source)
 
+    def test_legacy_log_chat_bridge_requires_pending_command_state(self):
+        from pathlib import Path
+
+        source = Path("ui.py").read_text(encoding="utf-8")
+        self.assertIn('and self._chat_source_queue', source)
+        self.assertIn("Proactive Brahma messages", source)
+
     def test_text_fallback_uses_canonical_assistant_delivery(self):
         from pathlib import Path
 
