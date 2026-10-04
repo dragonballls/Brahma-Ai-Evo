@@ -220,6 +220,75 @@ class AutoHealEngine:
         return list(reversed(history))[:limit]
 
     @classmethod
+    def _error_fingerprint(cls, traceback_text: str) -> str:
+        import hashlib
+        parsed = TracebackAnalyzer.parse(traceback_text)
+        material = "|".join(
+            str(parsed.get(key) or "")
+            for key in ("target_file", "line_number", "exception_type", "exception_message")
+        )
+        return hashlib.sha256(material.encode("utf-8", "replace")).hexdigest()[:20]
+
+    @classmethod
+    def auto_heal_runtime_error(
+        cls,
+        traceback_text: str,
+        *,
+        context_notes: str = "",
+        notify: Optional[Callable[[str], None]] = None,
+    ) -> Dict[str, Any]:
+        """Schedule one guarded background repair for a runtime exception."""
+        tb = str(traceback_text or "").strip()
+        if not tb:
+            return {"success": False, "status": "ignored", "message": "No traceback."}
+        cls.record_last_error(tb)
+        fingerprint = cls._error_fingerprint(tb)
+        now = time.time()
+        with cls._auto_lock:
+            previous = cls._auto_recent.get(fingerprint, 0.0)
+            if fingerprint in cls._auto_inflight:
+                return {"success": False, "status": "inflight", "fingerprint": fingerprint}
+            if now - previous < cls.AUTO_HEAL_COOLDOWN_SECONDS:
+                return {"success": False, "status": "cooldown", "fingerprint": fingerprint}
+            cls._auto_inflight.add(fingerprint)
+            cls._auto_recent[fingerprint] = now
+
+        def _worker() -> None:
+            try:
+                result = cls.heal_traceback(
+                    tb,
+                    context_notes=(
+                        "Automatic runtime self-healing was triggered while Brahma was actively running. "
+                        "Make the smallest safe first-party fix possible; preserve existing interfaces.\n"
+                        + str(context_notes or "")
+                    ),
+                )
+                if notify:
+                    message = (
+                        "Automatic self-healing completed: "
+                        + str(result.get("message") or "patch applied.")
+                        if result.get("success")
+                        else "Automatic self-healing could not safely apply a fix: "
+                        + str(result.get("message") or result.get("error") or "unknown error")
+                    )
+                    try:
+                        notify(message)
+                    except Exception:
+                        pass
+            except Exception:
+                logger.exception("Automatic runtime self-healing failed.")
+            finally:
+                with cls._auto_lock:
+                    cls._auto_inflight.discard(fingerprint)
+
+        threading.Thread(
+            target=_worker,
+            daemon=True,
+            name="brahma-auto-heal",
+        ).start()
+        return {"success": True, "status": "scheduled", "fingerprint": fingerprint}
+
+    @classmethod
     def heal_traceback(
         cls,
         traceback_text: str,
