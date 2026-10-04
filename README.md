@@ -36,6 +36,12 @@
 - **On-the-Fly Code Synthesis**: When asked to execute a task outside its built-in toolkit, Brahma identifies the capability gap, writes a brand-new Python tool directly into `features/`, tests it inside an isolated sandbox ("The Crucible"), and auto-registers it dynamically without restarting the application.
 - **Persistent Vault**: All forged skills are saved in your `features/` directory and hot-reloaded automatically.
 
+### 3. ♻️ Continuous Guarded Evolution
+- **Background GitHub Research**: Brahma periodically surveys new repositories and implementation patterns across its capability areas instead of waiting for a manual self-coding request.
+- **Multi-Source Selection**: Candidate improvements must be supported by multiple independent, relevant GitHub sources with license metadata before they can be considered.
+- **Safe Staging**: Brahma creates a durable checkpoint, runs its verification gates, and returns the checkout to `main`.
+- **No Silent Main Changes**: Continuous evolution never auto-promotes a background candidate; the verified checkpoint remains pending until explicitly approved, preserving the existing approve/undo safety model.
+- **Low-Power Operation**: The controller sleeps between scans and skips research while Offline Mode is enabled or when the working tree is not safe to modify.
 ### 3. 🛡️ Proactive Auto-Heal Engine
 - **Self-Repairing Codebase**: Background sentry catches runtime exceptions, analyzes tracebacks using LLM root-cause reasoning, applies dynamic patches to the faulty code, and presents an interactive HUD repair telemetry card without crashing the assistant.
 

@@ -905,6 +905,25 @@ TOOL_DECLARATIONS = [
         },
     },
     {
+        "name": "evolution",
+        "description": (
+            "Manage Brahma's continuous self-evolution controller. It periodically researches "
+            "new GitHub repositories and implementation patterns, ranks safe capability improvements, "
+            "and stages at most one fully verified checkpoint at a time. It never auto-promotes changes "
+            "to main. Use status, scan_now, pause, or resume."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "status | scan_now | pause | resume",
+                },
+            },
+            "required": ["action"],
+        },
+    },
+    {
         "name": "background_monitor",
         "description": (
             "Sets up a background monitor to check crypto prices, system RAM/CPU, or website uptime. "
@@ -5767,6 +5786,29 @@ class BrahmaLive:
                         result = "Choose preview, approve, undo, or list."
                 except Exception as exc:
                     result = f"Self-coding action failed safely: {exc}"
+            elif name == "evolution":
+                action = (args.get("action") or "status").strip().lower()
+                from core.evolution_engine import get_evolution_engine
+                evolution = get_evolution_engine()
+                try:
+                    if action == "status":
+                        result = json.dumps(evolution.status(), ensure_ascii=False)
+                    elif action == "scan_now":
+                        result_obj = await loop.run_in_executor(
+                            None,
+                            lambda: evolution.run_cycle(force=True),
+                        )
+                        result = json.dumps(result_obj, ensure_ascii=False)
+                    elif action == "pause":
+                        evolution.pause()
+                        result = "Continuous evolution paused safely. Existing checkpoints were not changed."
+                    elif action == "resume":
+                        evolution.resume()
+                        result = "Continuous evolution resumed."
+                    else:
+                        result = "Choose status, scan_now, pause, or resume."
+                except Exception as exc:
+                    result = f"Evolution action failed safely: {exc}"
             elif name == "universal_task":
                 request = str(args.get("request") or "").strip()
                 context = str(args.get("context") or "").strip()
@@ -7040,6 +7082,15 @@ def _main_impl():
     ui.show_main()
     _startup_log("ui shown")
 
+    # Continuous evolution researches GitHub while Brahma is idle, then stages
+    # at most one verified checkpoint. It never changes main without approval.
+    if evolution_engine is not None and not BRAHMA_EVO_TEST_MODE:
+        try:
+            evolution_engine.start()
+            _startup_log("continuous evolution controller started")
+        except Exception as exc:
+            _startup_log(f"continuous evolution controller start skipped: {exc}")
+
     if desktop_controller is not None:
         def _restore_desktop_mode():
             try:
@@ -7097,6 +7148,16 @@ def _main_impl():
     except Exception:
         plugin_manager = None
 
+    evolution_engine = None
+    try:
+        from core.evolution_engine import get_evolution_engine
+        evolution_engine = get_evolution_engine(
+            repo_path=BASE_DIR,
+            notify=lambda message: ui.write_log(f"[Evolution] {message}"),
+        )
+    except Exception as exc:
+        _startup_log(f"continuous evolution controller init skipped: {exc}")
+
     live_holder = {"instance": None}
 
     def _cleanup_runtime_services() -> None:
@@ -7105,6 +7166,11 @@ def _main_impl():
         if live is not None:
             try:
                 live.stop_background_services()
+            except Exception:
+                pass
+        if evolution_engine is not None:
+            try:
+                evolution_engine.stop()
             except Exception:
                 pass
         try:

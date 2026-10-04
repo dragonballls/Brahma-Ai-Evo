@@ -249,7 +249,13 @@ Implement the goal directly in the current repository and leave the working tree
         if status.stdout.strip():
             raise SelfCodingError("Rollback left the repository dirty.")
 
-    def preview(self, goal: str, *, max_passes: int = 1) -> dict[str, Any]:
+    def preview(
+        self,
+        goal: str,
+        *,
+        max_passes: int = 1,
+        return_to_base: bool = False,
+    ) -> dict[str, Any]:
         goal = str(goal or "").strip()
         if not goal:
             raise SelfCodingError("A non-empty self-coding goal is required.")
@@ -302,7 +308,7 @@ Implement the goal directly in the current repository and leave the working tree
                 state="pending",
             )
             self._save(checkpoint)
-            return {
+            result = {
                 "success": True,
                 "state": "pending",
                 "checkpoint_id": checkpoint_id,
@@ -311,6 +317,15 @@ Implement the goal directly in the current repository and leave the working tree
                 "commits": commits,
                 "message": "Verified checkpoint created; explicit approval is required before main changes.",
             }
+            if return_to_base:
+                switched = self._git("switch", base_branch)
+                if switched.returncode != 0:
+                    raise SelfCodingError(
+                        switched.stderr.strip()
+                        or "Verified checkpoint was created but the base branch could not be restored."
+                    )
+                result["returned_to_base"] = base_branch
+            return result
         except Exception as exc:
             try:
                 self._rollback(baseline, branch, base_branch)
