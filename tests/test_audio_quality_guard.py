@@ -64,10 +64,13 @@ class AudioQualityGuardTests(unittest.TestCase):
             query_devices=lambda: fake_devices,
             query_hostapis=lambda: [{"name": "DirectSound"}],
         )
-        with patch.object(audio_devices, "resolve", return_value=4),
-             patch.object(audio_devices, "_device_name", return_value="WH-1000XM5 Hands-Free AG Audio"),
-             patch.dict(sys.modules, {"sounddevice": fake_sd}),
-             patch.object(audio_devices, "_usable", return_value=True):            selected, rerouted = audio_devices.resolve_voice_input(
+        with (
+            patch.object(audio_devices, "resolve", return_value=4),
+            patch.object(audio_devices, "_device_name", return_value="WH-1000XM5 Hands-Free AG Audio"),
+            patch.dict(sys.modules, {"sounddevice": fake_sd}),
+            patch.object(audio_devices, "_usable", return_value=True),
+        ):
+            selected, rerouted = audio_devices.resolve_voice_input(
                 "WH-1000XM5 Hands-Free AG Audio",
                 "WH-1000XM5 Stereo",
             )
