@@ -489,6 +489,14 @@ class EvolutionEngine:
             self.task_ledger.heartbeat(task_id, state="running", evidence="Repository readiness check passed.")
 
             research = self._research_domains()
+            self.task_ledger.heartbeat(
+                task_id,
+                state="running",
+                evidence=(
+                    "Research completed across %d domains; %d repositories found."
+                    % (len(research), sum(len(x["result"].get("repositories", [])) for x in research))
+                ),
+            )
             self._set_state(
                 last_cycle_at=_utc_now(),
                 last_error=None,
@@ -503,8 +511,9 @@ class EvolutionEngine:
             fresh = [item for item in opportunities if not self._has_seen_goal(item["goal"])]
             if not fresh:
                 self._set_state(last_success_at=_utc_now())
+                self.task_ledger.complete(task_id, evidence="No new high-confidence candidate met the safety threshold.")
                 self._notify("Evolution scan complete: no new high-confidence improvement met the safety threshold.")
-                return {"success": True, "status": "no_candidate"}
+                return {"success": True, "status": "no_candidate", "task_id": task_id}
 
             # Stage only the highest-confidence opportunity. This prevents a
             # background process from building a queue of competing branches.
