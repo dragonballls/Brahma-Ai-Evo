@@ -529,6 +529,11 @@ def _cloud_tool_reply(
     tool_executor,
 ) -> str:
     """Route one cloud action through the canonical selected provider."""
+    try:
+        from core.language_policy import prompt_block as language_prompt_block
+        system_prompt = system_prompt.rstrip() + "\n\n" + language_prompt_block()
+    except Exception:
+        pass
     candidate = normalize_provider(provider)
     if candidate == "Gemini":
         return _gemini_tool_reply(
