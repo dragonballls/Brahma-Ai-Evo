@@ -60,18 +60,27 @@ class SkillForge:
         # before synthesizing anything from scratch. Failure to reach GitHub is
         # non-fatal; the local verifier remains the final safety boundary.
         github_dossier = ""
+        offline_mode = False
         try:
-            from core.github_research import GitHubResearchClient
-            researcher = GitHubResearchClient()
-            research = researcher.research_goal(goal, repo_limit=6, code_limit=10)
-            github_dossier = researcher.format_dossier(research, max_chars=9000)
-            logger.info(
-                "[Forge] GitHub-first research completed: %d repositories, %d code matches",
-                len(research.get("repositories", [])),
-                len(research.get("code_matches", [])),
-            )
-        except Exception as exc:
-            logger.warning("[Forge] GitHub-first research unavailable; continuing locally: %s", exc)
+            from memory import config_manager
+            offline_mode = bool(config_manager.get_setting("offline_mode_enabled", False))
+        except Exception:
+            pass
+        if not offline_mode:
+            try:
+                from core.github_research import GitHubResearchClient
+                researcher = GitHubResearchClient()
+                research = researcher.research_goal(goal, repo_limit=6, code_limit=10)
+                github_dossier = researcher.format_dossier(research, max_chars=9000)
+                logger.info(
+                    "[Forge] GitHub-first research completed: %d repositories, %d code matches",
+                    len(research.get("repositories", [])),
+                    len(research.get("code_matches", [])),
+                )
+            except Exception as exc:
+                logger.warning("[Forge] GitHub-first research unavailable; continuing locally: %s", exc)
+        else:
+            logger.info("[Forge] Offline Mode enabled; skipping GitHub research.")
 
         combined_context = "\n\n".join(
             item for item in (str(context_hints or "").strip(), github_dossier.strip()) if item
