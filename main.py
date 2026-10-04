@@ -6375,14 +6375,29 @@ class BrahmaLive:
                                     def _process_local_speech(pcm_bytes):
                                         try:
                                             import speech_recognition as sr
-                                            r = sr.Recognizer()
+                                            recognizer = sr.Recognizer()
                                             audio_data = sr.AudioData(pcm_bytes, SEND_SAMPLE_RATE, 2)
-                                            text_cmd = r.recognize_google(audio_data)
+                                            text_cmd = ""
+                                            try:
+                                                # Offline mode must never send microphone audio to a network recognizer.
+                                                text_cmd = recognizer.recognize_sphinx(audio_data)
+                                            except Exception as local_exc:
+                                                if bool(app_cfg.get("offline_mode_enabled", False)):
+                                                    self.ui.write_log(
+                                                        f"ERR: Offline speech recognition unavailable: {local_exc}. "
+                                                        "Use text input or install the bundled PocketSphinx dependency."
+                                                    )
+                                                    return
+                                                text_cmd = recognizer.recognize_google(audio_data)
                                             if text_cmd and len(text_cmd.strip()) > 1:
                                                 print(f"[Local AI Voice] 🎙️ Heard: {text_cmd}")
                                                 self._on_text_command(text_cmd, source="mic")
-                                        except Exception:
-                                            pass
+                                        except Exception as exc:
+                                            if bool(app_cfg.get("offline_mode_enabled", False)):
+                                                self.ui.write_log(
+                                                    f"ERR: Local microphone transcription failed: {exc}"
+                                                )
+
                                     threading.Thread(target=_process_local_speech, args=(captured,), daemon=True).start()
 
                     # Local/offline/text-fallback voice owns microphone recognition;
