@@ -1,0 +1,145 @@
+"""Constrained command/open adapter used by the legacy AgentExecutor planner.
+
+This module intentionally does not provide unrestricted shell execution. It supports
+the planner's existing benign "open this file/app" workflow and a small allowlist of
+read-only diagnostic commands. Complex UI actions should use computer_control.
+"""
+
+from __future__ import annotations
+
+import os
+import shlex
+import subprocess
+from pathlib import Path
+from typing import Any
+
+SAFE_COMMANDS = {
+    "whoami",
+    "hostname",
+    "ipconfig",
+    "tasklist",
+    "systeminfo",
+    "where",
+    "dir",
+    "echo",
+    "python",
+    "node",
+}
+
+
+def _resolve_user_path(value: str) -> Path:
+    target = (value or "").strip().strip('"')
+    aliases = {
+        "desktop": Path.home() / "Desktop",
+        "downloads": Path.home() / "Downloads",
+        "documents": Path.home() / "Documents",
+        "pictures": Path.home() / "Pictures",
+        "music": Path.home() / "Music",
+        "videos": Path.home() / "Videos",
+    }
+    lowered = target.casefold()
+    if lowered in aliases:
+        return aliases[lowered]
+    return Path(target).expanduser().resolve()
+
+
+def _open_target(task: str) -> str | None:
+    lowered = task.casefold().strip()
+    if not lowered.startswith("open "):
+        return None
+
+    remainder = task.strip()[5:].strip()
+    if " with notepad" in remainder.casefold():
+        remainder = remainder[:remainder.casefold().rfind(" with notepad")].strip()
+        if " on desktop" in remainder.casefold():
+            remainder = remainder[:remainder.casefold().rfind(" on desktop")].strip()
+        target = _resolve_user_path(str(Path.home() / "Desktop" / remainder))
+        if not target.exists():
+            target = _resolve_user_path(remainder)
+        if target.exists() and os.name == "nt":
+            subprocess.Popen(
+                ["notepad.exe", str(target)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            return f"Opened {target} with Notepad."
+
+    # Try the literal target first, then common user folders.
+    candidates = [_resolve_user_path(remainder)]
+    for root in ("Desktop", "Downloads", "Documents"):
+        candidates.append(Path.home() / root / remainder)
+
+    target = next((p for p in candidates if p.exists()), None)
+    if target is None:
+        return f"Could not find the requested file or application: {remainder}"
+
+    if os.name == "nt":
+        os.startfile(str(target))
+    else:
+        subprocess.Popen(
+            ["xdg-open", str(target)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    return f"Opened {target}."
+
+
+def cmd_control(
+    parameters: dict[str, Any] | None = None,
+    response: Any = None,
+    player: Any = None,
+    session_memory: Any = None,
+    speak: Any = None,
+) -> str:
+    p = parameters or {}
+    task = str(p.get("task") or p.get("command") or "").strip()
+    if not task:
+        return "A command or open task is required."
+
+    opened = _open_target(task)
+    if opened:
+        return opened
+
+    try:
+        argv = shlex.split(task, posix=os.name != "nt")
+    except ValueError as exc:
+        return f"Invalid command syntax: {exc}"
+
+    if not argv:
+        return "A command or open task is required."
+
+    command_name = Path(argv[0]).name.casefold()
+    if command_name.endswith(".exe"):
+        command_name = command_name[:-4]
+
+    if command_name not in SAFE_COMMANDS:
+        return (
+            f"Command '{argv[0]}' is not allowed through the legacy command adapter. "
+            "Use computer_control for supported desktop actions."
+        )
+
+    try:
+        proc = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            stdin=subprocess.DEVNULL,
+            check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"Command failed to start: {exc}"
+
+    output = (proc.stdout or proc.stderr or "").strip()
+    if proc.returncode != 0:
+        return f"Command failed (exit {proc.returncode}): {output[:2000]}"
+    return output[:8000] or f"Command '{argv[0]}' completed successfully."
+
+
+run = cmd_control
