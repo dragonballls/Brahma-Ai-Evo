@@ -88,7 +88,7 @@ class ConversationDeliveryTests(unittest.TestCase):
 
     def test_silent_live_turn_has_text_fallback_and_reconnect_signal(self):
         source = __import__("pathlib").Path("main.py").read_text(encoding="utf-8")
-        self.assertIn("degraded_turn = bool(full_in) and not full_out and turn_audio_bytes < 256", source)
+        self.assertIn("degraded_turn = bool(full_in) and not full_out and not had_usable_audio", source)
         self.assertIn('name="live-silent-turn-fallback"', source)
         self.assertIn("Live turn produced transcription but no usable response audio/text.", source)
 
