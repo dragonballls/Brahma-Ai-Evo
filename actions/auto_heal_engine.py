@@ -16,6 +16,7 @@ import py_compile
 import re
 import shutil
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -44,6 +45,7 @@ PROTECTED_CORE_FILES = {
     "requirements.txt",
     "version.txt",
     "install_wizard.py",
+    "recovery_supervisor.py",
 }
 
 
