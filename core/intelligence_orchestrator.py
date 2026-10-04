@@ -118,6 +118,7 @@ def trim(s:str,n:int)->str:
 
 
 _MODEL_CACHE = None
+_ENSEMBLE_EXECUTOR = ThreadPoolExecutor(max_workers=12, thread_name_prefix="BrahmaEnsemble")
 _PROVIDER_KEYS = {
     "openai":"openai_api_key", "anthropic":"anthropic_api_key", "gemini":"gemini_api_key",
     "openrouter":"openrouter_api_key", "groq":"groq_api_key", "xai":"xai_api_key",
@@ -201,6 +202,75 @@ class IntelligenceOrchestrator:
         if not bool(c.get("enabled",True)) or not allowed():
             return self._call(prompt,system,"auto",4096,0.5,history)
         p=profile_for(prompt,profile,c); pc=self._cfg(p,c); count=int(pc.get("specialists",0))
+        panel=_ensemble_models(c,pc)
+        if panel:
+            ctx=trim(context,int(c.get("max_context_chars",14000)))
+            roles=_ensemble_roles(p,len(panel))
+            futures={}
+            for index,((provider,model),role) in enumerate(zip(panel,roles),1):
+                expert_system=(
+                    system+
+                    "\n\nYou are one independent member of Brahma Evo's cross-provider reasoning panel. "
+                    "Solve the original request yourself. Do not assume another model is correct or defer "
+                    "to provider reputation. State important assumptions, evidence, and uncertainty. "
+                    f"Specialist focus: {role}."
+                )
+                expert_prompt=(
+                    f"Original request:\n{prompt}\n\nContext:\n{ctx or '[none]'}\n\n"
+                    "Produce your best complete analysis/answer independently. Do not discuss the panel."
+                )
+                futures[_ENSEMBLE_EXECUTOR.submit(
+                    self._call,
+                    expert_prompt,
+                    expert_system,
+                    model,
+                    int(pc.get("max_tokens",4096)),
+                    float(pc.get("temperature",0.35)),
+                    history,
+                )]=(index,provider,model)
+            panel_results=[]
+            for future in as_completed(futures):
+                index,provider,model=futures[future]
+                try:
+                    answer=str(future.result() or "").strip()
+                    if answer:
+                        panel_results.append((index,provider,model,answer))
+                except Exception as exc:
+                    log.warning("ensemble provider %s failed: %s",provider,exc)
+            panel_results.sort(key=lambda row:row[0])
+            if panel_results:
+                evidence="\\n\\n".join(
+                    f"=== Source {i} ===\\n{trim(answer,9000)}"
+                    for i,_provider,_model,answer in panel_results
+                )
+                judge_model=str(pc.get("synthesis_model","auto/smart"))
+                synth_system=(
+                    system+
+                    "\n\nYou are Brahma Evo's independent consensus judge. The sources are anonymized. "
+                    "Judge substance rather than model brand. Compare agreements and contradictions, "
+                    "identify unique useful insights and missing evidence, and resolve conflicts using "
+                    "logic and evidence rather than majority vote. Return one authoritative answer to "
+                    "the original request."
+                )
+                synth_prompt=(
+                    f"Original request:\n{prompt}\n\nContext:\n{ctx or '[none]'}\n\n"
+                    f"Independent panel analyses:\n{evidence}"
+                )
+                try:
+                    result=self._call(
+                        synth_prompt,synth_system,judge_model,
+                        int(pc.get("max_tokens",4096)),0.2,None
+                    )
+                    if result and result.strip():
+                        log.info(
+                            "cross-provider ensemble profile=%s panel=%d providers=%s",
+                            p,len(panel_results),",".join(row[1] for row in panel_results)
+                        )
+                        return result.strip()
+                except Exception as exc:
+                    log.warning("ensemble synthesis failed: %s",exc)
+                # Graceful degradation: one surviving expert is still better than a failed request.
+                return panel_results[0][3]
         if count<=0:return self._call(prompt,system,str(pc.get("model","auto/fast")),int(pc.get("max_tokens",2048)),float(pc.get("temperature",0.35)),history)
         count=min(count,int(c.get("max_specialists",2)),max(1,int(c.get("parallel_workers",4))))
         roles=self._roles(p)[:count]; ctx=trim(context,int(c.get("max_context_chars",14000))); results=[]
