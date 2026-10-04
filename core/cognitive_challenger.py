@@ -183,16 +183,34 @@ def compare(brahma: dict, astra: dict) -> dict:
         else:
             ties += 1
     mean_delta = round(sum(deltas) / len(deltas), 2)
+    brahma_mean = round(sum(float(bmap[c]["score"]) for c in common) / len(common), 2)
+    astra_mean = round(sum(float(amap[c]["score"]) for c in common) / len(common), 2)
+    win_rate = wins / len(common)
+    # "Beats Astra" is intentionally a strict claim: enough common cases,
+    # positive average margin, and more wins than losses with a 60% win rate.
+    robust_win = (
+        len(common) >= 8
+        and mean_delta >= 3.0
+        and wins > losses
+        and win_rate >= 0.60
+    )
     return {
         "suite_id": SUITE_ID,
-        "comparison": "brahma-beats-astra" if mean_delta > 0 else (
-            "astra-beats-brahma" if mean_delta < 0 else "tie"
+        "comparison": "brahma-beats-astra" if robust_win else (
+            "astra-beats-brahma" if mean_delta < -3.0 else "not-proven"
         ),
         "common_cases": len(common),
-        "brahma_mean": round(sum(float(bmap[c]["score"]) for c in common) / len(common), 2),
-        "astra_mean": round(sum(float(amap[c]["score"]) for c in common) / len(common), 2),
+        "brahma_mean": brahma_mean,
+        "astra_mean": astra_mean,
         "mean_delta": mean_delta,
+        "win_rate": round(win_rate, 3),
         "wins": wins,
         "losses": losses,
         "ties": ties,
+        "robust_win": robust_win,
+        "claim_requirements": {
+            "min_common_cases": 8,
+            "min_mean_delta": 3.0,
+            "min_win_rate": 0.60,
+        },
     }
