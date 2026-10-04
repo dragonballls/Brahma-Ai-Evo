@@ -4774,27 +4774,64 @@ class BrahmaLive:
             # 5. Ultimate offline safety net: Local Brain fallback
             if not reply and local_brain.is_available():
                 try:
-                    res = local_brain.chat_complete([
+                    safety_messages = [
                         {"role": "system", "content": "You are Brahma Evo, the autonomous desktop operating system. You control this PC. Never claim you cannot do automations."},
-                        {"role": "user", "content": request_text}
-                    ], model=local_model_target, tools=TOOL_DECLARATIONS, focus_core=True)
-                    msg_net = res.get("choices", [{}])[0].get("message", {})
-                    tc_net = msg_net.get("tool_calls")
+                        {"role": "user", "content": request_text},
+                    ]
+                    res = local_brain.chat_complete(
+                        safety_messages,
+                        model=local_model_target,
+                        tools=TOOL_DECLARATIONS,
+                        focus_core=True,
+                    )
+                    msg_net = res.get("choices", [{}])[0].get("message", {}) or {}
+                    tc_net = msg_net.get("tool_calls") or []
                     if tc_net:
-                        call_id = tc_net[0].get("id", "call_local")
-                        fn_name = tc_net[0].get("function", {}).get("name")
-                        fn_args_raw = tc_net[0].get("function", {}).get("arguments", {})
-                        if isinstance(fn_args_raw, str):
-                            try:
-                                fn_args = json.loads(fn_args_raw)
-                            except Exception:
-                                fn_args = {}
-                        else:
-                            fn_args = fn_args_raw or {}
-                        reply = self._execute_tool_sync(fn_name, fn_args, call_id)
+                        safety_messages.append({
+                            "role": "assistant",
+                            "content": msg_net.get("content", ""),
+                            "tool_calls": tc_net,
+                        })
+                        last_result = ""
+                        for index, tc in enumerate(tc_net):
+                            call_id = tc.get("id", f"local_safety_{index}")
+                            fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+                            fn_name = str(fn.get("name") or "").strip()
+                            raw_args = fn.get("arguments", {})
+                            if isinstance(raw_args, str):
+                                try:
+                                    fn_args = json.loads(raw_args) if raw_args.strip() else {}
+                                except Exception:
+                                    fn_args = {}
+                            else:
+                                fn_args = raw_args if isinstance(raw_args, dict) else {}
+                            last_result = self._execute_tool_sync(fn_name, fn_args, call_id) if fn_name else "The local model returned an unnamed tool call."
+                            safety_messages.append({
+                                "role": "tool",
+                                "tool_call_id": call_id,
+                                "name": fn_name or "unknown",
+                                "content": str(last_result),
+                            })
+                        try:
+                            followup = local_brain.chat_complete(
+                                safety_messages,
+                                model=local_model_target,
+                                temperature=0.3,
+                                tools=TOOL_DECLARATIONS,
+                                focus_core=False,
+                            )
+                            reply = str(
+                                followup.get("choices", [{}])[0]
+                                .get("message", {})
+                                .get("content", "")
+                                or ""
+                            ).strip() or last_result
+                        except Exception:
+                            reply = last_result
                     else:
-                        reply = msg_net.get("content", "").strip()
+                        reply = str(msg_net.get("content") or "").strip()
                     print(f"[BRAHMA EVO] 🔒 Local Brain offline safety net answered ({local_model_target})!")
+
                 except Exception as e_net:
                     print(f"[BRAHMA EVO] ⚠️ Offline Local Brain fallback failed: {e_net}")
             self._deliver_assistant_reply(reply, source=source)
