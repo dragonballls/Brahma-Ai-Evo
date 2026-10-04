@@ -69,6 +69,11 @@ class RuntimeConsistencyTests(unittest.TestCase):
 
             self.assertEqual(remaining, 0)
 
+    def test_memory_persistence_uses_atomic_json_writer(self):
+        source = (self.root / "memory" / "memory_manager.py").read_text(encoding="utf-8")
+        self.assertIn("def _atomic_write_json(path: Path, value: object)", source)
+        self.assertIn("_atomic_write_json(MEMORY_PATH, memory)", source)
+        self.assertIn("_atomic_write_json(CHAT_HISTORY_PATH, history[-MAX_HISTORY_LENGTH:])", source)
     def test_identity_persistence_is_atomic(self):
         source = self.read("core/identity.py")
         self.assertIn("self._lock = threading.RLock()", source)
