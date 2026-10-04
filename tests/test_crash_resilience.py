@@ -45,6 +45,49 @@ class CrashResilienceTests(unittest.TestCase):
         self.assertIn("crash_fingerprint", source)
         self.assertIn("rolled_back_after_crash", source)
 
+    def test_healthy_startup_clears_crash_marker(self):
+        import tempfile
+        from core import boot_sentry
+
+        with tempfile.TemporaryDirectory() as tmp:
+            marker = Path(tmp) / "fatal.log"
+            marker.write_text("old crash", encoding="utf-8")
+            with patch.object(boot_sentry, "CRASH_LOG", marker):
+                boot_sentry.mark_startup_healthy()
+            self.assertFalse(marker.exists())
+
+    def test_recent_patch_crash_defers_to_boot_rollback(self):
+        import tempfile
+        import json
+        import time
+        from core import crash_recovery
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            crash = root / "fatal.log"
+            history = root / "history.json"
+            state = root / "state.json"
+            target = root / "demo.py"
+            backup = root / "demo.bak"
+            crash.write_text("Traceback\nValueError: boom", encoding="utf-8")
+            target.write_text("broken", encoding="utf-8")
+            backup.write_text("good", encoding="utf-8")
+            now = time.time()
+            history.write_text(json.dumps([{
+                "patch_id": "patch1",
+                "timestamp": now - 1,
+                "target_file": str(target),
+                "backup_path": str(backup),
+                "status": "applied",
+            }]), encoding="utf-8")
+            with (
+                patch.object(crash_recovery, "FATAL_CRASH_LOG_PATH", crash),
+                patch.object(crash_recovery, "PATCH_HISTORY_PATH", history),
+                patch.object(crash_recovery, "CRASH_RECOVERY_STATE_PATH", state),
+            ):
+                result = crash_recovery.recover_from_crash(crash_time=now)
+            self.assertEqual(result["action"], "defer_boot_rollback")
+
     def test_crash_signature_is_stable(self):
         from core.crash_recovery import _fingerprint
         trace = "Traceback (most recent call last):\n  File 'demo.py', line 4\nValueError: boom"
