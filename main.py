@@ -3963,14 +3963,17 @@ class BrahmaLive:
             "Output ONLY valid JSON: {\"intent\": \"...\", \"reply_text\": \"...\"}"
         )
         try:
-            client = genai.Client(api_key=_get_api_key(), http_options={"api_version": "v1beta"})
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=f"{system_prompt}\n\nUser Response: {text}",
-                config={"temperature": 0.1, "response_mime_type": "application/json"}
+            from llm_client import client as unified_cloud_client
+            data = unified_cloud_client.chat_json(
+                f"{system_prompt}\n\nUser Response: {text}",
+                system=system_prompt,
+                model="auto",
+                max_tokens=512,
             )
-            data = json.loads(response.text.strip())
-            return data.get("intent", "IGNORE"), data.get("reply_text", "")
+            return (
+                str(data.get("intent", "IGNORE") or "IGNORE"),
+                str(data.get("reply_text", "") or ""),
+            )
         except Exception:
             lower = text.lower()
             if any(c in lower for c in ("cancel", "stop", "skip", "never mind", "abort", "don't reply", "do not reply")):
