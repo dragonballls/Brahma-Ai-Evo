@@ -68,6 +68,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Test-Path "dist/BrahmaEvo/BrahmaEvo.exe")) { throw "BrahmaEvo.exe was not produced." }
 
+      - name: Build crash supervisor
+        shell: pwsh
+        run: |
+          python -m PyInstaller installer/BrahmaEvo_Supervisor.spec --noconfirm
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path "dist/BrahmaEvoSupervisor.exe")) { throw "BrahmaEvoSupervisor.exe was not produced." }
+          Copy-Item "dist/BrahmaEvoSupervisor.exe" "dist/BrahmaEvo/BrahmaEvoSupervisor.exe" -Force
+
       - name: Build setup wizard
         shell: pwsh
         run: |
@@ -75,7 +83,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Test-Path "dist/BrahmaEvo_Setup.exe")) { throw "BrahmaEvo_Setup.exe was not produced." }
 
-      - name: Smoke-test packaged Brahma Evo
+      - name: Smoke-test packaged Brahma Evo through supervisor
         shell: pwsh
         env:
           BRAHMA_EVO_TEST_MODE: "1"
@@ -83,16 +91,26 @@ jobs:
           BRAHMA_SKIP_STARTUP_UPDATE: "1"
           BRAHMA_EVOLUTION_ENABLED: "0"
         run: |
-          $exe = (Resolve-Path "dist/BrahmaEvo/BrahmaEvo.exe").Path
-          $proc = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -PassThru
+          $supervisor = (Resolve-Path "dist/BrahmaEvo/BrahmaEvoSupervisor.exe").Path
+          $proc = Start-Process -FilePath $supervisor -WorkingDirectory (Split-Path $supervisor) -PassThru
           if (-not $proc.WaitForExit(120000)) {
             try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
-            throw "BrahmaEvo.exe did not exit during the packaged smoke test."
+            throw "BrahmaEvoSupervisor.exe did not exit during the packaged smoke test."
           }
           if ($proc.ExitCode -ne 0) {
-            throw "BrahmaEvo.exe exited with code $($proc.ExitCode)."
+            throw "BrahmaEvoSupervisor.exe exited with code $($proc.ExitCode)."
           }
-          Write-Host "Packaged Brahma Evo smoke test passed with exit code 0."
+          Write-Host "Packaged Brahma Evo supervisor + child smoke test passed with exit code 0."
+
+      - name: Smoke-test packaged crash recovery mode
+        shell: pwsh
+        run: |
+          $supervisor = (Resolve-Path "dist/BrahmaEvo/BrahmaEvoSupervisor.exe").Path
+          $proc = Start-Process -FilePath $supervisor -ArgumentList "--recover-crash" -WorkingDirectory (Split-Path $supervisor) -PassThru -Wait
+          if ($proc.ExitCode -ne 0) {
+            throw "BrahmaEvoSupervisor.exe crash-recovery mode exited with code $($proc.ExitCode)."
+          }
+          Write-Host "Packaged crash-recovery worker mode passed."
 
       - name: Smoke-test setup wizard
         shell: pwsh
@@ -113,6 +131,8 @@ jobs:
         run: |
           $files = @(
             "dist/BrahmaEvo/BrahmaEvo.exe",
+            "dist/BrahmaEvo/BrahmaEvoSupervisor.exe",
+            "dist/BrahmaEvoSupervisor.exe",
             "dist/BrahmaEvo_Setup.exe"
           )
           Get-FileHash $files -Algorithm SHA256 |
