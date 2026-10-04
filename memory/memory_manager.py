@@ -126,16 +126,31 @@ def _trim_to_limit(memory: dict) -> dict:
             pass
     return memory
 
+def _atomic_write_json(path: Path, value: object) -> None:
+    """Write JSON via a sibling temp file and atomic replace under the memory lock."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        temp.write_text(
+            json.dumps(value, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        temp.replace(path)
+    except Exception:
+        try:
+            temp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
+
+
 def save_memory(memory: dict) -> None:
     if not isinstance(memory, dict):
         return
     memory = _trim_to_limit(memory)
     MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _lock:
-        MEMORY_PATH.write_text(
-            json.dumps(memory, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        _atomic_write_json(MEMORY_PATH, memory)
 
 
 def _truncate_value(val: str) -> str:
@@ -540,10 +555,7 @@ def save_session_summary(summary: str, language: str = "") -> None:
     memory["sessions"] = sessions[-_SESSION_MAX:]
     with _lock:
         MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-        MEMORY_PATH.write_text(
-            json.dumps(memory, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        _atomic_write_json(MEMORY_PATH, memory)
     print(f"[Memory] 📝 Session saved ({entry['date']}): {summary[:60]}…")
 
 
@@ -562,10 +574,7 @@ def pop_last_session() -> dict | None:
                 return None
             entry = sessions.pop()          # remove the last entry
             memory["sessions"] = sessions
-            MEMORY_PATH.write_text(
-                json.dumps(memory, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            _atomic_write_json(MEMORY_PATH, memory)
             return entry
         except Exception as e:
             print(f"[Memory] ⚠️ pop_last_session error: {e}")
@@ -590,10 +599,7 @@ def load_chat_history() -> list[dict]:
 def save_chat_history(history: list[dict]) -> None:
     CHAT_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _lock:
-        CHAT_HISTORY_PATH.write_text(
-            json.dumps(history[-MAX_HISTORY_LENGTH:], indent=2, ensure_ascii=False),
-            encoding="utf-8"
-        )
+        _atomic_write_json(CHAT_HISTORY_PATH, history[-MAX_HISTORY_LENGTH:])
 
 def append_to_chat_history(user_msg: str, ai_reply: str) -> None:
     history = load_chat_history()
