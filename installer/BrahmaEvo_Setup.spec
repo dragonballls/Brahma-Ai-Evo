@@ -7,14 +7,24 @@ if not os.path.exists(os.path.join(cwd, 'installer')):
     cwd = os.path.abspath(os.getcwd()) # fallback
 
 source_dir = os.path.join(cwd, 'dist', 'BrahmaEvo')
+payload_zip = os.path.join(cwd, 'dist', 'BrahmaEvoPayload.zip')
 supervisor_exe = os.path.join(cwd, 'dist', 'BrahmaEvoSupervisor.exe')
-installer_datas = [
-    (source_dir, 'BrahmaEvo'),
-    (os.path.join(cwd, 'assets'), 'assets'),
-]
-if os.path.exists(supervisor_exe):
-    # Install the independent supervisor beside BrahmaEvo.exe.
-    installer_datas.append((supervisor_exe, 'BrahmaEvo'))
+
+# Prefer one pre-built payload archive. This keeps PyInstaller from walking and
+# reclassifying tens of thousands of application files a second time.
+if os.path.exists(payload_zip):
+    installer_datas = [
+        (payload_zip, 'BrahmaEvoPayload.zip'),
+        (os.path.join(cwd, 'assets'), 'assets'),
+    ]
+else:
+    # Local developer fallback: keep the spec usable without the packaging helper.
+    installer_datas = [
+        (source_dir, 'BrahmaEvo'),
+        (os.path.join(cwd, 'assets'), 'assets'),
+    ]
+    if os.path.exists(supervisor_exe):
+        installer_datas.append((supervisor_exe, 'BrahmaEvo'))
 
 a = Analysis(
     [os.path.join(cwd, 'installer', 'install_wizard.py')],

@@ -7543,17 +7543,18 @@ def _main_impl():
 
         def _finish_packaged_smoke_test():
             _startup_log("packaged smoke-test auto-exit")
+            # BrahmaUI exposes a compatibility root shim whose mainloop() enters
+            # QApplication.exec(). The shim intentionally has no Tk-style quit(),
+            # so exit the real Qt application object directly.
             try:
-                ui.root.quit()
-            except Exception:
-                pass
-            try:
-                ui.root.destroy()
-            except Exception:
-                pass
+                app_instance = QCoreApplication.instance()
+                if app_instance is not None:
+                    app_instance.quit()
+            except Exception as exc:
+                _startup_log(f"packaged smoke-test Qt shutdown failed: {exc}")
 
-        # Schedule shutdown on the Qt event-loop thread so the packaged GUI exits
-        # deterministically instead of relying on a worker thread calling Qt APIs.
+        # Schedule shutdown on the Qt event-loop thread. QCoreApplication.quit()
+        # is also safe if the fallback timer is used.
         try:
             QTimer.singleShot(int(test_exit_seconds * 1000), _finish_packaged_smoke_test)
         except Exception:

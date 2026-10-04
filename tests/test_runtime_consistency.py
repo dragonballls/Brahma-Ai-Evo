@@ -273,6 +273,26 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn('AutoHealEngine.heal_traceback(text, context_notes=context)', source)
         self.assertIn("Automatic conversational recovery.", source)
 
+    def test_packaged_smoke_exit_uses_real_qt_application(self):
+        source = self.read("main.py")
+        self.assertIn("QCoreApplication.instance()", source)
+        self.assertIn("app_instance.quit()", source)
+        self.assertIn("QTimer.singleShot", source)
+        self.assertNotIn("ui.root.quit()", source)
+        self.assertNotIn("ui.root.destroy()", source)
+
+    def test_setup_payload_archive_is_the_release_fast_path(self):
+        spec = self.read("installer/BrahmaEvo_Setup.spec")
+        wizard = self.read("installer/install_wizard.py")
+        packer = self.read("scripts/pack_windows_payload.py")
+        workflow = self.read(".github/workflows/windows-release.yml")
+        self.assertIn("BrahmaEvoPayload.zip", spec)
+        self.assertIn("zipfile.ZipFile", wizard)
+        self.assertIn("Unsafe installer payload entry", wizard)
+        self.assertIn("BrahmaEvoPayload.zip", workflow)
+        self.assertIn("required", packer)
+        self.assertIn("--verify", packer)
+
     def test_supervisor_spec_is_compatible_with_pyinstaller_spec_execution(self):
         source = self.read("installer/BrahmaEvo_Supervisor.spec")
         tree = ast.parse(source)

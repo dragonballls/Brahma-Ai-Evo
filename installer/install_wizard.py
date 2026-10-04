@@ -2,6 +2,8 @@ import sys
 import os
 import shutil
 import time
+import zipfile
+from pathlib import Path
 import win32com.client
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLabel, QPushButton, QProgressBar, QFileDialog, QGraphicsDropShadowEffect, QStackedWidget)
@@ -15,10 +17,11 @@ class InstallThread(QThread):
     finished = pyqtSignal()
     error = pyqtSignal(str)
 
-    def __init__(self, source_dir, target_dir):
+    def __init__(self, source_dir, target_dir, payload_zip=None):
         super().__init__()
         self.source_dir = source_dir
         self.target_dir = target_dir
+        self.payload_zip = payload_zip
 
     def run(self):
         try:
@@ -32,27 +35,50 @@ class InstallThread(QThread):
             
             self.progress.emit(20)
             self.status.emit("Copying files... This might take a minute.")
-            
-            # Walk directory to calculate size or just use a simple copy tree
+
             if not os.path.exists(self.target_dir):
                 os.makedirs(self.target_dir)
 
-            total_files = sum([len(files) for r, d, files in os.walk(self.source_dir)])
-            copied = 0
-            
-            for src_dir, dirs, files in os.walk(self.source_dir):
-                dst_dir = src_dir.replace(self.source_dir, self.target_dir, 1)
-                if not os.path.exists(dst_dir):
-                    os.makedirs(dst_dir)
-                for file_ in files:
-                    src_file = os.path.join(src_dir, file_)
-                    dst_file = os.path.join(dst_dir, file_)
-                    shutil.copy2(src_file, dst_file)
-                    copied += 1
-                    if total_files > 0:
-                        prog = 20 + int((copied / total_files) * 60)
-                        if prog % 5 == 0:  # throttle signals
-                            self.progress.emit(prog)
+            payload_zip = self.payload_zip if self.payload_zip and os.path.isfile(self.payload_zip) else None
+            if payload_zip:
+                # The release build embeds one archive instead of tens of thousands
+                # of individual PyInstaller data entries. Extract it directly to the
+                # destination, while rejecting path traversal entries.
+                root = Path(self.target_dir).resolve()
+                with zipfile.ZipFile(payload_zip, "r") as archive:
+                    members = [m for m in archive.infolist() if not m.is_dir()]
+                    total_files = len(members)
+                    copied = 0
+                    for member in members:
+                        destination = (root / member.filename).resolve()
+                        if destination != root and root not in destination.parents:
+                            raise ValueError(f"Unsafe installer payload entry: {member.filename}")
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        with archive.open(member, "r") as src, open(destination, "wb") as dst:
+                            shutil.copyfileobj(src, dst, length=1024 * 1024)
+                        copied += 1
+                        if total_files > 0:
+                            prog = 20 + int((copied / total_files) * 60)
+                            if prog % 5 == 0:
+                                self.progress.emit(prog)
+            else:
+                if not self.source_dir or not os.path.isdir(self.source_dir):
+                    raise FileNotFoundError("Brahma Evo payload is missing.")
+                total_files = sum(len(files) for _root, _dirs, files in os.walk(self.source_dir))
+                copied = 0
+                for src_dir, dirs, files in os.walk(self.source_dir):
+                    dst_dir = src_dir.replace(self.source_dir, self.target_dir, 1)
+                    if not os.path.exists(dst_dir):
+                        os.makedirs(dst_dir)
+                    for file_ in files:
+                        src_file = os.path.join(src_dir, file_)
+                        dst_file = os.path.join(dst_dir, file_)
+                        shutil.copy2(src_file, dst_file)
+                        copied += 1
+                        if total_files > 0:
+                            prog = 20 + int((copied / total_files) * 60)
+                            if prog % 5 == 0:
+                                self.progress.emit(prog)
 
             self.progress.emit(80)
             self.status.emit("Creating shortcuts...")
@@ -294,11 +320,18 @@ class InstallWizard(QWidget):
     def start_installation(self):
         self.stacked_widget.setCurrentIndex(1)
         source_dir = os.path.join(self.base_dir, 'BrahmaEvo')
-        if not os.path.exists(source_dir):
-            self.lbl_status.setText(f"Error: Payload missing.\n{source_dir}")
+        payload_zip = os.path.join(self.base_dir, 'BrahmaEvoPayload.zip')
+        if not os.path.isdir(source_dir) and not os.path.isfile(payload_zip):
+            self.lbl_status.setText(
+                f"Error: Payload missing.\nExpected archive: {payload_zip}"
+            )
             return
-            
-        self.thread = InstallThread(source_dir, self.install_path)
+
+        self.thread = InstallThread(
+            source_dir if os.path.isdir(source_dir) else None,
+            self.install_path,
+            payload_zip if os.path.isfile(payload_zip) else None,
+        )
         self.thread.progress.connect(self.progress_bar.setValue)
         self.thread.status.connect(self.lbl_status.setText)
         self.thread.finished.connect(self.on_finished)

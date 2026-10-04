@@ -76,6 +76,19 @@ jobs:
           if (-not (Test-Path "dist/BrahmaEvoSupervisor.exe")) { throw "BrahmaEvoSupervisor.exe was not produced." }
           Copy-Item "dist/BrahmaEvoSupervisor.exe" "dist/BrahmaEvo/BrahmaEvoSupervisor.exe" -Force
 
+      - name: Pack verified Brahma Evo payload
+        shell: pwsh
+        run: |
+          python scripts/pack_windows_payload.py dist/BrahmaEvo dist/BrahmaEvoPayload.zip
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path "dist/BrahmaEvoPayload.zip")) { throw "BrahmaEvoPayload.zip was not produced." }
+
+      - name: Verify packed Brahma Evo payload
+        shell: pwsh
+        run: |
+          python scripts/pack_windows_payload.py dist/BrahmaEvo dist/BrahmaEvoPayload.zip --verify
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Build setup wizard
         shell: pwsh
         run: |
@@ -111,6 +124,13 @@ jobs:
             throw "BrahmaEvoSupervisor.exe crash-recovery mode exited with code $($proc.ExitCode)."
           }
           Write-Host "Packaged crash-recovery worker mode passed."
+
+      - name: Verify setup payload integration
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist/BrahmaEvo_Setup.exe")) { throw "Setup wizard missing." }
+          if (-not (Test-Path "dist/BrahmaEvoPayload.zip")) { throw "Setup payload archive missing." }
+          python scripts/pack_windows_payload.py dist/BrahmaEvo dist/BrahmaEvoPayload.zip --verify
 
       - name: Smoke-test setup wizard
         shell: pwsh
