@@ -22,7 +22,7 @@ _RUNTIME_CACHE = None
 
 DEFAULTS={
     "enabled": True, "default_profile":"smart", "simple_profile":"fast",
-    "parallel_workers":4, "max_specialists":2, "ensemble_enabled":true, "ensemble_max_providers":8, "ensemble_model_cache_seconds":300, "max_context_chars":14000, "simple_max_chars":220,
+    "parallel_workers":4, "max_specialists":2, "ensemble_enabled":True, "ensemble_max_providers":8, "ensemble_model_cache_seconds":300, "max_context_chars":14000, "simple_max_chars":220,
     "simple_keywords":("hello","hi","hey","thanks","thank you","what time","what day"),
     "profiles":{
         "fast":{"model":"auto/fast","temperature":0.35,"max_tokens":2048,"specialists":0},
@@ -182,7 +182,9 @@ def _ensemble_roles(profile:str,count:int)->tuple[str,...]:
         'maintenance':('systems diagnostician','failure-mode analyst','independent verifier','performance specialist'),
         'vision':('visual analyst','detail checker','context analyst','independent verifier'),
     }.get(profile,('independent reasoner','skeptical reviewer','alternative-solution analyst','constraint checker'))
-    return tuple(roles[i%len(roles)] for i in range(count))class IntelligenceOrchestrator:
+    return tuple(roles[i%len(roles)] for i in range(count))
+
+class IntelligenceOrchestrator:
     def _cfg(self,p:str,c:dict)->dict:
         return dict(c.get("profiles",{}).get(p) or c["profiles"]["smart"])
     def _roles(self,p:str)->tuple[str,...]:
