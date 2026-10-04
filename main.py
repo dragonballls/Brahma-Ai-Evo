@@ -75,7 +75,8 @@ try:
 except Exception:
     pass
 
-import sounddevice as sd_smoke_trace("before sounddevice as sd\\n")
+_smoke_trace("before sounddevice import")
+import sounddevice as sd
 _smoke_trace("before google genai import")
 from google import genai
 from google.genai import types
