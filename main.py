@@ -7220,6 +7220,9 @@ def _main_impl():
         except Exception as exc:
             ui.write_log(f"ERR: Clipboard assistant wiring failed: {exc}")
 
+        if BRAHMA_EVO_TEST_MODE:
+            _startup_log("runner test mode complete; voice runtime intentionally bypassed")
+            return
         selected_settings = config_manager.load_settings()
         selected_provider = normalize_provider(
             selected_settings.get("default_ai_provider", "Gemini")
