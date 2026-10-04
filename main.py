@@ -6975,7 +6975,12 @@ def _main_impl():
         except Exception:
             pass
 
-        if startup_updates_enabled and update_from_github(BASE_DIR):
+        if (
+            startup_updates_enabled
+            and not BRAHMA_EVO_TEST_MODE
+            and os.environ.get("BRAHMA_SKIP_STARTUP_UPDATE", "").strip() != "1"
+            and update_from_github(BASE_DIR)
+        ):
             _startup_log("updated from GitHub; restarting")
             if _SINGLE_INSTANCE_GUARD is not None:
                 _SINGLE_INSTANCE_GUARD.release()
