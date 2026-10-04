@@ -7,10 +7,46 @@
   "max_context_chars": 14000,
   "simple_max_chars": 220,
   "profiles": {
-    "fast": {"model": "auto/fast", "temperature": 0.35, "max_tokens": 2048, "specialists": 0},
-    "smart": {"model": "auto/smart", "temperature": 0.35, "max_tokens": 4096, "specialists": 2, "synthesis_model": "auto/smart"},
-    "coding": {"model": "auto/coding", "temperature": 0.2, "max_tokens": 8192, "specialists": 2, "synthesis_model": "auto/coding"},
-    "vision": {"model": "auto/vision", "temperature": 0.2, "max_tokens": 2048, "specialists": 2, "synthesis_model": "auto/smart"},
-    "maintenance": {"model": "auto/smart", "temperature": 0.2, "max_tokens": 4096, "specialists": 2, "synthesis_model": "auto/smart"}
-  }
+    "fast": {
+      "model": "auto/fast",
+      "temperature": 0.35,
+      "max_tokens": 2048,
+      "specialists": 0
+    },
+    "smart": {
+      "model": "auto/smart",
+      "temperature": 0.35,
+      "max_tokens": 4096,
+      "specialists": 2,
+      "synthesis_model": "auto/smart",
+      "ensemble": true
+    },
+    "coding": {
+      "model": "auto/coding",
+      "temperature": 0.2,
+      "max_tokens": 8192,
+      "specialists": 2,
+      "synthesis_model": "auto/coding",
+      "ensemble": true
+    },
+    "vision": {
+      "model": "auto/vision",
+      "temperature": 0.2,
+      "max_tokens": 2048,
+      "specialists": 2,
+      "synthesis_model": "auto/smart",
+      "ensemble": true
+    },
+    "maintenance": {
+      "model": "auto/smart",
+      "temperature": 0.2,
+      "max_tokens": 4096,
+      "specialists": 2,
+      "synthesis_model": "auto/smart",
+      "ensemble": true
+    }
+  },
+  "ensemble_enabled": true,
+  "ensemble_max_providers": 10,
+  "ensemble_model_cache_seconds": 300
 }
