@@ -1,5 +1,6 @@
 from __future__ import annotations
 from core.user_paths import get_user_data_dir
+from core.runtime_paths import API_CONFIG_PATH
 
 import base64
 import hashlib
@@ -31,7 +32,7 @@ def _base_dir() -> Path:
 
 
 BASE_DIR = _base_dir()
-API_CONFIG_PATH = get_user_data_dir() / "config" / "api_keys.json"
+
 LIVE_MODEL = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 IMG_MAX_W = 1280
 IMG_MAX_H = 720
