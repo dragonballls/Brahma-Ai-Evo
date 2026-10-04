@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import PropertyMock, patch
 
 from core.evolution_engine import EvolutionEngine
 
@@ -29,7 +28,7 @@ class ContinuousEvolutionTests(unittest.TestCase):
     def test_offline_mode_never_researches_or_codes(self):
         with tempfile.TemporaryDirectory() as tmp:
             engine = EvolutionEngine(tmp)
-            with patch.object(type(engine), "offline_mode", new_callable=__import__("unittest").mock.PropertyMock, return_value=True):
+            with patch.object(type(engine), "offline_mode", new_callable=PropertyMock, return_value=True):
                 result = engine.run_cycle(force=True)
             self.assertEqual(result["status"], "offline")
 
