@@ -1,4 +1,5 @@
 from core.user_paths import get_user_data_dir
+from core.runtime_paths import API_CONFIG_PATH
 # actions/spotify_controller.py
 """
 Universal Music & Spotify Controller for Brahma AI.
@@ -20,7 +21,7 @@ import urllib.parse
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-API_CONFIG_PATH = get_user_data_dir() / "config" / "api_keys.json"
+
 SPOTIFY_CONFIG_PATH = get_user_data_dir() / "config" / "spotify-config.json"
 MCP_SERVER_DIR = Path(__file__).resolve().parent / "spotify_mcp_server"
 MCP_BUILD_INDEX = MCP_SERVER_DIR / "build" / "index.js"
