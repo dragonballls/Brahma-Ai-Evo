@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -59,8 +60,14 @@ class AudioQualityGuardTests(unittest.TestCase):
             },
         ]
 
-        with patch.object(audio_devices, "resolve", return_value=4),              patch.object(audio_devices, "_device_name", return_value="WH-1000XM5 Hands-Free AG Audio"),              patch("sounddevice.query_devices", return_value=fake_devices),              patch("sounddevice.query_hostapis", return_value=[{"name": "DirectSound"}]),              patch.object(audio_devices, "_usable", return_value=True):
-            selected, rerouted = audio_devices.resolve_voice_input(
+        fake_sd = types.SimpleNamespace(
+            query_devices=lambda: fake_devices,
+            query_hostapis=lambda: [{"name": "DirectSound"}],
+        )
+        with patch.object(audio_devices, "resolve", return_value=4),
+             patch.object(audio_devices, "_device_name", return_value="WH-1000XM5 Hands-Free AG Audio"),
+             patch.dict(sys.modules, {"sounddevice": fake_sd}),
+             patch.object(audio_devices, "_usable", return_value=True):            selected, rerouted = audio_devices.resolve_voice_input(
                 "WH-1000XM5 Hands-Free AG Audio",
                 "WH-1000XM5 Stereo",
             )
