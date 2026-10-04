@@ -1,5 +1,13 @@
 from core.user_paths import get_user_data_dir
 from core.runtime_paths import API_CONFIG_PATH, STARTUP_LOG_PATH, FATAL_CRASH_LOG_PATH
+# BootSentry must execute before importing GUI/audio/LLM modules so a bad
+# auto-patch cannot prevent the application from reaching its own rollback path.
+try:
+    from core.boot_sentry import check_and_recover_on_boot
+    if check_and_recover_on_boot():
+        print("[BootSentry] Pre-import recovery completed.")
+except Exception as exc:
+    print(f"[BootSentry] Pre-import recovery check skipped: {exc}")
 import os
 
 # Efficient GPU/WebGL configuration; the visualizer controls its own adaptive frame rate.
@@ -7465,12 +7473,6 @@ def main():
         return
 
     _SINGLE_INSTANCE_GUARD = guard
-    try:
-        from core.boot_sentry import check_and_recover_on_boot
-        if check_and_recover_on_boot():
-            _startup_log("BootSentry recovered the previous patched state before startup.")
-    except Exception as exc:
-        _startup_log(f"BootSentry recovery check skipped: {exc}")
     try:
         _main_impl()
     finally:
