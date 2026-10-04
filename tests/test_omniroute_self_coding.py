@@ -140,6 +140,12 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
         self.assertIn("openrouter_client.chat_json", llm)
         self.assertIn("openrouter_client.vision", llm)
 
+    def test_call_assistant_text_paths_use_unified_gateway(self):
+        source = (ROOT / "actions" / "call_assistant.py").read_text(encoding="utf-8")
+        self.assertIn("unified_cloud_client.chat(", source)
+        self.assertIn("unified_cloud_client.chat_json(", source)
+        self.assertNotIn("genai.Client(", source.split("def _generate_ai_response", 1)[1].split("def _transcribe_audio", 1)[0] if "def _transcribe_audio" in source else source)
+        self.assertNotIn("client.models.generate_content(", source.split("def _generate_ai_response", 1)[1].split("def _transcribe_audio", 1)[0] if "def _transcribe_audio" in source else source)
     def test_skill_and_coding_paths_fail_closed_without_gateway_bypass(self):
         skill = (ROOT / "core" / "skill_forge.py").read_text(encoding="utf-8")
         dev = (ROOT / "actions" / "brahma_dev_agent.py").read_text(encoding="utf-8")
