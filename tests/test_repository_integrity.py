@@ -166,7 +166,7 @@ class RepositoryIntegrityTests(unittest.TestCase):
 
         self.assertIn('name="text-command-agent"', main)
         self.assertIn("self.speak(reply, proactive=True, use_live=False)", main)
-        self.assertIn("degraded_turn = bool(full_in) and not full_out and turn_audio_bytes < 256", main)
+        self.assertIn("degraded_turn = bool(full_in) and not full_out and not had_usable_audio", main)
         self.assertIn("def _speak_native(self, text: str, profile)", main)
         self.assertIn("chat_with_tools(", main)
         self.assertIn("def chat_with_tools(", or_client)
