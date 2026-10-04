@@ -48,3 +48,17 @@ def test_compare_same_cases():
     assert result["comparison"] == "not-proven"
     assert result["mean_delta"] == 10
     assert result["robust_win"] is False
+
+
+def test_semantic_grader_can_override_deterministic_score(tmp_path, monkeypatch):
+    import core.cognitive_challenger as challenger
+    monkeypatch.setattr(challenger, "RESULTS_PATH", tmp_path / "results.json")
+    case = CASES[0]
+    result = run(
+        lambda _prompt, _dimension: "not the exact answer",
+        system="brahma",
+        cases=(case,),
+        persist_intellect=False,
+        grader=lambda _prompt, _answer: 87.5,
+    )
+    assert result["mean_score"] == 87.5
