@@ -6153,8 +6153,10 @@ class BrahmaLive:
                     self._phone_active = False
 
     async def _send_realtime(self):
-        while True:
+        while not self._shutdown_event.is_set():
             msg = await self.out_queue.get()
+            if msg is None:
+                continue
             await self.session.send_realtime_input(media=msg)
 
     async def _listen_audio(self):
@@ -6198,10 +6200,16 @@ class BrahmaLive:
 
             if getattr(self, "_ptt_enabled", False) and not getattr(self, "_ptt_held", False):
                 data = np.zeros_like(indata).tobytes()
-                loop.call_soon_threadsafe(
-                    self.out_queue.put_nowait,
-                    {"data": data, "mime_type": "audio/pcm"}
+                # Keep the realtime input queue in Blob-compatible form so
+                # the current Gemini Live SDK receives an explicit PCM sample rate.
+                blob = types.Blob(
+                    data=data,
+                    mime_type=f"audio/pcm;rate={SEND_SAMPLE_RATE}",
                 )
+                try:
+                    loop.call_soon_threadsafe(self.out_queue.put_nowait, blob)
+                except Exception:
+                    pass
                 return
             
             if not self.ui.muted or getattr(self.ui, "_wakeword_listening", False):
