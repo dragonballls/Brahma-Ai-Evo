@@ -10031,18 +10031,24 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
             self._chat_source_queue.popleft()
-        elif hasattr(self, "_result_card") and low.startswith("err:"):
-            self._result_card.set_body(raw.split(":", 1)[1].strip())
+        elif (
+            hasattr(self, "_result_card")
+            and low.startswith("err:")
+            and self._chat_source_queue
+        ):
+            # Only command-scoped errors belong in the conversation stream.
+            # Background/service errors remain operational log events.
+            error_text = raw.split(":", 1)[1].strip()
+            self._result_card.set_body(error_text)
             self._result_card.hide()
             self._restart_card_hide_timer()
-            source = self._chat_source_queue[0] if self._chat_source_queue else "local"
+            source = self._chat_source_queue[0]
             if self.on_chat_event:
                 try:
-                    self.on_chat_event({"role": "system", "text": raw.split(":", 1)[1].strip(), "source": source})
+                    self.on_chat_event({"role": "system", "text": error_text, "source": source})
                 except Exception:
                     pass
-            if self._chat_source_queue:
-                self._chat_source_queue.popleft()
+            self._chat_source_queue.popleft()
 
     def _restart_card_hide_timer(self):
         if hasattr(self, "_card_hide_tmr"):
