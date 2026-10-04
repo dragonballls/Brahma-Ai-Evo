@@ -70,7 +70,7 @@ class RuntimeConsistencyTests(unittest.TestCase):
             self.assertEqual(remaining, 0)
 
     def test_memory_persistence_uses_atomic_json_writer(self):
-        source = (self.root / "memory" / "memory_manager.py").read_text(encoding="utf-8")
+        source = (ROOT / "memory" / "memory_manager.py").read_text(encoding="utf-8")
         self.assertIn("def _atomic_write_json(path: Path, value: object)", source)
         self.assertIn("_atomic_write_json(MEMORY_PATH, memory)", source)
         self.assertIn("_atomic_write_json(CHAT_HISTORY_PATH, history[-MAX_HISTORY_LENGTH:])", source)
@@ -152,7 +152,7 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertNotIn('pull_model_async("qwen2.5:3b", lambda chunk: _populate_models())', source)
 
     def test_local_brain_reloads_persisted_endpoint_and_model(self):
-        source = (self.root / "core" / "local_brain.py").read_text(encoding="utf-8")
+        source = (ROOT / "core" / "local_brain.py").read_text(encoding="utf-8")
         self.assertIn("def reload_settings(self) -> None:", source)
         self.assertIn('settings.get("local_ai_url")', source)
         self.assertIn('settings.get("local_ai_model")', source)
