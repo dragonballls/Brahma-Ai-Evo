@@ -40,7 +40,7 @@ class UniversalCapabilityAgentTests(unittest.TestCase):
 
         source = (Path(__file__).resolve().parents[1] / "core" / "dynamic_registry.py").read_text(encoding="utf-8")
         block = source.split("def initialize", 1)[1].split("def get_tool_declarations", 1)[0]
-        self.assertIn("packaged_dir = item.with_suffix("")", block)
+        self.assertIn('packaged_dir = item.with_suffix("")', block)
         self.assertIn('(packaged_dir / "manifest.json").is_file()', block)
         self.assertIn('(packaged_dir / "skill.py").is_file()', block)
         self.assertIn("continue", block)
