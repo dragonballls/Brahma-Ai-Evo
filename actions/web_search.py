@@ -1,5 +1,5 @@
 from core.user_paths import get_user_data_dir
-from core.runtime_paths import r, API_CONFIG_PATH
+from core.runtime_paths import API_CONFIG_PATH
 #web_search.py
 import json
 import sys
