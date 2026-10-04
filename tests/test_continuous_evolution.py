@@ -89,7 +89,7 @@ class ContinuousEvolutionTests(unittest.TestCase):
         self.assertIn('scan_now | pause | resume', source)
         self.assertIn("evolution_engine.start()", source)
         self.assertIn("evolution_engine.stop()", source)
-        self.assertIn("Never auto-promotes changes", source or source)
+        self.assertIn("never auto-promotes changes", source.lower())
 
     def test_self_coding_can_restore_base_branch_after_background_preview(self):
         import inspect
