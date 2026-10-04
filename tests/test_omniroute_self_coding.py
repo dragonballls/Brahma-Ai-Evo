@@ -267,12 +267,15 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
         self.assertIn("researcher.research_goal(goal, repo_limit=6, code_limit=10)", source)
         self.assertIn("researcher.format_dossier(research, max_chars=9000)", source)
         self.assertIn("_call_llm_synthesizer(goal, name_hint, combined_context)", source)
-    def test_self_coding_model_ladder_uses_direct_omniroute_client(self):
+    def test_self_coding_model_ladder_uses_canonical_omniroute_client(self):
         source = Path(ROOT / "actions" / "brahma_dev_agent.py").read_text(encoding="utf-8")
-        self.assertIn("from or_client import client as direct_or_client", source)
+        self.assertIn("from or_client import client as cloud_client", source)
+        self.assertIn("cloud_client.multi_turn(", source)
         self.assertIn('model="auto/coding"', source)
-        self.assertIn("return direct_or_client.multi_turn(self.history, temperature=0.2)", source)
-        self.assertNotIn("return ai_client.multi_turn(self.history, temperature=0.2)", source)
+        self.assertIn("max_tokens=8192", source)
+        self.assertIn("Please check OmniRoute provider connectivity.", source)
+        self.assertNotIn("genai.Client(", source)
+        self.assertNotIn('get_api_key("Gemini")', source)
 
     def test_github_tools_are_exposed_to_brahma_dev(self):
         source = Path(ROOT / "actions" / "brahma_dev_agent.py").read_text(encoding="utf-8")
