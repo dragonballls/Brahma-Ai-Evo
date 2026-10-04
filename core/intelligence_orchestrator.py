@@ -131,7 +131,7 @@ _PROVIDER_PREFIXES = {
     "xai":("xai",), "cerebras":("cerebras",), "deepseek":("deepseek",),
     "mistral":("mistral",), "cohere":("cohere",)
 }
-_QUALITY_HINTS = ("opus","sonnet","reasoning","thinking","pro","ultra","max","flagship","large","gpt-5","gpt-4","gemini-3","gemini-2","o3","o4","o1","r1","v5","v4","v3")
+_QUALITY_HINTS = ("opus","sonnet","reasoning","thinking","pro","ultra","max","flagship","large","gpt-6-astra","gpt-5","gpt-4","gemini-3","gemini-2","o3","o4","o1","r1","v5","v4","v3")
 
 def _configured_providers()->tuple[str,...]:
     data=get_config(); return tuple(p for p,k in _PROVIDER_KEYS.items() if str(data.get(k) or '').strip())
