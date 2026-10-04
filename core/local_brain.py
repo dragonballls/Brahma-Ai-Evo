@@ -175,7 +175,6 @@ class LocalBrain:
         Yields parsed stream delta chunks or tool calls.
         """
         self.reload_settings()
-        self.reload_settings()
         active_model = model or self.default_model
         payload: Dict[str, Any] = {
             "model": active_model,
@@ -216,6 +215,7 @@ class LocalBrain:
         focus_core: bool = True,
     ) -> Dict[str, Any]:
         """Non-streaming completion for fast single-turn tool calls and structured responses."""
+        self.reload_settings()
         active_model = model or self.default_model
         payload: Dict[str, Any] = {
             "model": active_model,
