@@ -533,6 +533,11 @@ class EvolutionEngine:
                 return_to_base=True,
             )
             self._record_candidate(best, state="pending", checkpoint=checkpoint)
+            self.task_ledger.complete(
+                task_id,
+                evidence="Verified checkpoint %s created; main unchanged." % checkpoint.get("checkpoint_id"),
+                metadata={"checkpoint_id": checkpoint.get("checkpoint_id"), "goal": best["goal"]},
+            )
             self._set_state(last_success_at=_utc_now())
             self._notify(
                 f"Evolution candidate verified and checkpointed: {checkpoint.get('checkpoint_id')}. "
@@ -543,8 +548,14 @@ class EvolutionEngine:
                 "status": "pending",
                 "candidate": best,
                 "checkpoint": checkpoint,
+                "task_id": task_id,
             }
         except Exception as exc:
+            if "task_id" in locals():
+                try:
+                    self.task_ledger.fail(task_id, str(exc))
+                except Exception:
+                    pass
             self._set_state(last_error=str(exc), last_cycle_at=_utc_now())
             self._notify(f"Evolution cycle stopped safely: {exc}")
             return {"success": False, "status": "error", "error": str(exc)}
