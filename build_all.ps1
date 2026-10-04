@@ -25,7 +25,7 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "Failed to build crash supervisor!" -ForegroundColor Red
     exit 1
 }
-if (-not (Test-Path "dist\BrahmaEvoSupervisor\BrahmaEvoSupervisor.exe")) {
+if (-not (Test-Path "dist\BrahmaEvoSupervisor.exe")) {
     Write-Host "Crash supervisor executable was not produced!" -ForegroundColor Red
     exit 1
 }
