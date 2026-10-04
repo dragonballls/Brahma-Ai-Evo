@@ -183,6 +183,17 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("if offline or is_local(provider):", source)
         self.assertIn("return bool(api.get(\"gemini_api_key\"))", source)
 
+    def test_universal_fallback_is_reachable_from_main_reply_ladder(self):
+        main = self.read("main.py")
+        forge = self.read("core/skill_forge.py")
+        runtime = self.read("core/runtime_paths.py")
+        self.assertIn("from core.universal_agent import run as run_universal_task", main)
+        self.assertIn("run_universal_task(", main)
+        self.assertIn("if not reply and _looks_like_action_request(text):", main)
+        self.assertIn("from core.runtime_paths import API_CONFIG_PATH", forge)
+        self.assertNotIn("from core.runtime_paths import r,", forge)
+        self.assertNotIn(" r,", forge.split("from core.runtime_paths import", 1)[-1].split("\n", 1)[0])
+        self.assertNotIn("r =", runtime)
     def test_live_voice_degrades_to_text_tts_without_gemini_credential(self):
         source = self.read("main.py")
         self.assertIn("def _has_gemini_voice_credentials()", source)
