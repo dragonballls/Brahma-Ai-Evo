@@ -7472,6 +7472,20 @@ if __name__ == "__main__":
     import os
     import traceback
 
+    # Independent crash-recovery worker invoked by the external supervisor.
+    # This path must remain outside the GUI/single-instance lifecycle so it can run
+    # after Brahma itself has crashed.
+    if len(sys.argv) >= 2 and sys.argv[1] == "--recover-crash":
+        from core.crash_recovery import recover_from_crash
+        result = recover_from_crash()
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(0 if result.get("success") or result.get("action") in {
+            "no_crash_log",
+            "defer_boot_rollback",
+            "blocked",
+            "rolled_back",
+        } else 1)
+
     # Mission worker/recovery modes are separate OS processes. They intentionally
     # bypass the GUI and Brahma live session so autonomous work is not owned by
     # the main Brahma process and can be resumed after a reboot.
