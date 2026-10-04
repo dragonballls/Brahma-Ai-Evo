@@ -35,6 +35,16 @@ class UniversalCapabilityAgentTests(unittest.TestCase):
         self.assertEqual(result["status"], "executed-existing-skill")
         self.assertEqual(result["skill"], "known_skill")
 
+    def test_packaged_skill_directory_is_authoritative_over_legacy_module(self):
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[1] / "core" / "dynamic_registry.py").read_text(encoding="utf-8")
+        block = source.split("def initialize", 1)[1].split("def get_tool_declarations", 1)[0]
+        self.assertIn("packaged_dir = item.with_suffix("")", block)
+        self.assertIn("(packaged_dir / "manifest.json").is_file()", block)
+        self.assertIn("(packaged_dir / "skill.py").is_file()", block)
+        self.assertIn("continue", block)
+
     def test_dynamic_tool_declarations_deduplicate_aliases(self):
         from pathlib import Path
 
