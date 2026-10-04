@@ -35,6 +35,14 @@ class UniversalCapabilityAgentTests(unittest.TestCase):
         self.assertEqual(result["status"], "executed-existing-skill")
         self.assertEqual(result["skill"], "known_skill")
 
+    def test_dynamic_tool_declarations_deduplicate_aliases(self):
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[1] / "core" / "dynamic_registry.py").read_text(encoding="utf-8")
+        block = source.split("def get_tool_declarations", 1)[1].split("def has_tool", 1)[0]
+        self.assertIn("seen: set[int] = set()", block)
+        self.assertIn("id(skill) in seen", block)
+
     def test_empty_request_is_rejected(self):
         result = universal_agent.run("   ")
         self.assertFalse(result["success"])
