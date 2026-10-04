@@ -201,6 +201,13 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
             self.assertIn("Successfully wrote", written)
             self.assertEqual(Path(tmp, "demo.txt").read_text(encoding="utf-8"), "hello")
 
+    def test_skill_forge_skips_github_research_in_offline_mode(self):
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[1] / "core" / "skill_forge.py").read_text(encoding="utf-8")
+        self.assertIn('offline_mode = bool(config_manager.get_setting("offline_mode_enabled", False))', source)
+        self.assertIn("if not offline_mode:", source)
+        self.assertIn('Offline Mode enabled; skipping GitHub research.', source)
     def test_skill_forge_uses_github_first_research_before_synthesis(self):
         from pathlib import Path
 
