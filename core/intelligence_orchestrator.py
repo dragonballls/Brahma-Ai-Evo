@@ -256,15 +256,84 @@ class IntelligenceOrchestrator:
                     f"Original request:\n{prompt}\n\nContext:\n{ctx or '[none]'}\n\n"
                     f"Independent panel analyses:\n{evidence}"
                 )
+                # Cross-examination happens only for the expensive, non-fast path.
+                # Critics see anonymized evidence and target contradictions rather than
+                # blindly generating another duplicate answer.
+                critique_prompt = (
+                    f"Original request:\n{prompt}\n\nContext:\n{ctx or '[none]'}\n\n"
+                    f"Candidate analyses:\n{evidence}\n\n"
+                    "Act as an adversarial cross-examiner. Identify concrete contradictions, "
+                    "unsupported claims, missing constraints, and the single highest-value "
+                    "correction or additional verification the final answer needs. Do not "
+                    "rewrite the whole answer."
+                )
+                critique_system = (
+                    system +
+                    "\n\nYou are Brahma Evo's adversarial cross-examination layer. "
+                    "Be skeptical, evidence-driven, and concise. Focus on falsifiable issues."
+                )
+                critique_models = []
+                try:
+                    critique_models.append(
+                        _select_provider_model(
+                            "openai", _catalog_models(), {},
+                        ) or judge_model
+                    )
+                except Exception:
+                    critique_models.append(judge_model)
+                try:
+                    critique_models.append(
+                        _select_provider_model(
+                            "anthropic", _catalog_models(), {},
+                        ) or judge_model
+                    )
+                except Exception:
+                    critique_models.append(judge_model)
+                critiques = []
+                for critique_index, critique_model in enumerate(
+                    tuple(dict.fromkeys(critique_models))[:2], 1
+                ):
+                    try:
+                        critique = self._call(
+                            critique_prompt,
+                            critique_system + f"\nCritic slot: {critique_index}.",
+                            critique_model,
+                            max(1024, int(pc.get("max_tokens",4096)) // 2),
+                            0.1,
+                            None,
+                        )
+                        if critique and critique.strip():
+                            critiques.append(trim(critique.strip(), 7000))
+                    except Exception as exc:
+                        log.debug("ensemble critic failed: %s", exc)
+
+                critique_evidence = (
+                    "\n\n".join(
+                        f"=== Cross-examination {i} ===\n{value}"
+                        for i, value in enumerate(critiques, 1)
+                    )
+                    or "[no additional critique available]"
+                )
+                final_prompt = (
+                    f"Original request:\n{prompt}\n\nContext:\n{ctx or '[none]'}\n\n"
+                    f"Independent panel analyses:\n{evidence}\n\n"
+                    f"Cross-examination:\n{critique_evidence}\n\n"
+                    "Synthesize one answer. Resolve contradictions instead of majority-voting. "
+                    "Apply useful corrections from the cross-examiners. Do not mention the internal panel."
+                )
                 try:
                     result=self._call(
-                        synth_prompt,synth_system,judge_model,
-                        int(pc.get("max_tokens",4096)),0.2,None
+                        final_prompt,
+                        synth_system,
+                        judge_model,
+                        int(pc.get("max_tokens",4096)),
+                        0.15,
+                        None,
                     )
                     if result and result.strip():
                         log.info(
-                            "cross-provider ensemble profile=%s panel=%d providers=%s",
-                            p,len(panel_results),",".join(row[1] for row in panel_results)
+                            "cross-provider debate profile=%s panel=%d providers=%s critics=%d",
+                            p,len(panel_results),",".join(row[1] for row in panel_results),len(critiques)
                         )
                         return result.strip()
                 except Exception as exc:
