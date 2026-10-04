@@ -4974,14 +4974,24 @@ class BrahmaLive:
             "- When the user begins speaking over you, yield immediately. Their new speech takes priority over unfinished output.\n"
         )
 
-        tool_declarations = list(TOOL_DECLARATIONS)
+        # Gemini 3.8 Live defaults function calls to NON_BLOCKING. Brahma's
+        # voice executor intentionally runs tool work in its receive loop and
+        # sends the matching FunctionResponse before continuing, so mark every
+        # Live tool BLOCKING to preserve deterministic voice task execution.
+        tool_declarations = []
+        for declaration in TOOL_DECLARATIONS:
+            item = dict(declaration)
+            item["behavior"] = "BLOCKING"
+            tool_declarations.append(item)
         declared_names = {tool.get("name") for tool in tool_declarations}
         try:
             from core.dynamic_registry import DynamicToolRegistry
             for declaration in DynamicToolRegistry.get_tool_declarations():
                 if declaration.get("name") not in declared_names:
-                    tool_declarations.append(declaration)
-                    declared_names.add(declaration.get("name"))
+                    item = dict(declaration)
+                    item["behavior"] = "BLOCKING"
+                    tool_declarations.append(item)
+                    declared_names.add(item.get("name"))
         except Exception as exc:
             print(f"[SkillRegistry] Dynamic tools unavailable: {exc}")
 
