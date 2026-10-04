@@ -10,8 +10,6 @@ except Exception as exc:
     print(f"[BootSentry] Pre-import recovery check skipped: {exc}")
 import os
 
-# Efficient GPU/WebGL configuration;import os
-
 # Packaged-smoke tracing begins before heavyweight GUI/audio/LLM imports.
 _BRAHMA_SMOKE_TRACE = os.environ.get("BRAHMA_EVO_TEST_MODE", "").strip() == "1"
 
@@ -21,20 +19,21 @@ def _smoke_trace(message: str) -> None:
     try:
         STARTUP_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         with STARTUP_LOG_PATH.open("a", encoding="utf-8") as _fh:
-            _fh.write(f"[smoke] {message}\\n")
+            _fh.write(f"[smoke] {message}\n")
     except Exception:
         pass
 
 _smoke_trace("main bootstrap entered")
 
- the visualizer controls its own adaptive frame rate.
+# Efficient GPU/WebGL configuration; the visualizer controls its own adaptive frame rate.
 os.environ.setdefault(
     "QTWEBENGINE_CHROMIUM_FLAGS",
     "--enable-gpu-rasterization --enable-zero-copy --enable-accelerated-2d-canvas --enable-webgl --use-angle=d3d11 --num-raster-threads=2"
 )
 
 try:
-    from PyQt6.QtCore_smoke_trace("before PyQt6.QtCore\\n") import QCoreApplication, Qt, QTimer
+    _smoke_trace("before PyQt6 import")
+    from PyQt6.QtCore import QCoreApplication, Qt, QTimer
     from PyQt6.QtGui import QSurfaceFormat
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
     fmt = QSurfaceFormat.defaultFormat()
@@ -44,7 +43,8 @@ try:
 except Exception:
     pass
 
-from core import undo as undo_stack_smoke_trace("before core undo as undo_stack\\n")
+_smoke_trace("before core imports")
+from core import undo as undo_stack
 from core import audio_devices
 from core.echo import EchoGuard
 from core.hotkey import PushToTalk
@@ -76,15 +76,18 @@ except Exception:
     pass
 
 import sounddevice as sd_smoke_trace("before sounddevice as sd\\n")
-from google import genai_smoke_trace("before google genai\\n")
+_smoke_trace("before google genai import")
+from google import genai
 from google.genai import types
-from ui import BrahmaUI_smoke_trace("before ui BrahmaUI\\n")
+_smoke_trace("before ui import")
+from ui import BrahmaUI
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
     should_extract_memory, extract_memory, auto_learn_interaction
 )
 
-from actions.file_processor import file_processor_smoke_trace("before actions.file_processor file_processor\\n")
+_smoke_trace("before action imports")
+from actions.file_processor import file_processor
 from actions.flight_finder     import flight_finder
 from actions.open_app          import open_app
 from actions.weather_report    import weather_action
@@ -125,7 +128,8 @@ from core.voice_guard import VoiceCommandGate, VoiceToolExecutionGate
 from core.duplex_voice import BargeInGate, PlaybackGeneration
 from core.prosody import profile_for_text, profile_prompt_block
 from core.provider_policy import normalize_provider, is_local, is_gemini, is_openrouter
-from config import get_api_key_smoke_trace("before config get_api_key\\n")
+_smoke_trace("top-level imports complete")
+from config import get_api_key
 
 try:
     from dashboard.server import DashboardServer
