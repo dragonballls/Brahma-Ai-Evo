@@ -159,9 +159,16 @@ if ($NeedsRepair) {
     }
 }
 
-# 7. Launch App
-Write-Host "Starting Brahma AI..." -ForegroundColor Green
-if (Test-Path $VenvPythonW) {
+# 7. Launch App through the external crash-recovery supervisor.
+Write-Host "Starting Brahma AI recovery supervisor..." -ForegroundColor Green
+$SupervisorPy = Join-Path $WorkingDir "scripts\recovery_supervisor.py"
+if (Test-Path $SupervisorPy -PathType Leaf) {
+    if (Test-Path $VenvPythonW -PathType Leaf) {
+        Start-Process -FilePath $VenvPythonW -ArgumentList "`"$SupervisorPy`"" -WorkingDirectory $WorkingDir
+    } else {
+        Start-Process -FilePath $VenvPython -ArgumentList "`"$SupervisorPy`"" -WorkingDirectory $WorkingDir -WindowStyle Hidden
+    }
+} elseif (Test-Path $VenvPythonW -PathType Leaf) {
     Start-Process -FilePath $VenvPythonW -ArgumentList "main.py --startup" -WorkingDirectory $WorkingDir
 } else {
     Start-Process -FilePath $VenvPython -ArgumentList "main.py --startup" -WorkingDirectory $WorkingDir -WindowStyle Hidden
