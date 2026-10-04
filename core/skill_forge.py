@@ -25,7 +25,6 @@ from core.dynamic_registry import DynamicToolRegistry
 logger = logging.getLogger("SkillForge")
 
 CONFIG_DIR = get_user_data_dir() / "config"
-API_CONFIG_PATH = CONFIG_DIR / "api_keys.json"
 
 
 def _get_gemini_api_key() -> str:
