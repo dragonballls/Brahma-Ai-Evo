@@ -537,7 +537,8 @@ def _cloud_tool_reply(
             tool_executor,
         )
     if candidate == "OpenRouter":
-        return openrouter_client.chat_with_tools(
+        from or_client import client as omniroute_openrouter_client
+        return omniroute_openrouter_client.chat_with_tools(
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
@@ -579,8 +580,8 @@ def _ig_gemini_reply(username: str, text: str) -> str:
         if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or _is_gemini_limit_error(e):
             print("[InstagramChat] Gemini Rate Limit hit, falling back to OpenRouter...")
             try:
-                from llm_client import client as openrouter_client
-                return openrouter_client.chat(prompt, system=system_prompt)
+                from or_client import client as direct_openrouter_client
+                return direct_openrouter_client.chat(prompt, system=system_prompt)
             except Exception as or_e:
                 print(f"[InstagramChat] OpenRouter fallback failed: {or_e}")
                 return "Hey, I'm currently busy. I will get back to you later!"
@@ -615,8 +616,8 @@ def _clipboard_gemini_reply(text: str) -> str:
     except Exception as e:
         if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or _is_gemini_limit_error(e):
             try:
-                from llm_client import client as openrouter_client
-                return openrouter_client.chat(prompt, system=system_prompt)
+                from or_client import client as direct_openrouter_client
+                return direct_openrouter_client.chat(prompt, system=system_prompt)
             except Exception:
                 pass
         return "Interesting stuff you copied there!"
