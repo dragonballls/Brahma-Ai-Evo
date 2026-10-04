@@ -194,10 +194,17 @@ class DynamicToolRegistry:
 
     @classmethod
     def get_tool_declarations(cls) -> List[Dict[str, Any]]:
-        """Returns Gemini-compatible tool declarations for all active skills."""
+        """Returns one Gemini-compatible declaration per active skill, not per alias."""
         if not cls._initialized:
             cls.initialize()
-        return [skill.to_tool_declaration() for skill in cls._skills.values() if skill.active]
+        declarations: list[Dict[str, Any]] = []
+        seen: set[int] = set()
+        for skill in cls._skills.values():
+            if not skill.active or id(skill) in seen:
+                continue
+            seen.add(id(skill))
+            declarations.append(skill.to_tool_declaration())
+        return declarations
 
     @classmethod
     def has_tool(cls, name: str) -> bool:
