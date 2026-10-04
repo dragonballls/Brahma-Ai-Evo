@@ -477,69 +477,54 @@ class CallAssistant:
             return ""
 
     def _generate_ai_response(self, caller_text: str) -> str:
-        """Synthesizes a polite, 1-2 sentence assistant reply."""
-        api_key = _get_api_key()
+        """Generate the call response through the unified OmniRoute cloud route."""
         history_str = "\n".join(f"{t['speaker']}: {t['text']}" for t in self.transcript[-6:])
-
-        prompt = f"""You are Brahma AI Evo, an executive AI assistant answering a live phone call on behalf of {self.owner_name}.
-{self.owner_name} is currently occupied and unavailable to pick up.
-Caller: {self.caller_name} (App: {self.app_name}).
-
+        prompt = f"""Caller: {self.caller_name} on {self.app_name}.
 Conversation so far:
 {history_str}
-Caller just said: "{caller_text}"
 
-Guidelines:
-1. Speak directly to the caller. Keep answers very concise (1 to 2 sentences maximum).
-2. Ascertain who they are, the purpose of their call, and whether they would like to leave a message.
-3. Be polite, professional, and helpful. If they ask when {self.owner_name} will call back, say you will notify them right away.
-4. Do not make false promises or disclose private data.
-5. Return ONLY the spoken response text with no quotes or meta-text.
+The caller just said: "{caller_text}"
+
+Reply directly to the caller. Keep it to 1-2 concise sentences. Be polite,
+professional, truthful, and do not disclose private data. Determine their
+purpose and whether they want to leave a message. Output only the spoken text.
 """
-        if api_key:
-            try:
-                from google import genai
-                client = genai.Client(api_key=api_key, http_options={"api_version": "v1beta"})
-                resp = client.models.generate_content(
-                    model="gemini-2.5-flash-lite",
-                    contents=prompt,
-                )
-                txt = (getattr(resp, "text", "") or "").strip()
-                if txt:
-                    return txt
-            except Exception as e:
-                logger.warning(f"[CallAssistant] LLM reply error: {e}")
-
+        try:
+            from llm_client import client as unified_cloud_client
+            response = unified_cloud_client.chat(
+                prompt,
+                system=(
+                    f"You are Brahma AI Evo answering a live phone call on behalf of {self.owner_name}. "
+                    "The owner is unavailable. Keep the response concise and natural."
+                ),
+                model="auto",
+                max_tokens=512,
+                temperature=0.35,
+            )
+            if response.strip():
+                return response.strip()
+        except Exception as exc:
+            logger.warning(f"[CallAssistant] Unified cloud reply failed: {exc}")
         return f"Understood. I have made a note of that for {self.owner_name}. Is there anything else you'd like me to pass along?"
 
     def _generate_ai_closing(self, caller_text: str) -> str:
-        """Synthesizes an ultra-natural, warm human closing acknowledgment and says goodbye."""
-        api_key = _get_api_key()
-        prompt = f"""You are answering a live phone call on behalf of your friend and colleague {self.owner_name}.
-The caller just said: "{caller_text}".
-
-Your goal:
-Acknowledge receipt of their message in ONE short, natural, warm human sentence, confirm you'll pass it to {self.owner_name} right away, and say goodbye.
-Rules:
-- Speak casually like a real human assistant. Use contractions ("I'll", "Got it", "He'll").
-- Maximum 14 words.
-- End with a friendly signoff like "Catch you later, bye!" or "Talk soon, bye!"
-- Output ONLY the exact spoken response line, nothing else. No quotes, no markdown.
-"""
-        if api_key:
-            try:
-                from google import genai
-                client = genai.Client(api_key=api_key, http_options={"api_version": "v1beta"})
-                resp = client.models.generate_content(
-                    model="gemini-2.5-flash-lite",
-                    contents=prompt,
-                )
-                txt = (getattr(resp, "text", "") or "").strip().strip('"')
-                if txt:
-                    return txt
-            except Exception as e:
-                logger.warning(f"[CallAssistant] AI closing reply error: {e}")
-
+        """Generate a short closing through the unified OmniRoute cloud route."""
+        prompt = f"The caller just said: {caller_text}"
+        system = (
+            f"You are answering a live call on behalf of {self.owner_name}. "
+            "Acknowledge the message warmly in one short natural sentence, "
+            f"confirm you will pass it to {self.owner_name}, and say goodbye. "
+            "Maximum 14 words. Output only the spoken line."
+        )
+        try:
+            from llm_client import client as unified_cloud_client
+            response = unified_cloud_client.chat(
+                prompt, system=system, model="auto", max_tokens=128, temperature=0.35
+            )
+            if response.strip():
+                return response.strip().strip('"')
+        except Exception as exc:
+            logger.warning(f"[CallAssistant] Unified cloud closing failed: {exc}")
         return f"Got it! I've noted that down for {self.owner_name} and I'll pass it to him right away. Bye!"
 
     def _finalize_call_report(self):
@@ -555,38 +540,24 @@ Rules:
         action_item = "No immediate action required."
         urgency = "Normal"
 
-        api_key = _get_api_key()
-        if api_key and self.transcript:
+        if self.transcript:
             try:
-                from google import genai
-                client = genai.Client(api_key=api_key, http_options={"api_version": "v1beta"})
-                sum_prompt = f"""Summarize this phone call screened by Brahma AI Evo on behalf of {self.owner_name}:
-Caller: {self.caller_name}
-Duration: {duration_str}
-
-Transcript:
-{history_text}
-
-Output a clean JSON object:
-{{
-  "summary": "1-2 sentence executive summary of the caller's message and reason for calling",
-  "urgency": "Low|Normal|High|Emergency",
-  "action_item": "Clear next action for {self.owner_name} (e.g. Call back regarding invoice before 5 PM)"
-}}
-"""
-                resp = client.models.generate_content(
-                    model="gemini-2.5-flash-lite",
-                    contents=sum_prompt,
-                    config={"response_mime_type": "application/json"}
+                from llm_client import client as unified_cloud_client
+                data = unified_cloud_client.chat_json(
+                    f"Summarize this screened phone call for {self.owner_name}.\n"
+                    f"Caller: {self.caller_name}\nDuration: {duration_str}\n\n"
+                    f"Transcript:\n{history_text}\n\n"
+                    "Return JSON with keys summary, urgency (Low|Normal|High|Emergency), "
+                    f"and action_item for {self.owner_name}.",
+                    system="Return only valid JSON for an executive call report.",
+                    model="auto",
+                    max_tokens=512,
                 )
-                raw_json = (getattr(resp, "text", "") or "").strip()
-                data = json.loads(raw_json)
-                summary = data.get("summary", summary)
-                urgency = data.get("urgency", urgency)
-                action_item = data.get("action_item", action_item)
-            except Exception:
-                pass
-
+                summary = str(data.get("summary") or summary)
+                urgency = str(data.get("urgency") or urgency)
+                action_item = str(data.get("action_item") or action_item)
+            except Exception as exc:
+                logger.warning(f"[CallAssistant] Unified cloud summary failed: {exc}")
         # Create Dark-mode Card Image
         image_path = None
         if _MATPLOTLIB_OK:
