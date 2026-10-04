@@ -7556,10 +7556,19 @@ def _main_impl():
             time.sleep(0.05)
 
         _startup_log("packaged smoke-test auto-exit")
-        try:
-            _cleanup_runtime_services()
-        except Exception as exc:
-            _startup_log(f"packaged smoke-test cleanup skipped: {exc}")
+        # Cleanup is best-effort and isolated so one blocked native/third-party
+        # shutdown routine cannot prevent the CI-only hard exit.
+        cleanup = threading.Thread(
+            target=_cleanup_runtime_services,
+            name="BrahmaCISmokeCleanup",
+            daemon=True,
+        )
+        cleanup.start()
+        cleanup.join(timeout=2.0)
+        if cleanup.is_alive():
+            _startup_log("packaged smoke-test cleanup timed out; forcing process exit")
+        else:
+            _startup_log("packaged smoke-test cleanup finished")
 
         # os._exit is deliberately restricted to the CI smoke-test branch. It
         # guarantees the supervisor observes a real process exit even when a
