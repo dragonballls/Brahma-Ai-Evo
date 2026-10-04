@@ -181,6 +181,11 @@ class RepositoryIntegrityTests(unittest.TestCase):
         self.assertIn("def chat_with_tools(", or_client)
         self.assertIn('normalize_provider(self._provider) == GEMINI', llm)
 
+    def test_pyinstaller_includes_offline_speech_dependencies(self):
+        source = (ROOT / "installer" / "BrahmaEvo.spec").read_text(encoding="utf-8")
+        self.assertIn("'speech_recognition'", source)
+        self.assertIn("'pocketsphinx'", source)
+
     def test_pyinstaller_datas_use_two_part_entries(self):
         source = (ROOT / "installer" / "BrahmaEvo.spec").read_text(encoding="utf-8")
         tree = ast.parse(source, filename="installer/BrahmaEvo.spec")
