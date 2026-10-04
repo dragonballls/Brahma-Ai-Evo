@@ -150,6 +150,14 @@ class ConversationDeliveryTests(unittest.TestCase):
         self.assertIn('"role": "assistant"', main)
         self.assertIn('args=(text, memory_ctx, source or "local")', main)
         self.assertIn("def acknowledge_chat_response(self):", ui)
+    def test_native_tts_playback_has_a_real_failure_fallback(self):
+        from pathlib import Path
+
+        source = Path("actions/attention_monitor.py").read_text(encoding="utf-8")
+        self.assertIn("$deadline = (Get-Date).AddSeconds(8)", source)
+        self.assertIn("Media duration metadata did not load.", source)
+        self.assertIn("Media playback did not complete.", source)
+        self.assertIn("if return_code != 0:", source)
     def test_silent_live_turn_has_text_fallback_and_reconnect_signal(self):
         source = __import__("pathlib").Path("main.py").read_text(encoding="utf-8")
         self.assertIn("degraded_turn = bool(full_in) and not full_out and not had_usable_audio", source)
