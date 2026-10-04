@@ -201,6 +201,13 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
             self.assertIn("Successfully wrote", written)
             self.assertEqual(Path(tmp, "demo.txt").read_text(encoding="utf-8"), "hello")
 
+    def test_self_coding_model_ladder_uses_direct_omniroute_client(self):
+        source = Path(ROOT / "actions" / "brahma_dev_agent.py").read_text(encoding="utf-8")
+        self.assertIn("from or_client import client as direct_or_client", source)
+        self.assertIn('model="auto/coding"', source)
+        self.assertIn("return direct_or_client.multi_turn(self.history, temperature=0.2)", source)
+        self.assertNotIn("return ai_client.multi_turn(self.history, temperature=0.2)", source)
+
     def test_github_tools_are_exposed_to_brahma_dev(self):
         source = Path(ROOT / "actions" / "brahma_dev_agent.py").read_text(encoding="utf-8")
         self.assertIn("GitHubSearch", source)
