@@ -69,7 +69,6 @@ def mobile_autopilot(parameters: dict, response=None, player=None, session_memor
         prompt = _build_prompt(instruction, ui_tree)
         
         try:
-        try:
             decision = generate_json(
                 prompt,
                 system_instruction="You are a mobile UI automation agent. Return ONLY the requested JSON action object.",
