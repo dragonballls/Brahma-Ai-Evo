@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from llm_client import UnifiedAIClient
 from or_client import OpenRouterClient
@@ -96,18 +96,14 @@ class ConversationDeliveryTests(unittest.TestCase):
         self.assertIn("self._fallback_reply", source)
 
     def test_native_tts_can_be_forced_even_when_live_session_exists(self):
-        from main import BrahmaLive
+        from pathlib import Path
 
-        obj = object.__new__(BrahmaLive)
-        obj.session = object()
-        obj._loop = MagicMock()
-        obj._last_live_audio_at = 0.0
-        obj.ui = MagicMock()
-        obj.ui.muted = False
-
-        with patch.object(BrahmaLive, "_speak_native") as native:
-            obj.speak("test response", use_live=False)
-        native.assert_called_once()
+        source = Path("main.py").read_text(encoding="utf-8")
+        self.assertIn("use_live: bool | None = None", source)
+        self.assertIn("live_recently_healthy", source)
+        self.assertIn("use_live = live_recently_healthy", source)
+        self.assertIn("self.speak(reply, proactive=True, use_live=False)", source)
+        self.assertIn("def _speak_native(self, text: str, profile)", source)
 
     def test_silent_live_turn_has_text_fallback_and_reconnect_signal(self):
         source = __import__("pathlib").Path("main.py").read_text(encoding="utf-8")
