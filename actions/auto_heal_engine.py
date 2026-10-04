@@ -203,6 +203,12 @@ class SafetySandbox:
 class AutoHealEngine:
     """Orchestrates error analysis, hotfix synthesis, verification, and application."""
 
+    # Runtime-triggered healing is deliberately deduplicated and serialized so
+    # repeated failures cannot spawn an unbounded patch storm.
+    _auto_lock = threading.RLock()
+    _auto_inflight: set[str] = set()
+    _auto_recent: Dict[str, float] = {}
+    AUTO_HEAL_COOLDOWN_SECONDS = 300.0
     _last_error: Optional[str] = None
 
     @classmethod
