@@ -150,6 +150,14 @@ class ConversationDeliveryTests(unittest.TestCase):
         self.assertIn('"role": "assistant"', main)
         self.assertIn('args=(text, memory_ctx, source or "local")', main)
         self.assertIn("def acknowledge_chat_response(self):", ui)
+    def test_cloud_action_router_does_not_override_provider_switch_setting(self):
+        from pathlib import Path
+
+        source = Path("main.py").read_text(encoding="utf-8")
+        block = source.split("def _cloud_tool_reply(", 1)[1].split("def _ig_gemini_reply(", 1)[0]
+        self.assertIn("Route a cloud action through exactly the selected provider.", block)
+        self.assertNotIn("alternate = ", block)
+        self.assertNotIn("for candidate in ordered:", block)
     def test_native_tts_playback_has_a_real_failure_fallback(self):
         from pathlib import Path
 
