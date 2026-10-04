@@ -92,7 +92,7 @@ def _run_recovery(root: Path, child_start: float) -> None:
             stderr=subprocess.STDOUT,
             text=True,
             timeout=180,
-            env={**os.environ, "BRAHMA_CRASH_RECOVERY=1"},
+            env={**os.environ, "BRAHMA_CRASH_RECOVERY": "1"},
             creationflags=_hidden_creationflags(),
             check=False,
         )
