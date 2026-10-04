@@ -2578,7 +2578,52 @@ TOOL_DECLARATIONS = [
             },
             "required": ["description"]
         }
+    },,
+    {
+        "name": "ram_hogs",
+        "description": "Find the processes using the most RAM and report actionable memory-pressure information. Read-only diagnostics.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {},
+            "required": []
+        }
     },
+    {
+        "name": "kill_process",
+        "description": "Terminate a specific Windows process when the user explicitly asks to close/kill it. Prefer a process name or PID and report exactly what was targeted.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "process": {"type": "STRING", "description": "Process name or executable to terminate"},
+                "pid": {"type": "INTEGER", "description": "Optional process ID"}
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "brightness_control",
+        "description": "Adjust or report Windows display brightness. Use only when the user explicitly requests a brightness change.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "set | up | down | status"},
+                "value": {"type": "INTEGER", "description": "Brightness percentage from 0 to 100 for set"}
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "rollback",
+        "description": "Rollback a Brahma self-heal/maintenance change when the user explicitly requests a rollback.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "rollback"},
+                "checkpoint": {"type": "STRING", "description": "Optional checkpoint or recovery identifier"}
+            },
+            "required": ["action"]
+        }
+    }
 ]
 
 
