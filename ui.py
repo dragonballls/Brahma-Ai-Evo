@@ -15899,16 +15899,6 @@ class _RootShim:
     def mainloop(self):
         self._app.exec()
 
-    def quit(self):
-        # QApplication.quit() is safe to invoke from the packaged smoke-test
-        # timer thread and cleanly terminates the Qt event loop.
-        self._app.quit()
-
-    def destroy(self):
-        # Preserve the legacy root.destroy() contract without manually closing
-        # Qt widgets from a worker thread.
-        self._app.quit()
-
     def protocol(self, *_):
         pass
 
