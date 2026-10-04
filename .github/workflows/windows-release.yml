@@ -50,8 +50,6 @@ jobs:
         with:
           path: build_vendor/omniroute_runtime
           key: windows-omniroute-${{ hashFiles('core/runtime_contract.py', 'scripts/prepare_omniroute_runtime.py') }}
-          restore-keys: |
-            windows-omniroute-
 
       - name: Prepare pinned OmniRoute runtime
         shell: pwsh
