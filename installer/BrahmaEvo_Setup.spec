@@ -7,15 +7,20 @@ if not os.path.exists(os.path.join(cwd, 'installer')):
     cwd = os.path.abspath(os.getcwd()) # fallback
 
 source_dir = os.path.join(cwd, 'dist', 'BrahmaEvo')
+supervisor_exe = os.path.join(cwd, 'dist', 'BrahmaEvoSupervisor.exe')
+installer_datas = [
+    (source_dir, 'BrahmaEvo'),
+    (os.path.join(cwd, 'assets'), 'assets'),
+]
+if os.path.exists(supervisor_exe):
+    # Install the independent supervisor beside BrahmaEvo.exe.
+    installer_datas.append((supervisor_exe, 'BrahmaEvo'))
 
 a = Analysis(
     [os.path.join(cwd, 'installer', 'install_wizard.py')],
     pathex=[],
     binaries=[],
-    datas=[
-        (source_dir, 'BrahmaEvo'),
-        (os.path.join(cwd, 'assets'), 'assets')
-    ],
+    datas=installer_datas,
     hiddenimports=['PyQt6', 'shutil', 'PyQt6.QtWebEngineWidgets', 'PyQt6.QtWebEngineCore'],
     hookspath=[],
     hooksconfig={},
