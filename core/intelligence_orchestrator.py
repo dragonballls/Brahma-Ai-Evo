@@ -202,7 +202,7 @@ class IntelligenceOrchestrator:
         if not bool(c.get("enabled",True)) or not allowed():
             return self._call(prompt,system,"auto",4096,0.5,history)
         p=profile_for(prompt,profile,c); pc=self._cfg(p,c); count=int(pc.get("specialists",0))
-        panel=_ensemble_models(c,pc)
+        panel=_ensemble_models(c,pc) if p != "fast" else []
         if panel:
             ctx=trim(context,int(c.get("max_context_chars",14000)))
             roles=_ensemble_roles(p,len(panel))
