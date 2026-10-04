@@ -281,6 +281,13 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertNotIn("ui.root.quit()", source)
         self.assertNotIn("ui.root.destroy()", source)
 
+    def test_windows_omniroute_cache_skips_rebuild_on_exact_hit(self):
+        workflow = self.read(".github/workflows/windows-release.yml")
+        self.assertIn("id: omni-cache", workflow)
+        self.assertIn("steps.omni-cache.outputs.cache-hit", workflow)
+        self.assertIn("if: ${{ steps.omni-cache.outputs.cache-hit != 'true' }}", workflow)
+        self.assertIn("actions/cache/save@v4", workflow)
+
     def test_setup_payload_archive_is_the_release_fast_path(self):
         spec = self.read("installer/BrahmaEvo_Setup.spec")
         wizard = self.read("installer/install_wizard.py")

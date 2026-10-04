@@ -46,17 +46,19 @@ jobs:
           python -m pip check
 
       - name: Restore cached OmniRoute runtime
+        id: omni-cache
         uses: actions/cache/restore@v4
         with:
           path: build_vendor/omniroute_runtime
           key: windows-omniroute-${{ hashFiles('core/runtime_contract.py', 'scripts/prepare_omniroute_runtime.py') }}
 
       - name: Prepare pinned OmniRoute runtime
+        if: ${{ steps.omni-cache.outputs.cache-hit != 'true' }}
         shell: pwsh
         run: |
           python scripts/prepare_omniroute_runtime.py build_vendor/omniroute_runtime
 
-      - name: Verify OmniRoute runtime
+      - name: Verify cached or prepared OmniRoute runtime
         shell: pwsh
         run: |
           $manifest = Get-Content build_vendor/omniroute_runtime/runtime-manifest.txt -Raw
@@ -66,8 +68,10 @@ jobs:
           if ($manifest -notmatch "omniroute=$omniVersion") { throw "Unexpected OmniRoute version." }
           if (-not (Test-Path "build_vendor/omniroute_runtime/node.exe")) { throw "Bundled Node runtime missing." }
           if (-not (Test-Path "build_vendor/omniroute_runtime/node_modules/omniroute/bin/omniroute.mjs")) { throw "Bundled OmniRoute entrypoint missing." }
+          python -c "from pathlib import Path; import sys; root=Path('build_vendor/omniroute_runtime'); sys.path.insert(0, str(Path('.').resolve())); from scripts.prepare_omniroute_runtime import _healthy; raise SystemExit(0 if _healthy(root) else 1)"
 
       - name: Cache verified OmniRoute runtime
+        if: success() && ${{ steps.omni-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: build_vendor/omniroute_runtime
