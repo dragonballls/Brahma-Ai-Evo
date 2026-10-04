@@ -138,7 +138,7 @@ class ConversationDeliveryTests(unittest.TestCase):
         def fake_call(*args, **kwargs):
             return responses.pop(0)
 
-        with patch.object(client, "reload_settings"),              patch("llm_client.openrouter_client._call_tool_capable", side_effect=fake_call):
+        with patch.object(client, "reload_settings"),              patch("llm_client.openrouter_client._call_omniroute_tool_capable", return_value=None),              patch("llm_client.openrouter_client._call_tool_capable", side_effect=fake_call):
             result = client.chat_with_tools(
                 messages=[
                     {"role": "system", "content": "Use tools when needed."},
