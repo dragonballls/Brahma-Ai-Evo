@@ -183,11 +183,13 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("if offline or is_local(provider):", source)
         self.assertIn("return bool(api.get(\"gemini_api_key\"))", source)
 
-    def test_live_voice_does_not_retry_without_gemini_credential(self):
+    def test_live_voice_degrades_to_text_tts_without_gemini_credential(self):
         source = self.read("main.py")
         self.assertIn("def _has_gemini_voice_credentials()", source)
-        self.assertIn("if not offline_mode and not is_local(selected_provider) and gemini_voice_ready:", source)
-        self.assertIn("Continuous Live voice is unavailable without a Gemini voice credential", source)
+        self.assertIn("async def run_text_voice_fallback(self):", source)
+        self.assertIn("asyncio.run(brahma_evo.run_text_voice_fallback())", source)
+        self.assertIn("text_voice_fallback = bool(getattr(self, "_text_voice_fallback", False))", source)
+        self.assertNotIn("Continuous Live voice is unavailable without a Gemini voice credential; text/control features remain available.", source)
 
     def test_provider_auto_switch_setting_is_consumed(self):
         source = self.read("main.py")
