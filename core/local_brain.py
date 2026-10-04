@@ -104,6 +104,15 @@ class LocalBrain:
         return self._cached_models
 
     def pull_model_async(self, model_name: str, progress_callback=None):
+        """Pull a model through Ollama only; custom OpenAI-compatible endpoints are not silently misrouted."""
+        self.reload_settings()
+        if self.endpoint.rstrip("/") != DEFAULT_ENDPOINT.rstrip("/"):
+            if progress_callback:
+                progress_callback({
+                    "error": "Model downloads are supported only when the Local AI endpoint is Ollama's default endpoint."
+                })
+            return
+
         """Pulls a model from the local runtime library in the background."""
         def _pull():
             try:
