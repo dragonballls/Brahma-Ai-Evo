@@ -15,7 +15,7 @@ a = Analysis(
         (os.path.join(cwd, 'memory'), 'memory'),
         (os.path.join(cwd, 'config'), 'config'),
     ],
-    hiddenimports=[],
+    hiddenimports=['core.crash_recovery', 'actions.auto_heal_engine'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
