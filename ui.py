@@ -4211,8 +4211,23 @@ class WorkspaceSidebar(QWidget):
             self.reposition()
 
     def append_log(self, text: str):
-        """Consume a log line without persisting it; chat events have one canonical writer."""
-        return
+        """Render non-conversational log events without creating a second store write."""
+        raw = str(text or "").strip()
+        if not raw:
+            return
+        low = raw.lower()
+        if low.startswith("sys:"):
+            self.record_chat_event({
+                "role": "system",
+                "text": raw.split(":", 1)[1].strip(),
+                "source": "system",
+            }, persist=False)
+        elif low.startswith("file:"):
+            self.record_chat_event({
+                "role": "file",
+                "text": raw.split(":", 1)[1].strip(),
+                "source": "system",
+            }, persist=False)
 
     def record_chat_event(self, event: object, *, persist: bool = True):
         data = event if isinstance(event, dict) else {}
@@ -4700,8 +4715,23 @@ class InlineChatWorkspace(QFrame):
         if persist:
             self._refresh_history()
     def append_log(self, text: str):
-        """Consume a log line without persisting it; chat events have one canonical writer."""
-        return
+        """Render non-conversational log events without creating a second store write."""
+        raw = str(text or "").strip()
+        if not raw:
+            return
+        low = raw.lower()
+        if low.startswith("sys:"):
+            self.record_chat_event({
+                "role": "system",
+                "text": raw.split(":", 1)[1].strip(),
+                "source": "system",
+            }, persist=False)
+        elif low.startswith("file:"):
+            self.record_chat_event({
+                "role": "file",
+                "text": raw.split(":", 1)[1].strip(),
+                "source": "system",
+            }, persist=False)
 
     def apply_task_workspace(self, event: object):
         data = event if isinstance(event, dict) else {}
