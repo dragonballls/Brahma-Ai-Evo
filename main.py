@@ -6255,8 +6255,9 @@ class BrahmaLive:
                 "SYS: No usable microphone is available at the configured sample rate. "
                 "Voice input is paused; text and mobile remote remain available."
             )
-            while True:
-                await asyncio.sleep(60)
+            while not self._shutdown_event.is_set():
+                await asyncio.sleep(1)
+            return
 
         speech_buffer = bytearray()
         silence_chunks = 0
@@ -6266,8 +6267,10 @@ class BrahmaLive:
         # Gemini Live. Cache the mode once per stream and give ownership to one
         # recognizer only.
         app_cfg = config_manager.load_settings()
+        text_voice_fallback = bool(getattr(self, "_text_voice_fallback", False))
         local_voice_mode = (
-            is_local(app_cfg.get("default_ai_provider"))
+            text_voice_fallback
+            or is_local(app_cfg.get("default_ai_provider"))
             or bool(app_cfg.get("offline_mode_enabled", False))
         )
 
@@ -6321,13 +6324,14 @@ class BrahmaLive:
                                             pass
                                     threading.Thread(target=_process_local_speech, args=(captured,), daemon=True).start()
 
-                    # Local/Offline mode owns microphone recognition; do not send
-                    # the same speech to the separate Gemini Live session.
-                    data = np.zeros_like(indata).tobytes()
-                    loop.call_soon_threadsafe(
-                        self._enqueue_live_input,
-                        {"data": data, "mime_type": "audio/pcm"}
-                    )
+                    # Local/offline/text-fallback voice owns microphone recognition;
+                    # never send the same audio to a separate Gemini Live session.
+                    if not text_voice_fallback and self.session and self.out_queue:
+                        data = np.zeros_like(indata).tobytes()
+                        loop.call_soon_threadsafe(
+                            self._enqueue_live_input,
+                            {"data": data, "mime_type": "audio/pcm"}
+                        )
                     return
 
                 if brahma_speaking:
@@ -6398,7 +6402,7 @@ class BrahmaLive:
                 stream.start()
 
             print(f"[BRAHMA EVO] 🎤 Mic stream open ({_mic_name or 'Default'})")
-            while True:
+            while not self._shutdown_event.is_set():
                 await asyncio.sleep(0.1)
         except Exception as e:
             print(f"[BRAHMA EVO] ❌ Mic: {e}")
@@ -6650,6 +6654,34 @@ class BrahmaLive:
                 except Exception:
                     pass
 
+    async def run_text_voice_fallback(self):
+        """Keep microphone voice available when Gemini Live is unavailable."""
+        if not _VOICE_SESSION_GUARD.acquire(blocking=False):
+            try:
+                self.ui.write_log("SYS: Voice session already active; text-voice fallback ignored.")
+                self.ui.set_state("LISTENING")
+            except Exception:
+                pass
+            return
+        self._text_voice_fallback = True
+        try:
+            self.ui.write_log(
+                "SYS: Gemini Live voice unavailable; text/TTS voice fallback is active. "
+                "Speech is transcribed through the text command path."
+            )
+            self.ui.set_state("LISTENING")
+            while not self._shutdown_event.is_set():
+                try:
+                    await self._listen_audio()
+                except Exception as exc:
+                    self.ui.write_log(f"ERR: Voice-input fallback failed — {exc}")
+                    if self._shutdown_event.is_set():
+                        break
+                    await asyncio.sleep(3)
+        finally:
+            self._text_voice_fallback = False
+            self.set_speaking(False)
+            _VOICE_SESSION_GUARD.release()
     async def run(self):
         if not _VOICE_SESSION_GUARD.acquire(blocking=False):
             try:
@@ -7202,8 +7234,9 @@ def _main_impl():
         offline_mode = bool(selected_settings.get("offline_mode_enabled", False))
         gemini_voice_ready = _has_gemini_voice_credentials()
 
-        # Do not run an endless Gemini Live reconnect loop when the user
-        # intentionally configured Local/OpenRouter without a Gemini credential.
+        # Gemini Live provides the full-duplex native-audio experience when its
+        # credential is available. Otherwise keep the microphone useful through
+        # the independent text-agent + native-TTS path.
         if not offline_mode and not is_local(selected_provider) and gemini_voice_ready:
             try:
                 asyncio.run(brahma_evo.run())
@@ -7211,13 +7244,14 @@ def _main_impl():
                 print("\n🔴 Shutting down...")
         else:
             _startup_log(
-                f"Live voice session not started: provider={selected_provider}, "
-                f"offline={offline_mode}, gemini_voice_credentials={gemini_voice_ready}"
+                f"Gemini Live voice not started: provider={selected_provider}, "
+                f"offline={offline_mode}, gemini_voice_credentials={gemini_voice_ready}; "
+                "using text/TTS voice fallback"
             )
-            ui.write_log(
-                "SYS: Continuous Live voice is unavailable without a Gemini voice credential; "
-                "text/control features remain available."
-            )
+            try:
+                asyncio.run(brahma_evo.run_text_voice_fallback())
+            except KeyboardInterrupt:
+                print("\n🔴 Shutting down...")
     def start_runner():
         threading.Thread(target=runner, daemon=True).start()
 
