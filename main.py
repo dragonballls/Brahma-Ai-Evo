@@ -7030,6 +7030,35 @@ class BrahmaLive:
                 break
             await asyncio.sleep(5)
 
+def _install_auto_heal_exception_hooks() -> None:
+    """Route uncaught background-thread exceptions into the guarded healer."""
+    try:
+        import threading
+        from actions.auto_heal_engine import AutoHealEngine
+
+        previous_hook = getattr(threading, "excepthook", None)
+
+        def _hook(args):
+            try:
+                tb = "".join(traceback.format_exception(args.exc_type, args.exc_value, args.exc_traceback))
+                AutoHealEngine.auto_heal_runtime_error(
+                    tb,
+                    context_notes=f"Uncaught exception in background thread {getattr(args.thread, 'name', 'unknown')}.",
+                    notify=lambda msg: _startup_log(f"[AUTOHEAL] {msg}"),
+                )
+            except Exception:
+                pass
+            if previous_hook:
+                try:
+                    previous_hook(args)
+                except Exception:
+                    pass
+
+        threading.excepthook = _hook
+    except Exception:
+        pass
+
+
 def _main_impl():
     global _SINGLE_INSTANCE_GUARD
     _startup_log("main entered")
