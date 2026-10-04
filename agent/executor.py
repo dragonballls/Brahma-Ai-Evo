@@ -676,20 +676,18 @@ class AgentExecutor:
     def _summarize(self, goal: str, completed_steps: list, speak: Callable | None) -> str:
         fallback = f"All done, sir. Completed {len(completed_steps)} steps for: {goal[:60]}."
         try:
-            import google.generativeai as genai
-            genai.configure(api_key=_get_api_key())
-            model = genai.GenerativeModel(model_name="gemini-2.5-flash")
             steps_str = "\n".join(f"- {s.get('description', '')}" for s in completed_steps)
-            prompt    = (
+            prompt = (
                 f'User goal: "{goal}"\n'
                 f"Completed steps:\n{steps_str}\n\n"
                 "Write a single natural sentence summarizing what was accomplished. "
                 "Address the user as 'sir'. Be direct and positive."
             )
-            response = model.generate_content(prompt)
-            summary  = response.text.strip()
-            if speak: speak(summary)
+            summary = _gemini_generate(prompt, system="You are a task summarizer.")
+            if speak:
+                speak(summary)
             return summary
         except Exception:
-            if speak: speak(fallback)
+            if speak:
+                speak(fallback)
             return fallback
