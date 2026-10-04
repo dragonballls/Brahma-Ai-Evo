@@ -4771,6 +4771,57 @@ class BrahmaLive:
                 except Exception as e_loc:
                     print(f"[BRAHMA EVO] ⚠️ Local Brain failed: {e_loc}")
 
+            # 4. Universal capability fallback: if the request is an action and
+            # every existing route failed, actually invoke the capability engine.
+            # This makes universal_task a deterministic execution path rather than
+            # merely a model-visible tool that depends on the model remembering to call it.
+            if not reply and _looks_like_action_request(text):
+                try:
+                    self.ui.update_task_workspace(
+                        title="Universal Capability",
+                        command=text,
+                        plan=[
+                            "Retry specialized execution paths",
+                            "Search installed dynamic capabilities",
+                            "Synthesize and verify a missing capability if necessary",
+                            "Execute the capability and return the result",
+                        ],
+                        status="Expanding capability",
+                        output="No existing route completed the action; Brahma is finding or creating the required capability.",
+                        percent=80,
+                    )
+                    from core.universal_agent import run as run_universal_task
+                    universal_result = run_universal_task(
+                        text,
+                        context=request_text,
+                        max_repair_attempts=2,
+                    )
+                    if universal_result.get("success"):
+                        reply = str(
+                            universal_result.get("result")
+                            or "The universal capability completed the requested action."
+                        ).strip()
+                        self.ui.update_task_workspace(
+                            title="Universal Capability",
+                            command=text,
+                            plan=[
+                                "Retry specialized execution paths",
+                                "Search installed dynamic capabilities",
+                                "Synthesize and verify a missing capability if necessary",
+                                "Execute the capability and return the result",
+                            ],
+                            status="Completed",
+                            output=reply[:12000],
+                            percent=100,
+                        )
+                    else:
+                        print(
+                            "[BRAHMA EVO] Universal capability fallback failed: "
+                            f"{universal_result.get("message", universal_result.get("status", "unknown failure"))}"
+                        )
+                except Exception as exc_universal:
+                    print(f"[BRAHMA EVO] Universal capability fallback failed: {exc_universal}")
+
             # 5. Ultimate offline safety net: Local Brain fallback
             if not reply and local_brain.is_available():
                 try:
