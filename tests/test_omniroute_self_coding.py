@@ -132,7 +132,7 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
         # Native Gemini Live remains a deliberate specialized transport.
         self.assertEqual(main.count("genai.Client("), 1)
         live_pos = main.find("client = genai.Client(")
-        self.assertGreater(live_pos, main.find("Connect Live voice") if "Connect Live voice" in main else 0)
+        self.assertGreater(live_pos, main.find("class BrahmaLive"))
 
         llm = (ROOT / "llm_client.py").read_text(encoding="utf-8")
         self.assertIn("openrouter_client.chat", llm)
