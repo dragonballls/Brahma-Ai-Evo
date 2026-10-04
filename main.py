@@ -2578,7 +2578,7 @@ TOOL_DECLARATIONS = [
             },
             "required": ["description"]
         }
-    },,
+    },
     {
         "name": "ram_hogs",
         "description": "Find the processes using the most RAM and report actionable memory-pressure information. Read-only diagnostics.",
