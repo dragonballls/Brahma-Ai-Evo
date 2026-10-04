@@ -788,6 +788,34 @@ def _wakeword_detected(text: str) -> bool:
     return any(compact == phrase or compact.startswith(phrase + " ") for phrase in phrases)
 
 
+def _looks_like_action_request(text: str) -> bool:
+    """Conservative guard: tool-capable routing should handle likely side effects before text-only reasoning."""
+    low = re.sub(r"\s+", " ", (text or "").casefold()).strip()
+    if not low:
+        return False
+    action_phrases = (
+        "open ", "launch ", "start ", "run ", "execute ", "set ", "change ",
+        "turn on", "turn off", "mute ", "unmute ", "increase ", "decrease ",
+        "send ", "post ", "publish ", "create ", "delete ", "remove ", "move ",
+        "copy ", "rename ", "download ", "install ", "search ", "browse ",
+        "navigate ", "check ", "diagnose ", "control ", "play ", "pause ", "stop ",
+        "schedule ", "remind ", "call ", "message ", "email ", "compose ",
+        "write ", "edit ", "fix ", "build ", "implement ", "update ", "connect ",
+        "disconnect ", "take a screenshot", "look at my screen",
+    )
+    return any(low.startswith(phrase) for phrase in action_phrases) or any(
+        re.search(rf"\b(?:can|could|would|will) you\s+{re.escape(verb)}\b", low)
+        for verb in (
+            "open", "launch", "start", "run", "execute", "set", "change",
+            "turn", "send", "post", "create", "delete", "move", "copy",
+            "rename", "download", "install", "search", "browse", "navigate",
+            "check", "diagnose", "control", "play", "pause", "stop", "schedule",
+            "remind", "call", "message", "email", "write", "edit", "fix",
+            "build", "implement", "update", "connect", "disconnect",
+        )
+    )
+
+
 def _build_task_plan(text: str) -> list[str]:
     t = (text or "").lower()
     if any(word in t for word in ("presentation", "ppt", "slides", "deck")):
@@ -4554,6 +4582,35 @@ class BrahmaLive:
                     print("[BRAHMA EVO] 🌐 OpenRouter cloud agent answered successfully!")
                 except Exception as e_or:
                     print(f"[BRAHMA EVO] ⚠️ OpenRouter failed: {e_or}")
+
+            # Multi-model intelligence is a text-only recovery layer. Keep side-effecting
+            # requests on the tool-capable route so the model cannot merely describe an action.
+            if (
+                not reply
+                and not is_offline_mode
+                and not is_local(configured_provider)
+                and not _looks_like_action_request(text)
+            ):
+                try:
+                    self.ui.update_task_workspace(
+                        status="Thinking (Multi-model Intelligence)",
+                        output="Cloud tool routing returned no answer; running the configured multi-model reasoning ladder.",
+                        percent=62,
+                    )
+                    from core.intelligence_orchestrator import orchestrator
+                    reply = orchestrator.respond(
+                        request_text,
+                        system=(
+                            "You are Brahma Evo's text-reasoning recovery layer. "
+                            "Answer the user directly and accurately. "
+                            "Do not claim that you performed a computer action, API action, "
+                            "file operation, or other side effect; this layer is text-only. "
+                            "Use available context, preserve important constraints, and be concise."
+                        ),
+                        context=request_text,
+                    )
+                except Exception as exc_intel:
+                    print(f"[BRAHMA EVO] Multi-model intelligence fallback failed: {exc_intel}")
 
             # 3. If user explicitly configured Local AI, is in Offline Mode, or cloud provider failed: run Local Brain
             if not reply and (is_local(configured_provider) or is_offline_mode or not (is_cloud_gemini or is_cloud_openrouter)) and local_brain.is_available():
