@@ -213,6 +213,11 @@ class ConversationDeliveryTests(unittest.TestCase):
         self.assertIn('self.speak(failure_reply, proactive=True, use_live=False)', block)
         self.assertIn('self.ui.finish_task_workspace(failure_reply, "Reply failed.", 0)', block)
 
+    def test_multi_model_recovery_does_not_cross_from_gemini_when_auto_switch_is_off(self):
+        from pathlib import Path
+
+        source = Path("main.py").read_text(encoding="utf-8")
+        self.assertIn("(is_cloud_openrouter or auto_provider_switch)", source)
     def test_cloud_action_router_does_not_override_provider_switch_setting(self):
         from pathlib import Path
 
