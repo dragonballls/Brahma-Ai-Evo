@@ -246,7 +246,7 @@ class AutonomousMissionEdgeCaseTests(TestCase):
             mod._MISSIONS.clear()
 
             class FakeProcess:
-                pid = 4242
+                pid = 2_000_000
                 def create_time(self):
                     return 123.0
 
