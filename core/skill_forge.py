@@ -334,6 +334,36 @@ Preferred Name: {name_hint or 'auto_generate'}
 Additional Context: {context_hints}
 """
 
+        try:
+            from memory import config_manager
+            offline_mode = bool(config_manager.get_setting("offline_mode_enabled", False))
+        except Exception:
+            offline_mode = False
+
+        if offline_mode:
+            try:
+                from core.local_brain import local_brain
+                local_response = local_brain.chat_complete(
+                    [
+                        {"role": "system", "content": system_instructions + "\nReturn ONLY one valid JSON object."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    model=None,
+                    temperature=0.2,
+                    focus_core=False,
+                )
+                local_raw = str(
+                    (local_response.get("choices", [{}])[0].get("message", {}) or {}).get("content", "")
+                    or ""
+                ).strip()
+                data = cls._parse_json_response(local_raw)
+                if isinstance(data.get("manifest"), dict) and isinstance(data.get("code"), str):
+                    data["success"] = True
+                    return data
+            except Exception as exc:
+                logger.warning(f"[Forge] Offline local synthesis failed: {exc}")
+            return {"success": False, "error": "Offline local LLM synthesis is unavailable."}
+
         # Prefer the unified OmniRoute-backed cloud path. The existing
         # direct Gemini sequence remains as a compatibility fallback.
         try:
@@ -404,6 +434,43 @@ Critical Repair Instructions:
     "code": "Fully corrected, runnable Python code"
 }}
 """
+        try:
+            from memory import config_manager
+            offline_mode = bool(config_manager.get_setting("offline_mode_enabled", False))
+        except Exception:
+            offline_mode = False
+
+        if offline_mode:
+            try:
+                from core.local_brain import local_brain
+                local_response = local_brain.chat_complete(
+                    [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are repairing a Python skill generated for Brahma AI. "
+                                "Return ONLY JSON in the form {\"code\": \"fully corrected runnable Python code\"}. "
+                                "Preserve the requested behavior and existing safety constraints."
+                            ),
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    model=None,
+                    temperature=0.1,
+                    focus_core=False,
+                )
+                local_raw = str(
+                    (local_response.get("choices", [{}])[0].get("message", {}) or {}).get("content", "")
+                    or ""
+                ).strip()
+                data = cls._parse_json_response(local_raw)
+                if isinstance(data.get("code"), str):
+                    data["success"] = True
+                    return data
+            except Exception as exc:
+                logger.warning(f"[Forge] Offline local repair failed: {exc}")
+            return {"success": False, "error": "Offline local LLM repair is unavailable."}
+
         # Prefer the unified OmniRoute-backed repair path. Existing Gemini
         # repair remains unchanged as fallback.
         try:
