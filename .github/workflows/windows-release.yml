@@ -77,6 +77,43 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Test-Path "dist/BrahmaEvo/BrahmaEvo_Supervisor.exe")) { throw "Recovery supervisor was not produced." }
 
+      - name: Smoke-test recovery supervisor
+        shell: pwsh
+        env:
+          BRAHMA_EVO_TEST_MODE: "1"
+          BRAHMA_SKIP_STARTUP_UPDATE: "1"
+          BRAHMA_EVOLUTION_ENABLED: "0"
+          BRAHMA_EVO_SMOKE_MARKER: "${{ runner.temp }}\\brahma_recovery_supervisor_ready.txt"
+        run: |
+          $marker = Join-Path $env:RUNNER_TEMP "brahma_recovery_supervisor_ready.txt"
+          Remove-Item $marker -Force -ErrorAction SilentlyContinue
+          $exe = (Resolve-Path "dist/BrahmaEvo/BrahmaEvo_Supervisor.exe").Path
+          $proc = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -PassThru
+          try {
+            $deadline = (Get-Date).AddSeconds(45)
+            do {
+              Start-Sleep -Seconds 2
+              if ($proc.HasExited) {
+                $exitCode = $proc.ExitCode
+                throw "Recovery supervisor exited before child readiness with code $exitCode."
+              }
+              if (Test-Path $marker) { break }
+            } while ((Get-Date) -lt $deadline)
+
+            if (-not (Test-Path $marker)) {
+              throw "Recovery supervisor did not launch a ready Brahma child within 45 seconds."
+            }
+            Write-Host "Recovery supervisor launched Brahma and the child reported readiness."
+          }
+          finally {
+            if (-not $proc.HasExited) {
+              try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+            }
+            Start-Sleep -Seconds 2
+            Get-Process -Name "BrahmaEvo" -ErrorAction SilentlyContinue |
+              Stop-Process -Force -ErrorAction SilentlyContinue
+          }
+
       - name: Build setup wizard
         shell: pwsh
         run: |
