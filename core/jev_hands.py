@@ -16,11 +16,9 @@ from typing import Any
 
 import requests
 
-from core.user_paths import get_user_data_dir
 
 logger = logging.getLogger("brahma_jev")
 
-API_KEY_PATH = get_user_data_dir() / "config" / "api_keys.json"
 DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
 DEFAULT_MODEL = "typesafe/jev-1.13"
 DEFAULT_CONFIDENCE = 0.72
@@ -38,10 +36,11 @@ class UIAction:
 
 def _openrouter_key() -> str:
     try:
-        data = json.loads(API_KEY_PATH.read_text(encoding="utf-8"))
-        return str(data.get("openrouter_api_key") or "").strip()
+        from config import get_api_key
+        return str(get_api_key("OpenRouter") or "").strip()
     except Exception:
         return ""
+
 
 
 def _visible_window_state() -> tuple[Any, list[UIAction]]:
