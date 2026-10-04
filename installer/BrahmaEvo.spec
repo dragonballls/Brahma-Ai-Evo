@@ -33,7 +33,7 @@ a = Analysis(
         'PyQt6.QtWebEngineWidgets', 'PyQt6.QtWebChannel', 'pyautogui', 'sounddevice',
         'keyboard', 'docx', 'pptx', 'multipart', 'passlib', 'bcrypt', 'aiohttp', 'websockets',
         'uvicorn', 'fastapi', 'plyer', 'pydantic', 'typing_extensions', 'requests', 'beautifulsoup4',
-        'pyaudio', 'numpy'
+        'pyaudio', 'numpy', 'speech_recognition', 'pocketsphinx'
     ],
     hookspath=[],
     hooksconfig={},
