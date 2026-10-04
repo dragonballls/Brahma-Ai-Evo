@@ -65,7 +65,7 @@ def ensure_remote(repo: Path) -> None:
         raise RepositorySyncError(added.stderr.strip() or "Unable to create origin remote.")
 
 
-def publish_verified_repair(target_file: str | Path, patch_id: str, explanation: str = "") -> dict:
+def publish_verified_repair(target_file: str | Path, patch_id: str, explanation: str = "", repository_relative_path: str | None = None) -> dict:
     """Commit/push one already-verified runtime repair when an actual Git checkout exists.
 
     This deliberately does not touch self-coding checkpoints. It only publishes the
@@ -81,9 +81,17 @@ def publish_verified_repair(target_file: str | Path, patch_id: str, explanation:
     root = repo.resolve()
     target = Path(target_file).resolve()
     try:
-        target.relative_to(root)
+        repo_target = target.relative_to(root)
     except ValueError:
-        return {"published": False, "reason": "target_outside_repository"}
+        # Frozen/installed builds can repair an unpacked copy outside the Git checkout.
+        # In that case the caller must explicitly provide the source-tree-relative path.
+        relative = str(repository_relative_path or "").strip()
+        if not relative:
+            return {"published": False, "reason": "target_outside_repository"}
+        repo_target = Path(relative)
+        if repo_target.is_absolute() or ".." in repo_target.parts:
+            return {"published": False, "reason": "invalid_repository_relative_path"}
+        target = (root / repo_target).resolve()
 
     if not target.is_file():
         return {"published": False, "reason": "target_missing"}
@@ -95,7 +103,7 @@ def publish_verified_repair(target_file: str | Path, patch_id: str, explanation:
     # The repair engine normally operates on a clean file. If unrelated work appeared
     # between verification and publication, refusing to publish is safer than mixing it.
     lines = [line for line in status.stdout.splitlines() if line.strip()]
-    allowed = {str(target.relative_to(root)).replace("\\", "/")}
+    allowed = {str(repo_target).replace("\\", "/")}
     if any(line[3:].strip().replace("\\", "/") not in allowed for line in lines if len(line) >= 4):
         return {"published": False, "reason": "unrelated_working_tree_changes"}
 
@@ -122,7 +130,7 @@ def publish_verified_repair(target_file: str | Path, patch_id: str, explanation:
     if local.stdout.strip() != remote.stdout.strip():
         return {"published": False, "reason": "remote_main_changed"}
 
-    add = _run(root, ("add", "--", str(target.relative_to(root))))
+    add = _run(root, ("add", "--", str(repo_target)))
     if add.returncode != 0:
         return {"published": False, "reason": "stage_failed", "detail": add.stderr.strip()[-1000:]}
 
