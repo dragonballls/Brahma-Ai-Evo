@@ -1,4 +1,5 @@
 from core.user_paths import get_user_data_dir
+from core.runtime_paths import r, API_CONFIG_PATH
 #web_search.py
 import json
 import sys
@@ -12,7 +13,7 @@ def _get_base_dir() -> Path:
 
 
 BASE_DIR        = _get_base_dir()
-API_CONFIG_PATH = get_user_data_dir() / "config" / "api_keys.json"
+
 
 
 def _get_api_key() -> str:
