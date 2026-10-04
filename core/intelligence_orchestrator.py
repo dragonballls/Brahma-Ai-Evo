@@ -290,22 +290,28 @@ class IntelligenceOrchestrator:
                 except Exception:
                     critique_models.append(judge_model)
                 critiques = []
-                for critique_index, critique_model in enumerate(
-                    tuple(dict.fromkeys(critique_models))[:2], 1
-                ):
+                critic_specs = list(enumerate(tuple(dict.fromkeys(critique_models))[:2], 1))
+                critic_futures = {
+                    _ENSEMBLE_EXECUTOR.submit(
+                        self._call,
+                        critique_prompt,
+                        critique_system + f"\nCritic slot: {critique_index}.",
+                        critique_model,
+                        max(1024, int(pc.get("max_tokens",4096)) // 2),
+                        0.1,
+                        None,
+                    ): critique_index
+                    for critique_index, critique_model in critic_specs
+                }
+                for future in as_completed(critic_futures):
                     try:
-                        critique = self._call(
-                            critique_prompt,
-                            critique_system + f"\nCritic slot: {critique_index}.",
-                            critique_model,
-                            max(1024, int(pc.get("max_tokens",4096)) // 2),
-                            0.1,
-                            None,
-                        )
-                        if critique and critique.strip():
-                            critiques.append(trim(critique.strip(), 7000))
+                        critique = str(future.result() or "").strip()
+                        if critique:
+                            critiques.append((critic_futures[future], trim(critique, 7000)))
                     except Exception as exc:
                         log.debug("ensemble critic failed: %s", exc)
+                critiques.sort(key=lambda item: item[0])
+                critiques = [value for _index, value in critiques]
 
                 critique_evidence = (
                     "\n\n".join(
