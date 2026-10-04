@@ -19,6 +19,17 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+Write-Host "Building headless crash supervisor..." -ForegroundColor Cyan
+.\.venv\Scripts\pyinstaller.exe installer\BrahmaEvo_Supervisor.spec --noconfirm
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Failed to build crash supervisor!" -ForegroundColor Red
+    exit 1
+}
+if (-not (Test-Path "dist\BrahmaEvoSupervisor\BrahmaEvoSupervisor.exe")) {
+    Write-Host "Crash supervisor executable was not produced!" -ForegroundColor Red
+    exit 1
+}
+
 Write-Host "Main Application built successfully. Now building Setup Wizard..." -ForegroundColor Cyan
 .\.venv\Scripts\pyinstaller.exe installer\BrahmaEvo_Setup.spec --noconfirm
 if ($LASTEXITCODE -ne 0) {
