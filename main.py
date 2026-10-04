@@ -6756,9 +6756,17 @@ class BrahmaLive:
                             full_out = " ".join(out_buf).strip()
                             degraded_turn = bool(full_in) and not full_out and not had_usable_audio
                             if full_out:
-                                # The UI's assistant-log path persists this message;
-                                # do not also insert it directly or the bubble doubles.
-                                self.ui.write_log(f"Brahma Evo: {full_out}")
+                                # Live voice has no pending text-command source marker,
+                                # so persist the assistant turn through the canonical
+                                # conversation event bridge instead of the legacy log parser.
+                                try:
+                                    self.ui.record_chat_event({
+                                        "role": "assistant",
+                                        "text": full_out,
+                                        "source": "mic",
+                                    })
+                                except Exception as exc:
+                                    self.ui.write_log(f"ERR: Failed to persist Live assistant response — {exc}")
                             elif degraded_turn:
                                 # A Live session can accept/transcribe input while
                                 # producing no usable output. Never strand the user:
@@ -6773,7 +6781,7 @@ class BrahmaLive:
                                 )
                                 threading.Thread(
                                     target=self._fallback_reply,
-                                    args=(fallback_text, _memory_context_for_request(fallback_text)),
+                                    args=(fallback_text, _memory_context_for_request(fallback_text), "mic"),
                                     daemon=True,
                                     name="live-silent-turn-fallback",
                                 ).start()
