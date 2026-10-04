@@ -107,8 +107,7 @@ Attempt number: {attempt}"""
             model_name="gemini-3.8-flash",
             max_output_tokens=2048,
         )
-        result = json.loads(text)
-        decision_str = result.get("decision", "replan").lower()
+        decision_str = str(result.get("decision", "replan")).strip().lower()
         decision_map = {
             "retry":  ErrorDecision.RETRY,
             "skip":   ErrorDecision.SKIP,
@@ -170,13 +169,14 @@ Return ONLY the Python code, no explanation."""
 
         return {
             "step":        step.get("step"),
-            "tool":        "claude_code",
+            "tool":        "generated_code",
             "description": f"Auto-fix for: {step.get('description')}",
             "parameters": {
                 "description": fix_suggestion,
+                "code": code,
             },
             "depends_on": step.get("depends_on", []),
-            "critical":   step.get("critical", False)
+            "critical":   step.get("critical", False),
         }
 
     except Exception as e:
