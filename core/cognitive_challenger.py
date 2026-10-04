@@ -115,8 +115,8 @@ def grade_with_model(
     """Ask a separate evaluator for a 0-100 score using a fixed rubric."""
     grading_prompt = (
         "Score the candidate answer from 0 to 100 for correctness, completeness, "
-        "constraint adherence, and factual support. Return ONLY a number.\\n\\n"
-        f"Task:\\n{prompt}\\n\\nCandidate answer:\\n{answer}\\n"
+        "constraint adherence, and factual support. Return ONLY a number.\n\n"
+        f"Task:\n{prompt}\n\nCandidate answer:\n{answer}\n"
     )
     raw = str(client.chat(
         grading_prompt,
