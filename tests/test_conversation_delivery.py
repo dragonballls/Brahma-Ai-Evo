@@ -86,6 +86,16 @@ class ConversationDeliveryTests(unittest.TestCase):
         self.assertIn("self.speak(reply, proactive=True, use_live=False)", source)
         self.assertIn("def _speak_native(self, text: str, profile)", source)
 
+    def test_text_fallback_uses_canonical_assistant_delivery(self):
+        from pathlib import Path
+
+        main = Path("main.py").read_text(encoding="utf-8")
+        ui = Path("ui.py").read_text(encoding="utf-8")
+        self.assertIn("def _deliver_assistant_reply(", main)
+        self.assertIn('self.ui.record_chat_event({', main)
+        self.assertIn('"role": "assistant"', main)
+        self.assertIn('args=(text, memory_ctx, source or "local")', main)
+        self.assertIn("def acknowledge_chat_response(self):", ui)
     def test_silent_live_turn_has_text_fallback_and_reconnect_signal(self):
         source = __import__("pathlib").Path("main.py").read_text(encoding="utf-8")
         self.assertIn("degraded_turn = bool(full_in) and not full_out and not had_usable_audio", source)
