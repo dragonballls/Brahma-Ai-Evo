@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.user_paths import get_user_data_dir
-from core.runtime_paths import r, API_CONFIG_PATH
+from core.runtime_paths import API_CONFIG_PATH
 from core.skill_crucible import SkillCrucible
 from core.dynamic_registry import DynamicToolRegistry
 
