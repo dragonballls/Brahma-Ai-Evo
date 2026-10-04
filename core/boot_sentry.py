@@ -20,6 +20,16 @@ CRASH_LOG = FATAL_CRASH_LOG_PATH
 PATCH_HISTORY_FILE = PATCH_HISTORY_PATH
 
 
+def mark_startup_healthy() -> None:
+    """Clear the previous crash marker once Brahma reaches a healthy UI state."""
+    try:
+        if CRASH_LOG.exists():
+            CRASH_LOG.unlink()
+            logger.info("Startup marked healthy; cleared stale fatal crash marker.")
+    except Exception as exc:
+        logger.warning("Unable to clear stale fatal crash marker: %s", exc)
+
+
 def check_and_recover_on_boot() -> bool:
     """
     Checks if a crash log exists. If a recent patch was applied within the last 5 minutes
