@@ -533,8 +533,7 @@ def _cloud_tool_reply(
     errors = []
 
     try:
-        try:
-            if candidate == "Gemini":
+        if candidate == "Gemini":
                 return _gemini_tool_reply(
                     prompt,
                     system_prompt,
