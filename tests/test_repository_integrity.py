@@ -233,6 +233,17 @@ class RepositoryIntegrityTests(unittest.TestCase):
         self.assertIn("def stop(self)", gateway)
         self.assertIn("atexit.register(_gateway.stop)", gateway)
 
+    def test_packaged_smoke_exit_contract_is_complete(self):
+        ui = (ROOT / "ui.py").read_text(encoding="utf-8")
+        main = (ROOT / "main.py").read_text(encoding="utf-8")
+        self.assertIn("class _RootShim:", ui)
+        self.assertIn("def quit(self):", ui)
+        self.assertIn("def destroy(self):", ui)
+        self.assertIn("self._app.quit()", ui)
+        self.assertIn("BRAHMA_EVO_TEST_AUTO_EXIT_SECONDS", main)
+        self.assertIn("QTimer.singleShot(int(test_exit_seconds * 1000), _finish_packaged_smoke_test)", main)
+        self.assertNotIn("threading.Timer(test_exit_seconds, _finish_packaged_smoke_test).start()", main)
+
     def test_legacy_google_generativeai_sdk_is_not_used(self):
         offenders = []
         for path in _all_python_files():
