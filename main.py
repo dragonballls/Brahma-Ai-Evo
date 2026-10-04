@@ -7543,21 +7543,28 @@ def _main_impl():
 
         # Do not enter a second/nested Qt event loop for the smoke test. The
         # previous shutdown strategies could leave the packaged process alive
-        # even though application startup itself had succeeded. Instead, pump
-        # Qt events on this thread for a bounded interval, then run the same
-        # application-owned cleanup path used by normal shutdown.
+        # even though application startup itself had succeeded. Pump Qt events
+        # for a bounded interval, perform best-effort cleanup, then terminate the
+        # CI-only process at the OS level so unrelated background threads cannot
+        # keep the packaged smoke test alive. This branch is unreachable during
+        # normal use because BRAHMA_EVO_TEST_MODE is CI-only.
         _startup_log("packaged smoke-test event-pump started")
         deadline = time.monotonic() + test_exit_seconds
-        try:
-            app_instance = QCoreApplication.instance()
-            while app_instance is not None and time.monotonic() < deadline:
-                app_instance.processEvents()
-                time.sleep(0.05)
-        finally:
-            _startup_log("packaged smoke-test auto-exit")
-            _cleanup_runtime_services()
-        return
+        app_instance = QCoreApplication.instance()
+        while app_instance is not None and time.monotonic() < deadline:
+            app_instance.processEvents()
+            time.sleep(0.05)
 
+        _startup_log("packaged smoke-test auto-exit")
+        try:
+            _cleanup_runtime_services()
+        except Exception as exc:
+            _startup_log(f"packaged smoke-test cleanup skipped: {exc}")
+
+        # os._exit is deliberately restricted to the CI smoke-test branch. It
+        # guarantees the supervisor observes a real process exit even when a
+        # third-party/native worker refuses to stop.
+        os._exit(0)
     ui.root.mainloop()
 
 
