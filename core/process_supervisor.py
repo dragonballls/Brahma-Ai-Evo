@@ -59,6 +59,10 @@ def recovery_command(base_dir: Path | None = None) -> list[str]:
     return [str(interpreter), str(root / "core" / "crash_recovery.py"), "--recover-crash"]
 
 
+def _test_ready_marker(root: Path) -> Path:
+    return root / ".brahma-ci-ready"
+
+
 def _log(message: str) -> None:
     try:
         SUPERVISOR_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -122,6 +126,13 @@ def supervise(base_dir: Path | None = None, *, max_cycles: int | None = None) ->
                 return 0
 
             command = application_command(root)
+            marker = _test_ready_marker(root)
+            test_mode = os.environ.get("BRAHMA_EVO_TEST_MODE", "").strip() == "1"
+            if test_mode:
+                try:
+                    marker.unlink(missing_ok=True)
+                except OSError:
+                    pass
             child_start = time.time()
             _log(f"Launching Brahma: {' '.join(command)}")
             try:
@@ -134,7 +145,34 @@ def supervise(base_dir: Path | None = None, *, max_cycles: int | None = None) ->
                     env={**os.environ, "BRAHMA_SUPERVISED": "1"},
                     creationflags=_hidden_creationflags(),
                 )
-                exit_code = process.wait()
+                if test_mode:
+                    try:
+                        smoke_timeout = max(
+                            10.0,
+                            float(os.environ.get("BRAHMA_EVO_TEST_SUPERVISOR_TIMEOUT", "30")),
+                        )
+                    except (TypeError, ValueError):
+                        smoke_timeout = 30.0
+                    try:
+                        exit_code = process.wait(timeout=smoke_timeout)
+                    except subprocess.TimeoutExpired:
+                        ready = False
+                        try:
+                            ready = marker.exists() and marker.stat().st_mtime >= (child_start - 2.0)
+                        except OSError:
+                            ready = False
+                        try:
+                            process.kill()
+                            process.wait(timeout=10)
+                        except Exception:
+                            pass
+                        if ready:
+                            _log("Packaged smoke test reached Brahma startup-ready marker; forced child cleanup.")
+                            return 0
+                        _log("Packaged smoke test timed out before startup-ready marker.")
+                        return 1
+                else:
+                    exit_code = process.wait()
             except Exception as exc:
                 exit_code = 9009
                 _log(f"Unable to start Brahma: {exc}")
