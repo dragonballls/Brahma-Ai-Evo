@@ -135,6 +135,34 @@ class UnifiedAIClient:
             return self._gemini_text(merged_prompt, system, max_tokens, temperature)
         return openrouter_client.chat(prompt, system, history, model, max_tokens, temperature)
 
+    def chat_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        tool_executor,
+        model: Optional[str] = None,
+        max_tokens: int = 8192,
+        temperature: float = 0.35,
+        max_rounds: int = 6,
+    ) -> str:
+        """Run the provider's cloud tool loop through the canonical client wrapper."""
+        self.reload_settings()
+        if self._is_local_provider():
+            raise RuntimeError("Use local_brain.chat_complete for local tool execution.")
+        if normalize_provider(self._provider) != "OpenRouter":
+            raise RuntimeError(
+                f"Provider {self._provider} does not expose the OpenRouter tool loop."
+            )
+        return openrouter_client.chat_with_tools(
+            messages=messages,
+            tools=tools,
+            tool_executor=tool_executor,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            max_rounds=max_rounds,
+        )
+
     def chat_json(self, prompt: str, system: str = "Return ONLY valid JSON.", model: Optional[str] = None, max_tokens: int = 4096) -> dict:
         self.reload_settings()
         if self._is_local_provider():
