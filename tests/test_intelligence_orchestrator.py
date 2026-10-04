@@ -51,7 +51,7 @@ class IntelligenceOrchestratorTests(unittest.TestCase):
             calls.append(kwargs)
             if kwargs["model"] == "auto/smart":
                 return "CONSENSUS"
-            return f"independent answer from {kwargs['model']}"
+            return "independent expert answer"
 
         with (
             patch("core.intelligence_orchestrator._configured_providers", return_value=("openai", "anthropic", "gemini")),
@@ -87,9 +87,10 @@ class IntelligenceOrchestratorTests(unittest.TestCase):
                 "smart": {"model": "auto/smart", "temperature": 0.3, "max_tokens": 4096, "specialists": 0, "ensemble": True}
             },
         }
-        with (
-            patch("core.intelligence_orchestrator.load_config", return_value=config),
-            patch("core.intelligence_orchestrator.cloud_client.chat", return_value="direct"),
+        with patch(
+            "core.intelligence_orchestrator.load_config", return_value=config
+        ), patch(
+            "core.intelligence_orchestrator.cloud_client.chat", return_value="direct"
         ) as call:
             result = IntelligenceOrchestrator().respond("complex request")
         self.assertEqual(result, "direct")
