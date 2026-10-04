@@ -60,7 +60,7 @@ def _load_history() -> list[dict[str, Any]]:
 
 def _save_history(history: list[dict[str, Any]]) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    _utc_safe_write(PATCH_HISTORY_PATH, {"history": history} if False else history)
+    _utc_safe_write(PATCH_HISTORY_PATH, history)
 
 
 def _fingerprint(traceback_text: str) -> str:
