@@ -462,14 +462,30 @@ def _speak_edge_native(
         # Play Edge TTS audio via Windows PresentationCore MediaPlayer (native across Windows 10 & 11).
         _current_audio_path = audio_path
         try:
+            ps_script = (
+                "Add-Type -AssemblyName presentationCore; "
+                "$p = New-Object System.Windows.Media.MediaPlayer; "
+                "$p.Volume = 1.0; "
+                f"$p.Open([System.Uri]'{audio_path}'); "
+                "$deadline = (Get-Date).AddSeconds(8); "
+                "while(-not $p.NaturalDuration.HasTimeSpan -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 50 }; "
+                "if(-not $p.NaturalDuration.HasTimeSpan) { throw 'Media duration metadata did not load.' }; "
+                "$duration = $p.NaturalDuration.TimeSpan; "
+                "$p.Play(); "
+                "$deadline = (Get-Date).AddSeconds([Math]::Max(5, [Math]::Ceiling($duration.TotalSeconds) + 3)); "
+                "while($p.Position -lt $duration -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 50 }; "
+                "if($p.Position -lt $duration) { throw 'Media playback did not complete.' }; "
+                "$p.Stop(); $p.Close()"
+            )
             cmd = [
-                "powershell", "-NoProfile", "-NonInteractive", "-Command",
-                f"Add-Type -AssemblyName presentationCore; $p = New-Object System.Windows.Media.MediaPlayer; $p.Open([System.Uri]'{audio_path}'); $p.Play(); Start-Sleep -Milliseconds 400; while($p.NaturalDuration.HasTimeSpan -and $p.Position -lt $p.NaturalDuration.TimeSpan){{Start-Sleep -Milliseconds 80}}"
+                "powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script
             ]
             flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
             _current_speech_proc = subprocess.Popen(cmd, creationflags=flags)
-            _current_speech_proc.wait()
+            return_code = _current_speech_proc.wait()
             _current_speech_proc = None
+            if return_code != 0:
+                raise RuntimeError(f"MediaPlayer exited with code {return_code}.")
         except Exception as exc:
             print(f"[AttentionMonitor] MediaPlayer playback failed: {exc}. Falling back to offline male voice.")
             _speak_sapi_male(text, rate=sapi_rate)
