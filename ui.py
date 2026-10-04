@@ -8961,6 +8961,7 @@ class MainWindow(QMainWindow):
     _memory_overlay_sig = pyqtSignal(str)
     _audio_level_sig = pyqtSignal(float)
     _device_action_sig = pyqtSignal(object)
+    _chat_event_sig = pyqtSignal(object)
 
     def _make_window_icon(self) -> QIcon:
         return _logo_icon()
@@ -8983,6 +8984,10 @@ class MainWindow(QMainWindow):
         self.on_text_command  = None
         self.on_attention_action = None
         self.on_chat_event = None
+        self._chat_event_sig.connect(
+            self._deliver_chat_event,
+            Qt.ConnectionType.QueuedConnection,
+        )
         self._clipboard_ai_handler = None
         self.on_remote_clicked = None
         self._muted           = False
@@ -9904,6 +9909,20 @@ class MainWindow(QMainWindow):
         )
         return True
 
+    def _emit_chat_event(self, event: object) -> None:
+        """Marshal chat events onto the Qt GUI thread before touching widgets/store."""
+        try:
+            self._chat_event_sig.emit(dict(event or {}))
+        except Exception:
+            pass
+
+    def _deliver_chat_event(self, event: object) -> None:
+        if self.on_chat_event:
+            try:
+                self.on_chat_event(dict(event or {}))
+            except Exception:
+                pass
+
     def submit_command(self, txt: str, source: str = "local"):
         txt = (txt or "").strip()
         if not txt:
@@ -9913,15 +9932,11 @@ class MainWindow(QMainWindow):
         self._chat_source_queue.append(source or "local")
         # Persist the user message directly instead of reconstructing it from
         # a log line. This prevents source mismatches and duplicate chat bubbles.
-        if self.on_chat_event:
-            try:
-                self.on_chat_event({
-                    "role": "user",
-                    "text": txt,
-                    "source": source or "local",
-                })
-            except Exception:
-                pass
+        self._emit_chat_event({
+            "role": "user",
+            "text": txt,
+            "source": source or "local",
+        })
         if hasattr(self, "_command_card"):
             preview = txt[:60] + ("…" if len(txt) > 60 else "")
             self._command_card.set_body(preview)
@@ -16691,11 +16706,9 @@ class BrahmaUI:
         self._win._log_sig.emit(text)
 
     def record_chat_event(self, event: dict):
-        """Persist/render a conversation event through the single UI callback."""
+        """Persist/render a conversation event through the queued Qt bridge."""
         try:
-            callback = self._win.on_chat_event
-            if callback:
-                callback(dict(event or {}))
+            self._win._emit_chat_event(event or {})
         except Exception:
             pass
 
