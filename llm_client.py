@@ -74,6 +74,44 @@ class UnifiedAIClient:
             logger.error(f"[LLM Client] Local AI Request Failed: {e}")
             return None
 
+    def _gemini_text(self, prompt: str, system: str, max_tokens: int = 4096, temperature: float = 0.7) -> str:
+        from google import genai
+        from google.genai import types
+
+        api_key = None
+        try:
+            from config import get_api_key
+            api_key = get_api_key("Gemini")
+        except Exception:
+            pass
+        if not api_key:
+            raise PermissionError("Gemini API key is missing.")
+
+        client = genai.Client(api_key=api_key, http_options={"api_version": "v1beta"})
+        last_error = None
+        models = (
+            __import__("os").environ.get("BRAHMA_TEXT_GEMINI_MODEL", "gemini-2.5-flash"),
+            "gemini-3.8-flash",
+            "gemini-flash-latest",
+        )
+        for model_name in models:
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system,
+                        temperature=temperature,
+                        max_output_tokens=max_tokens,
+                    ),
+                )
+                text = getattr(response, "text", "") or ""
+                if text.strip():
+                    return text.strip()
+            except Exception as exc:
+                last_error = exc
+        raise RuntimeError(f"Gemini generation failed: {last_error}")
+
     def chat(self, prompt: str, system: str = "You are a helpful assistant.", history: Optional[list[dict]] = None, model: Optional[str] = None, max_tokens: int = 4096, temperature: float = 0.7) -> str:
         self.reload_settings()
         if self._is_local_provider():
@@ -84,10 +122,18 @@ class UnifiedAIClient:
             result = self._local_chat_completion(messages, temperature)
             if result:
                 return result
-            else:
-                raise RuntimeError("Local AI request failed. Please check if Ollama or LM Studio is running.")
-        else:
-            return openrouter_client.chat(prompt, system, history, model, max_tokens, temperature)
+            raise RuntimeError("Local AI request failed. Please check if Ollama or LM Studio is running.")
+        if normalize_provider(self._provider) == GEMINI:
+            history_text = ""
+            if history:
+                history_text = "\n\n".join(
+                    f"{item.get('role', 'user').title()}: {item.get('content', '')}"
+                    for item in history
+                    if isinstance(item, dict)
+                )
+            merged_prompt = f"{history_text}\n\n{prompt}".strip() if history_text else prompt
+            return self._gemini_text(merged_prompt, system, max_tokens, temperature)
+        return openrouter_client.chat(prompt, system, history, model, max_tokens, temperature)
 
     def chat_json(self, prompt: str, system: str = "Return ONLY valid JSON.", model: Optional[str] = None, max_tokens: int = 4096) -> dict:
         self.reload_settings()
@@ -188,6 +234,16 @@ class UnifiedAIClient:
             pass
         if self._is_local_provider():
             return self.chat(prompt, system=system, history=history)
+        if normalize_provider(self._provider) == GEMINI:
+            history_text = ""
+            if history:
+                history_text = "\n\n".join(
+                    f"{item.get('role', 'user').title()}: {item.get('content', '')}"
+                    for item in history
+                    if isinstance(item, dict)
+                )
+            merged_prompt = f"{history_text}\n\n{prompt}".strip() if history_text else prompt
+            return self._gemini_text(merged_prompt, system, max_tokens=4096, temperature=0.35)
         from core.intelligence_orchestrator import orchestrator
         return orchestrator.respond(
             prompt,
