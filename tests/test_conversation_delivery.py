@@ -241,6 +241,16 @@ class ConversationDeliveryTests(unittest.TestCase):
         self.assertIn("Media duration metadata did not load.", source)
         self.assertIn("Media playback did not complete.", source)
         self.assertIn("if return_code != 0:", source)
+    def test_live_voice_turns_use_canonical_chat_event_delivery(self):
+        from pathlib import Path
+
+        source = Path("main.py").read_text(encoding="utf-8")
+        block = source.split("if sc.turn_complete:", 1)[1].split("if full_in and len(full_in) > 5:", 1)[0]
+        self.assertIn('self.ui.record_chat_event({', block)
+        self.assertIn('"role": "assistant"', block)
+        self.assertIn('"source": "mic"', block)
+        self.assertIn('args=(fallback_text, _memory_context_for_request(fallback_text), "mic")', block)
+
     def test_silent_live_turn_has_text_fallback_and_reconnect_signal(self):
         source = __import__("pathlib").Path("main.py").read_text(encoding="utf-8")
         self.assertIn("degraded_turn = bool(full_in) and not full_out and not had_usable_audio", source)
