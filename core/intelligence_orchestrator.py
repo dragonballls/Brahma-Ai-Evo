@@ -165,7 +165,7 @@ def _select_provider_model(provider:str, models:tuple[str,...], overrides:dict)-
         low=m.casefold(); return (sum(2 for h in _QUALITY_HINTS if h in low),len(m))
     return max(candidates,key=score)
 
-def _ensemble_models(cfg:dict, profile_cfg:dict)->list[tuple[str,str]]:
+def _ensemble_models(cfg:dict, profile_cfg:dict, profile:str="smart")->list[tuple[str,str]]:
     if not bool(cfg.get('ensemble_enabled',True)) or not bool(profile_cfg.get('ensemble',True)): return []
     providers=_configured_providers()
     if len(providers)<2: return []
@@ -202,7 +202,7 @@ class IntelligenceOrchestrator:
         if not bool(c.get("enabled",True)) or not allowed():
             return self._call(prompt,system,"auto",4096,0.5,history)
         p=profile_for(prompt,profile,c); pc=self._cfg(p,c); count=int(pc.get("specialists",0))
-        panel=_ensemble_models(c,pc) if p != "fast" else []
+        panel=_ensemble_models(c,pc,p) if p != "fast" else []
         if panel:
             ctx=trim(context,int(c.get("max_context_chars",14000)))
             roles=_ensemble_roles(p,len(panel))
