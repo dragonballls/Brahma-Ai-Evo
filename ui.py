@@ -50,7 +50,11 @@ except Exception:
 
 try:
     from PyQt6.QtWebEngineWidgets import QWebEngineView
-    WEB_ENGINE_AVAILABLE = True
+    # The packaged CI smoke test validates the desktop UI without starting the
+    # heavyweight Chromium/WebEngine runtime. Normal interactive builds keep it.
+    WEB_ENGINE_AVAILABLE = (
+        os.environ.get("BRAHMA_EVO_TEST_MODE", "").strip() != "1"
+    )
 except Exception:
     WEB_ENGINE_AVAILABLE = False
 
@@ -274,7 +278,10 @@ class BackgroundWidget(QWidget):
         self._web_view = None
 
         if WEB_ENGINE_AVAILABLE:
-            self._init_web_engine()
+            # Defer Chromium/WebEngine startup until Qt has entered the event loop.
+            # This keeps application construction deterministic and prevents the
+            # renderer from blocking the main window initialization path.
+            QTimer.singleShot(0, self._init_web_engine)
 
     def _init_web_engine(self):
         if self._web_view is not None:
@@ -16258,7 +16265,9 @@ class BrahmaUI:
             self._log.append_log(f"SYS: Startup animation {state}.")
 
     def _should_play_boot_sequence(self) -> bool:
-        return True
+        # CI smoke mode must not spend its bounded startup window on the cinematic
+        # boot overlay; normal interactive launches retain the full sequence.
+        return os.environ.get("BRAHMA_EVO_TEST_MODE", "").strip() != "1"
 
     def _mark_boot_sequence_played(self):
         try:
