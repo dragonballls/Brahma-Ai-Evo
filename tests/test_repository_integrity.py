@@ -101,12 +101,12 @@ class RepositoryIntegrityTests(unittest.TestCase):
                 continue
             text = path.read_text(encoding="utf-8", errors="replace")
             for match in pattern.finditer(text):
-                owners[match.group(1)].append(str(path.relative_to(ROOT)))
+                owners[match.group(1)].append(path.relative_to(ROOT).as_posix())
 
         for name, paths in owners.items():
             self.assertEqual(
                 paths,
-                ["core/runtime_contract.py"],
+                [(ROOT / "core" / "runtime_contract.py").relative_to(ROOT).as_posix()],
                 f"{name} must be owned only by core/runtime_contract.py; found {paths}",
             )
 
