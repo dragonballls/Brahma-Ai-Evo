@@ -286,5 +286,22 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
         self.assertIn("self.github_required_sources = min(3", source)
 
 
+    def test_centralized_efficiency_policy_is_wired_into_coding_and_repair(self):
+        policy = (ROOT / "core" / "efficiency_policy.py").read_text(encoding="utf-8")
+        self_coding = (ROOT / "core" / "self_coding.py").read_text(encoding="utf-8")
+        dev = (ROOT / "actions" / "brahma_dev_agent.py").read_text(encoding="utf-8")
+        heal = (ROOT / "actions" / "auto_heal_engine.py").read_text(encoding="utf-8")
+
+        self.assertIn("EFFICIENCY_DIRECTIVE", policy)
+        for source in (self_coding, dev, heal):
+            self.assertIn("core.efficiency_policy", source)
+            self.assertIn("EFFICIENCY-FIRST ENGINEERING POLICY", source)
+
+        self.assertIn("exact content/configuration hashes", policy)
+        self.assertIn("Do not repeat the same scan", policy)
+        self.assertIn("Never cache API keys", policy)
+        self.assertIn("Never trade away correctness", policy)
+
+
 if __name__ == "__main__":
     unittest.main()
