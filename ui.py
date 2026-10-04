@@ -10012,19 +10012,25 @@ class MainWindow(QMainWindow):
         self._log.append_log(text)
         raw = (text or "").strip()
         low = raw.lower()
-        if hasattr(self, "_result_card") and low.startswith("brahma evo:"):
+        if (
+            hasattr(self, "_result_card")
+            and low.startswith("brahma evo:")
+            and self._chat_source_queue
+        ):
+            # Legacy log-to-chat bridge is only valid while a submitted command
+            # is waiting for its assistant response. Proactive Brahma messages
+            # must never consume another command's source marker.
             reply = raw.split(":", 1)[1].strip()
             self._result_card.set_body(reply[:80] + ("…" if len(reply) > 80 else ""))
             self._result_card.hide()
             self._restart_card_hide_timer()
-            source = self._chat_source_queue[0] if self._chat_source_queue else "local"
+            source = self._chat_source_queue[0]
             if self.on_chat_event and reply:
                 try:
                     self.on_chat_event({"role": "assistant", "text": reply, "source": source})
                 except Exception:
                     pass
-            if self._chat_source_queue:
-                self._chat_source_queue.popleft()
+            self._chat_source_queue.popleft()
         elif hasattr(self, "_result_card") and low.startswith("err:"):
             self._result_card.set_body(raw.split(":", 1)[1].strip())
             self._result_card.hide()
