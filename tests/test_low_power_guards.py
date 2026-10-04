@@ -43,8 +43,8 @@ class LowPowerGuardTests(unittest.TestCase):
     def test_runtime_configuration_is_not_bundled_from_repo_state(self):
         spec = self.read("installer/BrahmaEvo.spec")
         self.assertNotIn("(os.path.join(cwd, 'config'), 'config')", spec)
-        self.assertIn("(os.path.join(cwd, 'config', 'models'), 'config', 'models')", spec)
-        self.assertIn("(os.path.join(cwd, 'config', 'intelligence.json'), 'config', 'intelligence.json')", spec)
+        self.assertIn("(os.path.join(cwd, 'config', 'models'), 'config/models')", spec)
+        self.assertIn("(os.path.join(cwd, 'config', 'intelligence.json'), 'config')", spec)
         ui = self.read("ui.py")
         self.assertIn("from core.runtime_paths import CONFIG_DIR", ui)
         self.assertIn("API_CONFIG_PATH", ui)
