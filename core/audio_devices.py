@@ -287,21 +287,29 @@ def _device_name(idx: int) -> str:
 def _same_bluetooth_endpoint(input_name: str, output_name: str) -> bool:
     a = " ".join(str(input_name or "").casefold().replace("(", " ").replace(")", " ").split())
     b = " ".join(str(output_name or "").casefold().replace("(", " ").replace(")", " ").split())
-    if not a or not b or not is_bluetooth_device_name(a) or not is_bluetooth_device_name(b):
+    if not a or not b:
+        return False
+
+    # Windows commonly labels the two endpoints differently:
+    #   "WH-1000XM5 Hands-Free AG Audio"
+    #   "WH-1000XM5 Stereo"
+    # Only one side may contain an explicit Bluetooth/HFP hint, so requiring
+    # both names to say "Bluetooth" misses the actual paired endpoint.
+    if not (is_bluetooth_device_name(a) or is_bluetooth_device_name(b)):
         return False
 
     # Exact/near-exact names are the common Windows Bluetooth Classic case.
     if a == b or a in b or b in a:
         return True
 
-    # Ignore endpoint-role words and compare a handful of descriptive tokens.
     ignored = {
         "bluetooth", "hands", "free", "ag", "audio", "headset", "headphones",
         "mic", "microphone", "input", "output", "stereo", "wireless",
     }
     a_tokens = {t for t in a.replace("-", " ").split() if len(t) > 2 and t not in ignored}
     b_tokens = {t for t in b.replace("-", " ").split() if len(t) > 2 and t not in ignored}
-    return bool(a_tokens and b_tokens and len(a_tokens & b_tokens) >= max(1, min(2, len(a_tokens), len(b_tokens))))
+    shared = a_tokens & b_tokens
+    return bool(a_tokens and b_tokens and len(shared) >= max(1, min(2, len(a_tokens), len(b_tokens))))
 
 
 def resolve_voice_input(input_name: str, output_name: str):
@@ -315,20 +323,16 @@ def resolve_voice_input(input_name: str, output_name: str):
     wanted = (input_name or "").strip()
     output = (output_name or "").strip() or default_device_name("output")
     normal = resolve(wanted, "input") if wanted else None
-
-    # No selected Bluetooth output: preserve the user's microphone choice.
-    if not is_bluetooth_device_name(output):
-        return normal, False
-
-    # Empty input means system default; it may already be a separate laptop/USB mic.
-    # Only override an explicitly Bluetooth headset mic, or a default that resolves
-    # to the same headset endpoint.
     current_name = _device_name(normal) if normal is not None else ""
-    same_headset = _same_bluetooth_endpoint(
-        wanted or current_name,
-        output,
-    )
-    if not same_headset:
+    if not current_name and not wanted:
+        current_name = default_device_name("input")
+    input_endpoint = wanted or current_name
+
+    # A Windows Bluetooth stereo endpoint may not contain the word "Bluetooth";
+    # identify the paired headset from its capture endpoint name when possible.
+    same_headset = _same_bluetooth_endpoint(input_endpoint, output)
+    bluetooth_output = is_bluetooth_device_name(output) or same_headset
+    if not bluetooth_output or not same_headset:
         return normal, False
 
     try:
