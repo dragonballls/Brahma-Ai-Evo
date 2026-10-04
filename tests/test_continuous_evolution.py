@@ -79,7 +79,17 @@ class ContinuousEvolutionTests(unittest.TestCase):
                 }):
                     with patch("llm_client.client.intelligent_json", return_value=payload):
                         # The helper is exercised directly without creating a Git branch.
-                        result = engine._rank_opportunities([])
+                        research = [{
+                            "domain": "agent orchestration",
+                            "result": {
+                                "repositories": [
+                                    {"repository": "a/one", "license_class": "permissive"},
+                                    {"repository": "b/two", "license_class": "permissive"},
+                                ],
+                                "code_matches": [],
+                            },
+                        }]
+                        result = engine._rank_opportunities(research)
             self.assertEqual(len(result), 1)
             self.assertEqual(result[0]["goal"], "add useful feature")
 
