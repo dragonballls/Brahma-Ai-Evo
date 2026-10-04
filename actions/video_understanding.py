@@ -10,8 +10,9 @@ from pathlib import Path
 from typing import Any
 
 from core.user_paths import get_user_data_dir
+from core.runtime_paths import r, API_CONFIG_PATH
 
-API_CONFIG_PATH = get_user_data_dir() / "config" / "api_keys.json"
+
 DEFAULT_VIDEO_MODEL = os.environ.get("BRAHMA_VIDEO_MODEL", "gemini-2.5-flash")
 
 
