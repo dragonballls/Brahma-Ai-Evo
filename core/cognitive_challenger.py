@@ -105,6 +105,35 @@ def _write_results(rows: list[dict]) -> None:
     RESULTS_PATH.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def grade_with_model(
+    prompt: str,
+    answer: str,
+    *,
+    grader_model: str,
+    client,
+) -> float:
+    """Ask a separate evaluator for a 0-100 score using a fixed rubric."""
+    grading_prompt = (
+        "Score the candidate answer from 0 to 100 for correctness, completeness, "
+        "constraint adherence, and factual support. Return ONLY a number.\\n\\n"
+        f"Task:\\n{prompt}\\n\\nCandidate answer:\\n{answer}\\n"
+    )
+    raw = str(client.chat(
+        grading_prompt,
+        system=(
+            "You are a neutral benchmark grader. Do not reward verbosity or model identity. "
+            "Score only the candidate's substantive quality against the task."
+        ),
+        model=grader_model,
+        max_tokens=32,
+        temperature=0.0,
+    ) or "").strip()
+    try:
+        return max(0.0, min(100.0, float(raw)))
+    except ValueError:
+        return 0.0
+
+
 def run(
     solver: Callable[[str, str], str],
     *,
