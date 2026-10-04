@@ -77,6 +77,13 @@ class ConversationDeliveryTests(unittest.TestCase):
         for phrase in ("open ", "run ", "send ", "delete ", "control ", "fix "):
             self.assertIn(phrase, helper)
 
+    def test_local_brain_escalates_to_full_tool_registry_only_when_focused_path_is_empty(self):
+        from pathlib import Path
+
+        source = Path("main.py").read_text(encoding="utf-8")
+        self.assertIn("focus_core=True", source)
+        self.assertIn("and _looks_like_action_request(text)", source)
+        self.assertIn("focus_core=False", source)
     def test_openrouter_tool_loop_executes_tool_and_returns_final_text(self):
         client = UnifiedAIClient()
         client._provider = "OpenRouter"
