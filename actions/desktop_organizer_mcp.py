@@ -30,7 +30,7 @@ PROTECTED_EXTENSIONS = {".lnk", ".url", ".sys", ".dll"}
 PROTECTED_FILENAMES = {
     "desktop.ini", "thumbs.db", ".ds_store",
     "brahma_history.json", "organizer_history.json",
-    "email_credentials.json", ".email_key", "api_keys.json"
+    "email_credentials.json", ".email_key", API_CONFIG_PATH.name
 }
 PROTECTED_DIR_PREFIXES = (".", "brahmaprojects", ".brahma", ".git", ".venv", "node_modules", "$recycle.bin")
 
