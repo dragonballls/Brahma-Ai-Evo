@@ -440,7 +440,7 @@ Do NOT include markdown fences outside the JSON. Return only the valid JSON obje
 
         return {
             "success": False,
-            "error": "All LLM synthesis backends failed. Please verify your Gemini API key in config/api_keys.json."
+            "error": "All LLM synthesis backends failed. Please verify your configured Gemini credential."
         }
 
 
