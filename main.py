@@ -7547,11 +7547,21 @@ def main():
             _startup_log("BootSentry recovered the previous patched state before startup.")
     except Exception as exc:
         _startup_log(f"BootSentry recovery check skipped: {exc}")
+    completed = False
     try:
         _main_impl()
+        completed = True
     finally:
         guard.release()
         _SINGLE_INSTANCE_GUARD = None
+
+    # A clean shutdown invalidates any older fatal-crash evidence. Crash paths
+    # skip this block and the outer __main__ handler records the fresh traceback.
+    if completed:
+        try:
+            FATAL_CRASH_LOG_PATH.unlink(missing_ok=True)
+        except Exception as exc:
+            _startup_log(f"could not clear stale fatal crash log: {exc}")
 
 if __name__ == "__main__":
     import sys
