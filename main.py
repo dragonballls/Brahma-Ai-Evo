@@ -4755,7 +4755,7 @@ class BrahmaLive:
                     res = local_brain.chat_complete(
                         messages,
                         model=local_model_target,
-                        tools=TOOL_DECLARATIONS,
+                        tools=_runtime_tool_declarations(),
                         focus_core=True
                     )
                     msg = res.get("choices", [{}])[0].get("message", {})
@@ -4770,7 +4770,7 @@ class BrahmaLive:
                         res = local_brain.chat_complete(
                             messages,
                             model=local_model_target,
-                            tools=TOOL_DECLARATIONS,
+                            tools=_runtime_tool_declarations(),
                             focus_core=False,
                         )
                     msg = res.get("choices", [{}])[0].get("message", {})
@@ -4817,7 +4817,7 @@ class BrahmaLive:
                                 messages,
                                 model=local_model_target,
                                 temperature=0.3,
-                                tools=TOOL_DECLARATIONS,
+                                tools=_runtime_tool_declarations(),
                                 focus_core=False,
                             )
                             followup_reply = followup_res.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
@@ -4895,7 +4895,7 @@ class BrahmaLive:
                     res = local_brain.chat_complete(
                         safety_messages,
                         model=local_model_target,
-                        tools=TOOL_DECLARATIONS,
+                        tools=_runtime_tool_declarations(),
                         focus_core=True,
                     )
                     msg_net = res.get("choices", [{}])[0].get("message", {}) or {}
@@ -4931,7 +4931,7 @@ class BrahmaLive:
                                 safety_messages,
                                 model=local_model_target,
                                 temperature=0.3,
-                                tools=TOOL_DECLARATIONS,
+                                tools=_runtime_tool_declarations(),
                                 focus_core=False,
                             )
                             reply = str(
