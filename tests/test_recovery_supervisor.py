@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,6 +65,22 @@ class RecoverySupervisorTests(unittest.TestCase):
         self.assertGreaterEqual(len(cmd), 2)
         self.assertEqual(Path(cmd[1]).resolve(), (ROOT / "main.py").resolve())
         self.assertEqual(cmd[-1], "--startup")
+
+    def test_external_crash_invokes_bounded_healer(self):
+        import actions.auto_heal_engine as auto_heal_engine
+        import core.boot_sentry as boot_sentry
+        import scripts.recovery_supervisor as supervisor
+
+        tb = 'Traceback (most recent call last):\\n  File "actions/open_app.py", line 10, in execute\\nRuntimeError: demo failure'
+        state = {}
+        with patch.object(boot_sentry, "check_and_recover_on_boot", return_value=False),              patch.object(auto_heal_engine.AutoHealEngine, "heal_traceback", return_value={"success": True, "message": "fixed"}) as heal:
+            result = supervisor._run_recovery(tb, state)
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["action"], "auto_heal")
+        self.assertEqual(result["message"], "fixed")
+        self.assertEqual(state["heal_attempts"], 1)
+        heal.assert_called_once()
 
     def test_supervisor_does_not_require_windows_to_import(self):
         import scripts.recovery_supervisor as supervisor
