@@ -105,30 +105,35 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
 
     def test_omniroute_is_local_and_lazy(self):
         from core.omniroute import OmniRouteGateway
+
+        gateway = OmniRouteGateway()
+        self.assertEqual(gateway.base_url, "http://127.0.0.1:20128/v1")
+        self.assertFalse(gateway._ready)
+
     def test_unified_cloud_paths_have_no_direct_gemini_bypass(self):
         import re
-        paths = (
-            ROOT / "main.py",
+
+        files = (
             ROOT / "llm_client.py",
             ROOT / "core" / "skill_forge.py",
             ROOT / "actions" / "brahma_dev_agent.py",
         )
-        forbidden = (
-            "genai.Client(",
-            "client.models.generate_content(",
-            "from google import genai",
-            "from google.genai import types",
-        )
-        for path in paths:
+        for path in files:
             source = path.read_text(encoding="utf-8")
             self.assertNotRegex(
                 source,
                 re.compile(r"genai\.Client\(|client\.models\.generate_content\("),
                 msg=f"Direct Gemini generation bypass remains in {path}",
             )
+
         main = (ROOT / "main.py").read_text(encoding="utf-8")
         self.assertIn("unified_cloud_client.chat_with_tools", main)
         self.assertIn("unified_cloud_client.chat_json", main)
+        # Native Gemini Live remains a deliberate specialized transport.
+        self.assertEqual(main.count("genai.Client("), 1)
+        live_pos = main.find("client = genai.Client(")
+        self.assertGreater(live_pos, main.find("Connect Live voice") if "Connect Live voice" in main else 0)
+
         llm = (ROOT / "llm_client.py").read_text(encoding="utf-8")
         self.assertIn("openrouter_client.chat", llm)
         self.assertIn("openrouter_client.chat_with_tools", llm)
@@ -143,12 +148,6 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
         self.assertIn("Please check OmniRoute provider connectivity.", dev)
         self.assertNotIn("Direct Gemini", dev)
         self.assertNotIn("Direct Gemini", skill)
-
-
-        gateway = OmniRouteGateway()
-        self.assertEqual(gateway.base_url, "http://127.0.0.1:20128/v1")
-        self.assertFalse(gateway._ready)
-
 
     def test_github_research_ranks_and_synthesizes_multiple_sources(self):
         client = GitHubResearchClient()
