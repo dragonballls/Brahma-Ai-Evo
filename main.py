@@ -411,7 +411,7 @@ def _gemini_tool_reply(
         return value
 
     declarations = []
-    for declaration in TOOL_DECLARATIONS:
+    for declaration in _runtime_tool_declarations():
         if not isinstance(declaration, dict):
             continue
         name = str(declaration.get("name") or "").strip()
@@ -543,7 +543,7 @@ def _cloud_tool_reply(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ],
-            tools=TOOL_DECLARATIONS,
+            tools=_runtime_tool_declarations(),
             tool_executor=tool_executor,
             model="auto",
             max_tokens=8192,
@@ -2625,6 +2625,23 @@ TOOL_DECLARATIONS = [
         }
     }
 ]
+
+
+def _runtime_tool_declarations() -> list[dict]:
+    """Return static Brahma tools plus currently active dynamic skills."""
+    merged = [dict(tool) for tool in TOOL_DECLARATIONS]
+    seen = {str(tool.get("name") or "").strip() for tool in merged}
+    try:
+        from core.dynamic_registry import DynamicToolRegistry
+        for declaration in DynamicToolRegistry.get_tool_declarations():
+            name = str(declaration.get("name") or "").strip()
+            if name and name not in seen:
+                merged.append(dict(declaration))
+                seen.add(name)
+    except Exception as exc:
+        print(f"[SkillRegistry] Runtime tool declarations unavailable: {exc}")
+    return merged
+
 
 
 class BrahmaLive:
