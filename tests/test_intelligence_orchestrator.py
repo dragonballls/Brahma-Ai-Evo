@@ -44,5 +44,57 @@ class IntelligenceOrchestratorTests(unittest.TestCase):
         call.assert_called_once()
         self.assertEqual(call.call_args.kwargs["model"],"auto")
 
+    def test_cross_provider_ensemble_fans_out_distinct_models_then_synthesizes(self):
+        calls = []
+
+        def fake_chat(**kwargs):
+            calls.append(kwargs)
+            if kwargs["model"] == "auto/smart":
+                return "CONSENSUS"
+            return f"independent answer from {kwargs['model']}"
+
+        with (
+            patch("core.intelligence_orchestrator._configured_providers", return_value=("openai", "anthropic", "gemini")),
+            patch("core.intelligence_orchestrator._catalog_models", return_value=(
+                "openai/gpt-test-pro",
+                "anthropic/claude-test-opus",
+                "google/gemini-test-pro",
+            )),
+            patch("core.intelligence_orchestrator.cloud_client.chat", side_effect=fake_chat),
+        ):
+            result = IntelligenceOrchestrator().respond("Compare three complex architectures.", profile="smart")
+
+        self.assertEqual(result, "CONSENSUS")
+        panel_models = [item["model"] for item in calls if item["model"] != "auto/smart"]
+        self.assertEqual(set(panel_models), {"openai/gpt-test-pro", "anthropic/claude-test-opus", "google/gemini-test-pro"})
+        self.assertEqual(len(panel_models), 3)
+        synth = [item for item in calls if item["model"] == "auto/smart"]
+        self.assertEqual(len(synth), 1)
+        self.assertIn("=== Source 1 ===", synth[0]["prompt"])
+        self.assertNotIn("openai/gpt-test-pro", synth[0]["prompt"])
+
+    def test_ensemble_can_be_disabled_without_changing_standard_path(self):
+        config = {
+            "enabled": True,
+            "ensemble_enabled": False,
+            "default_profile": "smart",
+            "simple_profile": "fast",
+            "parallel_workers": 4,
+            "max_specialists": 2,
+            "simple_max_chars": 220,
+            "simple_keywords": ("hello",),
+            "profiles": {
+                "smart": {"model": "auto/smart", "temperature": 0.3, "max_tokens": 4096, "specialists": 0, "ensemble": True}
+            },
+        }
+        with (
+            patch("core.intelligence_orchestrator.load_config", return_value=config),
+            patch("core.intelligence_orchestrator.cloud_client.chat", return_value="direct"),
+        ) as call:
+            result = IntelligenceOrchestrator().respond("complex request")
+        self.assertEqual(result, "direct")
+        call.assert_called_once()
+        self.assertEqual(call.call_args.kwargs["model"], "auto/smart")
+
 if __name__=="__main__":
     unittest.main()
