@@ -385,62 +385,86 @@ Output ONLY a strict JSON object with these exact keys:
 }}
 Do NOT include markdown fences outside the JSON. Return only the valid JSON object.
 """
-        # 1. Primary: Google Gemini (Native directly via google.genai)
-        gemini_key = _get_gemini_api_key()
-        if gemini_key:
-            try:
-                from google import genai
-                g_client = genai.Client(api_key=gemini_key, http_options={"api_version": "v1beta"})
-                for model_name in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
-                    try:
-                        resp = g_client.models.generate_content(
-                            model=model_name,
-                            contents=prompt,
-                            config={"temperature": 0.1, "response_mime_type": "application/json"}
-                        )
-                        raw_text = getattr(resp, "text", "") or ""
-                        if raw_text.strip():
-                            clean_json = raw_text.strip()
-                            if clean_json.startswith("```"):
-                                clean_json = re.sub(r"^```[a-zA-Z]*\n?", "", clean_json)
-                                clean_json = re.sub(r"\n?```$", "", clean_json).strip()
-                            data = json.loads(clean_json)
-                            if "target_chunk" in data and "replacement_chunk" in data:
-                                data["success"] = True
-                                return data
-                    except Exception as model_err:
-                        logger.warning(f"[AutoHeal] Gemini model {model_name} synthesis attempt failed: {model_err}")
-                        continue
-            except Exception as g_err:
-                logger.warning(f"[AutoHeal] Gemini synthesis failed: {g_err}")
-
-        # 2. Fallback: Unified AI Client (llm_client.py)
+        # 1. Primary: the same unified cloud route used by normal Brahma
+        # conversation/tool execution. OmniRoute owns provider selection,
+        # credential routing, retries, and model failover.
         try:
             from llm_client import client as unified_client
-            resp_text = unified_client.chat(prompt, temperature=0.1)
+            resp_text = unified_client.chat(
+                prompt,
+                system="You are an expert Python auto-patching engineer. Return strict JSON.",
+                model="auto",
+                max_tokens=4096,
+                temperature=0.1,
+            )
             clean_json = resp_text.strip()
             if clean_json.startswith("```"):
-                clean_json = re.sub(r"^```[a-zA-Z]*\n?", "", clean_json)
-                clean_json = re.sub(r"\n?```$", "", clean_json).strip()
+                clean_json = re.sub(r"^```[a-zA-Z]*\\n?", "", clean_json)
+                clean_json = re.sub(r"\\n?```$", "", clean_json).strip()
             data = json.loads(clean_json)
             if "target_chunk" in data and "replacement_chunk" in data:
                 data["success"] = True
                 return data
         except Exception as u_err:
-            logger.warning(f"[AutoHeal] Unified AI client fallback failed: {u_err}")
+            logger.warning(f"[AutoHeal] Unified AI/OmniRoute synthesis failed: {u_err}")
 
-        # 3. Fallback: OpenRouter client
+        # 2. Direct OpenRouter fallback preserves recovery when OmniRoute is
+        # unavailable or its embedded runtime is not healthy.
         try:
             import or_client
-            resp_text = or_client.chat(prompt, system="You are an expert Python auto-patching engineer. Return strict JSON.")
-            clean_json = re.sub(r"^```[a-zA-Z]*\n?", "", resp_text.strip())
-            clean_json = re.sub(r"\n?```$", "", clean_json).strip()
+            resp_text = or_client.chat(
+                prompt,
+                system="You are an expert Python auto-patching engineer. Return strict JSON.",
+                model="auto",
+                max_tokens=4096,
+                temperature=0.1,
+            )
+            clean_json = re.sub(r"^```[a-zA-Z]*\\n?", "", resp_text.strip())
+            clean_json = re.sub(r"\\n?```$", "", clean_json).strip()
             data = json.loads(clean_json)
             if "target_chunk" in data and "replacement_chunk" in data:
                 data["success"] = True
                 return data
         except Exception as or_err:
             logger.warning(f"[AutoHeal] OpenRouter fallback failed: {or_err}")
+
+        # 3. Final emergency fallback: native Gemini. This path is deliberately
+        # last so ordinary self-healing remains provider-consistent with chat.
+        gemini_key = _get_gemini_api_key()
+        if gemini_key:
+            try:
+                from google import genai
+                g_client = genai.Client(
+                    api_key=gemini_key,
+                    http_options={"api_version": "v1beta"},
+                )
+                for model_name in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
+                    try:
+                        resp = g_client.models.generate_content(
+                            model=model_name,
+                            contents=prompt,
+                            config={
+                                "temperature": 0.1,
+                                "response_mime_type": "application/json",
+                            },
+                        )
+                        raw_text = getattr(resp, "text", "") or ""
+                        if raw_text.strip():
+                            clean_json = raw_text.strip()
+                            if clean_json.startswith("```"):
+                                clean_json = re.sub(r"^```[a-zA-Z]*\\n?", "", clean_json)
+                                clean_json = re.sub(r"\\n?```$", "", clean_json).strip()
+                            data = json.loads(clean_json)
+                            if "target_chunk" in data and "replacement_chunk" in data:
+                                data["success"] = True
+                                return data
+                    except Exception as model_err:
+                        logger.warning(
+                            f"[AutoHeal] Gemini emergency model {model_name} failed: {model_err}"
+                        )
+                        continue
+            except Exception as g_err:
+                logger.warning(f"[AutoHeal] Gemini emergency fallback failed: {g_err}")
 
         return {
             "success": False,
