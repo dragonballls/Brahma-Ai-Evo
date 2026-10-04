@@ -18,11 +18,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.user_paths import get_user_data_dir
+from core.runtime_paths import API_CONFIG_PATH
 
 logger = logging.getLogger("CircuitAssembler")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-API_CONFIG_PATH = get_user_data_dir() / "config" / "api_keys.json"
 
 PLUGIN = {
     "name": "circuit_assembler",
