@@ -107,7 +107,8 @@ class LiveVoiceContractTests(unittest.TestCase):
         self.assertIn("async def run_text_voice_fallback(self):", self.main_text)
         self.assertIn("self._text_voice_fallback = True", self.main_text)
         self.assertIn("asyncio.run(brahma_evo.run_text_voice_fallback())", self.main_text)
-        self.assertIn("text_voice_fallback = bool(getattr(self, "_text_voice_fallback", False))", self.main_text)
+        self.assertIn('text_voice_fallback = bool(getattr(self, "_text_voice_fallback", False))', self.main_text)
+
         self.assertIn("Speech is transcribed through the text command path.", self.main_text)
     def test_hands_free_is_the_default_mode(self):
         self.assertFalse(config_manager.get_setting("push_to_talk_enabled", False))
