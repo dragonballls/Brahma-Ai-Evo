@@ -2426,6 +2426,7 @@ class BrahmaLive:
         self._live_model_index = 0
         self._live_model_failure_streak = 0
         self._voice_audio_degraded = False
+        self._last_live_audio_at = 0.0
         self._ptt = None
         self._ptt_held = False
         try:
@@ -3408,17 +3409,16 @@ class BrahmaLive:
         else:
             is_local_preferred = False
 
-        if is_local_preferred or self._use_openrouter_first or not self._loop or not self.session:
-            threading.Thread(target=self._fallback_reply, args=(text, memory_ctx), daemon=True).start()
-            return
-        self.ui.set_state("THINKING")
-        asyncio.run_coroutine_threadsafe(
-            self.session.send_client_content(
-                turns={"parts": [{"text": routed_text}]},
-                turn_complete=True
-            ),
-            self._loop
-        )
+        # Text/mobile/Discord commands use the reliable text agent even when a
+        # Gemini Live session happens to be connected. Live audio is a separate
+        # real-time channel; it must never become a single point of failure for chat.
+        threading.Thread(
+            target=self._fallback_reply,
+            args=(text, memory_ctx),
+            daemon=True,
+            name="text-command-agent",
+        ).start()
+        return
 
 
     def _handle_smart_home_command(self, text: str, source: str = "local") -> bool:
@@ -4477,7 +4477,7 @@ class BrahmaLive:
                 reply = "I’m ready, sir."
             self.ui.write_log(f"Brahma Evo: {reply}")
             if not getattr(self.ui, "muted", False):
-                self.speak(reply, proactive=True)
+                self.speak(reply, proactive=True, use_live=False)
             try:
                 self.ui.finish_task_workspace(reply, "Reply delivered.", 100)
             except Exception:
@@ -4536,7 +4536,12 @@ class BrahmaLive:
         if hasattr(self, "ui") and self.ui and not self.ui.muted:
             self.ui.set_state("LISTENING")
 
-    def speak(self, text: str, proactive: bool = False):
+    def speak(
+        self,
+        text: str,
+        proactive: bool = False,
+        use_live: bool | None = None,
+    ):
         text = (text or "").strip()
         if not text:
             return
@@ -4553,9 +4558,20 @@ class BrahmaLive:
             intensity=state.intensity if state is not None else 0.5,
         )
 
-        if self.session and self._loop:
-            # Route text through Gemini Live API for the unified native Charon voice.
+        # A live session existing in memory is not proof that its response path
+        # is healthy. Only reuse Live for auxiliary speech after usable audio has
+        # actually arrived recently. Callers may force native TTS with use_live=False.
+        if use_live is None:
+            live_recently_healthy = (
+                bool(self.session and self._loop)
+                and self._last_live_audio_at > 0
+                and (time.monotonic() - self._last_live_audio_at) < 15.0
+            )
+            use_live = live_recently_healthy
+
+        if use_live and self.session and self._loop:
             import asyncio
+
             async def _send():
                 try:
                     prompt = (
@@ -4566,40 +4582,38 @@ class BrahmaLive:
                     )
                     await self.session.send(input=prompt, end_of_turn=True)
                 except Exception as e:
-                    print(f"[BRAHMA EVO] Unified Speak (Charon) err: {e}")
-                    def _fallback():
-                        try:
-                            self.set_speaking(True)
-                            from actions.attention_monitor import _speak_edge_native
-                            _speak_edge_native(
-                                text,
-                                rate=profile.edge_rate,
-                                pitch=profile.edge_pitch,
-                                sapi_rate=profile.sapi_rate,
-                            )
-                        except Exception as exc:
-                            print(f"[Brahma Speak] Fallback TTS failed: {exc}")
-                        finally:
-                            self.set_speaking(False)
-                    threading.Thread(target=_fallback, daemon=True).start()
-            asyncio.run_coroutine_threadsafe(_send(), self._loop)
-        else:
-            # Fallback when Gemini Live is disconnected or in offline mode.
-            def _speak_thread():
-                try:
-                    self.set_speaking(True)
-                    from actions.attention_monitor import _speak_edge_native
-                    _speak_edge_native(
-                        text,
-                        rate=profile.edge_rate,
-                        pitch=profile.edge_pitch,
-                        sapi_rate=profile.sapi_rate,
-                    )
-                except Exception as exc:
-                    print(f"[Brahma Speak] Unified TTS failed: {exc}")
-                finally:
-                    self.set_speaking(False)
-            threading.Thread(target=_speak_thread, daemon=True).start()
+                    print(f"[BRAHMA EVO] Unified Speak (Live) err: {e}")
+                    self._speak_native(text, profile)
+
+            try:
+                asyncio.run_coroutine_threadsafe(_send(), self._loop)
+                return
+            except Exception as exc:
+                print(f"[BRAHMA EVO] Live speak scheduling failed: {exc}")
+
+        self._speak_native(text, profile)
+
+    def _speak_native(self, text: str, profile) -> None:
+        def _speak_thread():
+            try:
+                self.set_speaking(True)
+                from actions.attention_monitor import _speak_edge_native
+                _speak_edge_native(
+                    text,
+                    rate=profile.edge_rate,
+                    pitch=profile.edge_pitch,
+                    sapi_rate=profile.sapi_rate,
+                )
+            except Exception as exc:
+                print(f"[Brahma Speak] Unified TTS failed: {exc}")
+            finally:
+                self.set_speaking(False)
+
+        threading.Thread(
+            target=_speak_thread,
+            daemon=True,
+            name="brahma-native-tts",
+        ).start()
 
     def speak_error(self, tool_name: str, error: str):
         short = str(error)[:120]
@@ -4793,7 +4807,8 @@ class BrahmaLive:
         args = dict(fc.args or {})
 
         print(f"[BRAHMA EVO] 🔧 {name}  {args}")
-        self.speak(f"Working on {name.replace('_', ' ')}...")
+        if not getattr(fc, "silent_completion", False):
+            self.speak(f"Working on {name.replace('_', ' ')}...")
         self.ui.set_state("THINKING")
 
         # Trigger Brahma Right Wing: Live Operations & Sources Telemetry
@@ -6103,6 +6118,7 @@ class BrahmaLive:
                         # has a reported failure mode where transcription arrives
                         # but streamed audio chunks contain almost no PCM data.
                         if chunk_size > 8:
+                            self._last_live_audio_at = time.monotonic()
                             self.set_speaking(True)
                             self._enqueue_playback(
                                 self._playback_generation.current(), response.data
@@ -6171,10 +6187,33 @@ class BrahmaLive:
                             in_buf = []
 
                             full_out = " ".join(out_buf).strip()
+                            degraded_turn = bool(full_in) and not full_out and turn_audio_bytes < 256
                             if full_out:
                                 # The UI's assistant-log path persists this message;
                                 # do not also insert it directly or the bubble doubles.
                                 self.ui.write_log(f"Brahma Evo: {full_out}")
+                            elif degraded_turn:
+                                # A Live session can accept/transcribe input while
+                                # producing no usable output. Never strand the user:
+                                # hand the same turn to the independent text agent,
+                                # then tear down the unhealthy Live session so the
+                                # reconnect ladder can restore voice.
+                                self._voice_audio_degraded = True
+                                fallback_text = full_in
+                                self.ui.write_log(
+                                    "SYS: Live voice returned no usable response; "
+                                    "falling back to the text intelligence path."
+                                )
+                                threading.Thread(
+                                    target=self._fallback_reply,
+                                    args=(fallback_text, _memory_context_for_request(fallback_text)),
+                                    daemon=True,
+                                    name="live-silent-turn-fallback",
+                                ).start()
+                                out_buf = []
+                                raise RuntimeError(
+                                    "Live turn produced transcription but no usable response audio/text."
+                                )
                             out_buf = []
 
                             if full_in and len(full_in) > 5:
@@ -6435,6 +6474,7 @@ class BrahmaLive:
                     )
                 self.session = None
                 self._loop = None
+                self._last_live_audio_at = 0.0
                 self._voice_audio_degraded = False
             self.set_speaking(False)
             # Do not present a false LISTENING state while the Live session is
