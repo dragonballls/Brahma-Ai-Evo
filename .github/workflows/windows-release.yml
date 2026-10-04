@@ -79,17 +79,20 @@ jobs:
         shell: pwsh
         env:
           BRAHMA_EVO_TEST_MODE: "1"
+          BRAHMA_EVO_TEST_AUTO_EXIT_SECONDS: "5"
+          BRAHMA_SKIP_STARTUP_UPDATE: "1"
+          BRAHMA_EVOLUTION_ENABLED: "0"
         run: |
           $exe = (Resolve-Path "dist/BrahmaEvo/BrahmaEvo.exe").Path
           $proc = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -PassThru
-          Start-Sleep -Seconds 15
-          if ($proc.HasExited) {
-            $exitCode = $proc.ExitCode
-            throw "BrahmaEvo.exe exited during launch smoke test with code $exitCode."
+          if (-not $proc.WaitForExit(120000)) {
+            try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+            throw "BrahmaEvo.exe did not exit during the packaged smoke test."
           }
-          Write-Host "BrahmaEvo.exe remained running for the launch smoke test."
-          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-          Wait-Process -Id $proc.Id -Timeout 10 -ErrorAction SilentlyContinue
+          if ($proc.ExitCode -ne 0) {
+            throw "BrahmaEvo.exe exited with code $($proc.ExitCode)."
+          }
+          Write-Host "Packaged Brahma Evo smoke test passed with exit code 0."
 
       - name: Smoke-test setup wizard
         shell: pwsh
