@@ -6343,8 +6343,17 @@ class BrahmaLive:
         import numpy as np
 
         _mic_name = config_manager.get_input_device()
-        _mic_dev = audio_devices.resolve(_mic_name, "input") if _mic_name else None
+        _spk_name_for_voice = config_manager.get_output_device()
+        _mic_dev, _mic_rerouted_for_media = audio_devices.resolve_voice_input(
+            _mic_name,
+            _spk_name_for_voice,
+        )
         available_inputs = audio_devices.list_devices("input")
+        if _mic_rerouted_for_media:
+            self.ui.write_log(
+                "SYS: Using a separate microphone to preserve Bluetooth media quality "
+                "while voice mode is active."
+            )
         if _mic_dev is None and available_inputs:
             _mic_name = available_inputs[0]
             _mic_dev = audio_devices.resolve(_mic_name, "input")
