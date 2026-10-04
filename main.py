@@ -6286,7 +6286,11 @@ class BrahmaLive:
             traceback.print_exc()
             try:
                 from actions.auto_heal_engine import AutoHealEngine
-                AutoHealEngine.record_last_error(tb_str)
+                AutoHealEngine.auto_heal_runtime_error(
+                    tb_str,
+                    context_notes=f"Tool execution failed while handling the user's request. Tool={name}.",
+                    notify=lambda msg: self.ui.write_log(f"[AutoHeal] {msg}"),
+                )
             except Exception:
                 pass
             self.speak_error(name, e)
