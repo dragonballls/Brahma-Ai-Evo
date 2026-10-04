@@ -4,22 +4,10 @@ import unittest
 from unittest.mock import patch
 
 from llm_client import UnifiedAIClient
-from or_client import OpenRouterClient
-
-
-class _FakeResponse:
-    def __init__(self, payload):
-        self.status_code = 200
-        self._payload = payload
-        self.text = ""
-
-    def json(self):
-        return self._payload
-
-
 class ConversationDeliveryTests(unittest.TestCase):
     def test_openrouter_tool_loop_executes_tool_and_returns_final_text(self):
-        client = OpenRouterClient()
+        client = UnifiedAIClient()
+        client._provider = "OpenRouter"
         responses = [
             {
                 "choices": [{
@@ -46,18 +34,11 @@ class ConversationDeliveryTests(unittest.TestCase):
                 }]
             },
         ]
-        seen = []
 
-        def fake_post(*args, **kwargs):
-            seen.append(kwargs["json"])
-            return _FakeResponse(responses.pop(0))
+        def fake_call(*args, **kwargs):
+            return responses.pop(0)
 
-        def tool_executor(name, args):
-            return f"{name}:{args['action']}:ok"
-
-        with patch.object(client, "_is_rate_limited", return_value=False),              patch.object(client, "_refresh_credentials"),              patch.object(client, "_call_tool_capable", side_effect=lambda model, messages, tools, max_tokens, temperature: responses.pop(0)):
-            # Seed a fake credential because _call_tool_capable is mocked above.
-            client.api_key = "test-openrouter-key"
+        with patch.object(client, "reload_settings"),              patch("llm_client.openrouter_client._call_tool_capable", side_effect=fake_call):
             result = client.chat_with_tools(
                 messages=[
                     {"role": "system", "content": "Use tools when needed."},
@@ -72,7 +53,7 @@ class ConversationDeliveryTests(unittest.TestCase):
                         "required": ["action"],
                     },
                 }],
-                tool_executor=tool_executor,
+                tool_executor=lambda name, args: f"{name}:{args['action']}:ok",
                 model="auto",
                 max_rounds=3,
             )
