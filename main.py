@@ -341,6 +341,7 @@ def _extract_gemini_text(response) -> str:
 
 
 def _gemini_text_reply(prompt: str) -> str:
+    """Direct Gemini text path used when Gemini is the selected provider."""
     system_prompt = (
         "You are Brahma Evo, a concise, helpful desktop assistant. "
         "Reply naturally and briefly. Do not mention internal implementation details."
@@ -350,26 +351,159 @@ def _gemini_text_reply(prompt: str) -> str:
         system_prompt += "\n\n" + language_prompt_block()
     except Exception:
         pass
-    # OmniRoute-backed cloud path is preferred. Direct Gemini remains the
-    # compatibility fallback if the local gateway cannot be started.
-    try:
-        return openrouter_client.intelligent_chat(
-            prompt,
-            system=system_prompt,
-            context=prompt,
-            profile=None,
+
+    client = genai.Client(
+        api_key=_get_api_key(),
+        http_options={"api_version": "v1beta"},
+    )
+    last_error = None
+    for model_name in (
+        os.environ.get("BRAHMA_TEXT_GEMINI_MODEL", "gemini-2.5-flash"),
+        "gemini-3.8-flash",
+        "gemini-flash-latest",
+    ):
+        if not model_name:
+            continue
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    temperature=0.6,
+                    max_output_tokens=4096,
+                ),
+            )
+            text = _extract_gemini_text(response)
+            if text:
+                return text
+        except Exception as exc:
+            last_error = exc
+            continue
+    raise RuntimeError(f"Gemini text generation failed: {last_error}")
+
+
+def _gemini_tool_reply(
+    prompt: str,
+    system_prompt: str,
+    tool_executor,
+    max_rounds: int = 6,
+) -> str:
+    """Manual Gemini function-calling loop with Brahma-owned tool execution."""
+    api_key = _get_api_key()
+    if not api_key:
+        raise PermissionError("Gemini API key is not configured.")
+
+    client = genai.Client(
+        api_key=api_key,
+        http_options={"api_version": "v1beta"},
+    )
+    tool = types.Tool(function_declarations=TOOL_DECLARATIONS)
+    config = types.GenerateContentConfig(
+        system_instruction=system_prompt,
+        tools=[tool],
+        temperature=0.35,
+        max_output_tokens=8192,
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(
+            disable=True
+        ),
+    )
+    contents = [
+        types.Content(
+            role="user",
+            parts=[types.Part.from_text(text=prompt)],
         )
-    except Exception:
-        client = genai.Client(
-            api_key=_get_api_key(),
-            http_options={"api_version": "v1beta"},
-        )
+    ]
+
+    for _ in range(max(1, int(max_rounds))):
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=f"{system_prompt}\n\nUser: {prompt}",
-            config={"temperature": 0.6},
+            model=os.environ.get("BRAHMA_TEXT_GEMINI_MODEL", "gemini-2.5-flash"),
+            contents=contents,
+            config=config,
         )
-        return _extract_gemini_text(response)
+        function_calls = list(getattr(response, "function_calls", None) or [])
+        if not function_calls:
+            text = _extract_gemini_text(response)
+            if text:
+                return text
+            raise RuntimeError("Gemini returned an empty response.")
+
+        candidate_content = None
+        try:
+            candidates = getattr(response, "candidates", None) or []
+            if candidates:
+                candidate_content = getattr(candidates[0], "content", None)
+        except Exception:
+            candidate_content = None
+        if candidate_content is not None:
+            contents.append(candidate_content)
+
+        function_parts = []
+        for index, call in enumerate(function_calls):
+            name = str(getattr(call, "name", "") or "").strip()
+            args = dict(getattr(call, "args", None) or {})
+            call_id = str(getattr(call, "id", "") or f"gemini_tool_{index}")
+            if not name:
+                result = "Gemini returned a tool call without a name."
+            else:
+                try:
+                    result = tool_executor(name, args)
+                except Exception as exc:
+                    result = f"Tool '{name}' failed: {exc}"
+            function_parts.append(
+                types.Part.from_function_response(
+                    name=name or "unknown",
+                    response={"result": str(result)},
+                    id=call_id,
+                )
+            )
+
+        contents.append(
+            types.Content(
+                role="user",
+                parts=function_parts,
+            )
+        )
+
+    raise RuntimeError("Gemini tool-calling reached its safety round limit without a final response.")
+
+
+def _cloud_tool_reply(
+    prompt: str,
+    system_prompt: str,
+    provider: str,
+    tool_executor,
+) -> str:
+    """Route a cloud action through the selected provider with cross-provider fallback."""
+    errors = []
+    ordered = [normalize_provider(provider)]
+    alternate = "OpenRouter" if ordered[0] == "Gemini" else "Gemini"
+    ordered.append(alternate)
+
+    for candidate in ordered:
+        try:
+            if candidate == "Gemini":
+                return _gemini_tool_reply(
+                    prompt,
+                    system_prompt,
+                    tool_executor,
+                )
+            return openrouter_client.chat_with_tools(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                tools=TOOL_DECLARATIONS,
+                tool_executor=tool_executor,
+                model="auto",
+                max_tokens=8192,
+                temperature=0.35,
+                max_rounds=6,
+            )
+        except Exception as exc:
+            errors.append(f"{candidate}: {exc}")
+
+    raise RuntimeError("Cloud tool routing failed. " + " | ".join(errors))
 
 
 def _ig_gemini_reply(username: str, text: str) -> str:
@@ -4295,8 +4429,17 @@ class BrahmaLive:
                         output="Processing on Google Gemini...",
                         percent=50,
                     )
-                    reply = _gemini_text_reply(request_text)
-                    print("[BRAHMA EVO] 🌐 Google Gemini answered successfully!")
+                    reply = _cloud_tool_reply(
+                        request_text,
+                        (
+                            "You are Brahma Evo, a concise, helpful desktop assistant. "
+                            "Perform the requested task using the provided tools when needed. "
+                            "Never claim a task is complete unless the tool result confirms it."
+                        ),
+                        "Gemini",
+                        lambda name, args: self._execute_tool_sync(name, args),
+                    )
+                    print("[BRAHMA EVO] 🌐 Google Gemini cloud agent answered successfully!")
                 except Exception as e_gem:
                     print(f"[BRAHMA EVO] ⚠️ Gemini failed: {e_gem}")
                     if _is_gemini_limit_error(e_gem):
@@ -4310,15 +4453,17 @@ class BrahmaLive:
                         output="Processing on OpenRouter...",
                         percent=50,
                     )
-                    reply = openrouter_client.intelligent_chat(
+                    reply = _cloud_tool_reply(
                         request_text,
-                        system=(
+                        (
                             "You are Brahma Evo, a concise, helpful desktop assistant. "
-                            "Reply naturally and briefly. Do not mention internal implementation details."
+                            "Perform the requested task using the provided tools when needed. "
+                            "Never claim a task is complete unless the tool result confirms it."
                         ),
-                        context=memory_ctx,
+                        "OpenRouter",
+                        lambda name, args: self._execute_tool_sync(name, args),
                     )
-                    print("[BRAHMA EVO] 🌐 OpenRouter answered successfully!")
+                    print("[BRAHMA EVO] 🌐 OpenRouter cloud agent answered successfully!")
                 except Exception as e_or:
                     print(f"[BRAHMA EVO] ⚠️ OpenRouter failed: {e_or}")
 
@@ -4425,13 +4570,15 @@ class BrahmaLive:
                             output="Gemini failed; trying the configured cloud fallback.",
                             percent=60,
                         )
-                        reply = openrouter_client.intelligent_chat(
+                        reply = _cloud_tool_reply(
                             request_text,
-                            system=(
+                            (
                                 "You are Brahma Evo, a concise, helpful desktop assistant. "
-                                "Reply naturally and briefly. Do not mention internal implementation details."
+                                "Perform the requested task using the provided tools when needed. "
+                                "Never claim a task is complete unless the tool result confirms it."
                             ),
-                            context=memory_ctx,
+                            "OpenRouter",
+                            lambda name, args: self._execute_tool_sync(name, args),
                         )
                     except Exception as exc:
                         print(f"[BRAHMA EVO] OpenRouter fallback failed: {exc}")
@@ -4442,7 +4589,16 @@ class BrahmaLive:
                             output="OpenRouter failed; trying Google Gemini as the cloud fallback.",
                             percent=60,
                         )
-                        reply = _gemini_text_reply(request_text)
+                        reply = _cloud_tool_reply(
+                            request_text,
+                            (
+                                "You are Brahma Evo, a concise, helpful desktop assistant. "
+                                "Perform the requested task using the provided tools when needed. "
+                                "Never claim a task is complete unless the tool result confirms it."
+                            ),
+                            "Gemini",
+                            lambda name, args: self._execute_tool_sync(name, args),
+                        )
                     except Exception as exc:
                         print(f"[BRAHMA EVO] Gemini fallback failed: {exc}")
 
