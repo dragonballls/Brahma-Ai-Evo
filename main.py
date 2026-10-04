@@ -4605,6 +4605,49 @@ class BrahmaLive:
                 except Exception as exc_intel:
                     print(f"[BRAHMA EVO] Multi-model intelligence fallback failed: {exc_intel}")
 
+            # Secondary cloud routing is controlled by the user's explicit
+            # auto-switch setting. This must happen before the Local safety net.
+            if not reply and not is_offline_mode and auto_provider_switch:
+                if primary_provider == "Gemini":
+                    try:
+                        self.ui.update_task_workspace(
+                            status="Thinking (OpenRouter fallback)",
+                            output="Gemini failed; trying the configured cloud fallback.",
+                            percent=60,
+                        )
+                        reply = _cloud_tool_reply(
+                            request_text,
+                            (
+                                "You are Brahma Evo, a concise, helpful desktop assistant. "
+                                "Perform the requested task using the provided tools when needed. "
+                                "Never claim a task is complete unless the tool result confirms it."
+                            ),
+                            "OpenRouter",
+                            lambda name, args: self._execute_tool_sync(name, args),
+                        )
+                    except Exception as exc:
+                        print(f"[BRAHMA EVO] OpenRouter fallback failed: {exc}")
+                elif primary_provider == "OpenRouter":
+                    try:
+                        self.ui.update_task_workspace(
+                            status="Thinking (Gemini fallback)",
+                            output="OpenRouter failed; trying Google Gemini as the cloud fallback.",
+                            percent=60,
+                        )
+                        reply = _cloud_tool_reply(
+                            request_text,
+                            (
+                                "You are Brahma Evo, a concise, helpful desktop assistant. "
+                                "Perform the requested task using the provided tools when needed. "
+                                "Never claim a task is complete unless the tool result confirms it."
+                            ),
+                            "Gemini",
+                            lambda name, args: self._execute_tool_sync(name, args),
+                        )
+                    except Exception as exc:
+                        print(f"[BRAHMA EVO] Gemini fallback failed: {exc}")
+
+
             # 3. If user explicitly configured Local AI, is in Offline Mode, or cloud provider failed: run Local Brain
             if not reply and (is_local(configured_provider) or is_offline_mode or not (is_cloud_gemini or is_cloud_openrouter)) and local_brain.is_available():
                 try:
@@ -4697,48 +4740,6 @@ class BrahmaLive:
                     print(f"[BRAHMA EVO] 🔒 Local Brain ({local_model_target}) answered successfully!")
                 except Exception as e_loc:
                     print(f"[BRAHMA EVO] ⚠️ Local Brain failed: {e_loc}")
-
-            # Secondary cloud routing is controlled by the user's explicit
-            # auto-switch setting. This must happen before the Local safety net.
-            if not reply and not is_offline_mode and auto_provider_switch:
-                if primary_provider == "Gemini":
-                    try:
-                        self.ui.update_task_workspace(
-                            status="Thinking (OpenRouter fallback)",
-                            output="Gemini failed; trying the configured cloud fallback.",
-                            percent=60,
-                        )
-                        reply = _cloud_tool_reply(
-                            request_text,
-                            (
-                                "You are Brahma Evo, a concise, helpful desktop assistant. "
-                                "Perform the requested task using the provided tools when needed. "
-                                "Never claim a task is complete unless the tool result confirms it."
-                            ),
-                            "OpenRouter",
-                            lambda name, args: self._execute_tool_sync(name, args),
-                        )
-                    except Exception as exc:
-                        print(f"[BRAHMA EVO] OpenRouter fallback failed: {exc}")
-                elif primary_provider == "OpenRouter":
-                    try:
-                        self.ui.update_task_workspace(
-                            status="Thinking (Gemini fallback)",
-                            output="OpenRouter failed; trying Google Gemini as the cloud fallback.",
-                            percent=60,
-                        )
-                        reply = _cloud_tool_reply(
-                            request_text,
-                            (
-                                "You are Brahma Evo, a concise, helpful desktop assistant. "
-                                "Perform the requested task using the provided tools when needed. "
-                                "Never claim a task is complete unless the tool result confirms it."
-                            ),
-                            "Gemini",
-                            lambda name, args: self._execute_tool_sync(name, args),
-                        )
-                    except Exception as exc:
-                        print(f"[BRAHMA EVO] Gemini fallback failed: {exc}")
 
             # 5. Ultimate offline safety net: Local Brain fallback
             if not reply and local_brain.is_available():
