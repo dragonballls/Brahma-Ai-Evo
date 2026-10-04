@@ -341,47 +341,18 @@ def _extract_gemini_text(response) -> str:
 
 
 def _gemini_text_reply(prompt: str) -> str:
-    """Direct Gemini text path used when Gemini is the selected provider."""
-    system_prompt = (
-        "You are Brahma Evo, a concise, helpful desktop assistant. "
-        "Reply naturally and briefly. Do not mention internal implementation details."
+    """Compatibility name for the unified OmniRoute cloud text path."""
+    from llm_client import client as unified_cloud_client
+    return unified_cloud_client.chat(
+        prompt,
+        system=(
+            "You are Brahma Evo, a concise, helpful desktop assistant. "
+            "Reply naturally and briefly. Do not mention internal implementation details."
+        ),
+        model="auto",
+        max_tokens=4096,
+        temperature=0.6,
     )
-    try:
-        from core.language_policy import prompt_block as language_prompt_block
-        system_prompt += "\n\n" + language_prompt_block()
-    except Exception:
-        pass
-
-    client = genai.Client(
-        api_key=_get_api_key(),
-        http_options={"api_version": "v1beta"},
-    )
-    last_error = None
-    for model_name in (
-        os.environ.get("BRAHMA_TEXT_GEMINI_MODEL", "gemini-2.5-flash"),
-        "gemini-3.8-flash",
-        "gemini-flash-latest",
-    ):
-        if not model_name:
-            continue
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_prompt,
-                    temperature=0.6,
-                    max_output_tokens=4096,
-                ),
-            )
-            text = _extract_gemini_text(response)
-            if text:
-                return text
-        except Exception as exc:
-            last_error = exc
-            continue
-    raise RuntimeError(f"Gemini text generation failed: {last_error}")
-
 
 def _gemini_tool_reply(
     prompt: str,
@@ -389,138 +360,20 @@ def _gemini_tool_reply(
     tool_executor,
     max_rounds: int = 6,
 ) -> str:
-    """Manual Gemini function-calling loop with Brahma-owned tool execution."""
-    api_key = _get_api_key()
-    if not api_key:
-        raise PermissionError("Gemini API key is not configured.")
-
-    client = genai.Client(
-        api_key=api_key,
-        http_options={"api_version": "v1beta"},
-    )
-
-    def lower_schema(value):
-        if isinstance(value, dict):
-            return {
-                key: (str(item).lower() if key == "type" and isinstance(item, str)
-                      else lower_schema(item))
-                for key, item in value.items()
-            }
-        if isinstance(value, list):
-            return [lower_schema(item) for item in value]
-        return value
-
-    declarations = []
-    for declaration in _runtime_tool_declarations():
-        if not isinstance(declaration, dict):
-            continue
-        name = str(declaration.get("name") or "").strip()
-        if not name:
-            continue
-        declarations.append(
-            types.FunctionDeclaration(
-                name=name,
-                description=str(declaration.get("description") or ""),
-                parameters_json_schema=lower_schema(
-                    declaration.get("parameters") or {
-                        "type": "object",
-                        "properties": {},
-                    }
-                ),
-            )
-        )
-
-    tool = types.Tool(function_declarations=declarations)
-    config = types.GenerateContentConfig(
-        system_instruction=system_prompt,
-        tools=[tool],
+    """Compatibility name for the unified OmniRoute tool-calling path."""
+    from llm_client import client as unified_cloud_client
+    return unified_cloud_client.chat_with_tools(
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ],
+        tools=_runtime_tool_declarations(),
+        tool_executor=tool_executor,
+        model="auto",
+        max_tokens=8192,
         temperature=0.35,
-        max_output_tokens=8192,
-        automatic_function_calling=types.AutomaticFunctionCallingConfig(
-            disable=True
-        ),
+        max_rounds=max_rounds,
     )
-    contents = [
-        types.Content(
-            role="user",
-            parts=[types.Part.from_text(text=prompt)],
-        )
-    ]
-
-    models = (
-        os.environ.get("BRAHMA_TEXT_GEMINI_MODEL", "gemini-2.5-flash"),
-        "gemini-3.8-flash",
-        "gemini-flash-latest",
-    )
-    last_error = None
-
-    for model_name in models:
-        if not model_name:
-            continue
-        try:
-            working_contents = list(contents)
-            for _ in range(max(1, int(max_rounds))):
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=working_contents,
-                    config=config,
-                )
-                function_calls = list(getattr(response, "function_calls", None) or [])
-                if not function_calls:
-                    text = _extract_gemini_text(response)
-                    if text:
-                        return text
-                    raise RuntimeError("Gemini returned an empty response.")
-
-                candidate_content = None
-                try:
-                    candidates = getattr(response, "candidates", None) or []
-                    if candidates:
-                        candidate_content = getattr(candidates[0], "content", None)
-                except Exception:
-                    candidate_content = None
-                if candidate_content is not None:
-                    working_contents.append(candidate_content)
-
-                function_parts = []
-                for index, call in enumerate(function_calls):
-                    name = str(getattr(call, "name", "") or "").strip()
-                    args = dict(getattr(call, "args", None) or {})
-                    call_id = str(getattr(call, "id", "") or f"gemini_tool_{index}")
-                    if not name:
-                        result = "Gemini returned a tool call without a name."
-                    else:
-                        try:
-                            result = tool_executor(name, args)
-                        except Exception as exc:
-                            result = f"Tool '{name}' failed: {exc}"
-                    function_parts.append(
-                        types.Part.from_function_response(
-                            name=name or "unknown",
-                            response={"result": str(result)},
-                            id=call_id,
-                        )
-                    )
-
-                # Gemini's documented manual function-calling flow appends
-                # FunctionResponse parts as a user turn before requesting the
-                # model's final response.
-                working_contents.append(
-                    types.Content(
-                        role="user",
-                        parts=function_parts,
-                    )
-                )
-
-            raise RuntimeError(
-                "Gemini tool-calling reached its safety round limit without a final response."
-            )
-        except Exception as exc:
-            last_error = exc
-            continue
-
-    raise RuntimeError(f"Gemini tool routing failed: {last_error}")
-
 
 def _cloud_tool_reply(
     prompt: str,
@@ -528,35 +381,34 @@ def _cloud_tool_reply(
     provider: str,
     tool_executor,
 ) -> str:
-    """Route one cloud action through the canonical selected provider."""
+    """Route all online tool-capable requests through the local OmniRoute gateway.
+
+    ``provider`` remains a compatibility parameter for legacy callers; Gemini
+    and OpenRouter no longer execute through separate core paths.
+    """
     try:
         from core.language_policy import prompt_block as language_prompt_block
         system_prompt = system_prompt.rstrip() + "\n\n" + language_prompt_block()
     except Exception:
         pass
-    candidate = normalize_provider(provider)
-    if candidate == "Gemini":
-        return _gemini_tool_reply(
-            prompt,
-            system_prompt,
-            tool_executor,
-        )
-    if candidate == "OpenRouter":
-        from or_client import client as omniroute_openrouter_client
-        return omniroute_openrouter_client.chat_with_tools(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
-            ],
-            tools=_runtime_tool_declarations(),
-            tool_executor=tool_executor,
-            model="auto",
-            max_tokens=8192,
-            temperature=0.35,
-            max_rounds=6,
-        )
-    raise RuntimeError(f"Unsupported cloud provider: {candidate}")
+    if is_local(provider):
+        raise RuntimeError("Local provider requests must use the local brain path.")
+    from llm_client import client as unified_cloud_client
+    return unified_cloud_client.chat_with_tools(
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ],
+        tools=_runtime_tool_declarations(),
+        tool_executor=tool_executor,
+        model="auto",
+        max_tokens=8192,
+        temperature=0.35,
+        max_rounds=6,
+    )
+
 def _ig_gemini_reply(username: str, text: str) -> str:
+    from llm_client import client as unified_cloud_client
     system_prompt = (
         "You are Brahma Evo, an AI personal assistant acting on behalf of your user. "
         "You have taken over their Instagram chat with the user's permission. "
@@ -568,149 +420,32 @@ def _ig_gemini_reply(username: str, text: str) -> str:
         system_prompt += "\n\n" + language_prompt_block()
     except Exception:
         pass
-    prompt = f"Instagram DM from {username}: {text}"
-    
-    try:
-        client = genai.Client(
-            api_key=_get_api_key(),
-            http_options={"api_version": "v1beta"},
-        )
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=f"{system_prompt}\n\nUser: {prompt}",
-            config={"temperature": 0.6},
-        )
-        return _extract_gemini_text(response)
-    except Exception as e:
-        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or _is_gemini_limit_error(e):
-            print("[InstagramChat] Gemini Rate Limit hit, falling back to OpenRouter...")
-            try:
-                from or_client import client as direct_openrouter_client
-                return direct_openrouter_client.chat(prompt, system=system_prompt)
-            except Exception as or_e:
-                print(f"[InstagramChat] OpenRouter fallback failed: {or_e}")
-                return "Hey, I'm currently busy. I will get back to you later!"
-        print(f"[InstagramChat] Gemini Reply Error: {e}")
-        return "Hey, I'm currently busy. I will get back to you later!"
-
+    return unified_cloud_client.chat(
+        f"Instagram username: {username}\nIncoming message: {text}",
+        system=system_prompt,
+        model="auto",
+        max_tokens=512,
+        temperature=0.5,
+    )
 
 def _clipboard_gemini_reply(text: str) -> str:
+    from llm_client import client as unified_cloud_client
     system_prompt = (
-        "You are Brahma Evo, a witty and helpful AI assistant. "
-        "The user just copied the following text to their clipboard. "
-        "Make a very short, interesting, or helpful 1-sentence comment or question about it. "
-        "Do not offer to 'help' or ask 'how can I help'. Just make a standalone witty observation or summary."
+        "You are Brahma Evo, helping the user understand or act on clipboard text. "
+        "Answer naturally, concisely, and do not mention internal implementation details."
     )
     try:
         from core.language_policy import prompt_block as language_prompt_block
         system_prompt += "\n\n" + language_prompt_block()
     except Exception:
         pass
-    prompt = text
-    try:
-        client = genai.Client(
-            api_key=_get_api_key(),
-            http_options={"api_version": "v1beta"},
-        )
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=f"{system_prompt}\n\nClipboard Text: {prompt}",
-            config={"temperature": 0.8},
-        )
-        return _extract_gemini_text(response)
-    except Exception as e:
-        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or _is_gemini_limit_error(e):
-            try:
-                from or_client import client as direct_openrouter_client
-                return direct_openrouter_client.chat(prompt, system=system_prompt)
-            except Exception:
-                pass
-        return "Interesting stuff you copied there!"
-
-
-def _looks_like_code_request(text: str) -> bool:
-    low = (text or "").lower()
-    code_words = (
-        "build", "create", "write", "implement", "code", "python", "app",
-        "module", "function", "class", "project", "script", "api",
-        "ui", "webpage", "bot", "server", "service"
+    return unified_cloud_client.chat(
+        text,
+        system=system_prompt,
+        model="auto",
+        max_tokens=1024,
+        temperature=0.35,
     )
-    return any(word in low for word in code_words)
-
-
-def _looks_like_website_request(text: str) -> bool:
-    low = (text or "").lower()
-    website_words = (
-        "website",
-        "web site",
-        "webpage",
-        "web page",
-        "landing page",
-        "homepage",
-        "home page",
-        "portfolio",
-        "product site",
-        "business site",
-        "marketing site",
-        "web app",
-        "frontend",
-        "site",
-        "html",
-        "react",
-        "web",
-    )
-    action_words = ("make", "create", "build", "design", "develop", "generate", "code", "edit", "update", "fix")
-    has_web = any(re.search(rf"\b{re.escape(w)}\b", low) for w in website_words)
-    has_action = any(re.search(rf"\b{re.escape(a)}\b", low) for a in action_words)
-    return has_web and (has_action or any(w in low for w in ("landing page", "homepage", "portfolio", "website", "web app", "web page")))
-
-
-def _looks_like_presentation_request(text: str) -> bool:
-    low = (text or "").lower()
-    ppt_keywords = (
-        "presentation", "powerpoint", "slideshow", "slides", "slide deck",
-        "pitch deck", "deck", "ppt", "pptx"
-    )
-    action_words = ("make", "create", "build", "design", "develop", "generate", "draft", "prepare")
-    has_keyword = any(re.search(rf"\b{re.escape(k)}\b", low) for k in ppt_keywords)
-    has_action = any(re.search(rf"\b{re.escape(a)}\b", low) for a in action_words)
-    return has_keyword and (has_action or any(k in low for k in ("slide deck", "pitch deck", "powerpoint", "pptx", "ppt")))
-
-
-def _looks_like_spreadsheet_request(text: str) -> bool:
-    low = (text or "").lower()
-    sheet_keywords = (
-        "spreadsheet", "excel", "sheet", "sheets", "workbook", "xlsx",
-        "tracker", "expense tracker", "budget sheet"
-    )
-    action_words = ("make", "create", "build", "design", "develop", "generate", "draft", "prepare")
-    has_keyword = any(re.search(rf"\b{re.escape(k)}\b", low) for k in sheet_keywords)
-    has_action = any(re.search(rf"\b{re.escape(a)}\b", low) for a in action_words)
-    return has_keyword and (has_action or any(k in low for k in ("spreadsheet", "excel sheet", "expense tracker", "budget sheet", "xlsx")))
-
-
-def _extract_skill_creation_goal(text: str) -> str | None:
-    normalized = re.sub(r"\s+", " ", (text or "").strip())
-    match = re.match(
-        r"^(?:please\s+)?(?:(?:i\s+(?:want|need|would like)\s+you\s+to|(?:can|could)\s+you)\s+)?"
-        r"(?:make|create|build|develop|generate|forge|write|implement|add|design)\s+"
-        r"(?:me\s+)?(?:your\s+)?(?:(?:a|an|new|custom|own)\s+)*(?:skill|feature)\b(.*)$",
-        normalized,
-        flags=re.IGNORECASE,
-    )
-    if not match:
-        return None
-
-    goal = match.group(1).strip(" \t:,-")
-    goal = re.sub(r"^(?:that|which|to)\s+", "", goal, flags=re.IGNORECASE)
-    goal = re.sub(
-        r"^(?:(?:will|can|could|should)\s+)?(?:allow|let|enable|allows|lets|enables)\s+(?:you\s+)?(?:to\s+)?",
-        "",
-        goal,
-        flags=re.IGNORECASE,
-    )
-    return goal.strip()
-
 
 def _is_gemini_limit_error(exc: Exception) -> bool:
     msg = str(exc).lower()
