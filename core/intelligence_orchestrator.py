@@ -1,6 +1,10 @@
 """Multi-model cloud reasoning for Brahma Evo."""
 from __future__ import annotations
 import json, logging, time, threading
+import os
+import requests
+from config import get_config
+from core.omniroute import gateway
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Optional
@@ -18,7 +22,7 @@ _RUNTIME_CACHE = None
 
 DEFAULTS={
     "enabled": True, "default_profile":"smart", "simple_profile":"fast",
-    "parallel_workers":4, "max_specialists":2, "max_context_chars":14000, "simple_max_chars":220,
+    "parallel_workers":4, "max_specialists":2, "ensemble_enabled":true, "ensemble_max_providers":8, "ensemble_model_cache_seconds":300, "max_context_chars":14000, "simple_max_chars":220,
     "simple_keywords":("hello","hi","hey","thanks","thank you","what time","what day"),
     "profiles":{
         "fast":{"model":"auto/fast","temperature":0.35,"max_tokens":2048,"specialists":0},
@@ -112,7 +116,73 @@ def trim(s:str,n:int)->str:
     s=str(s or "")
     return s if len(s)<=n else s[:n]+"\n[truncated]"
 
-class IntelligenceOrchestrator:
+
+_MODEL_CACHE = None
+_PROVIDER_KEYS = {
+    "openai":"openai_api_key", "anthropic":"anthropic_api_key", "gemini":"gemini_api_key",
+    "openrouter":"openrouter_api_key", "groq":"groq_api_key", "xai":"xai_api_key",
+    "cerebras":"cerebras_api_key", "deepseek":"deepseek_api_key",
+    "mistral":"mistral_api_key", "cohere":"cohere_api_key",
+}
+_PROVIDER_PREFIXES = {
+    "openai":("openai","oai"), "anthropic":("anthropic","claude","cc"),
+    "gemini":("gemini","google"), "openrouter":("openrouter",), "groq":("groq",),
+    "xai":("xai",), "cerebras":("cerebras",), "deepseek":("deepseek",),
+    "mistral":("mistral",), "cohere":("cohere",)
+}
+_QUALITY_HINTS = ("opus","sonnet","reasoning","thinking","pro","ultra","max","flagship","large","gpt-5","gpt-4","gemini-3","gemini-2","o3","o4","o1","r1","v5","v4","v3")
+
+def _configured_providers()->tuple[str,...]:
+    data=get_config(); return tuple(p for p,k in _PROVIDER_KEYS.items() if str(data.get(k) or '').strip())
+
+def _catalog_models()->tuple[str,...]:
+    global _MODEL_CACHE
+    providers=_configured_providers(); now=time.monotonic(); ttl=max(30,int(load_config().get('ensemble_model_cache_seconds',300)))
+    if _MODEL_CACHE and now-_MODEL_CACHE[0] < ttl and _MODEL_CACHE[1] == providers: return _MODEL_CACHE[2]
+    models=[]
+    try:
+        gw=gateway()
+        if gw.ensure_ready():
+            headers={'Accept':'application/json'}
+            key=os.environ.get('BRAHMA_OMNIROUTE_API_KEY','').strip()
+            if key: headers['Authorization']='Bearer '+key
+            resp=requests.get(gw.base_url+'/models',params={'prefix':'alias'},headers=headers,timeout=5)
+            if resp.ok:
+                rows=resp.json().get('data',[])
+                models=[str(row.get('id')).strip() for row in rows if isinstance(row,dict) and str(row.get('id') or '').strip()]
+    except Exception as exc: log.debug('ensemble model catalog unavailable: %s',exc)
+    _MODEL_CACHE=(now,providers,tuple(dict.fromkeys(models)))
+    return _MODEL_CACHE[2]
+
+def _select_provider_model(provider:str, models:tuple[str,...], overrides:dict)->str|None:
+    override=str(overrides.get(provider) or '').strip()
+    if override: return override if '/' in override else provider+'/'+override
+    prefixes={x.casefold() for x in _PROVIDER_PREFIXES.get(provider,(provider,))}
+    candidates=[m for m in models if m.split('/',1)[0].casefold() in prefixes]
+    if not candidates: return None
+    def score(m):
+        low=m.casefold(); return (sum(2 for h in _QUALITY_HINTS if h in low),len(m))
+    return max(candidates,key=score)
+
+def _ensemble_models(cfg:dict, profile_cfg:dict)->list[tuple[str,str]]:
+    if not bool(cfg.get('ensemble_enabled',True)) or not bool(profile_cfg.get('ensemble',True)): return []
+    providers=_configured_providers()
+    if len(providers)<2: return []
+    overrides=dict(cfg.get('ensemble_models') or {}) if isinstance(cfg.get('ensemble_models'),dict) else {}
+    if isinstance(profile_cfg.get('ensemble_models'),dict): overrides.update(profile_cfg['ensemble_models'])
+    models=_catalog_models(); selected=[]
+    for provider in providers:
+        model=_select_provider_model(provider,models,overrides)
+        if model: selected.append((provider,model))
+    return selected[:max(2,int(cfg.get('ensemble_max_providers',8)))]
+
+def _ensemble_roles(profile:str,count:int)->tuple[str,...]:
+    roles={
+        'coding':('implementation architect','adversarial code reviewer','test strategist','edge-case debugger'),
+        'maintenance':('systems diagnostician','failure-mode analyst','independent verifier','performance specialist'),
+        'vision':('visual analyst','detail checker','context analyst','independent verifier'),
+    }.get(profile,('independent reasoner','skeptical reviewer','alternative-solution analyst','constraint checker'))
+    return tuple(roles[i%len(roles)] for i in range(count))class IntelligenceOrchestrator:
     def _cfg(self,p:str,c:dict)->dict:
         return dict(c.get("profiles",{}).get(p) or c["profiles"]["smart"])
     def _roles(self,p:str)->tuple[str,...]:
