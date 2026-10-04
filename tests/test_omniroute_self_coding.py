@@ -201,6 +201,14 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
             self.assertIn("Successfully wrote", written)
             self.assertEqual(Path(tmp, "demo.txt").read_text(encoding="utf-8"), "hello")
 
+    def test_skill_forge_uses_github_first_research_before_synthesis(self):
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[1] / "core" / "skill_forge.py").read_text(encoding="utf-8")
+        self.assertIn("from core.github_research import GitHubResearchClient", source)
+        self.assertIn("researcher.research_goal(goal, repo_limit=6, code_limit=10)", source)
+        self.assertIn("researcher.format_dossier(research, max_chars=9000)", source)
+        self.assertIn("_call_llm_synthesizer(goal, name_hint, combined_context)", source)
     def test_self_coding_model_ladder_uses_direct_omniroute_client(self):
         source = Path(ROOT / "actions" / "brahma_dev_agent.py").read_text(encoding="utf-8")
         self.assertIn("from or_client import client as direct_or_client", source)
