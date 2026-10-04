@@ -7438,7 +7438,8 @@ def _main_impl():
             except Exception:
                 pass
 
-        threading.Timer(test_exit_seconds, _finish_packaged_smoke_test).start()
+        # Schedule on Qt's main event loop so the packaged GUI exits cleanly.
+        QTimer.singleShot(int(test_exit_seconds * 1000), _finish_packaged_smoke_test)
 
     ui.root.mainloop()
 
