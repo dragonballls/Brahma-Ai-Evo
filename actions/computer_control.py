@@ -8,6 +8,7 @@ import sys
 import time
 import random
 from pathlib import Path
+from config import get_config
 
 try:
     import pyautogui
@@ -30,18 +31,16 @@ def _base_dir() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-_BASE         = _base_dir()
-_CONFIG_PATH  = _BASE / "config" / "api_keys.json"
-_MEMORY_PATH  = _BASE / "memory" / "long_term.json"
+_BASE = _base_dir()
 
 def _load_config() -> dict:
     try:
-        return json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
+        return get_config()
     except Exception:
-        return {}
+        return {"os_system": "windows"}
 
 def _get_os() -> str:
-    return _load_config().get("os_system", "windows").lower()
+    return str(_load_config().get("os_system", "windows") or "windows").lower()
 
 _SAFE_SCREENSHOT_ROOTS = (
     Path.home(),
@@ -130,15 +129,17 @@ def _random_data(data_type: str) -> str:
     return f"random_{data_type}_{random.randint(1000, 9999)}"
 
 def _user_profile() -> dict:
-    """Read identity fields from long-term memory."""
+    """Read identity fields from the canonical user-scoped memory store."""
     try:
-        if _MEMORY_PATH.exists():
-            data     = json.loads(_MEMORY_PATH.read_text(encoding="utf-8"))
-            identity = data.get("identity", {})
-            return {k: v.get("value", "") for k, v in identity.items()}
+        from memory.memory_manager import load_memory
+        data = load_memory()
+        identity = data.get("identity", {}) if isinstance(data, dict) else {}
+        return {
+            k: v.get("value", "") if isinstance(v, dict) else str(v)
+            for k, v in identity.items()
+        }
     except Exception:
-        pass
-    return {}
+        return {}
 
 def _type(text: str, interval: float = 0.015) -> str:
     _require_pyautogui()
