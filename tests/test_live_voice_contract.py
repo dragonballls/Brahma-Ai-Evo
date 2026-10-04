@@ -39,10 +39,17 @@ class LiveVoiceContractTests(unittest.TestCase):
     def test_live_model_ladder_has_current_primary_and_fallbacks(self):
         self.assertIn('LIVE_MODEL = os.environ.get("BRAHMA_LIVE_MODEL", "gemini-3.8-live")', self.main_text)
         self.assertIn('gemini-3.1-flash-live-preview', self.main_text)
-        self.assertIn('models/gemini-2.5-flash-native-audio-preview-12-2025', self.main_text)
+        self.assertIn('gemini-2.5-flash-native-audio-preview-12-2025', self.main_text)
         self.assertIn("LIVE_MODEL_CANDIDATES", self.main_text)
         self.assertIn("_live_model_index", self.main_text)
 
+    def test_live_microphone_input_uses_explicit_pcm_blob(self):
+        self.assertIn("types.Blob(", self.main_text)
+        self.assertIn('mime_type=f"audio/pcm;rate={SEND_SAMPLE_RATE}"', self.main_text)
+        self.assertIn("send_realtime_input(media=msg)", self.main_text)
+
+    def test_live_tool_calls_are_blocking_for_brahma_executor(self):
+        self.assertIn('item["behavior"] = "BLOCKING"', self.main_text)
     def test_silent_audio_recovery_guard_exists(self):
         self.assertIn("tiny_audio_chunks", self.main_text)
         self.assertIn("turn_audio_bytes < 256", self.main_text)
