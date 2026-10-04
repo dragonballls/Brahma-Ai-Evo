@@ -5,6 +5,60 @@ from unittest.mock import patch
 
 from llm_client import UnifiedAIClient
 class ConversationDeliveryTests(unittest.TestCase):
+    def test_omniroute_is_first_for_tool_capable_chat(self):
+        client = UnifiedAIClient()
+        client._provider = "OpenRouter"
+        calls = []
+
+        with patch("llm_client.openrouter_client._call_omniroute_tool_capable", return_value="OmniRoute answer") as omni, \
+             patch("llm_client.openrouter_client._call_tool_capable", side_effect=AssertionError("Direct OpenRouter should be fallback only")):
+            result = client.chat_with_tools(
+                messages=[{"role": "user", "content": "Open an app."}],
+                tools=[{
+                    "name": "open_app",
+                    "description": "Open an application",
+                    "parameters": {"type": "object", "properties": {"app_name": {"type": "string"}}},
+                }],
+                tool_executor=lambda name, args: calls.append((name, args)),
+                model="auto",
+                max_rounds=3,
+            )
+
+        self.assertEqual(result, "OmniRoute answer")
+        omni.assert_called_once()
+        self.assertEqual(calls, [])
+
+    def test_tool_call_uses_direct_openrouter_when_omniroute_unavailable(self):
+        client = UnifiedAIClient()
+        client._provider = "OpenRouter"
+        responses = [{
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Direct fallback answer",
+                }
+            }]
+        }]
+
+        def fake_call(*args, **kwargs):
+            return responses.pop(0)
+
+        with patch("llm_client.openrouter_client._call_omniroute_tool_capable", return_value=None), \
+             patch("llm_client.openrouter_client._call_tool_capable", side_effect=fake_call):
+            result = client.chat_with_tools(
+                messages=[{"role": "user", "content": "Hello."}],
+                tools=[{
+                    "name": "noop",
+                    "description": "No-op",
+                    "parameters": {"type": "object", "properties": {}},
+                }],
+                tool_executor=lambda name, args: "ok",
+                model="auto",
+                max_rounds=2,
+            )
+
+        self.assertEqual(result, "Direct fallback answer")
+
     def test_openrouter_tool_loop_executes_tool_and_returns_final_text(self):
         client = UnifiedAIClient()
         client._provider = "OpenRouter"
