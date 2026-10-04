@@ -68,6 +68,8 @@ def is_intellect_query(prompt: str) -> bool:
     text = " ".join(str(prompt or "").casefold().split())
     phrases = (
         "intellect level",
+        "what is your intellect",
+        "intellect",
         "intelligence level",
         "how intelligent are you",
         "how smart are you",
