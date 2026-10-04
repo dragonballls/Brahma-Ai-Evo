@@ -31,7 +31,7 @@ if (-not (Test-Path "dist\BrahmaEvoSupervisor.exe")) {
 }
 
 Copy-Item "dist\BrahmaEvoSupervisor.exe" "dist\BrahmaEvo\BrahmaEvoSupervisor.exe" -Force
-if ($LASTEXITCODE -ne 0) {
+if (-not (Test-Path "dist\BrahmaEvo\BrahmaEvoSupervisor.exe")) {
     Write-Host "Failed to copy crash supervisor beside the main application!" -ForegroundColor Red
     exit 1
 }
