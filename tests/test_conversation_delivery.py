@@ -225,6 +225,18 @@ class ConversationDeliveryTests(unittest.TestCase):
 
         source = Path("main.py").read_text(encoding="utf-8")
         self.assertIn("(is_cloud_openrouter or auto_provider_switch)", source)
+    def test_all_tool_capable_paths_use_runtime_dynamic_tool_surface(self):
+        from pathlib import Path
+
+        source = Path("main.py").read_text(encoding="utf-8")
+        gemini_block = source.split("def _gemini_tool_reply(", 1)[1].split("def _cloud_tool_reply(", 1)[0]
+        cloud_block = source.split("def _cloud_tool_reply(", 1)[1].split("def _ig_gemini_reply(", 1)[0]
+        self.assertIn("for declaration in _runtime_tool_declarations():", gemini_block)
+        self.assertIn("tools=_runtime_tool_declarations()", cloud_block)
+
+        fallback_block = source.split("def _fallback_reply(", 1)[1]
+        self.assertGreaterEqual(fallback_block.count("tools=_runtime_tool_declarations()"), 4)
+
     def test_cloud_action_router_does_not_override_provider_switch_setting(self):
         from pathlib import Path
 
