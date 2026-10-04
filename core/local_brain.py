@@ -48,7 +48,22 @@ class LocalBrain:
         self.enabled = False
         self._cached_models: List[str] = []
 
+    def reload_settings(self) -> None:
+        """Reload the shared Local AI endpoint and model settings."""
+        try:
+            from memory.config_manager import load_settings
+            settings = load_settings()
+            endpoint = str(settings.get("local_ai_url") or DEFAULT_ENDPOINT).strip().rstrip("/")
+            model = str(settings.get("local_ai_model") or DEFAULT_MODEL).strip()
+            if endpoint:
+                self.endpoint = endpoint
+            if model:
+                self.default_model = model
+        except Exception:
+            pass
+
     def is_available(self) -> bool:
+        self.reload_settings()
         """Check the configured OpenAI-compatible endpoint, then Ollama's native API."""
         endpoints: list[tuple[str, str]] = [
             (f"{self.endpoint}/models", "openai"),
@@ -84,6 +99,7 @@ class LocalBrain:
 
     def list_installed_models(self) -> List[str]:
         """Returns all downloaded models on the local runtime."""
+        self.reload_settings()
         self.is_available()
         return self._cached_models
 
@@ -158,6 +174,8 @@ class LocalBrain:
         Streams completions from the local runtime.
         Yields parsed stream delta chunks or tool calls.
         """
+        self.reload_settings()
+        self.reload_settings()
         active_model = model or self.default_model
         payload: Dict[str, Any] = {
             "model": active_model,
