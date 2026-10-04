@@ -83,16 +83,33 @@ jobs:
           BRAHMA_EVO_TEST_MODE: "1"
           BRAHMA_SKIP_STARTUP_UPDATE: "1"
           BRAHMA_EVOLUTION_ENABLED: "0"
+          BRAHMA_EVO_SMOKE_MARKER: "${{ runner.temp }}\\brahma_evo_smoke_ready.txt"
         run: |
+          $marker = Join-Path $env:RUNNER_TEMP "brahma_evo_smoke_ready.txt"
+          Remove-Item $marker -Force -ErrorAction SilentlyContinue
           $exe = (Resolve-Path "dist/BrahmaEvo/BrahmaEvo.exe").Path
           $proc = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -PassThru
           try {
-            Start-Sleep -Seconds 30
+            $deadline = (Get-Date).AddSeconds(45)
+            do {
+              Start-Sleep -Seconds 2
+              if ($proc.HasExited) {
+                $exitCode = $proc.ExitCode
+                throw "BrahmaEvo.exe exited before startup readiness with code $exitCode."
+              }
+              if (Test-Path $marker) {
+                break
+              }
+            } while ((Get-Date) -lt $deadline)
+
+            if (-not (Test-Path $marker)) {
+              throw "BrahmaEvo.exe did not report startup readiness within 45 seconds."
+            }
             if ($proc.HasExited) {
               $exitCode = $proc.ExitCode
-              throw "BrahmaEvo.exe exited during the 30-second packaged startup health check with code $exitCode."
+              throw "BrahmaEvo.exe exited after reporting startup readiness with code $exitCode."
             }
-            Write-Host "Packaged Brahma Evo remained alive for 30-second startup health check."
+            Write-Host "Packaged Brahma Evo reported startup readiness and remained alive."
           }
           finally {
             if (-not $proc.HasExited) {
