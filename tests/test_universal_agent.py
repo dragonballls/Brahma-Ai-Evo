@@ -43,6 +43,12 @@ class UniversalCapabilityAgentTests(unittest.TestCase):
         self.assertIn("seen: set[int] = set()", block)
         self.assertIn("id(skill) in seen", block)
 
+    def test_prompt_routes_unmatched_capabilities_to_universal_task(self):
+        from pathlib import Path
+
+        prompt = (Path(__file__).resolve().parents[1] / "core" / "prompt.txt").read_text(encoding="utf-8")
+        self.assertIn("call `universal_task`", prompt)
+        self.assertIn("Do not merely explain that the capability is unavailable", prompt)
     def test_empty_request_is_rejected(self):
         result = universal_agent.run("   ")
         self.assertFalse(result["success"])
