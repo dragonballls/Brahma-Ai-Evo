@@ -416,10 +416,10 @@ class BrahmaDevAgent:
         return calls
 
     def _call_llm(self) -> str:
-        """Prefer OmniRoute's coding route, then retain the existing direct-provider fallbacks."""
+        """Use the canonical OmniRoute coding route for all online coding turns."""
         try:
-            from or_client import client as direct_or_client
-            response = direct_or_client.multi_turn(
+            from or_client import client as cloud_client
+            response = cloud_client.multi_turn(
                 self.history,
                 model="auto/coding",
                 max_tokens=8192,
@@ -429,70 +429,7 @@ class BrahmaDevAgent:
                 return response.strip()
         except Exception as exc:
             logger.warning(f"[BrahmaDev] OmniRoute coding route failed: {exc}")
-
-        try:
-            from config import get_api_key
-            gemini_key = get_api_key("Gemini")
-
-            if gemini_key:
-                import time
-                from google import genai
-                from google.genai import types
-
-                client = genai.Client(api_key=gemini_key)
-
-                system_instruction = BRAHMA_DEV_SYSTEM_PROMPT
-                contents = []
-                for msg in self.history:
-                    if msg["role"] == "system":
-                        system_instruction = msg["content"]
-                    else:
-                        role = "user" if msg["role"] == "user" else "model"
-                        contents.append(types.Content(
-                            role=role,
-                            parts=[types.Part.from_text(text=msg["content"])]
-                        ))
-
-                # Attempt primary model and fallback model with retries
-                models_to_try = ["gemini-2.5-flash", "gemini-3.6-flash"]
-                last_err = None
-
-                for model_name in models_to_try:
-                    for attempt in range(3):
-                        try:
-                            resp = client.models.generate_content(
-                                model=model_name,
-                                contents=contents,
-                                config={"system_instruction": system_instruction, "temperature": 0.2}
-                            )
-                            if resp.text:
-                                return resp.text.strip()
-                        except Exception as e:
-                            last_err = e
-                            err_str = str(e).lower()
-                            if "429" in err_str or "quota" in err_str or "resource_exhausted" in err_str or "503" in err_str:
-                                time.sleep(2 * (attempt + 1))
-                                continue
-                            else:
-                                break
-
-                if last_err:
-                    logger.warning(f"[BrahmaDev] Gemini calls exhausted: {last_err}")
-        except Exception as e:
-            logger.warning(f"[BrahmaDev] Direct Gemini setup error: {e}")
-
-        # Check if openrouter key actually exists before falling back
-        try:
-            from config import get_api_key
-            or_key = get_api_key("OpenRouter")
-            if or_key:
-                from or_client import client as direct_or_client
-                return direct_or_client.multi_turn(self.history, temperature=0.2)
-        except Exception:
-            pass
-
-        raise RuntimeError("AI model service temporarily unavailable or rate-limited. Please wait 10 seconds and try again.")
-
+        raise RuntimeError("AI model service temporarily unavailable or rate-limited. Please check OmniRoute provider connectivity.")
 
 
     def _github_research_preflight(self, user_instruction: str) -> str:
