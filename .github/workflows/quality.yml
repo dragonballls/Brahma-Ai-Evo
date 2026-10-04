@@ -38,6 +38,8 @@ jobs:
         run: python -m unittest tests.test_gods_eye_globe -v
       - name: Run multi-model intelligence regressions
         run: python -m unittest tests.test_intelligence_orchestrator -v
+      - name: Run conversation delivery regressions
+        run: python -m unittest tests.test_conversation_delivery -v
       - name: Run selected advanced capability regressions
         run: python -m unittest tests.test_selected_advanced_capabilities -v
       - name: Run functional self-awareness regressions
