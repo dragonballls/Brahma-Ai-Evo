@@ -110,6 +110,12 @@ class LiveVoiceContractTests(unittest.TestCase):
         self.assertIn('text_voice_fallback = bool(getattr(self, "_text_voice_fallback", False))', self.main_text)
 
         self.assertIn("Speech is transcribed through the text command path.", self.main_text)
+    def test_offline_voice_never_calls_network_speech_recognition(self):
+        self.assertIn("recognize_sphinx(audio_data)", self.main_text)
+        self.assertIn('if bool(app_cfg.get("offline_mode_enabled", False)):', self.main_text)
+        self.assertIn("recognize_google(audio_data)", self.main_text)
+        requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+        self.assertRegex(requirements, r"(?im)^pocketsphinx>=5\\.0\\.0,<6$")
     def test_hands_free_is_the_default_mode(self):
         self.assertFalse(config_manager.get_setting("push_to_talk_enabled", False))
 
