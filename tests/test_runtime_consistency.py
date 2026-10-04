@@ -289,6 +289,15 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("steps.omni-cache.outputs.cache-hit", workflow)
         self.assertIn("if: ${{ steps.omni-cache.outputs.cache-hit != 'true' }}", workflow)
         self.assertIn("actions/cache/save@v4", workflow)
+        self.assertIn("actions/cache/restore@v4", workflow)
+
+    def test_windows_payload_is_reused_by_content_hash(self):
+        workflow = self.read(".github/workflows/windows-release.yml")
+        self.assertIn("id: payload-cache", workflow)
+        self.assertIn("windows-payload-", workflow)
+        self.assertIn("hashFiles('dist/BrahmaEvo/**')", workflow)
+        self.assertIn("steps.payload-cache.outputs.cache-hit != 'true'", workflow)
+        self.assertIn("compression-level: 0", workflow)
 
     def test_setup_payload_archive_is_the_release_fast_path(self):
         spec = self.read("installer/BrahmaEvo_Setup.spec")
@@ -303,6 +312,7 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("actions/cache/restore@v4", workflow)
         self.assertIn("required", packer)
         self.assertIn("--verify", packer)
+        self.assertIn("compresslevel=1", packer)
 
     def test_supervisor_spec_is_compatible_with_pyinstaller_spec_execution(self):
         source = self.read("installer/BrahmaEvo_Supervisor.spec")
