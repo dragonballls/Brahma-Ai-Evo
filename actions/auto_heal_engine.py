@@ -346,12 +346,26 @@ class AutoHealEngine:
         history.append(entry)
         SafetySandbox._save_history(history)
 
+        # Publish only after all in-process verification and history persistence
+        # succeed. Self-coding checkpoints remain separate and approval-gated.
+        publication = {"published": False, "reason": "not_attempted"}
+        try:
+            from core.repository_sync import publish_verified_repair
+            publication = publish_verified_repair(
+                target_path,
+                patch_id,
+                explanation=explanation,
+            )
+            logger.info("[AutoHeal] Repository publication: %s", publication)
+        except Exception as publish_err:
+            logger.warning("[AutoHeal] Repository publication skipped: %s", publish_err)
         return {
             "success": True,
             "patch_id": patch_id,
             "target_file": str(target_path),
             "backup_path": str(backup_path),
             "explanation": explanation,
+            "repository_publication": publication,
             "message": f"Successfully auto-patched '{target_path.name}' at line {line_num} (Patch ID: {patch_id}). Backup preserved.",
         }
 
