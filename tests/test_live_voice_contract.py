@@ -110,6 +110,11 @@ class LiveVoiceContractTests(unittest.TestCase):
         self.assertIn('text_voice_fallback = bool(getattr(self, "_text_voice_fallback", False))', self.main_text)
 
         self.assertIn("Speech is transcribed through the text command path.", self.main_text)
+    def test_all_non_live_reasoning_paths_include_language_policy(self):
+        self.assertIn("from core.language_policy import prompt_block as language_prompt_block", self.main_text)
+        self.assertIn("language_directive = language_prompt_block()", self.main_text)
+        self.assertIn("f\"{language_directive}\\n\"", self.main_text)
+        self.assertIn("safety_language = language_prompt_block()", self.main_text)
     def test_offline_voice_never_calls_network_speech_recognition(self):
         self.assertIn("recognize_sphinx(audio_data)", self.main_text)
         self.assertIn('if bool(app_cfg.get("offline_mode_enabled", False)):', self.main_text)
