@@ -31,6 +31,41 @@ def test_forged_feature_registers_and_executes(tmp_path):
 
             assert result["success"] is True, result
             assert DynamicToolRegistry.execute_sync("forge_smoke_test", {}) == "forge smoke test passed"
+            assert (tmp_path / "vault" / "forge_smoke_test" / "skill.py").is_file()
+            assert not (tmp_path / "features" / "forge_smoke_test.py").exists()
+    finally:
+        DynamicToolRegistry._skills = original_skills
+        DynamicToolRegistry._initialized = original_initialized
+
+
+def test_forged_skill_persistence_is_outside_repository(tmp_path):
+    original_skills = DynamicToolRegistry._skills.copy()
+    original_initialized = DynamicToolRegistry._initialized
+    payload = {
+        "success": True,
+        "manifest": {
+            "name": "persistent_smoke_test",
+            "description": "Persistent smoke test",
+            "parameters": {"type": "OBJECT", "properties": {}},
+            "active": True,
+        },
+        "code": 'def execute(**kwargs):\n    return "persistent"\n',
+        "test_cases": [{"input": {}}],
+    }
+    source = tmp_path / "features"
+    vault = tmp_path / "vault"
+    try:
+        with (
+            patch("core.dynamic_registry.FEATURES_DIR", source),
+            patch("core.dynamic_registry.APPDATA_SKILLS_DIR", vault),
+            patch.object(SkillForge, "_call_llm_synthesizer", return_value=payload),
+            patch.object(SkillCrucible, "resolve_dependencies", return_value=(True, "No dependencies.")),
+        ):
+            result = SkillForge.forge_skill("persist this capability", "persistent_smoke_test")
+            assert result["success"] is True, result
+            assert str(vault / "persistent_smoke_test" / "skill.py") == result["skill_path"]
+            assert not (source / "persistent_smoke_test.py").exists()
+            assert not (source / "persistent_smoke_test").exists()
     finally:
         DynamicToolRegistry._skills = original_skills
         DynamicToolRegistry._initialized = original_initialized
