@@ -128,12 +128,12 @@ def get_base_dir():
 BASE_DIR        = get_base_dir()
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
 STARTUP_LOG     = STARTUP_LOG_PATH
-LIVE_MODEL = os.environ.get("BRAHMA_LIVE_MODEL", "models/gemini-3.8-live")
+LIVE_MODEL = os.environ.get("BRAHMA_LIVE_MODEL", "gemini-3.8-live")
 _LIVE_FALLBACK_MODELS = tuple(
     model.strip()
     for model in os.environ.get(
         "BRAHMA_LIVE_FALLBACK_MODELS",
-        "models/gemini-3.1-flash-live-preview,models/gemini-2.5-flash-native-audio-preview-12-2025",
+        "gemini-3.1-flash-live-preview,gemini-2.5-flash-native-audio-preview-12-2025",
     ).split(",")
     if model.strip()
 )
@@ -6388,10 +6388,12 @@ class BrahmaLive:
 
                         if sc.turn_complete:
                             self.set_speaking(False)
-                            turn_audio_bytes = 0
-                            tiny_audio_chunks = 0
-                            output_transcript_seen = False
 
+                            # Snapshot output telemetry before resetting the turn.
+                            # Previously turn_audio_bytes was zeroed first, which
+                            # made every transcript-without-text turn look silent.
+                            completed_audio_bytes = turn_audio_bytes
+                            had_usable_audio = completed_audio_bytes >= 256
                             full_in = " ".join(in_buf).strip()
                             if full_in:
                                 self.ui.write_log(f"You: {full_in}")
@@ -6406,7 +6408,7 @@ class BrahmaLive:
                             in_buf = []
 
                             full_out = " ".join(out_buf).strip()
-                            degraded_turn = bool(full_in) and not full_out and turn_audio_bytes < 256
+                            degraded_turn = bool(full_in) and not full_out and not had_usable_audio
                             if full_out:
                                 # The UI's assistant-log path persists this message;
                                 # do not also insert it directly or the bubble doubles.
@@ -6434,6 +6436,9 @@ class BrahmaLive:
                                     "Live turn produced transcription but no usable response audio/text."
                                 )
                             out_buf = []
+                            turn_audio_bytes = 0
+                            tiny_audio_chunks = 0
+                            output_transcript_seen = False
 
                             if full_in and len(full_in) > 5:
                                 threading.Thread(
