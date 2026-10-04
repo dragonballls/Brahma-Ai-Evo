@@ -4576,35 +4576,6 @@ class BrahmaLive:
                 except Exception as e_or:
                     print(f"[BRAHMA EVO] ⚠️ OpenRouter failed: {e_or}")
 
-            # Multi-model intelligence is a text-only recovery layer. Keep side-effecting
-            # requests on the tool-capable route so the model cannot merely describe an action.
-            if (
-                not reply
-                and not is_offline_mode
-                and not is_local(configured_provider)
-                and not _looks_like_action_request(text)
-            ):
-                try:
-                    self.ui.update_task_workspace(
-                        status="Thinking (Multi-model Intelligence)",
-                        output="Cloud tool routing returned no answer; running the configured multi-model reasoning ladder.",
-                        percent=62,
-                    )
-                    from core.intelligence_orchestrator import orchestrator
-                    reply = orchestrator.respond(
-                        request_text,
-                        system=(
-                            "You are Brahma Evo's text-reasoning recovery layer. "
-                            "Answer the user directly and accurately. "
-                            "Do not claim that you performed a computer action, API action, "
-                            "file operation, or other side effect; this layer is text-only. "
-                            "Use available context, preserve important constraints, and be concise."
-                        ),
-                        context=request_text,
-                    )
-                except Exception as exc_intel:
-                    print(f"[BRAHMA EVO] Multi-model intelligence fallback failed: {exc_intel}")
-
             # Secondary cloud routing is controlled by the user's explicit
             # auto-switch setting. This must happen before the Local safety net.
             if not reply and not is_offline_mode and auto_provider_switch:
@@ -4646,6 +4617,37 @@ class BrahmaLive:
                         )
                     except Exception as exc:
                         print(f"[BRAHMA EVO] Gemini fallback failed: {exc}")
+
+
+
+            # Multi-model intelligence is a text-only recovery layer. Keep side-effecting
+            # requests on the tool-capable route so the model cannot merely describe an action.
+            if (
+                not reply
+                and not is_offline_mode
+                and not is_local(configured_provider)
+                and not _looks_like_action_request(text)
+            ):
+                try:
+                    self.ui.update_task_workspace(
+                        status="Thinking (Multi-model Intelligence)",
+                        output="Cloud tool routing returned no answer; running the configured multi-model reasoning ladder.",
+                        percent=62,
+                    )
+                    from core.intelligence_orchestrator import orchestrator
+                    reply = orchestrator.respond(
+                        request_text,
+                        system=(
+                            "You are Brahma Evo's text-reasoning recovery layer. "
+                            "Answer the user directly and accurately. "
+                            "Do not claim that you performed a computer action, API action, "
+                            "file operation, or other side effect; this layer is text-only. "
+                            "Use available context, preserve important constraints, and be concise."
+                        ),
+                        context=request_text,
+                    )
+                except Exception as exc_intel:
+                    print(f"[BRAHMA EVO] Multi-model intelligence fallback failed: {exc_intel}")
 
 
             # 3. If user explicitly configured Local AI, is in Offline Mode, or cloud provider failed: run Local Brain
