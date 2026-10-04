@@ -135,13 +135,24 @@ def supervise(base_dir: Path | None = None, *, max_cycles: int | None = None) ->
                     pass
             child_start = time.time()
             _log(f"Launching Brahma: {' '.join(command)}")
+            child_log = None
             try:
+                child_stdout = subprocess.DEVNULL
+                if test_mode:
+                    smoke_log_path = root / ".brahma-ci-child.log"
+                    try:
+                        smoke_log_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    child_log = smoke_log_path.open("w", encoding="utf-8", errors="replace")
+                    child_stdout = child_log
+
                 process = subprocess.Popen(
                     command,
                     cwd=root,
                     stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stdout=child_stdout,
+                    stderr=subprocess.STDOUT if test_mode else subprocess.DEVNULL,
                     env={**os.environ, "BRAHMA_SUPERVISED": "1"},
                     creationflags=_hidden_creationflags(),
                 )
@@ -169,6 +180,14 @@ def supervise(base_dir: Path | None = None, *, max_cycles: int | None = None) ->
                         if ready:
                             _log("Packaged smoke test reached Brahma startup-ready marker; forced child cleanup.")
                             return 0
+                        try:
+                            if child_log is not None:
+                                child_log.flush()
+                                output = smoke_log_path.read_text(encoding="utf-8", errors="replace")
+                                if output.strip():
+                                    _log("Packaged child output (tail): " + output[-12000:])
+                        except Exception as log_exc:
+                            _log(f"Packaged child output read failed: {log_exc}")
                         _log("Packaged smoke test timed out before startup-ready marker.")
                         return 1
                 else:
