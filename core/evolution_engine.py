@@ -364,6 +364,21 @@ class EvolutionEngine:
         candidates = response.get("candidates") if isinstance(response, dict) else []
         if not isinstance(candidates, list):
             return []
+        researched_sources = {
+            str(repo.get("repository") or "").strip().lower()
+            for item in research
+            for repo in (item.get("result", {}).get("repositories") or [])
+            if str(repo.get("repository") or "").strip()
+        }
+        researched_license = {
+            str(repo.get("repository") or "").strip().lower(): str(
+                repo.get("license_class") or "unknown"
+            ).strip().lower()
+            for item in research
+            for repo in (item.get("result", {}).get("repositories") or [])
+            if str(repo.get("repository") or "").strip()
+        }
+
         cleaned: list[dict[str, Any]] = []
         for item in candidates[:MAX_CANDIDATES_PER_CYCLE]:
             if not isinstance(item, dict):
@@ -378,12 +393,16 @@ class EvolutionEngine:
                 continue
             if risk > 0.35 or confidence < 0.75:
                 continue
-            sources = [
+            sources = list(dict.fromkeys(
                 str(x).strip().lower()
                 for x in (item.get("source_repositories") or [])
                 if str(x).strip()
-            ]
-            if len(set(sources)) < 2:
+            ))
+            real_sources = [source for source in sources if source in researched_sources]
+            if len(set(real_sources)) < 2:
+                continue
+            license_classes = {researched_license.get(source, "unknown") for source in real_sources}
+            if not (license_classes & {"permissive", "review-required"}):
                 continue
             cleaned.append(
                 {
@@ -392,7 +411,7 @@ class EvolutionEngine:
                     "expected_benefit": str(item.get("expected_benefit") or "").strip(),
                     "risk": round(risk, 3),
                     "confidence": round(confidence, 3),
-                    "source_repositories": list(dict.fromkeys(sources)),
+                    "source_repositories": real_sources,
                 }
             )
         return cleaned
