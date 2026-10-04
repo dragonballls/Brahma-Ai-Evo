@@ -182,6 +182,46 @@ class RepositoryIntegrityTests(unittest.TestCase):
         self.assertIn("def stop(self)", gateway)
         self.assertIn("atexit.register(_gateway.stop)", gateway)
 
+    def test_legacy_google_generativeai_sdk_is_not_used(self):
+        offenders = []
+        for path in _all_python_files():
+            if path.parent.name == "tests":
+                continue
+            source = path.read_text(encoding="utf-8", errors="replace")
+            if "google.generativeai" in source or "GenerativeModel(" in source:
+                offenders.append(str(path.relative_to(ROOT)))
+        self.assertEqual(
+            offenders,
+            [],
+            "Legacy google.generativeai/GenerativeModel usage remains in: " + ", ".join(offenders),
+        )
+
+    def test_live_api_key_paths_are_not_reimplemented_in_feature_modules(self):
+        offenders = []
+        allowed = {
+            ROOT / "config" / "__init__.py",
+            ROOT / "core" / "runtime_paths.py",
+        }
+        for path in _all_python_files():
+            if path.parent.name == "tests" or path in allowed:
+                continue
+            source = path.read_text(encoding="utf-8", errors="replace")
+            if "api_keys.json" in source:
+                offenders.append(str(path.relative_to(ROOT)))
+        self.assertEqual(
+            offenders,
+            [],
+            "Feature modules must use the canonical config accessor/path: " + ", ".join(offenders),
+        )
+
+    def test_legacy_agent_command_adapter_exists(self):
+        source = (ROOT / "actions" / "cmd_control.py").read_text(encoding="utf-8")
+        planner = (ROOT / "agent" / "planner.py").read_text(encoding="utf-8")
+        executor = (ROOT / "agent" / "executor.py").read_text(encoding="utf-8")
+        self.assertIn("def cmd_control(", source)
+        self.assertIn("cmd_control", planner)
+        self.assertIn("from actions.cmd_control import cmd_control", executor)
+
     def test_no_stale_primary_python_runtime_in_documentation(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertNotIn("Python 3.11", readme)
