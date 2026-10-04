@@ -77,13 +77,14 @@ class ConversationDeliveryTests(unittest.TestCase):
         for phrase in ("open ", "run ", "send ", "delete ", "control ", "fix "):
             self.assertIn(phrase, helper)
 
-    def test_main_openrouter_tool_route_uses_direct_provider_client(self):
+    def test_main_cloud_tool_route_uses_unified_omniroute_client(self):
         from pathlib import Path
 
         source = Path("main.py").read_text(encoding="utf-8")
         block = source.split("def _cloud_tool_reply(", 1)[1].split("def _ig_gemini_reply(", 1)[0]
-        self.assertIn("from or_client import client as omniroute_openrouter_client", block)
-        self.assertIn("return omniroute_openrouter_client.chat_with_tools(", block)
+        self.assertIn("from llm_client import client as unified_cloud_client", block)
+        self.assertIn("return unified_cloud_client.chat_with_tools(", block)
+        self.assertIn('model="auto"', block)
 
     def test_cloud_recovery_order_is_primary_secondary_multimodel_then_local(self):
         from pathlib import Path
@@ -137,7 +138,7 @@ class ConversationDeliveryTests(unittest.TestCase):
         def fake_call(*args, **kwargs):
             return responses.pop(0)
 
-        with patch.object(client, "reload_settings"),              patch("llm_client.openrouter_client._call_tool_capable", side_effect=fake_call):
+        with patch.object(client, "reload_settings"),              patch("llm_client.openrouter_client._call_omniroute_tool_capable", return_value=None),              patch("llm_client.openrouter_client._call_tool_capable", side_effect=fake_call):
             result = client.chat_with_tools(
                 messages=[
                     {"role": "system", "content": "Use tools when needed."},
@@ -158,13 +159,13 @@ class ConversationDeliveryTests(unittest.TestCase):
             )
         self.assertEqual(result, "I captured the screen successfully.")
 
-    def test_gemini_provider_is_not_routed_to_openrouter(self):
+    def test_gemini_configured_provider_uses_omniroute_cloud_router(self):
         client = UnifiedAIClient()
         client._provider = "Gemini"
-        with patch.object(client, "_gemini_text", return_value="gemini answer") as gemini,              patch("llm_client.openrouter_client.chat", side_effect=AssertionError("OpenRouter must not be called")):
+        with patch("llm_client.openrouter_client.chat", return_value="OmniRoute answer") as routed:
             result = client.chat("hello")
-        self.assertEqual(result, "gemini answer")
-        gemini.assert_called_once()
+        self.assertEqual(result, "OmniRoute answer")
+        routed.assert_called_once()
 
     def test_live_session_is_not_the_exclusive_text_command_path(self):
         from pathlib import Path
@@ -231,7 +232,7 @@ class ConversationDeliveryTests(unittest.TestCase):
         source = Path("main.py").read_text(encoding="utf-8")
         gemini_block = source.split("def _gemini_tool_reply(", 1)[1].split("def _cloud_tool_reply(", 1)[0]
         cloud_block = source.split("def _cloud_tool_reply(", 1)[1].split("def _ig_gemini_reply(", 1)[0]
-        self.assertIn("for declaration in _runtime_tool_declarations():", gemini_block)
+        self.assertIn("tools=_runtime_tool_declarations()", gemini_block)
         self.assertIn("tools=_runtime_tool_declarations()", cloud_block)
 
         fallback_block = source.split("def _fallback_reply(", 1)[1]
@@ -242,7 +243,7 @@ class ConversationDeliveryTests(unittest.TestCase):
 
         source = Path("main.py").read_text(encoding="utf-8")
         block = source.split("def _cloud_tool_reply(", 1)[1].split("def _ig_gemini_reply(", 1)[0]
-        self.assertIn("Route a cloud action through exactly the selected provider.", block)
+        self.assertIn("Route all online tool-capable requests through the local OmniRoute gateway.", block)
         self.assertNotIn("alternate = ", block)
         self.assertNotIn("for candidate in ordered:", block)
     def test_native_tts_playback_has_a_real_failure_fallback(self):

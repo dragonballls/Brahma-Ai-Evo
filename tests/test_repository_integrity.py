@@ -160,7 +160,7 @@ class RepositoryIntegrityTests(unittest.TestCase):
         self.assertIn("def _runtime_tool_declarations()", main)
         self.assertIn("DynamicToolRegistry.get_tool_declarations()", main)
         self.assertIn("tools=_runtime_tool_declarations()", main)
-        self.assertIn("for declaration in _runtime_tool_declarations():", main)
+        self.assertIn("for declaration in DynamicToolRegistry.get_tool_declarations():", main)
 
     def test_executor_only_capabilities_are_declared_to_the_models(self):
         main = (ROOT / "main.py").read_text(encoding="utf-8")

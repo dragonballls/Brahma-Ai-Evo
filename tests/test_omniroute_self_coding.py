@@ -110,6 +110,50 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
         self.assertEqual(gateway.base_url, "http://127.0.0.1:20128/v1")
         self.assertFalse(gateway._ready)
 
+    def test_unified_cloud_paths_have_no_direct_gemini_bypass(self):
+        import re
+
+        files = (
+            ROOT / "llm_client.py",
+            ROOT / "core" / "skill_forge.py",
+            ROOT / "actions" / "brahma_dev_agent.py",
+        )
+        for path in files:
+            source = path.read_text(encoding="utf-8")
+            self.assertNotRegex(
+                source,
+                re.compile(r"genai\.Client\(|client\.models\.generate_content\("),
+                msg=f"Direct Gemini generation bypass remains in {path}",
+            )
+
+        main = (ROOT / "main.py").read_text(encoding="utf-8")
+        self.assertIn("unified_cloud_client.chat_with_tools", main)
+        self.assertIn("unified_cloud_client.chat_json", main)
+        # Native Gemini Live remains a deliberate specialized transport.
+        self.assertEqual(main.count("genai.Client("), 1)
+        live_pos = main.find("client = genai.Client(")
+        self.assertGreater(live_pos, main.find("class BrahmaLive"))
+
+        llm = (ROOT / "llm_client.py").read_text(encoding="utf-8")
+        self.assertIn("openrouter_client.chat", llm)
+        self.assertIn("openrouter_client.chat_with_tools", llm)
+        self.assertIn("openrouter_client.chat_json", llm)
+        self.assertIn("openrouter_client.vision", llm)
+
+    def test_call_assistant_text_paths_use_unified_gateway(self):
+        source = (ROOT / "actions" / "call_assistant.py").read_text(encoding="utf-8")
+        self.assertIn("unified_cloud_client.chat(", source)
+        self.assertIn("unified_cloud_client.chat_json(", source)
+        self.assertNotIn("genai.Client(", source.split("def _generate_ai_response", 1)[1].split("def _transcribe_audio", 1)[0] if "def _transcribe_audio" in source else source)
+        self.assertNotIn("client.models.generate_content(", source.split("def _generate_ai_response", 1)[1].split("def _transcribe_audio", 1)[0] if "def _transcribe_audio" in source else source)
+    def test_skill_and_coding_paths_fail_closed_without_gateway_bypass(self):
+        skill = (ROOT / "core" / "skill_forge.py").read_text(encoding="utf-8")
+        dev = (ROOT / "actions" / "brahma_dev_agent.py").read_text(encoding="utf-8")
+        self.assertIn("LLM synthesis unavailable after OmniRoute routing.", skill)
+        self.assertIn("Repair unavailable after OmniRoute routing.", skill)
+        self.assertIn("Please check OmniRoute provider connectivity.", dev)
+        self.assertNotIn("Direct Gemini", dev)
+        self.assertNotIn("Direct Gemini", skill)
 
     def test_github_research_ranks_and_synthesizes_multiple_sources(self):
         client = GitHubResearchClient()
@@ -223,12 +267,15 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
         self.assertIn("researcher.research_goal(goal, repo_limit=6, code_limit=10)", source)
         self.assertIn("researcher.format_dossier(research, max_chars=9000)", source)
         self.assertIn("_call_llm_synthesizer(goal, name_hint, combined_context)", source)
-    def test_self_coding_model_ladder_uses_direct_omniroute_client(self):
+    def test_self_coding_model_ladder_uses_canonical_omniroute_client(self):
         source = Path(ROOT / "actions" / "brahma_dev_agent.py").read_text(encoding="utf-8")
-        self.assertIn("from or_client import client as direct_or_client", source)
+        self.assertIn("from or_client import client as cloud_client", source)
+        self.assertIn("cloud_client.multi_turn(", source)
         self.assertIn('model="auto/coding"', source)
-        self.assertIn("return direct_or_client.multi_turn(self.history, temperature=0.2)", source)
-        self.assertNotIn("return ai_client.multi_turn(self.history, temperature=0.2)", source)
+        self.assertIn("max_tokens=8192", source)
+        self.assertIn("Please check OmniRoute provider connectivity.", source)
+        self.assertNotIn("genai.Client(", source)
+        self.assertNotIn('get_api_key("Gemini")', source)
 
     def test_github_tools_are_exposed_to_brahma_dev(self):
         source = Path(ROOT / "actions" / "brahma_dev_agent.py").read_text(encoding="utf-8")
