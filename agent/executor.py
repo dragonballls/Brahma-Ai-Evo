@@ -1,4 +1,3 @@
-from core.user_paths import get_user_data_dir
 import json
 import re
 import sys
@@ -26,12 +25,36 @@ def get_base_dir() -> Path:
 
 
 BASE_DIR        = get_base_dir()
-API_CONFIG_PATH = get_user_data_dir() / "config" / "api_keys.json"
-
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    from config import get_api_key
+    key = get_api_key("Gemini")
+    if not key:
+        raise RuntimeError("Gemini API key is not configured.")
+    return key
+
+
+def _gemini_generate(prompt: str, *, system: str = "") -> str:
+    from google import genai
+    from google.genai import types
+
+    client = genai.Client(
+        api_key=_get_api_key(),
+        http_options={"api_version": "v1beta"},
+    )
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=system or None,
+            temperature=0.2,
+            max_output_tokens=4096,
+        ),
+    )
+    text = (getattr(response, "text", "") or "").strip()
+    if not text:
+        raise RuntimeError("Gemini returned an empty response.")
+    return text
 
 def _run_skill_forge(
     goal: str,
@@ -132,16 +155,14 @@ def _inject_context(params: dict, tool: str, step_results: dict, goal: str = "")
 
 
 def _detect_language(text: str) -> str:
-    import google.generativeai as genai
-    genai.configure(api_key=_get_api_key())
-    model = genai.GenerativeModel("gemini-3.1-flash-lite")
     try:
-        response = model.generate_content(
-            f"What language is this text written in? "
-            f"Reply with ONLY the language name in English (e.g. Turkish, English, French).\n\n"
-            f"Text: {text[:200]}"
-        )
-        return response.text.strip()
+        return _gemini_generate(
+            (
+                "Identify the language of the following text. "
+                "Return ONLY the language name in English.\n\n"
+                f"Text: {text[:200]}"
+            )
+        ).strip()
     except Exception:
         return "English"
 
@@ -150,25 +171,17 @@ def _translate_to_goal_language(content: str, goal: str) -> str:
     if not goal:
         return content
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=_get_api_key())
-        model = genai.GenerativeModel("gemini-3.1-flash-lite")
-
         target_lang = _detect_language(goal)
         print(f"[Executor] 🌐 Translating to: {target_lang}")
-
-        prompt = (
-            f"You are a professional translator. "
-            f"Translate the following text into {target_lang}.\n"
-            f"IMPORTANT:\n"
-            f"- Translate EVERYTHING, leave nothing in English\n"
-            f"- Keep all facts, numbers, and data intact\n"
-            f"- Keep the structure and formatting\n"
-            f"- Output ONLY the translated text, nothing else\n\n"
-            f"Text to translate:\n{content[:4000]}"
+        translated = _gemini_generate(
+            (
+                f"Translate the following text into {target_lang}. "
+                "Preserve all facts, numbers, and formatting. "
+                "Return ONLY the translated text.\n\n"
+                f"Text:\n{content[:4000]}"
+            ),
+            system="You are a professional translator.",
         )
-        response = model.generate_content(prompt)
-        translated = response.text.strip()
         print(f"[Executor] ✅ Translation done ({target_lang})")
         return translated
     except Exception as e:
