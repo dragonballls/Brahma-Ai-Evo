@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from core.github_research import GitHubResearchClient
+from core.agent_task_ledger import AgentTaskLedger
 from core.user_paths import get_user_data_dir
 
 logger = logging.getLogger("BrahmaEvolution")
@@ -88,6 +89,7 @@ class EvolutionEngine:
         self._state_lock = threading.Lock()
         self._state_path = get_user_data_dir() / "evolution" / "state.json"
         self._state = self._load_state()
+        self.task_ledger = AgentTaskLedger()
 
     @property
     def interval_seconds(self) -> int:
@@ -192,6 +194,12 @@ class EvolutionEngine:
     def start(self) -> bool:
         if self._thread and self._thread.is_alive():
             return False
+        try:
+            recovered = self.task_ledger.recover_stale()
+            if recovered:
+                logger.info("Recovered %d stale agent-task records.", recovered)
+        except Exception:
+            pass
         self._stop.clear()
         self._wake.clear()
         self._thread = threading.Thread(
@@ -471,6 +479,14 @@ class EvolutionEngine:
                 self._set_state(last_cycle_at=_utc_now(), last_error=reason)
                 self._notify(f"Evolution scan skipped safely: {reason}.")
                 return {"success": False, "status": "skipped", "reason": reason}
+
+            task_id = self.task_ledger.create(
+                "Continuous evolution heartbeat",
+                "Research current GitHub sources and stage one safe, verified Brahma improvement.",
+                source="evolution_engine",
+                metadata={"force": bool(force)},
+            )
+            self.task_ledger.heartbeat(task_id, state="running", evidence="Repository readiness check passed.")
 
             research = self._research_domains()
             self._set_state(
