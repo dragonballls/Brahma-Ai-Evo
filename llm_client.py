@@ -112,6 +112,109 @@ class UnifiedAIClient:
                 last_error = exc
         raise RuntimeError(f"Gemini generation failed: {last_error}")
 
+    def _gemini_json(
+        self,
+        prompt: str,
+        system: str,
+        max_tokens: int = 4096,
+        temperature: float = 0.2,
+    ) -> dict:
+        from google import genai
+        from google.genai import types
+
+        try:
+            from config import get_api_key
+            api_key = get_api_key("Gemini")
+        except Exception:
+            api_key = None
+        if not api_key:
+            raise PermissionError("Gemini API key is missing.")
+
+        client = genai.Client(api_key=api_key, http_options={"api_version": "v1beta"})
+        last_error = None
+        for model_name in (
+            __import__("os").environ.get("BRAHMA_TEXT_GEMINI_MODEL", "gemini-2.5-flash"),
+            "gemini-3.8-flash",
+            "gemini-flash-latest",
+        ):
+            if not model_name:
+                continue
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system,
+                        temperature=temperature,
+                        max_output_tokens=max_tokens,
+                        response_mime_type="application/json",
+                    ),
+                )
+                raw = (getattr(response, "text", "") or "").strip()
+                if raw:
+                    return json.loads(raw)
+            except Exception as exc:
+                last_error = exc
+        raise RuntimeError(f"Gemini JSON generation failed: {last_error}")
+
+    def _gemini_vision(
+        self,
+        prompt: str,
+        image_b64: str,
+        mime: str,
+        system: str,
+        max_tokens: int = 1024,
+        temperature: float = 0.2,
+    ) -> str:
+        from google import genai
+        from google.genai import types
+        import base64
+
+        try:
+            from config import get_api_key
+            api_key = get_api_key("Gemini")
+        except Exception:
+            api_key = None
+        if not api_key:
+            raise PermissionError("Gemini API key is missing.")
+
+        client = genai.Client(api_key=api_key, http_options={"api_version": "v1beta"})
+        last_error = None
+        for model_name in (
+            __import__("os").environ.get("BRAHMA_TEXT_GEMINI_MODEL", "gemini-2.5-flash"),
+            "gemini-3.8-flash",
+            "gemini-flash-latest",
+        ):
+            if not model_name:
+                continue
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=[
+                        types.Content(
+                            role="user",
+                            parts=[
+                                types.Part.from_text(text=prompt),
+                                types.Part.from_bytes(
+                                    data=base64.b64decode(image_b64),
+                                    mime_type=mime,
+                                ),
+                            ],
+                        )
+                    ],
+                    config=types.GenerateContentConfig(
+                        system_instruction=system,
+                        temperature=temperature,
+                        max_output_tokens=max_tokens,
+                    ),
+                )
+                text = (getattr(response, "text", "") or "").strip()
+                if text:
+                    return text
+            except Exception as exc:
+                last_error = exc
+        raise RuntimeError(f"Gemini vision generation failed: {last_error}")
+
     def chat(self, prompt: str, system: str = "You are a helpful assistant.", history: Optional[list[dict]] = None, model: Optional[str] = None, max_tokens: int = 4096, temperature: float = 0.7) -> str:
         self.reload_settings()
         if self._is_local_provider():
@@ -168,12 +271,11 @@ class UnifiedAIClient:
         if self._is_local_provider():
             messages = [
                 {"role": "system", "content": system + " Output valid JSON only, without any markdown formatting."},
-                {"role": "user", "content": prompt}
+                {"role": "user", "content": prompt},
             ]
             raw = self._local_chat_completion(messages, temperature=0.2, response_format={"type": "json_object"})
             if not raw:
                 raise RuntimeError("Local AI request failed.")
-            
             clean = raw.strip()
             if clean.startswith("```"):
                 parts = clean.split("```")
@@ -181,13 +283,13 @@ class UnifiedAIClient:
                 if clean.startswith("json"):
                     clean = clean[4:]
             clean = clean.strip().rstrip("`").strip()
-            
             try:
                 return json.loads(clean)
             except json.JSONDecodeError as e:
                 raise ValueError(f"Local model returned unparseable JSON: {e}\nRaw output: {raw[:200]}")
-        else:
-            return openrouter_client.chat_json(prompt, system, model, max_tokens)
+        if normalize_provider(self._provider) == GEMINI:
+            return self._gemini_json(prompt, system, max_tokens=max_tokens)
+        return openrouter_client.chat_json(prompt, system, model, max_tokens)
 
     def vision(self, prompt: str, image_b64: str, mime: str = "image/png", system: str = "Analyze the image.", model: Optional[str] = None, max_tokens: int = 1024) -> str:
         self.reload_settings()
@@ -198,29 +300,38 @@ class UnifiedAIClient:
                     "role": "user",
                     "content": [
                         {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{image_b64}"}},
-                        {"type": "text", "text": prompt}
-                    ]
-                }
+                        {"type": "text", "text": prompt},
+                    ],
+                },
             ]
             result = self._local_chat_completion(messages, temperature=0.2)
             if result:
                 return result
             raise RuntimeError("Local AI vision request failed.")
-        else:
-            return openrouter_client.vision(prompt, image_b64, mime, system, model, max_tokens)
+        if normalize_provider(self._provider) == GEMINI:
+            return self._gemini_vision(prompt, image_b64, mime, system, max_tokens=max_tokens)
+        return openrouter_client.vision(prompt, image_b64, mime, system, model, max_tokens)
 
     def vision_from_file(self, prompt: str, image_path: str, system: str = "Analyze the image.", model: Optional[str] = None, max_tokens: int = 1024) -> str:
         self.reload_settings()
+        import base64
+        path = Path(image_path)
+        mime_map = {
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".webp": "image/webp",
+            ".gif": "image/gif",
+        }
+        mime = mime_map.get(path.suffix.lower(), "image/png")
+        with open(path, "rb") as f:
+            image_b64 = base64.b64encode(f.read()).decode("utf-8")
+
         if self._is_local_provider():
-            import base64
-            path = Path(image_path)
-            mime_map = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif"}
-            mime = mime_map.get(path.suffix.lower(), "image/png")
-            with open(path, "rb") as f:
-                image_b64 = base64.b64encode(f.read()).decode("utf-8")
             return self.vision(prompt, image_b64, mime, system, model, max_tokens)
-        else:
-            return openrouter_client.vision_from_file(prompt, image_path, system, model, max_tokens)
+        if normalize_provider(self._provider) == GEMINI:
+            return self._gemini_vision(prompt, image_b64, mime, system, max_tokens=max_tokens)
+        return openrouter_client.vision(prompt, image_b64, mime, system, model, max_tokens)
 
     def multi_turn(self, messages: list[dict], model: Optional[str] = None, max_tokens: int = 4096, temperature: float = 0.7) -> str:
         self.reload_settings()
@@ -229,8 +340,22 @@ class UnifiedAIClient:
             if result:
                 return result
             raise RuntimeError("Local AI request failed.")
-        else:
-            return openrouter_client.multi_turn(messages, model, max_tokens, temperature)
+        if normalize_provider(self._provider) == GEMINI:
+            parts = []
+            for item in messages:
+                if not isinstance(item, dict):
+                    continue
+                role = str(item.get("role", "user")).strip().title()
+                content = str(item.get("content", "") or "").strip()
+                if content:
+                    parts.append(f"{role}: {content}")
+            return self._gemini_text(
+                "\n\n".join(parts),
+                "You are Brahma Evo, a precise and helpful assistant.",
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+        return openrouter_client.multi_turn(messages, model, max_tokens, temperature)
 
     def intelligent_chat(
         self,
@@ -292,6 +417,8 @@ class UnifiedAIClient:
         self.reload_settings()
         if self._is_local_provider():
             return self.chat_json(prompt, system=system, max_tokens=max_tokens)
+        if normalize_provider(self._provider) == GEMINI:
+            return self._gemini_json(prompt, system, max_tokens=max_tokens)
         from core.intelligence_orchestrator import orchestrator
         return orchestrator.respond_json(
             prompt,
