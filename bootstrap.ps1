@@ -159,13 +159,18 @@ if ($NeedsRepair) {
     }
 }
 
-# 7. Launch App
-Write-Host "Starting Brahma AI..." -ForegroundColor Green
-if (Test-Path $VenvPythonW) {
-    Start-Process -FilePath $VenvPythonW -ArgumentList "main.py --startup" -WorkingDirectory $WorkingDir
+# 7. Launch the independent supervisor; it owns the Brahma process lifecycle.
+Write-Host "Starting Brahma Evo supervisor..." -ForegroundColor Green
+$SupervisorExe = Join-Path $WorkingDir "BrahmaEvoSupervisor.exe"
+$SupervisorPy = Join-Path $WorkingDir "core\process_supervisor.py"
+
+if (Test-Path $SupervisorExe) {
+    Start-Process -FilePath $SupervisorExe -WorkingDirectory $WorkingDir -WindowStyle Hidden
+} elseif (Test-Path $VenvPythonW) {
+    Start-Process -FilePath $VenvPythonW -ArgumentList $SupervisorPy -WorkingDirectory $WorkingDir -WindowStyle Hidden
 } else {
-    Start-Process -FilePath $VenvPython -ArgumentList "main.py --startup" -WorkingDirectory $WorkingDir -WindowStyle Hidden
+    Start-Process -FilePath $VenvPython -ArgumentList $SupervisorPy -WorkingDirectory $WorkingDir -WindowStyle Hidden
 }
 
-Write-Host "Bootstrap complete. You can close this window."
+Write-Host "Bootstrap complete. The supervisor will restart Brahma after unexpected crashes."
 Start-Sleep -Seconds 3
