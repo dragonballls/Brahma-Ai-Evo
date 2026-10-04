@@ -134,9 +134,12 @@ class SkillForge:
             # All stages passed!
             break
 
-        # 3. Commit as a Native Codebase Feature in features/ (Autonomous Self-Evolution)
-        features_dir = DynamicToolRegistry.get_skills_directory()
-        features_dir.mkdir(parents=True, exist_ok=True)
+        # 3. Persist the generated capability in Brahma's per-user skill vault.
+        # Generated skills must survive app updates and must not silently dirty the
+        # Git checkout used by guarded self-coding.
+        from core.dynamic_registry import APPDATA_SKILLS_DIR
+        skills_dir = APPDATA_SKILLS_DIR
+        skills_dir.mkdir(parents=True, exist_ok=True)
 
         # Prepare triggers & aliases
         triggers = list(manifest.get("triggers", []))
@@ -146,7 +149,7 @@ class SkillForge:
         clean_goal = re.sub(
             r"^(?:please\s+|can\s+you\s+|use\s+(?:the\s+)?(?:skill|feature)\s+to\s+|run\s+(?:the\s+)?(?:skill|feature)\s+to\s+|test\s+(?:the\s+)?(?:skill|feature)\s+to\s+)",
             "",
-            goal.lower().strip()
+            goal.lower().strip(),
         )
         if clean_goal and clean_goal not in triggers:
             triggers.append(clean_goal)
@@ -168,7 +171,7 @@ class SkillForge:
         manifest["author"] = "Project Ultron Autonomous Self-Evolution Engine"
         manifest["active"] = True
 
-        # Build clean native feature code with embedded FEATURE_METADATA
+        # Build clean native feature code with embedded FEATURE_METADATA.
         feature_code = code
         if "FEATURE_METADATA" not in feature_code:
             meta_str = repr(manifest)
@@ -182,34 +185,18 @@ class SkillForge:
             )
             feature_code = header + feature_code
 
-        # Primary native module: features/{actual_name}.py
-        feature_py_file = features_dir / f"{actual_name}.py"
+        # The package directory is the single authoritative persisted form.
+        target_dir = skills_dir / actual_name
         try:
-            with open(feature_py_file, "w", encoding="utf-8") as f:
-                f.write(feature_code)
-
-            # Update features/__init__.py for self-evolving codebase integration
-            init_file = features_dir / "__init__.py"
-            try:
-                init_content = init_file.read_text(encoding="utf-8") if init_file.exists() else ""
-                import_stmt = f"from . import {actual_name}\n"
-                if import_stmt not in init_content:
-                    with open(init_file, "a", encoding="utf-8") as f_init:
-                        f_init.write(import_stmt)
-            except Exception as e_init:
-                logger.warning(f"[Forge] Could not update features/__init__.py: {e_init}")
-
-            # Also maintain feature package directory for telemetry and test cases
-            target_dir = features_dir / actual_name
             target_dir.mkdir(parents=True, exist_ok=True)
             with open(target_dir / "manifest.json", "w", encoding="utf-8") as f:
-                json.dump(manifest, f, indent=4)
+                json.dump(manifest, f, indent=4, ensure_ascii=False)
             with open(target_dir / "skill.py", "w", encoding="utf-8") as f:
                 f.write(feature_code)
             with open(target_dir / "test_cases.json", "w", encoding="utf-8") as f:
-                json.dump(test_cases, f, indent=4)
+                json.dump(test_cases, f, indent=4, ensure_ascii=False)
 
-            # 4. Hot-Load into Dynamic Registry
+            # 4. Hot-load into Dynamic Registry.
             DynamicToolRegistry.initialize()
             if not DynamicToolRegistry.has_tool(actual_name):
                 raise RuntimeError(f"Generated feature '{actual_name}' was not registered.")
@@ -218,12 +205,15 @@ class SkillForge:
                 "success": True,
                 "name": actual_name,
                 "description": manifest.get("description", ""),
-                "skill_path": str(feature_py_file),
-                "message": f"Successfully forged and activated native feature '{actual_name}'! Verified via Crucible sandbox.",
+                "skill_path": str(target_dir / "skill.py"),
+                "message": (
+                    f"Successfully forged and activated persistent skill '{actual_name}'! "
+                    "Verified via Crucible sandbox and stored in Brahma's user skill vault."
+                ),
                 "manifest": manifest,
             }
         except Exception as e:
-            return {"success": False, "message": f"Failed saving synthesized feature: {e}"}
+            return {"success": False, "message": f"Failed saving synthesized skill: {e}"}
 
     @classmethod
     def _parse_json_response(cls, text: str) -> Dict[str, Any]:
