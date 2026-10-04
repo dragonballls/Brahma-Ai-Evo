@@ -120,8 +120,13 @@ class DynamicToolRegistry:
             if item.name.startswith((".", "_")):
                 continue
 
-            # Case A: Single Python module file (e.g. features/internet_speed_test.py)
+            # Case A: Single Python module file (e.g. features/internet_speed_test.py).
+            # When a matching packaged skill directory also exists, the package
+            # is authoritative so the same capability is never registered twice.
             if item.is_file() and item.suffix == ".py":
+                packaged_dir = item.with_suffix("")
+                if (packaged_dir / "manifest.json").is_file() and (packaged_dir / "skill.py").is_file():
+                    continue
                 try:
                     source = item.read_text(encoding="utf-8")
                     tree = ast.parse(source, filename=str(item))
