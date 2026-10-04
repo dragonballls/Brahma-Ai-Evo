@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import unittest
 from pathlib import Path
 import sys
@@ -274,7 +275,11 @@ class RuntimeConsistencyTests(unittest.TestCase):
 
     def test_supervisor_spec_is_compatible_with_pyinstaller_spec_execution(self):
         source = self.read("installer/BrahmaEvo_Supervisor.spec")
-        self.assertNotIn("__file__", source)
+        tree = ast.parse(source)
+        self.assertFalse(
+            any(isinstance(node, ast.Name) and node.id == "__file__" for node in ast.walk(tree)),
+            "supervisor spec must not access the unavailable runtime name",
+        )
         self.assertIn("os.path.abspath(os.getcwd())", source)
         self.assertIn("BrahmaEvoSupervisor", source)
 
