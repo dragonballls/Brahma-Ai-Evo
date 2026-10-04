@@ -56,8 +56,29 @@ class SkillForge:
         # Normalize skill name if provided
         name_hint = re.sub(r"[^a-zA-Z0-9_]", "_", (skill_name or "").lower()).strip("_")
 
+        # GitHub-first capability research: reuse mature public implementations
+        # before synthesizing anything from scratch. Failure to reach GitHub is
+        # non-fatal; the local verifier remains the final safety boundary.
+        github_dossier = ""
+        try:
+            from core.github_research import GitHubResearchClient
+            researcher = GitHubResearchClient()
+            research = researcher.research_goal(goal, repo_limit=6, code_limit=10)
+            github_dossier = researcher.format_dossier(research, max_chars=9000)
+            logger.info(
+                "[Forge] GitHub-first research completed: %d repositories, %d code matches",
+                len(research.get("repositories", [])),
+                len(research.get("code_matches", [])),
+            )
+        except Exception as exc:
+            logger.warning("[Forge] GitHub-first research unavailable; continuing locally: %s", exc)
+
+        combined_context = "\n\n".join(
+            item for item in (str(context_hints or "").strip(), github_dossier.strip()) if item
+        )
+
         # 1. Synthesize initial specification
-        synthesis = cls._call_llm_synthesizer(goal, name_hint, context_hints)
+        synthesis = cls._call_llm_synthesizer(goal, name_hint, combined_context)
         if not synthesis.get("success"):
             return {
                 "success": False,
