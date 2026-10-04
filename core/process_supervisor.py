@@ -7,6 +7,7 @@ GUI, voice stack, or LLM client is being repaired.
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -53,9 +54,9 @@ def application_command(base_dir: Path | None = None) -> list[str]:
 def recovery_command(base_dir: Path | None = None) -> list[str]:
     root = Path(base_dir or _base_dir()).resolve()
     if getattr(sys, "frozen", False):
-        return [sys.executable, "--recover-crash"]
+        return [str(root / "BrahmaEvo.exe"), "--recover-crash"]
     interpreter = Path(sys.executable)
-    return [str(interpreter), str(root / "core" / "process_supervisor.py"), "--recover-crash"]
+    return [str(interpreter), str(root / "core" / "crash_recovery.py"), "--recover-crash"]
 
 
 def _log(message: str) -> None:
@@ -158,7 +159,7 @@ def main() -> int:
         from core.crash_recovery import recover_from_crash
 
         result = recover_from_crash()
-        print(__import__("json").dumps(result, ensure_ascii=False))
+        print(json.dumps(result, ensure_ascii=False))
         return 0 if result.get("success") or result.get("action") in {
             "no_crash_log",
             "defer_boot_rollback",
