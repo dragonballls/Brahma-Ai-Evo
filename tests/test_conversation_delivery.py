@@ -77,6 +77,26 @@ class ConversationDeliveryTests(unittest.TestCase):
         for phrase in ("open ", "run ", "send ", "delete ", "control ", "fix "):
             self.assertIn(phrase, helper)
 
+    def test_main_openrouter_tool_route_uses_direct_provider_client(self):
+        from pathlib import Path
+
+        source = Path("main.py").read_text(encoding="utf-8")
+        block = source.split("def _cloud_tool_reply(", 1)[1].split("def _ig_gemini_reply(", 1)[0]
+        self.assertIn("from or_client import client as omniroute_openrouter_client", block)
+        self.assertIn("return omniroute_openrouter_client.chat_with_tools(", block)
+
+    def test_cloud_recovery_order_is_primary_secondary_multimodel_then_local(self):
+        from pathlib import Path
+
+        source = Path("main.py").read_text(encoding="utf-8")
+        primary = source.index("# Run the configured cloud provider first")
+        secondary = source.index("# Secondary cloud routing is controlled", primary)
+        multimodel = source.index("# Multi-model intelligence is a text-only recovery layer.", secondary)
+        local = source.index("# 3. If user explicitly configured Local AI", multimodel)
+        self.assertLess(primary, secondary)
+        self.assertLess(secondary, multimodel)
+        self.assertLess(multimodel, local)
+
     def test_local_brain_escalates_to_full_tool_registry_only_when_focused_path_is_empty(self):
         from pathlib import Path
 
