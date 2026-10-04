@@ -155,6 +155,13 @@ class RepositoryIntegrityTests(unittest.TestCase):
             "Declared tools without a local executor branch: " + ", ".join(missing),
         )
 
+    def test_dynamic_skills_share_the_runtime_tool_declaration_surface(self):
+        main = (ROOT / "main.py").read_text(encoding="utf-8")
+        self.assertIn("def _runtime_tool_declarations()", main)
+        self.assertIn("DynamicToolRegistry.get_tool_declarations()", main)
+        self.assertIn("tools=_runtime_tool_declarations()", main)
+        self.assertIn("for declaration in _runtime_tool_declarations():", main)
+
     def test_executor_only_capabilities_are_declared_to_the_models(self):
         main = (ROOT / "main.py").read_text(encoding="utf-8")
         declaration_end = main.find("\n]\n\n\nclass BrahmaLive")
