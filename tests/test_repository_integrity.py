@@ -233,6 +233,13 @@ class RepositoryIntegrityTests(unittest.TestCase):
         self.assertIn("def stop(self)", gateway)
         self.assertIn("atexit.register(_gateway.stop)", gateway)
 
+    def test_packaged_smoke_uses_stable_test_mode_contract(self):
+        main = (ROOT / "main.py").read_text(encoding="utf-8")
+        self.assertIn('BRAHMA_EVO_TEST_MODE = os.environ.get("BRAHMA_EVO_TEST_MODE", "").strip() == "1"', main)
+        self.assertIn('and not BRAHMA_EVO_TEST_MODE', main)
+        self.assertNotIn("BRAHMA_EVO_TEST_AUTO_EXIT_SECONDS", main)
+        self.assertNotIn("_finish_packaged_smoke_test", main)
+
     def test_legacy_google_generativeai_sdk_is_not_used(self):
         offenders = []
         for path in _all_python_files():

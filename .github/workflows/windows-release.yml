@@ -7,6 +7,8 @@ concurrency:
 on:
   push:
     branches: ["main"]
+  pull_request:
+    branches: ["main"]
   workflow_dispatch:
 
 permissions:
@@ -79,20 +81,41 @@ jobs:
         shell: pwsh
         env:
           BRAHMA_EVO_TEST_MODE: "1"
-          BRAHMA_EVO_TEST_AUTO_EXIT_SECONDS: "5"
           BRAHMA_SKIP_STARTUP_UPDATE: "1"
           BRAHMA_EVOLUTION_ENABLED: "0"
+          BRAHMA_EVO_SMOKE_MARKER: "${{ runner.temp }}\\brahma_evo_smoke_ready.txt"
         run: |
+          $marker = Join-Path $env:RUNNER_TEMP "brahma_evo_smoke_ready.txt"
+          Remove-Item $marker -Force -ErrorAction SilentlyContinue
           $exe = (Resolve-Path "dist/BrahmaEvo/BrahmaEvo.exe").Path
           $proc = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -PassThru
-          if (-not $proc.WaitForExit(120000)) {
-            try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
-            throw "BrahmaEvo.exe did not exit during the packaged smoke test."
+          try {
+            $deadline = (Get-Date).AddSeconds(45)
+            do {
+              Start-Sleep -Seconds 2
+              if ($proc.HasExited) {
+                $exitCode = $proc.ExitCode
+                throw "BrahmaEvo.exe exited before startup readiness with code $exitCode."
+              }
+              if (Test-Path $marker) {
+                break
+              }
+            } while ((Get-Date) -lt $deadline)
+
+            if (-not (Test-Path $marker)) {
+              throw "BrahmaEvo.exe did not report startup readiness within 45 seconds."
+            }
+            if ($proc.HasExited) {
+              $exitCode = $proc.ExitCode
+              throw "BrahmaEvo.exe exited after reporting startup readiness with code $exitCode."
+            }
+            Write-Host "Packaged Brahma Evo reported startup readiness and remained alive."
           }
-          if ($proc.ExitCode -ne 0) {
-            throw "BrahmaEvo.exe exited with code $($proc.ExitCode)."
+          finally {
+            if (-not $proc.HasExited) {
+              try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+            }
           }
-          Write-Host "Packaged Brahma Evo smoke test passed with exit code 0."
 
       - name: Smoke-test setup wizard
         shell: pwsh

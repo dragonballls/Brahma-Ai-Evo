@@ -7416,29 +7416,18 @@ def _main_impl():
     if desktop_controller is None or not desktop_controller.enabled:
         ui.show_main()
 
-    # CI-only packaged smoke tests need a deterministic clean exit after the
-    # application has initialized. This is never enabled during normal use.
+    # Packaged Windows smoke tests need an explicit readiness signal rather than
+    # inferring successful startup solely from process lifetime.
     if BRAHMA_EVO_TEST_MODE:
-        try:
-            test_exit_seconds = max(
-                1.0,
-                float(os.environ.get("BRAHMA_EVO_TEST_AUTO_EXIT_SECONDS", "5")),
-            )
-        except (TypeError, ValueError):
-            test_exit_seconds = 5.0
-
-        def _finish_packaged_smoke_test():
-            _startup_log("packaged smoke-test auto-exit")
+        smoke_marker = os.environ.get("BRAHMA_EVO_SMOKE_MARKER", "").strip()
+        if smoke_marker:
             try:
-                ui.root.quit()
-            except Exception:
-                pass
-            try:
-                ui.root.destroy()
-            except Exception:
-                pass
-
-        threading.Timer(test_exit_seconds, _finish_packaged_smoke_test).start()
+                marker_path = Path(smoke_marker).expanduser()
+                marker_path.parent.mkdir(parents=True, exist_ok=True)
+                marker_path.write_text("ready\n", encoding="utf-8")
+                _startup_log(f"packaged smoke-test readiness marker written: {marker_path}")
+            except Exception as exc:
+                _startup_log(f"packaged smoke-test readiness marker failed: {exc}")
 
     ui.root.mainloop()
 
