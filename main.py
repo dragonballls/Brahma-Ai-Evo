@@ -7552,7 +7552,12 @@ def _main_impl():
             except Exception:
                 pass
 
-        threading.Timer(test_exit_seconds, _finish_packaged_smoke_test).start()
+        # Schedule shutdown on the Qt event-loop thread so the packaged GUI exits
+        # deterministically instead of relying on a worker thread calling Qt APIs.
+        try:
+            QTimer.singleShot(int(test_exit_seconds * 1000), _finish_packaged_smoke_test)
+        except Exception:
+            threading.Timer(test_exit_seconds, _finish_packaged_smoke_test).start()
 
     ui.root.mainloop()
 
