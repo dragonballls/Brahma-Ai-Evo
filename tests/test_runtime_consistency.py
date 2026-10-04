@@ -273,13 +273,15 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn('AutoHealEngine.heal_traceback(text, context_notes=context)', source)
         self.assertIn("Automatic conversational recovery.", source)
 
-    def test_packaged_smoke_exit_uses_real_qt_application(self):
+    def test_packaged_smoke_exit_uses_bounded_qt_event_pump(self):
         source = self.read("main.py")
         self.assertIn("QCoreApplication.instance()", source)
-        self.assertIn("app_instance.quit()", source)
-        self.assertIn("QTimer.singleShot", source)
+        self.assertIn("app_instance.processEvents()", source)
+        self.assertIn("time.monotonic() < deadline", source)
+        self.assertIn("_cleanup_runtime_services()", source)
         self.assertNotIn("ui.root.quit()", source)
         self.assertNotIn("ui.root.destroy()", source)
+        self.assertNotIn("QTimer.singleShot(int(test_exit_seconds * 1000), _finish_packaged_smoke_test)", source)
 
     def test_windows_omniroute_cache_skips_rebuild_on_exact_hit(self):
         workflow = self.read(".github/workflows/windows-release.yml")

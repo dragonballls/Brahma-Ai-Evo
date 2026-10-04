@@ -7541,24 +7541,22 @@ def _main_impl():
         except (TypeError, ValueError):
             test_exit_seconds = 5.0
 
-        def _finish_packaged_smoke_test():
-            _startup_log("packaged smoke-test auto-exit")
-            # BrahmaUI exposes a compatibility root shim whose mainloop() enters
-            # QApplication.exec(). The shim intentionally has no Tk-style quit(),
-            # so exit the real Qt application object directly.
-            try:
-                app_instance = QCoreApplication.instance()
-                if app_instance is not None:
-                    app_instance.quit()
-            except Exception as exc:
-                _startup_log(f"packaged smoke-test Qt shutdown failed: {exc}")
-
-        # Schedule shutdown on the Qt event-loop thread. QCoreApplication.quit()
-        # is also safe if the fallback timer is used.
+        # Do not enter a second/nested Qt event loop for the smoke test. The
+        # previous shutdown strategies could leave the packaged process alive
+        # even though application startup itself had succeeded. Instead, pump
+        # Qt events on this thread for a bounded interval, then run the same
+        # application-owned cleanup path used by normal shutdown.
+        _startup_log("packaged smoke-test event-pump started")
+        deadline = time.monotonic() + test_exit_seconds
         try:
-            QTimer.singleShot(int(test_exit_seconds * 1000), _finish_packaged_smoke_test)
-        except Exception:
-            threading.Timer(test_exit_seconds, _finish_packaged_smoke_test).start()
+            app_instance = QCoreApplication.instance()
+            while app_instance is not None and time.monotonic() < deadline:
+                app_instance.processEvents()
+                time.sleep(0.05)
+        finally:
+            _startup_log("packaged smoke-test auto-exit")
+            _cleanup_runtime_services()
+        return
 
     ui.root.mainloop()
 
