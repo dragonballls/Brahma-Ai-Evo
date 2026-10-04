@@ -7416,6 +7416,19 @@ def _main_impl():
     if desktop_controller is None or not desktop_controller.enabled:
         ui.show_main()
 
+    # Packaged Windows smoke tests need an explicit readiness signal rather than
+    # inferring successful startup solely from process lifetime.
+    if BRAHMA_EVO_TEST_MODE:
+        smoke_marker = os.environ.get("BRAHMA_EVO_SMOKE_MARKER", "").strip()
+        if smoke_marker:
+            try:
+                marker_path = Path(smoke_marker).expanduser()
+                marker_path.parent.mkdir(parents=True, exist_ok=True)
+                marker_path.write_text("ready\n", encoding="utf-8")
+                _startup_log(f"packaged smoke-test readiness marker written: {marker_path}")
+            except Exception as exc:
+                _startup_log(f"packaged smoke-test readiness marker failed: {exc}")
+
     ui.root.mainloop()
 
 
