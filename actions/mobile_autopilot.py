@@ -1,6 +1,5 @@
 import json
 import time
-import re
 from pathlib import Path
 from actions.brahma_connect import connect_execute
 
@@ -39,10 +38,7 @@ def mobile_autopilot(parameters: dict, response=None, player=None, session_memor
         return json.dumps({"success": False, "error": "Missing instruction."})
 
     try:
-        import google.generativeai as genai
-        from agent.planner import _get_api_key
-        genai.configure(api_key=_get_api_key())
-        model = genai.GenerativeModel("gemini-3.1-flash-lite")
+        from core.gemini_runtime import generate_json
     except Exception as e:
         return json.dumps({"success": False, "error": f"Failed to initialize Gemini: {e}"})
 
@@ -73,15 +69,17 @@ def mobile_autopilot(parameters: dict, response=None, player=None, session_memor
         prompt = _build_prompt(instruction, ui_tree)
         
         try:
-            llm_response = model.generate_content(prompt)
-            text = llm_response.text.strip()
-            text = re.sub(r"```(?:json)?", "", text).strip().rstrip("`").strip()
-            decision = json.loads(text)
+        try:
+            decision = generate_json(
+                prompt,
+                system_instruction="You are a mobile UI automation agent. Return ONLY the requested JSON action object.",
+                model_name="gemini-3.8-flash",
+                max_output_tokens=2048,
+            )
         except Exception as e:
             if player:
                 player.write_log(f"Autopilot LLM error: {e}")
             break
-            
         action = decision.get("action")
         reason = decision.get("reason", "Executing next step")
         
