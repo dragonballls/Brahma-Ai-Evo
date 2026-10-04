@@ -35,12 +35,11 @@ except Exception:
     _MATPLOTLIB_OK = False
 
 from core.user_paths import get_user_data_dir
-from core.runtime_paths import API_CONFIG_PATH
+from core.runtime_paths import API_CONFIG_PATH, CONFIG_DIR
 from core.identity import identity
 
 logger = logging.getLogger("CallAssistant")
 
-CONFIG_DIR = get_user_data_dir() / "config"
 DELIVERABLES_DIR = get_user_data_dir() / "deliverables"
 
 
