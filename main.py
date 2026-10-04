@@ -4672,6 +4672,7 @@ class BrahmaLive:
                 not reply
                 and not is_offline_mode
                 and not is_local(configured_provider)
+                and (is_cloud_openrouter or auto_provider_switch)
                 and not _looks_like_action_request(text)
             ):
                 try:
