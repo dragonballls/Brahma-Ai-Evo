@@ -6975,7 +6975,12 @@ def _main_impl():
         except Exception:
             pass
 
-        if startup_updates_enabled and update_from_github(BASE_DIR):
+        if (
+            startup_updates_enabled
+            and not BRAHMA_EVO_TEST_MODE
+            and os.environ.get("BRAHMA_SKIP_STARTUP_UPDATE", "").strip() != "1"
+            and update_from_github(BASE_DIR)
+        ):
             _startup_log("updated from GitHub; restarting")
             if _SINGLE_INSTANCE_GUARD is not None:
                 _SINGLE_INSTANCE_GUARD.release()
@@ -7410,6 +7415,31 @@ def _main_impl():
     # Do not resurrect the normal application window after its restoration hook.
     if desktop_controller is None or not desktop_controller.enabled:
         ui.show_main()
+
+    # CI-only packaged smoke tests need a deterministic clean exit after the
+    # application has initialized. This is never enabled during normal use.
+    if BRAHMA_EVO_TEST_MODE:
+        try:
+            test_exit_seconds = max(
+                1.0,
+                float(os.environ.get("BRAHMA_EVO_TEST_AUTO_EXIT_SECONDS", "5")),
+            )
+        except (TypeError, ValueError):
+            test_exit_seconds = 5.0
+
+        def _finish_packaged_smoke_test():
+            _startup_log("packaged smoke-test auto-exit")
+            try:
+                ui.root.quit()
+            except Exception:
+                pass
+            try:
+                ui.root.destroy()
+            except Exception:
+                pass
+
+        threading.Timer(test_exit_seconds, _finish_packaged_smoke_test).start()
+
     ui.root.mainloop()
 
 

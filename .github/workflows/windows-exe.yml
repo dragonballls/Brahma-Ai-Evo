@@ -1,0 +1,91 @@
+name: Brahma Evo Windows EXE
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-exe:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
+
+      - name: Prepare pinned OmniRoute runtime
+        shell: pwsh
+        run: |
+          python scripts/prepare_omniroute_runtime.py build_vendor/omniroute_runtime
+
+      - name: Build Brahma Evo
+        shell: pwsh
+        run: |
+          python -m PyInstaller installer/BrahmaEvo.spec --noconfirm
+          if ($LASTEXITCODE -ne 0) { throw "Brahma Evo PyInstaller build failed." }
+
+      - name: Build setup wizard
+        shell: pwsh
+        run: |
+          python -m PyInstaller installer/BrahmaEvo_Setup.spec --noconfirm
+          if ($LASTEXITCODE -ne 0) { throw "Brahma Evo setup wizard build failed." }
+
+      - name: Verify packaged files
+        shell: pwsh
+        run: |
+          $app = Join-Path $PWD "dist/BrahmaEvo/BrahmaEvo.exe"
+          $setup = Join-Path $PWD "dist/BrahmaEvo_Setup.exe"
+          if (-not (Test-Path $app)) { throw "BrahmaEvo.exe was not produced." }
+          if (-not (Test-Path $setup)) { throw "BrahmaEvo_Setup.exe was not produced." }
+          Write-Host "BrahmaEvo.exe:" (Get-Item $app).Length "bytes"
+          Write-Host "BrahmaEvo_Setup.exe:" (Get-Item $setup).Length "bytes"
+
+      - name: Launch packaged EXE smoke test
+        shell: pwsh
+        env:
+          BRAHMA_EVO_TEST_MODE: "1"
+          BRAHMA_EVO_TEST_AUTO_EXIT_SECONDS: "5"
+          BRAHMA_SKIP_STARTUP_UPDATE: "1"
+          BRAHMA_EVOLUTION_ENABLED: "0"
+        run: |
+          $app = Join-Path $PWD "dist/BrahmaEvo/BrahmaEvo.exe"
+          $process = Start-Process -FilePath $app -WorkingDirectory (Split-Path $app) -PassThru
+          if (-not $process.WaitForExit(120000)) {
+            try { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue } catch {}
+            throw "BrahmaEvo.exe did not exit during the packaged smoke test."
+          }
+          if ($process.ExitCode -ne 0) {
+            throw "BrahmaEvo.exe exited with code $($process.ExitCode)."
+          }
+          Write-Host "Packaged EXE smoke test passed with exit code 0."
+
+      - name: Package distributable
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/BrahmaEvo, dist/BrahmaEvo_Setup.exe -DestinationPath dist/BrahmaEvo-Windows.zip -Force
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v7
+        with:
+          name: BrahmaEvo-Windows
+          path: dist/BrahmaEvo-Windows.zip
+          if-no-files-found: error
