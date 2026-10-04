@@ -201,6 +201,13 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
             self.assertIn("Successfully wrote", written)
             self.assertEqual(Path(tmp, "demo.txt").read_text(encoding="utf-8"), "hello")
 
+    def test_skill_forge_uses_local_llm_for_offline_synthesis_and_repair(self):
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[1] / "core" / "skill_forge.py").read_text(encoding="utf-8")
+        self.assertIn("from core.local_brain import local_brain", source)
+        self.assertIn("Offline local LLM synthesis is unavailable.", source)
+        self.assertIn("Offline local LLM repair is unavailable.", source)
     def test_skill_forge_skips_github_research_in_offline_mode(self):
         from pathlib import Path
 
