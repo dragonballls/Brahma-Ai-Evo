@@ -272,6 +272,12 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn('AutoHealEngine.heal_traceback(text, context_notes=context)', source)
         self.assertIn("Automatic conversational recovery.", source)
 
+    def test_supervisor_spec_is_compatible_with_pyinstaller_spec_execution(self):
+        source = self.read("installer/BrahmaEvo_Supervisor.spec")
+        self.assertNotIn("__file__", source)
+        self.assertIn("os.path.abspath(os.getcwd())", source)
+        self.assertIn("BrahmaEvoSupervisor", source)
+
     def test_boot_sentry_uses_patch_age_guard(self):
         source = self.read("core/boot_sentry.py")
         self.assertIn('float(entry.get("timestamp"))', source)
