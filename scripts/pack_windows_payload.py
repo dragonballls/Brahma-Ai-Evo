@@ -25,7 +25,7 @@ def build(source: Path, output: Path) -> dict[str, object]:
         output,
         "w",
         compression=zipfile.ZIP_DEFLATED,
-        compresslevel=6,
+        compresslevel=1,
         allowZip64=True,
     ) as archive:
         for file_path in files:
@@ -46,7 +46,11 @@ def verify(source: Path, archive_path: Path) -> dict[str, object]:
                 f"missing={missing[:5]}, unexpected={unexpected[:5]}, size_mismatches={size_mismatches[:5]}"
             )
         required = {name: actual[name] for name in REQUIRED_FILES}
-        digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+        digest = hashlib.sha256()
+        with archive_path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+                digest.update(chunk)
+        digest = digest.hexdigest()
     return {
         "archive": str(archive_path),
         "files": len(expected),
