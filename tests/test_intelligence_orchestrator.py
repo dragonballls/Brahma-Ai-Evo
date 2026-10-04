@@ -70,7 +70,7 @@ class IntelligenceOrchestratorTests(unittest.TestCase):
         self.assertEqual(len(panel_models), 5)  # 3 experts + 2 cross-examiners
         synth = [item for item in calls if item["model"] == "auto/smart"]
         self.assertEqual(len(synth), 1)
-        critiques = [item for item in calls if "adversarial cross-examiner" in item["system"]]
+        critiques = [item for item in calls if "adversarial cross-examination" in item["system"]]
         self.assertEqual(len(critiques), 2)
         self.assertIn("=== Source 1 ===", synth[0]["prompt"])
         self.assertIn("Cross-examination:", synth[0]["prompt"])
