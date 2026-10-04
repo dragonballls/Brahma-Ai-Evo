@@ -1,4 +1,5 @@
 from core.user_paths import get_user_data_dir
+from core.runtime_paths import API_CONFIG_PATH, APP_SETTINGS_PATH
 """
 Brahma AI — Calorie & Nutrition Vision Engine.
 
@@ -61,8 +62,8 @@ PLUGIN = {
 
 def _get_api_config() -> dict:
     for cfg_path in [
-        get_user_data_dir() / "config" / "api_keys.json",
-        get_user_data_dir() / "config" / "app_settings.json",
+        API_CONFIG_PATH,
+        APP_SETTINGS_PATH,
     ]:
         if cfg_path.exists():
             try:
