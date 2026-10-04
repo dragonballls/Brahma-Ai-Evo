@@ -277,6 +277,207 @@ class OpenRouterClient:
             "Check your API key and network connection."
         )
 
+
+    @staticmethod
+    def _normalize_tools(tools: list[dict] | None) -> list[dict]:
+        """Convert Brahma/Gemini-style declarations into OpenAI-compatible tool schemas."""
+        def lower_types(value):
+            if isinstance(value, dict):
+                return {
+                    key: (str(item).lower() if key == "type" and isinstance(item, str)
+                          else lower_types(item))
+                    for key, item in value.items()
+                }
+            if isinstance(value, list):
+                return [lower_types(item) for item in value]
+            return value
+
+        normalized: list[dict] = []
+        for tool in tools or []:
+            if not isinstance(tool, dict):
+                continue
+            name = str(tool.get("name") or "").strip()
+            if not name:
+                fn = tool.get("function")
+                if isinstance(fn, dict):
+                    name = str(fn.get("name") or "").strip()
+                    if name:
+                        normalized.append({
+                            "type": "function",
+                            "function": lower_types(dict(fn)),
+                        })
+                continue
+            normalized.append({
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": str(tool.get("description") or ""),
+                    "parameters": lower_types(
+                        tool.get("parameters") or {
+                            "type": "object",
+                            "properties": {},
+                        }
+                    ),
+                },
+            })
+        return normalized
+
+    def _call_tool_capable(
+        self,
+        model: str,
+        messages: list[dict],
+        tools: list[dict],
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        temperature: float = DEFAULT_TEMPERATURE,
+    ) -> dict:
+        """Make one OpenRouter request that preserves structured tool calls."""
+        self._refresh_credentials()
+        if not self.api_key:
+            raise PermissionError(
+                f"[OpenRouter] API key is missing. Add it in {API_CONFIG_PATH}."
+            )
+        payload: dict = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "tools": self._normalize_tools(tools),
+            "tool_choice": "auto",
+        }
+        for attempt in range(1, MAX_RETRIES_PER_MODEL + 1):
+            try:
+                resp = requests.post(
+                    API_URL,
+                    headers=self._headers,
+                    json=payload,
+                    timeout=REQUEST_TIMEOUT,
+                )
+                if resp.status_code == 401:
+                    raise PermissionError("[OpenRouter] Authentication failed.")
+                if resp.status_code == 403:
+                    raise PermissionError(f"[OpenRouter] Access denied for model {model}.")
+                if resp.status_code == 429:
+                    self._mark_rate_limited(model)
+                    return {}
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return data if isinstance(data, dict) else {}
+                logger.warning(
+                    f"[OpenRouter] tool-capable {model} -> HTTP {resp.status_code} "
+                    f"(attempt {attempt}/{MAX_RETRIES_PER_MODEL})"
+                )
+            except requests.exceptions.Timeout:
+                logger.warning(
+                    f"[OpenRouter] tool-capable {model} timed out "
+                    f"(attempt {attempt}/{MAX_RETRIES_PER_MODEL})"
+                )
+            except PermissionError:
+                raise
+            except Exception as exc:
+                logger.error(f"[OpenRouter] tool-capable {model} failed: {exc}")
+            if attempt < MAX_RETRIES_PER_MODEL:
+                time.sleep(RETRY_DELAY)
+        return {}
+
+    def chat_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        tool_executor,
+        model: Optional[str] = None,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        temperature: float = DEFAULT_TEMPERATURE,
+        max_rounds: int = 6,
+    ) -> str:
+        """Run a bounded OpenAI-compatible tool-calling conversation with local tool execution."""
+        normalized_messages = [dict(message) for message in messages]
+        candidates = []
+        if model and not model.startswith("auto"):
+            candidates.append(model)
+        candidates.extend(TEXT_MODELS)
+        seen = set()
+        candidates = [m for m in candidates if m and not (m in seen or seen.add(m))]
+
+        last_content = ""
+        for round_index in range(max(1, int(max_rounds))):
+            response = {}
+            for candidate in candidates:
+                if self._is_rate_limited(candidate):
+                    continue
+                response = self._call_tool_capable(
+                    candidate,
+                    normalized_messages,
+                    tools,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+                if response:
+                    break
+            if not response:
+                raise RuntimeError("[OpenRouter] No tool-capable model returned a response.")
+
+            message = response.get("choices", [{}])[0].get("message", {}) or {}
+            content = message.get("content", "")
+            if isinstance(content, list):
+                content = "".join(
+                    str(item.get("text", "")) for item in content
+                    if isinstance(item, dict) and item.get("text")
+                )
+            last_content = str(content or "").strip()
+
+            tool_calls = message.get("tool_calls") or []
+            if not tool_calls:
+                if last_content:
+                    return last_content
+                finish_reason = str(response.get("choices", [{}])[0].get("finish_reason") or "")
+                if finish_reason == "length":
+                    continue
+                return "Task completed."
+
+            assistant_message = {
+                "role": "assistant",
+                "content": content,
+                "tool_calls": tool_calls,
+            }
+            normalized_messages.append(assistant_message)
+
+            for index, call in enumerate(tool_calls):
+                fn = call.get("function", {}) if isinstance(call, dict) else {}
+                name = str(fn.get("name") or "").strip()
+                raw_args = fn.get("arguments", {})
+                if isinstance(raw_args, str):
+                    try:
+                        args = json.loads(raw_args) if raw_args.strip() else {}
+                    except json.JSONDecodeError as exc:
+                        result = f"Tool arguments were invalid JSON: {exc}"
+                        args = {}
+                    else:
+                        result = None
+                else:
+                    args = raw_args if isinstance(raw_args, dict) else {}
+                    result = None
+
+                if not name:
+                    result = "The model returned an invalid tool call with no tool name."
+
+                if result is None:
+                    try:
+                        result = tool_executor(name, args)
+                    except Exception as exc:
+                        result = f"Tool '{name}' failed: {exc}"
+
+                call_id = str(call.get("id") or f"call_{round_index}_{index}")
+                normalized_messages.append({
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "name": name or "unknown",
+                    "content": str(result),
+                })
+
+        if last_content:
+            return last_content
+        raise RuntimeError("OpenRouter tool-calling reached its safety round limit without a final response.")
+
     def chat(
         self,
         prompt: str,
