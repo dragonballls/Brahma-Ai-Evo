@@ -4713,6 +4713,8 @@ class BrahmaLive:
                     msg = res.get("choices", [{}])[0].get("message", {})
                     tool_calls = msg.get("tool_calls")
                     if tool_calls:
+                        messages.append(msg)
+                        last_tool_result = ""
                         for tc in tool_calls:
                             call_id = tc.get("id", "call_local")
                             fn_info = tc.get("function", {})
@@ -4727,32 +4729,42 @@ class BrahmaLive:
                                 fn_args = fn_args_raw or {}
 
                             print(f"[BRAHMA EVO] 🔒 Local Brain executing tool: {fn_name}({fn_args})")
-                            self.ui.update_task_workspace(
-                                status=f"Executing {fn_name}",
-                                output=f"Running action: {fn_name} on local machine...",
-                                percent=75,
-                            )
-                            tool_result = self._execute_tool_sync(fn_name, fn_args, call_id)
+                            try:
+                                self.ui.update_task_workspace(
+                                    status=f"Executing {fn_name}",
+                                    output=f"Running action: {fn_name} on local machine...",
+                                    percent=75,
+                                )
+                            except Exception:
+                                pass
+                            try:
+                                last_tool_result = self._execute_tool_sync(fn_name, fn_args, call_id)
+                            except Exception as exc:
+                                last_tool_result = f"Tool '{fn_name}' failed: {exc}"
 
-                            messages.append(msg)
                             messages.append({
                                 "role": "tool",
                                 "tool_call_id": call_id,
                                 "name": fn_name,
-                                "content": str(tool_result)
+                                "content": str(last_tool_result)
                             })
-                            try:
-                                followup_res = local_brain.chat_complete(
-                                    messages,
-                                    model=local_model_target,
-                                    temperature=0.3
-                                )
-                                followup_reply = followup_res.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-                                if followup_reply:
-                                    reply = followup_reply
-                            except Exception as e_fu:
-                                print(f"[BRAHMA EVO] ⚠️ Local Brain follow-up failed: {e_fu}")
-                                reply = str(tool_result) if tool_result else f"{fn_name.replace('_', ' ').capitalize()} completed."
+
+                        try:
+                            followup_res = local_brain.chat_complete(
+                                messages,
+                                model=local_model_target,
+                                temperature=0.3,
+                                tools=TOOL_DECLARATIONS,
+                                focus_core=False,
+                            )
+                            followup_reply = followup_res.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+                            if followup_reply:
+                                reply = followup_reply
+                            elif last_tool_result:
+                                reply = str(last_tool_result)
+                        except Exception as e_fu:
+                            print(f"[BRAHMA EVO] ⚠️ Local Brain follow-up failed: {e_fu}")
+                            reply = str(last_tool_result) if last_tool_result else "The requested local action completed."
                     else:
                         reply = msg.get("content", "").strip()
                     print(f"[BRAHMA EVO] 🔒 Local Brain ({local_model_target}) answered successfully!")
