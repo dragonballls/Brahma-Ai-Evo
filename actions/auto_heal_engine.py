@@ -351,10 +351,15 @@ class AutoHealEngine:
         publication = {"published": False, "reason": "not_attempted"}
         try:
             from core.repository_sync import publish_verified_repair
+            try:
+                relative_target = str(target_path.relative_to(BASE_DIR))
+            except ValueError:
+                relative_target = None
             publication = publish_verified_repair(
                 target_path,
                 patch_id,
                 explanation=explanation,
+                repository_relative_path=relative_target,
             )
             logger.info("[AutoHeal] Repository publication: %s", publication)
         except Exception as publish_err:
