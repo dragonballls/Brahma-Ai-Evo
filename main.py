@@ -447,6 +447,90 @@ def _clipboard_gemini_reply(text: str) -> str:
         temperature=0.35,
     )
 
+def _looks_like_code_request(text: str) -> bool:
+    low = (text or "").lower()
+    code_words = (
+        "build", "create", "write", "implement", "code", "python", "app",
+        "module", "function", "class", "project", "script", "api",
+        "ui", "webpage", "bot", "server", "service"
+    )
+    return any(word in low for word in code_words)
+
+
+def _looks_like_website_request(text: str) -> bool:
+    low = (text or "").lower()
+    website_words = (
+        "website",
+        "web site",
+        "webpage",
+        "web page",
+        "landing page",
+        "homepage",
+        "home page",
+        "portfolio",
+        "product site",
+        "business site",
+        "marketing site",
+        "web app",
+        "frontend",
+        "site",
+        "html",
+        "react",
+        "web",
+    )
+    action_words = ("make", "create", "build", "design", "develop", "generate", "code", "edit", "update", "fix")
+    has_web = any(re.search(rf"\b{re.escape(w)}\b", low) for w in website_words)
+    has_action = any(re.search(rf"\b{re.escape(a)}\b", low) for a in action_words)
+    return has_web and (has_action or any(w in low for w in ("landing page", "homepage", "portfolio", "website", "web app", "web page")))
+
+
+def _looks_like_presentation_request(text: str) -> bool:
+    low = (text or "").lower()
+    ppt_keywords = (
+        "presentation", "powerpoint", "slideshow", "slides", "slide deck",
+        "pitch deck", "deck", "ppt", "pptx"
+    )
+    action_words = ("make", "create", "build", "design", "develop", "generate", "draft", "prepare")
+    has_keyword = any(re.search(rf"\b{re.escape(k)}\b", low) for k in ppt_keywords)
+    has_action = any(re.search(rf"\b{re.escape(a)}\b", low) for a in action_words)
+    return has_keyword and (has_action or any(k in low for k in ("slide deck", "pitch deck", "powerpoint", "pptx", "ppt")))
+
+
+def _looks_like_spreadsheet_request(text: str) -> bool:
+    low = (text or "").lower()
+    sheet_keywords = (
+        "spreadsheet", "excel", "sheet", "sheets", "workbook", "xlsx",
+        "tracker", "expense tracker", "budget sheet"
+    )
+    action_words = ("make", "create", "build", "design", "develop", "generate", "draft", "prepare")
+    has_keyword = any(re.search(rf"\b{re.escape(k)}\b", low) for k in sheet_keywords)
+    has_action = any(re.search(rf"\b{re.escape(a)}\b", low) for a in action_words)
+    return has_keyword and (has_action or any(k in low for k in ("spreadsheet", "excel sheet", "expense tracker", "budget sheet", "xlsx")))
+
+
+def _extract_skill_creation_goal(text: str) -> str | None:
+    normalized = re.sub(r"\s+", " ", (text or "").strip())
+    match = re.match(
+        r"^(?:please\s+)?(?:(?:i\s+(?:want|need|would like)\s+you\s+to|(?:can|could)\s+you)\s+)?"
+        r"(?:make|create|build|develop|generate|forge|write|implement|add|design)\s+"
+        r"(?:me\s+)?(?:your\s+)?(?:(?:a|an|new|custom|own)\s+)*(?:skill|feature)\b(.*)$",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+
+    goal = match.group(1).strip(" \t:,-")
+    goal = re.sub(r"^(?:that|which|to)\s+", "", goal, flags=re.IGNORECASE)
+    goal = re.sub(
+        r"^(?:(?:will|can|could|should)\s+)?(?:allow|let|enable|allows|lets|enables)\s+(?:you\s+)?(?:to\s+)?",
+        "",
+        goal,
+        flags=re.IGNORECASE,
+    )
+    return goal.strip()
+
+
 def _is_gemini_limit_error(exc: Exception) -> bool:
     msg = str(exc).lower()
     return any(token in msg for token in (
