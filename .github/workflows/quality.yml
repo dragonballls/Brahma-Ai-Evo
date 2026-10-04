@@ -30,6 +30,9 @@ jobs:
         run: python -m unittest tests.test_low_power_guards -v
       - name: Run runtime consistency regressions
         run: python -m unittest tests.test_runtime_consistency -v
+      - name: Run Bluetooth media-quality audio regressions
+        run: python -m unittest tests.test_audio_quality_guard -v
+
       - name: Run voice safety regressions
         run: python -m unittest tests.test_voice_guards -v
       - name: Run OmniRoute and self-coding regressions
