@@ -259,11 +259,11 @@ class RuntimeConsistencyTests(unittest.TestCase):
         main = self.read("main.py")
         self.assertNotIn("import core.boot_sentry", main)
         self.assertIn("from core.boot_sentry import check_and_recover_on_boot", main)
-        guard_pos = main.index("if not guard.acquire()")
         boot_pos = main.index("from core.boot_sentry import check_and_recover_on_boot")
-        main_fn_pos = main.index("def main():")
-        self.assertGreater(boot_pos, main_fn_pos)
-        self.assertGreater(boot_pos, guard_pos)
+        gui_pos = main.index("from PyQt6.QtCore import")
+        audio_pos = main.index("import sounddevice as sd")
+        self.assertLess(boot_pos, gui_pos)
+        self.assertLess(boot_pos, audio_pos)
 
     def test_boot_sentry_uses_patch_age_guard(self):
         source = self.read("core/boot_sentry.py")
