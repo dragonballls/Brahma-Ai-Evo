@@ -1,7 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
+import sys
 
-cwd = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+# PyInstaller executes .spec files as code without defining __file__. Resolve
+# the repository from the invocation directory, with a safe parent fallback
+# for callers that invoke PyInstaller from the installer directory.
+cwd = os.path.abspath(os.getcwd())
+if not os.path.exists(os.path.join(cwd, 'core')):
+    parent = os.path.abspath(os.path.join(cwd, '..'))
+    if os.path.exists(os.path.join(parent, 'core')):
+        cwd = parent
 
 a = Analysis(
     [os.path.join(cwd, 'core', 'process_supervisor.py')],
