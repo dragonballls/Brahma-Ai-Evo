@@ -140,10 +140,6 @@ class RepositoryIntegrityTests(unittest.TestCase):
             if not (isinstance(node.left, ast.Name) and node.left.id == "name"):
                 continue
 
-            values = [node.left]
-            for operand in node.comparators:
-                values.append(operand)
-
             for op, operand in zip(node.ops, node.comparators):
                 if isinstance(op, ast.Eq) and isinstance(operand, ast.Constant):
                     reachable.add(str(operand.value))
@@ -171,6 +167,43 @@ class RepositoryIntegrityTests(unittest.TestCase):
         self.assertIn("chat_with_tools(", main)
         self.assertIn("def chat_with_tools(", or_client)
         self.assertIn('normalize_provider(self._provider) == GEMINI', llm)
+
+    def test_pyinstaller_datas_use_two_part_entries(self):
+        source = (ROOT / "installer" / "BrahmaEvo.spec").read_text(encoding="utf-8")
+        tree = ast.parse(source, filename="installer/BrahmaEvo.spec")
+
+        analysis_call = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "Analysis"
+        )
+        datas = next(
+            keyword.value
+            for keyword in analysis_call.keywords
+            if keyword.arg == "datas"
+        )
+        self.assertIsInstance(datas, ast.BinOp)
+        self.assertIsInstance(datas.left, ast.List)
+
+        invalid = []
+        for index, item in enumerate(datas.left.elts):
+            if not isinstance(item, (ast.Tuple, ast.List)) or len(item.elts) != 2:
+                invalid.append(index)
+        self.assertEqual(
+            invalid,
+            [],
+            "installer/BrahmaEvo.spec contains invalid PyInstaller datas entries at indexes: "
+            + ", ".join(map(str, invalid)),
+        )
+        self.assertIn(
+            "(os.path.join(cwd, 'config', 'models'), 'config/models')",
+            source,
+        )
+        self.assertIn(
+            "(os.path.join(cwd, 'config', 'intelligence.json'), 'config')",
+            source,
+        )
 
     def test_omniroute_has_one_runtime_owner_and_clean_shutdown(self):
         setup = (ROOT / "core" / "omniroute_setup.py").read_text(encoding="utf-8")
