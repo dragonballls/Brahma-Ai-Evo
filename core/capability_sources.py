@@ -51,6 +51,20 @@ CURATED_SOURCES = (
         "patterns": ("agent/command/hook catalogs", "health checks", "configuration templates"),
     },
     {
+        "repository": "debpalash/VoiceStudio",
+        "license": "AGPL-3.0",
+        "domains": ("voice", "tts", "stt", "dictation", "voice agents"),
+        "keywords": ("voice", "tts", "stt", "speech", "dictation", "transcription", "audio"),
+        "patterns": ("local voice engine adapters", "voice profiles", "agent-facing local API/MCP"),
+    },
+    {
+        "repository": "vercel/next.js",
+        "license": "MIT",
+        "domains": ("web workspace", "frontend", "web applications"),
+        "keywords": ("web", "frontend", "react", "workspace", "dashboard", "website"),
+        "patterns": ("full-stack web workspace patterns", "React/TypeScript integration", "production web tooling"),
+    },
+    {
         "repository": "anthropics/financial-services",
         "license": "Apache-2.0",
         "domains": ("workflow", "connectors", "review", "specialists"),
