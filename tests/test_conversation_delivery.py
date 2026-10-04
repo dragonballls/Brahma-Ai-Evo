@@ -195,6 +195,17 @@ class ConversationDeliveryTests(unittest.TestCase):
         self.assertIn('"role": "assistant"', main)
         self.assertIn('args=(text, memory_ctx, source or "local")', main)
         self.assertIn("def acknowledge_chat_response(self):", ui)
+    def test_failed_text_request_has_canonical_chat_and_voice_response(self):
+        from pathlib import Path
+
+        main = Path("main.py").read_text(encoding="utf-8")
+        block = main.split("def _fallback_reply", 1)[1]
+        self.assertIn("failure_reply = (", block)
+        self.assertIn('self.ui.record_chat_event({', block)
+        self.assertIn('"role": "assistant"', block)
+        self.assertIn('self.speak(failure_reply, proactive=True, use_live=False)', block)
+        self.assertIn('self.ui.finish_task_workspace(failure_reply, "Reply failed.", 0)', block)
+
     def test_cloud_action_router_does_not_override_provider_switch_setting(self):
         from pathlib import Path
 
