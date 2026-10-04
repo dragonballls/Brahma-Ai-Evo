@@ -331,6 +331,14 @@ class EvolutionEngine:
         )
 
     def _rank_opportunities(self, research: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        available_repo_count = sum(
+            len(item.get("result", {}).get("repositories") or [])
+            for item in research
+        )
+        if available_repo_count < 2:
+            logger.info("Evolution ranking skipped: fewer than two usable GitHub repositories were discovered.")
+            return []
+
         dossier = self._dossier(research)
         prompt = (
             "Review the following GitHub landscape and local Brahma architecture. "
