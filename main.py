@@ -185,6 +185,21 @@ def _startup_log(message: str) -> None:
         pass
 
 
+def _write_test_ready_marker() -> None:
+    if not BRAHMA_EVO_TEST_MODE:
+        return
+    try:
+        marker_root = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else BASE_DIR
+        marker = marker_root / ".brahma-ci-ready"
+        marker.write_text(
+            f"ready={time.time():.6f}\npid={os.getpid()}\n",
+            encoding="utf-8",
+        )
+        _startup_log("packaged smoke-test startup-ready marker written")
+    except Exception as exc:
+        _startup_log(f"packaged smoke-test marker write failed: {exc}")
+
+
 def _ensure_desktop_shortcut() -> None:
     if os.name != "nt":
         return
@@ -7190,6 +7205,7 @@ def _main_impl():
 
     ui.show_main()
     _startup_log("ui shown")
+    _write_test_ready_marker()
 
     # Continuous evolution researches GitHub while Brahma is idle, then stages
     # at most one verified checkpoint. It never changes main without approval.
