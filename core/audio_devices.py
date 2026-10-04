@@ -240,6 +240,136 @@ def _usable(idx: int, kind: str) -> bool:
             except Exception:
                 pass
 
+# Bluetooth Classic headset microphones can force Windows into the HFP
+# communications profile, which materially reduces media playback quality.
+# Prefer a separate microphone whenever Brahma is playing through the same
+# Bluetooth headset. Bluetooth LE Audio devices may support stereo + mic, so
+# this is a compatibility safeguard rather than a blanket Bluetooth ban.
+_BLUETOOTH_HINTS = (
+    "bluetooth",
+    "hands-free",
+    "hands free",
+    "ag audio",
+    "headset",
+    "wireless",
+    "airpods",
+    "buds",
+)
+
+
+def is_bluetooth_device_name(name: str) -> bool:
+    low = str(name or "").casefold()
+    return any(token in low for token in _BLUETOOTH_HINTS)
+
+
+def _device_name(idx: int) -> str:
+    try:
+        import sounddevice as sd
+        return str(sd.query_devices(idx).get("name") or "").strip()
+    except Exception:
+        return ""
+
+
+def _same_bluetooth_endpoint(input_name: str, output_name: str) -> bool:
+    a = " ".join(str(input_name or "").casefold().replace("(", " ").replace(")", " ").split())
+    b = " ".join(str(output_name or "").casefold().replace("(", " ").replace(")", " ").split())
+    if not a or not b or not is_bluetooth_device_name(a) or not is_bluetooth_device_name(b):
+        return False
+
+    # Exact/near-exact names are the common Windows Bluetooth Classic case.
+    if a == b or a in b or b in a:
+        return True
+
+    # Ignore endpoint-role words and compare a handful of descriptive tokens.
+    ignored = {
+        "bluetooth", "hands", "free", "ag", "audio", "headset", "headphones",
+        "mic", "microphone", "input", "output", "stereo", "wireless",
+    }
+    a_tokens = {t for t in a.replace("-", " ").split() if len(t) > 2 and t not in ignored}
+    b_tokens = {t for t in b.replace("-", " ").split() if len(t) > 2 and t not in ignored}
+    return bool(a_tokens and b_tokens and len(a_tokens & b_tokens) >= max(1, min(2, len(a_tokens), len(b_tokens))))
+
+
+def resolve_voice_input(input_name: str, output_name: str):
+    """Resolve Brahma's voice microphone without unnecessarily degrading media playback.
+
+    When a Bluetooth output is active, avoid selecting the same Bluetooth headset's
+    capture endpoint if a usable non-Bluetooth microphone exists. This keeps
+    Windows on the headset's high-quality media profile on systems where Classic
+    Bluetooth cannot do stereo playback while its microphone is open.
+    """
+    wanted = (input_name or "").strip()
+    output = (output_name or "").strip()
+    normal = resolve(wanted, "input") if wanted else None
+
+    # No selected Bluetooth output: preserve the user's microphone choice.
+    if not is_bluetooth_device_name(output):
+        return normal, False
+
+    # Empty input means system default; it may already be a separate laptop/USB mic.
+    # Only override an explicitly Bluetooth headset mic, or a default that resolves
+    # to the same headset endpoint.
+    current_name = _device_name(normal) if normal is not None else ""
+    same_headset = _same_bluetooth_endpoint(
+        wanted or current_name,
+        output,
+    )
+    if not same_headset:
+        return normal, False
+
+    try:
+        import sounddevice as sd
+        import platform
+        devices = list(sd.query_devices())
+        try:
+            apis = [a.get("name", "") for a in sd.query_hostapis()]
+        except Exception:
+            apis = []
+
+        preferred = list(_PREFERRED_APIS.get(platform.system(), ()))
+        chosen = _chosen_api.get("input")
+        orders = ([chosen] if chosen is not None else []) + [a for a in preferred if a != chosen] + [None]
+
+        # Keep the most useful built-in/USB/array candidates ahead of other
+        # Bluetooth capture endpoints.
+        candidates = []
+        for api_filter in orders:
+            for idx, dev in enumerate(devices):
+                name = (dev.get("name") or "").strip()
+                if not name or _is_pseudo(name):
+                    continue
+                if dev.get("max_input_channels", 0) <= 0:
+                    continue
+                if is_bluetooth_device_name(name):
+                    continue
+                if api_filter is not None:
+                    api = apis[dev.get("hostapi", -1)].lower() if dev.get("hostapi", -1) < len(apis) else ""
+                    if api_filter not in api:
+                        continue
+                if not _usable(idx, "input"):
+                    continue
+                low = name.casefold()
+                score = 0
+                for hint in ("microphone", "mic", "array", "realtek", "internal", "integrated", "built-in", "webcam"):
+                    if hint in low:
+                        score += 2
+                candidates.append((score, idx, name))
+            if candidates:
+                break
+
+        if candidates:
+            candidates.sort(reverse=True)
+            _, selected, selected_name = candidates[0]
+            return selected, True
+
+    except Exception as exc:
+        print(f"[Audio] Bluetooth media-preservation microphone selection failed: {exc}")
+
+    # No separate microphone exists. Falling back to the requested mic is the only
+    # way to keep voice capture functional; expose the condition to the caller.
+    return normal, False
+
+
 # Aliases for "the default device" and internal routing endpoints. Matched
 # case-insensitively as substrings against the device name.
 _PSEUDO_DEVICES = (
