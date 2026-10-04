@@ -155,6 +155,12 @@ class RepositoryIntegrityTests(unittest.TestCase):
             "Declared tools without a local executor branch: " + ", ".join(missing),
         )
 
+    def test_executor_only_capabilities_are_declared_to_the_models(self):
+        main = (ROOT / "main.py").read_text(encoding="utf-8")
+        declaration_end = main.find("\n]\n\n\nclass BrahmaLive")
+        declarations = main[:declaration_end]
+        for name in ("ram_hogs", "kill_process", "brightness_control", "rollback", "universal_task"):
+            self.assertIn(f'"name": "{name}"', declarations)
     def test_conversation_delivery_contract_is_decoupled(self):
         main = (ROOT / "main.py").read_text(encoding="utf-8")
         llm = (ROOT / "llm_client.py").read_text(encoding="utf-8")
