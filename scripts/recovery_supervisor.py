@@ -99,8 +99,11 @@ def _save_state(state: dict[str, Any]) -> None:
             pass
 
 
-def _read_fatal_traceback() -> str:
+def _read_fatal_traceback(min_mtime: float | None = None) -> str:
     try:
+        stat = FATAL_CRASH_LOG_PATH.stat()
+        if min_mtime is not None and stat.st_mtime < min_mtime:
+            return ""
         return FATAL_CRASH_LOG_PATH.read_text(encoding="utf-8", errors="replace").strip()
     except Exception:
         return ""
@@ -241,7 +244,7 @@ def run_supervisor() -> int:
             state["recent_restarts"] = recent_restarts
             _save_state(state)
 
-            tb = _read_fatal_traceback()
+            tb = _read_fatal_traceback(started)
             recovery = _run_recovery(tb, state)
             logger.warning("Crash recovery result: %s", recovery)
 
