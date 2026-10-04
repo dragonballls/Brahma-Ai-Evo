@@ -83,6 +83,21 @@ class ContinuousEvolutionTests(unittest.TestCase):
             self.assertEqual(len(result), 1)
             self.assertEqual(result[0]["goal"], "add useful feature")
 
+    def test_main_exposes_evolution_controller_without_auto_promotion(self):
+        source = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
+        self.assertIn('"name": "evolution"', source)
+        self.assertIn('scan_now | pause | resume', source)
+        self.assertIn("evolution_engine.start()", source)
+        self.assertIn("evolution_engine.stop()", source)
+        self.assertIn("Never auto-promotes changes", source or source)
+
+    def test_self_coding_can_restore_base_branch_after_background_preview(self):
+        import inspect
+        from core.self_coding import SelfCodingAgent
+        source = inspect.getsource(SelfCodingAgent.preview)
+        self.assertIn("return_to_base", source)
+        self.assertIn('result["returned_to_base"] = base_branch', source)
+
     def test_cycle_never_auto_promotes(self):
         with tempfile.TemporaryDirectory() as tmp:
             engine = EvolutionEngine(tmp)
