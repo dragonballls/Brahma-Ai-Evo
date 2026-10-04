@@ -155,14 +155,21 @@ def _catalog_models()->tuple[str,...]:
     _MODEL_CACHE=(now,providers,tuple(dict.fromkeys(models)))
     return _MODEL_CACHE[2]
 
-def _select_provider_model(provider:str, models:tuple[str,...], overrides:dict)->str|None:
+def _select_provider_model(provider:str, models:tuple[str,...], overrides:dict, profile:str="smart")->str|None:
     override=str(overrides.get(provider) or '').strip()
     if override: return override if '/' in override else provider+'/'+override
     prefixes={x.casefold() for x in _PROVIDER_PREFIXES.get(provider,(provider,))}
     candidates=[m for m in models if m.split('/',1)[0].casefold() in prefixes]
     if not candidates: return None
     def score(m):
-        low=m.casefold(); return (sum(2 for h in _QUALITY_HINTS if h in low),len(m))
+        low=m.casefold()
+        base=sum(2 for h in _QUALITY_HINTS if h in low)
+        try:
+            from core.model_performance import routing_bonus
+            learned=routing_bonus(provider=provider, model=m, profile=profile)
+        except Exception:
+            learned=0.0
+        return (base + learned, len(m))
     return max(candidates,key=score)
 
 def _ensemble_models(cfg:dict, profile_cfg:dict, profile:str="smart")->list[tuple[str,str]]:
@@ -173,7 +180,7 @@ def _ensemble_models(cfg:dict, profile_cfg:dict, profile:str="smart")->list[tupl
     if isinstance(profile_cfg.get('ensemble_models'),dict): overrides.update(profile_cfg['ensemble_models'])
     models=_catalog_models(); selected=[]
     for provider in providers:
-        model=_select_provider_model(provider,models,overrides)
+        model=_select_provider_model(provider,models,overrides,profile)
         if model: selected.append((provider,model))
     return selected[:max(2,int(cfg.get('ensemble_max_providers',8)))]
 
