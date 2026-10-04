@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from core.agent_task_ledger import AgentTaskLedger
 from core.capability_sources import CURATED_SOURCES, matching_sources
-from core.github_research import GitHubResearchClient
+from core.github_research import GitHubResearchClient, GitHubResearchError
 from core.memory_reflection import ReflectiveMemory
 from core.software_harness import SoftwareHarnessRegistry
 
@@ -73,7 +73,7 @@ class GithubRevolutionIntegrationTests(unittest.TestCase):
         with patch.object(client, "search_repositories", return_value=[]),              patch.object(client, "search_code", return_value=[]),              patch.object(
                  client,
                  "get_repository",
-                 side_effect=Exception("network not used in unit test"),
+                 side_effect=GitHubResearchError("network not used in unit test"),
              ):
             result = client.research_goal("agent orchestration heartbeat task approvals")
         self.assertIn("curated_sources", result)
