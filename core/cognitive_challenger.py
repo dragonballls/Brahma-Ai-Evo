@@ -140,6 +140,7 @@ def run(
     system: str = "brahma",
     cases: Iterable[ChallengeCase] = CASES,
     persist_intellect: bool = True,
+    grader: Callable[[str, str], float] | None = None,
 ) -> dict:
     rows: list[dict] = []
     started = time.perf_counter()
@@ -147,7 +148,12 @@ def run(
         case_started = time.perf_counter()
         try:
             answer = str(solver(case.prompt, case.dimension) or "")
-            score = _score(case, answer)
+            score = (
+                float(grader(case.prompt, answer))
+                if grader is not None
+                else _score(case, answer)
+            )
+            score = max(0.0, min(100.0, score))
             error = ""
         except Exception as exc:
             answer = ""
