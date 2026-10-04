@@ -161,7 +161,9 @@ def _run_recovery(traceback_text: str, state: dict[str, Any]) -> dict[str, Any]:
         )
         state.update(heal_fingerprint=fingerprint, heal_attempts=attempts + 1)
         _save_state(state)
-        result.update(success=bool(heal.get("success")), action="auto_heal", **heal)
+        result.update(heal)
+        result["success"] = bool(heal.get("success"))
+        result["action"] = "auto_heal"
         return result
     except Exception as exc:
         logger.exception("External auto-heal attempt failed.")
