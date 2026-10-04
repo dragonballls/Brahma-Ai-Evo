@@ -418,8 +418,8 @@ class BrahmaDevAgent:
     def _call_llm(self) -> str:
         """Prefer OmniRoute's coding route, then retain the existing direct-provider fallbacks."""
         try:
-            from llm_client import client as ai_client
-            response = ai_client.multi_turn(
+            from or_client import client as direct_or_client
+            response = direct_or_client.multi_turn(
                 self.history,
                 model="auto/coding",
                 max_tokens=8192,
@@ -487,8 +487,8 @@ class BrahmaDevAgent:
             with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
                 or_key = json.load(f).get("openrouter_api_key", "").strip()
             if or_key:
-                from llm_client import client as ai_client
-                return ai_client.multi_turn(self.history, temperature=0.2)
+                from or_client import client as direct_or_client
+                return direct_or_client.multi_turn(self.history, temperature=0.2)
         except Exception:
             pass
 
