@@ -379,6 +379,42 @@ class IntelligenceOrchestrator:
     def respond_json(self,prompt:str,*,system="Return ONLY valid JSON.",profile="smart",max_tokens=8192)->dict[str,Any]:
         c=load_config()
         if not bool(c.get("enabled",True)) or not allowed():return cloud_client.chat_json(prompt,system=system,model="auto",max_tokens=max_tokens)
+        pc=self._cfg(profile,c)
+        panel=_ensemble_models(c,pc,profile) if profile != "fast" else []
+        if panel:
+            futures={}
+            roles=_ensemble_roles(profile,len(panel))
+            for index,((provider,model),role) in enumerate(zip(panel,roles),1):
+                futures[_ENSEMBLE_EXECUTOR.submit(
+                    cloud_client.chat,
+                    f"{prompt}\n\nSpecialist role: {role}.\nReturn ONLY one valid JSON object. Solve independently and do not discuss other models.",
+                    system=system+" You are an independent structured-reasoning specialist.",
+                    model=model,max_tokens=max_tokens,temperature=float(pc.get("temperature",0.2)),
+                )]=(index,provider,model)
+            drafts=[]
+            for future in as_completed(futures):
+                try:
+                    value=str(future.result() or "").strip()
+                    if value: drafts.append((futures[future],value))
+                except Exception as exc:
+                    log.debug("structured ensemble member failed: %s",exc)
+            drafts.sort(key=lambda item:item[0][0])
+            if drafts:
+                evidence="\n\n".join(f"=== Draft {i} ===\n{trim(value,10000)}" for (i,_provider,_model),value in drafts)
+                judge_model=str(pc.get("synthesis_model","auto/smart"))
+                raw=cloud_client.chat(
+                    prompt=f"Task:\n{prompt}\n\nIndependent structured drafts:\n{evidence}",
+                    system=system+" Reconcile contradictions and return ONLY one valid JSON object.",
+                    model=judge_model,max_tokens=max_tokens,temperature=0.1,
+                )
+                clean=str(raw or "").strip()
+                if clean.startswith("```"):
+                    parts=clean.split("```"); clean=parts[1] if len(parts)>1 else clean
+                    if clean.lstrip().startswith("json"): clean=clean.lstrip()[4:]
+                try:
+                    return json.loads(clean.strip().strip("`"))
+                except json.JSONDecodeError:
+                    log.debug("structured ensemble judge returned invalid JSON; falling back")
         pc=self._cfg(profile,c); count=min(max(1,int(pc.get("specialists",1))),int(c.get("max_specialists",2)),max(1,int(c.get("parallel_workers",4))))
         model=str(pc.get("model","auto/smart")); roles=self._roles(profile)[:count]; drafts=[]
         def task(i,role):return i,cloud_client.chat(prompt=f"{prompt}\n\nRole: {role}\nReturn ONLY valid JSON.",system=system+" Return one valid JSON object.",model=model,max_tokens=max_tokens,temperature=float(pc.get("temperature",0.2)))
