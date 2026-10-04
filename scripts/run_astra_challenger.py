@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from core.cognitive_challenger import CASES, run, compare, RESULTS_PATH
+from core.cognitive_challenger import CASES, run, compare, RESULTS_PATH, grade_with_model
 from core.intelligence_orchestrator import orchestrator
 from llm_client import client as cloud_client
 
@@ -23,6 +23,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--system", choices=("brahma", "astra", "both"), default="brahma")
     parser.add_argument("--astra-model", default="openai/gpt-6-astra")
+    parser.add_argument("--grader-model", default="")
+    parser.add_argument("--semantic-grade", action="store_true")
     parser.add_argument("--no-persist-intellect", action="store_true")
     args = parser.parse_args()
 
@@ -38,6 +40,12 @@ def main() -> int:
             temperature=0.0,
         )
 
+    grader = None
+    if args.semantic_grade and args.grader_model:
+        grader = lambda prompt, answer: grade_with_model(
+            prompt, answer, grader_model=args.grader_model, client=cloud_client
+        )
+
     results = {}
     if args.system in {"brahma", "both"}:
         results["brahma"] = run(
@@ -45,6 +53,7 @@ def main() -> int:
             system="brahma",
             cases=CASES,
             persist_intellect=not args.no_persist_intellect,
+            grader=grader,
         )
     if args.system in {"astra", "both"}:
         results["astra"] = run(
