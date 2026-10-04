@@ -528,13 +528,11 @@ def _cloud_tool_reply(
     provider: str,
     tool_executor,
 ) -> str:
-    """Route a cloud action through the selected provider with cross-provider fallback."""
+    """Route a cloud action through exactly the selected provider."""
+    candidate = normalize_provider(provider)
     errors = []
-    ordered = [normalize_provider(provider)]
-    alternate = "OpenRouter" if ordered[0] == "Gemini" else "Gemini"
-    ordered.append(alternate)
 
-    for candidate in ordered:
+    try:
         try:
             if candidate == "Gemini":
                 return _gemini_tool_reply(
@@ -554,8 +552,8 @@ def _cloud_tool_reply(
                 temperature=0.35,
                 max_rounds=6,
             )
-        except Exception as exc:
-            errors.append(f"{candidate}: {exc}")
+    except Exception as exc:
+        errors.append(f"{candidate}: {exc}")
 
     raise RuntimeError("Cloud tool routing failed. " + " | ".join(errors))
 
