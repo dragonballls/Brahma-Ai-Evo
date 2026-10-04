@@ -270,7 +270,7 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("_schedule_conversational_auto_heal(", source)
         self.assertIn("brahma-conversational-autoheal", source)
         self.assertIn('AutoHealEngine.heal_traceback(text, context_notes=context)', source)
-        self.assertIn('"Automatic conversational recovery."', source)
+        self.assertIn("Automatic conversational recovery.", source)
 
     def test_boot_sentry_uses_patch_age_guard(self):
         source = self.read("core/boot_sentry.py")
