@@ -288,8 +288,10 @@ class RuntimeConsistencyTests(unittest.TestCase):
         workflow = self.read(".github/workflows/windows-release.yml")
         self.assertIn("BrahmaEvoPayload.zip", spec)
         self.assertIn("zipfile.ZipFile", wizard)
+        self.assertNotIn("QWebEngineView", wizard)
         self.assertIn("Unsafe installer payload entry", wizard)
         self.assertIn("BrahmaEvoPayload.zip", workflow)
+        self.assertIn("actions/cache/restore@v4", workflow)
         self.assertIn("required", packer)
         self.assertIn("--verify", packer)
 

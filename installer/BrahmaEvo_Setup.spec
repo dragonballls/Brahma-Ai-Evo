@@ -14,7 +14,7 @@ supervisor_exe = os.path.join(cwd, 'dist', 'BrahmaEvoSupervisor.exe')
 # reclassifying tens of thousands of application files a second time.
 if os.path.exists(payload_zip):
     installer_datas = [
-        (payload_zip, 'BrahmaEvoPayload.zip'),
+        (payload_zip, '.'),
         (os.path.join(cwd, 'assets'), 'assets'),
     ]
 else:
@@ -31,7 +31,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=installer_datas,
-    hiddenimports=['PyQt6', 'shutil', 'PyQt6.QtWebEngineWidgets', 'PyQt6.QtWebEngineCore'],
+    hiddenimports=['PyQt6', 'shutil'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

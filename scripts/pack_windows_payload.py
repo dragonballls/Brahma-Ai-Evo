@@ -21,7 +21,13 @@ def build(source: Path, output: Path) -> dict[str, object]:
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.exists():
         output.unlink()
-    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
+    with zipfile.ZipFile(
+        output,
+        "w",
+        compression=zipfile.ZIP_DEFLATED,
+        compresslevel=6,
+        allowZip64=True,
+    ) as archive:
         for file_path in files:
             archive.write(file_path, file_path.relative_to(source).as_posix())
     return verify(source, output)

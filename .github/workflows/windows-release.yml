@@ -45,6 +45,14 @@ jobs:
           python -m pip install pyinstaller==6.22.3
           python -m pip check
 
+      - name: Restore cached OmniRoute runtime
+        uses: actions/cache/restore@v4
+        with:
+          path: build_vendor/omniroute_runtime
+          key: windows-omniroute-${{ hashFiles('core/runtime_contract.py', 'scripts/prepare_omniroute_runtime.py') }}
+          restore-keys: |
+            windows-omniroute-
+
       - name: Prepare pinned OmniRoute runtime
         shell: pwsh
         run: |

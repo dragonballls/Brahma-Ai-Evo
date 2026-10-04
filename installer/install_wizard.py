@@ -5,11 +5,26 @@ import time
 import zipfile
 from pathlib import Path
 import win32com.client
-from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
-                             QLabel, QPushButton, QProgressBar, QFileDialog, QGraphicsDropShadowEffect, QStackedWidget)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QUrl, QTimer
-from PyQt6.QtGui import QIcon, QFont, QColor
-from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QPushButton, QProgressBar, QGraphicsDropShadowEffect,
+    QStackedWidget, QFrame,
+)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QIcon, QFont, QColor, QLinearGradient, QPainter
+
+class _InstallerBackground(QFrame):
+    """Lightweight native background so setup never boots Qt WebEngine."""
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        gradient = QLinearGradient(0, 0, self.width(), self.height())
+        gradient.setColorAt(0.0, QColor(5, 16, 32))
+        gradient.setColorAt(0.5, QColor(8, 28, 55))
+        gradient.setColorAt(1.0, QColor(3, 10, 22))
+        painter.fillRect(self.rect(), gradient)
+        painter.end()
+        super().paintEvent(event)
+
 
 class InstallThread(QThread):
     progress = pyqtSignal(int)
@@ -147,16 +162,10 @@ class InstallWizard(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # Background Container
-        self.bg_container = QWidget(self)
+        # Lightweight native background. The application itself retains
+        # WebEngine where needed, but the installer does not initialize Chromium.
+        self.bg_container = _InstallerBackground(self)
         self.bg_container.resize(self.size())
-        
-        # Web Engine View for Orb
-        self.web_view = QWebEngineView(self.bg_container)
-        self.web_view.resize(self.size())
-        
-        # Disable web view background to blend with transparent main window if needed
-        self.web_view.page().setBackgroundColor(Qt.GlobalColor.transparent)
 
         # Find assets folder
         if hasattr(sys, '_MEIPASS'):
@@ -164,9 +173,8 @@ class InstallWizard(QWidget):
         else:
             self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-        orb_path = os.path.join(self.base_dir, 'assets', 'web_background', 'index.html')
-        if os.path.exists(orb_path):
-            self.web_view.setUrl(QUrl.fromLocalFile(orb_path))
+        # The full Brahma application owns the holographic WebEngine UI.
+        # Keeping the installer native avoids loading Chromium just for a backdrop.
 
         # Overlay UI
         self.overlay = QWidget(self)
@@ -313,7 +321,6 @@ class InstallWizard(QWidget):
         
     def resizeEvent(self, event):
         self.bg_container.resize(self.size())
-        self.web_view.resize(self.size())
         self.overlay.resize(self.size())
         super().resizeEvent(event)
 
