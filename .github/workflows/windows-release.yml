@@ -146,6 +146,43 @@ jobs:
           }
           Write-Host "Packaged Brahma Evo supervisor + child smoke test passed with exit code 0."
 
+      - name: Collect packaged startup diagnostics
+        if: ${{ failure() }}
+        shell: pwsh
+        run: |
+          Write-Host "=== Packaged child log ==="
+          if (Test-Path "dist/BrahmaEvo/.brahma-ci-child.log") {
+            Get-Content "dist/BrahmaEvo/.brahma-ci-child.log" -Tail 250
+          } else {
+            Write-Host "No packaged child log found."
+          }
+
+          $localAppData = [Environment]::GetFolderPath("LocalApplicationData")
+          $logDir = Join-Path $localAppData "BrahmaAI\logs"
+          Write-Host "=== Brahma startup log ==="
+          $startup = Join-Path $logDir "startup.log"
+          if (Test-Path $startup) {
+            Get-Content $startup -Tail 300
+          } else {
+            Write-Host "No startup.log found at $startup"
+          }
+
+          Write-Host "=== Supervisor log ==="
+          $supervisorLog = Join-Path $logDir "supervisor.log"
+          if (Test-Path $supervisorLog) {
+            Get-Content $supervisorLog -Tail 300
+          } else {
+            Write-Host "No supervisor.log found at $supervisorLog"
+          }
+
+          Write-Host "=== Fatal crash log ==="
+          $fatal = Join-Path $logDir "FATAL_CRASH.log"
+          if (Test-Path $fatal) {
+            Get-Content $fatal -Tail 200
+          } else {
+            Write-Host "No FATAL_CRASH.log found."
+          }
+
       - name: Smoke-test packaged crash recovery mode
         shell: pwsh
         run: |
