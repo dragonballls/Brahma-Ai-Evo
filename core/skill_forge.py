@@ -27,15 +27,6 @@ logger = logging.getLogger("SkillForge")
 CONFIG_DIR = get_user_data_dir() / "config"
 
 
-def _get_gemini_api_key() -> str:
-    try:
-        from core.gemini_runtime import get_api_key
-        return get_api_key()
-    except Exception:
-        return (os.environ.get("GEMINI_API_KEY", "") or os.environ.get("GOOGLE_API_KEY", "")).strip()
-
-
-
 class SkillForge:
     """Autonomous synthesizer of new Brahma AI skills."""
 
@@ -354,8 +345,8 @@ Additional Context: {context_hints}
                 logger.warning(f"[Forge] Offline local synthesis failed: {exc}")
             return {"success": False, "error": "Offline local LLM synthesis is unavailable."}
 
-        # Prefer the unified OmniRoute-backed cloud path. The existing
-        # direct Gemini sequence remains as a compatibility fallback.
+        # Cloud synthesis is intentionally OmniRoute-only so model/provider
+        # routing stays centralized and cannot silently bypass the gateway.
         try:
             from llm_client import client as unified_client
             data = unified_client.intelligent_json(
@@ -370,34 +361,8 @@ Additional Context: {context_hints}
         except Exception as exc:
             logger.warning(f"[Forge] OmniRoute synthesis failed; using existing fallback: {exc}")
 
-        gemini_key = _get_gemini_api_key()
-        if gemini_key:
-            try:
-                from google import genai
-                g_client = genai.Client(api_key=gemini_key, http_options={"api_version": "v1beta"})
-                for model_name in ("gemini-2.5-flash-lite", "gemini-3.6-flash", "gemini-2.5-flash", "gemini-flash-latest"):
-                    try:
-                        resp = g_client.models.generate_content(
-                            model=model_name,
-                            contents=prompt,
-                            config={
-                                "temperature": 0.2,
-                                "system_instruction": system_instructions,
-                                "response_mime_type": "application/json"
-                            }
-                        )
-                        raw = getattr(resp, "text", "") or ""
-                        data = cls._parse_json_response(raw)
-                        if "manifest" in data and "code" in data:
-                            data["success"] = True
-                            return data
-                    except Exception as e:
-                        logger.warning(f"[Forge] Model {model_name} failed: {e}")
-                        continue
-            except Exception as exc:
-                logger.error(f"[Forge] Gemini client error: {exc}")
+        return {"success": False, "error": "LLM synthesis unavailable after OmniRoute routing."}
 
-        return {"success": False, "error": "LLM synthesis failed after OmniRoute and Gemini fallbacks."}
 
     @classmethod
     def _repair_code(cls, broken_code: str, error_msg: str, goal: str) -> Dict[str, Any]:
@@ -461,8 +426,8 @@ Critical Repair Instructions:
                 logger.warning(f"[Forge] Offline local repair failed: {exc}")
             return {"success": False, "error": "Offline local LLM repair is unavailable."}
 
-        # Prefer the unified OmniRoute-backed repair path. Existing Gemini
-        # repair remains unchanged as fallback.
+        # Cloud repair is intentionally OmniRoute-only so coding behavior
+        # uses the same gateway and routing policy as normal requests.
         try:
             from llm_client import client as unified_client
             data = unified_client.intelligent_json(
@@ -481,27 +446,5 @@ Critical Repair Instructions:
         except Exception as exc:
             logger.warning(f"[Forge] OmniRoute repair failed; using existing fallback: {exc}")
 
-        gemini_key = _get_gemini_api_key()
-        if gemini_key:
-            try:
-                from google import genai
-                g_client = genai.Client(api_key=gemini_key, http_options={"api_version": "v1beta"})
-                for model_name in ("gemini-2.5-flash-lite", "gemini-3.6-flash", "gemini-2.5-flash", "gemini-flash-latest"):
-                    try:
-                        resp = g_client.models.generate_content(
-                            model=model_name,
-                            contents=prompt,
-                            config={"temperature": 0.1, "response_mime_type": "application/json"}
-                        )
-                        raw = getattr(resp, "text", "") or ""
-                        data = cls._parse_json_response(raw)
-                        if "code" in data:
-                            data["success"] = True
-                            return data
-                    except Exception as e:
-                        logger.warning(f"[Forge] Repair model {model_name} failed: {e}")
-                        continue
-            except Exception as exc:
-                logger.error(f"[Forge] Repair Gemini error: {exc}")
+        return {"success": False, "error": "Repair unavailable after OmniRoute routing."}
 
-        return {"success": False, "error": "Repair attempt failed."}
