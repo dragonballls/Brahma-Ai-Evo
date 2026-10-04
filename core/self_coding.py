@@ -209,8 +209,11 @@ Implement the goal directly in the current repository and leave the working tree
     def _verify(self) -> None:
         commands = (
             (sys.executable, "-m", "compileall", "-q", "actions", "core", "features", "memory", "plugins", "smart_home", "main.py", "ui.py"),
+            (sys.executable, "tests/test_repository_integrity.py"),
             (sys.executable, "tests/test_low_power_guards.py"),
             (sys.executable, "tests/test_runtime_consistency.py"),
+            (sys.executable, "tests/test_conversation_delivery.py"),
+            (sys.executable, "tests/test_live_voice_contract.py"),
         )
         optional_tests = (
             self.repo / "tests" / "test_voice_guards.py",
