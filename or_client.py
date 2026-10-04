@@ -54,6 +54,9 @@ TEXT_MODELS: list[str] = [
     "google/gemma-3n-e2b-it:free",
     "liquid/lfm-2.5-1.2b-instruct:free",
     "liquid/lfm-2.5-1.2b-thinking:free",
+    # OpenRouter maintains this router alias and dynamically selects a current
+    # free model compatible with the requested capabilities.
+    "openrouter/free",
 ]
 
 VISION_MODELS: list[str] = [
@@ -65,6 +68,7 @@ VISION_MODELS: list[str] = [
     "google/gemma-3n-e2b-it:free",
     "meta-llama/llama-3.3-70b-instruct:free",
     "nvidia/nemotron-3-super-120b-a12b:free",
+    "openrouter/free",
 ]
 
 API_URL               = "https://openrouter.ai/api/v1/chat/completions"
