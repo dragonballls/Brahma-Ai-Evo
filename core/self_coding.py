@@ -131,23 +131,31 @@ class SelfCodingAgent:
 
     def _save(self, checkpoint: Checkpoint) -> None:
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        self._path(checkpoint.checkpoint_id).write_text(
-            json.dumps(
-                {
-                    "checkpoint_id": checkpoint.checkpoint_id,
-                    "branch": checkpoint.branch,
-                    "baseline": checkpoint.baseline,
-                    "base_branch": checkpoint.base_branch,
-                    "commits": list(checkpoint.commits),
-                    "created_at": checkpoint.created_at,
-                    "state": checkpoint.state,
-                    "promoted_sha": checkpoint.promoted_sha,
-                    "undo_commits": list(checkpoint.undo_commits),
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
+        target = self._path(checkpoint.checkpoint_id)
+        temp = target.with_suffix(target.suffix + ".tmp")
+        payload = json.dumps(
+            {
+                "checkpoint_id": checkpoint.checkpoint_id,
+                "branch": checkpoint.branch,
+                "baseline": checkpoint.baseline,
+                "base_branch": checkpoint.base_branch,
+                "commits": list(checkpoint.commits),
+                "created_at": checkpoint.created_at,
+                "state": checkpoint.state,
+                "promoted_sha": checkpoint.promoted_sha,
+                "undo_commits": list(checkpoint.undo_commits),
+            },
+            indent=2,
         )
+        try:
+            temp.write_text(payload, encoding="utf-8")
+            temp.replace(target)
+        except Exception:
+            try:
+                temp.unlink(missing_ok=True)
+            except Exception:
+                pass
+            raise
 
     def _load(self, checkpoint_id: str) -> Checkpoint:
         data = json.loads(self._path(checkpoint_id).read_text(encoding="utf-8"))
