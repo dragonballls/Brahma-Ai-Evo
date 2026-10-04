@@ -450,7 +450,22 @@ Output ONLY a strict JSON object with these exact keys:
 }}
 Do NOT include markdown fences outside the JSON. Return only the valid JSON object.
 """
-        # 1. Primary: Google Gemini (Native directly via google.genai)
+        # 1. Primary: OmniRoute-backed unified cloud client.
+        try:
+            from llm_client import client as unified_client
+            data = unified_client.chat_json(
+                prompt,
+                system="You are an expert Python auto-patching engineer. Return ONLY the requested JSON.",
+                model="auto",
+                max_tokens=3500,
+            )
+            if isinstance(data, dict) and "target_chunk" in data and "replacement_chunk" in data:
+                data["success"] = True
+                return data
+        except Exception as unified_err:
+            logger.warning("[AutoHeal] Unified cloud synthesis unavailable: %s", unified_err)
+
+        # 2. Compatibility fallback: direct Gemini.
         gemini_key = _get_gemini_api_key()
         if gemini_key:
             try:
@@ -479,7 +494,7 @@ Do NOT include markdown fences outside the JSON. Return only the valid JSON obje
             except Exception as g_err:
                 logger.warning(f"[AutoHeal] Gemini synthesis failed: {g_err}")
 
-        # 2. Fallback: Unified AI Client (llm_client.py)
+        # 3. Fallback: Unified AI Client (llm_client.py)
         try:
             from llm_client import client as unified_client
             resp_text = unified_client.chat(prompt, temperature=0.1)
@@ -494,7 +509,7 @@ Do NOT include markdown fences outside the JSON. Return only the valid JSON obje
         except Exception as u_err:
             logger.warning(f"[AutoHeal] Unified AI client fallback failed: {u_err}")
 
-        # 3. Fallback: OpenRouter client
+        # 4. Fallback: OpenRouter client
         try:
             import or_client
             resp_text = or_client.chat(prompt, system="You are an expert Python auto-patching engineer. Return strict JSON.")
