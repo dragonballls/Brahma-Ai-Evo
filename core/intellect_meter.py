@@ -110,9 +110,13 @@ def _score_value(row: dict[str, Any]) -> float | None:
     return value
 
 
-def _latest_by_dimension() -> dict[str, dict[str, Any]]:
+def _latest_by_dimension(system: str = "brahma") -> dict[str, dict[str, Any]]:
     latest: dict[str, dict[str, Any]] = {}
+    target = str(system or "").strip().casefold()
     for row in _benchmarks():
+        row_system = str(row.get("system", "brahma")).strip().casefold()
+        if row_system != target:
+            continue
         dimension = str(row.get("dimension", "")).strip().casefold()
         score = _score_value(row)
         if dimension not in DIMENSION_WEIGHTS or score is None:
@@ -129,7 +133,7 @@ def _latest_by_dimension() -> dict[str, dict[str, Any]]:
 
 
 def snapshot() -> IntellectSnapshot:
-    latest = _latest_by_dimension()
+    latest = _latest_by_dimension("brahma")
     measured = tuple(sorted(latest))
     total_weight = sum(DIMENSION_WEIGHTS.values())
     measured_weight = sum(DIMENSION_WEIGHTS[d] for d in measured)
@@ -165,9 +169,18 @@ def snapshot() -> IntellectSnapshot:
         ratios: list[float] = []
         for row in astra_rows:
             dim = str(row.get("dimension", "")).strip().casefold()
-            brahma = latest.get(dim)
+            suite = str(row.get("suite", "")).strip().casefold()
+            candidates = [
+                item for item in _benchmarks()
+                if str(item.get("system", "")).strip().casefold() == "brahma"
+                and str(item.get("dimension", "")).strip().casefold() == dim
+                and str(item.get("suite", "")).strip().casefold() == suite
+            ]
+            brahma_score = _score_value(sorted(
+                candidates,
+                key=lambda item: str(item.get("timestamp", "")),
+            )[-1]) if candidates else None
             astra_score = _score_value(row)
-            brahma_score = _score_value(brahma or {})
             if astra_score is not None and brahma_score is not None and astra_score > 0:
                 ratios.append((brahma_score / astra_score) * 100.0)
         if ratios:
