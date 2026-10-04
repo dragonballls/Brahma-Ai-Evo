@@ -45,5 +45,6 @@ def test_compare_same_cases():
         {"suite_id": SUITE_ID, "rows": rows_a},
         {"suite_id": SUITE_ID, "rows": rows_b},
     )
-    assert result["comparison"] == "brahma-beats-astra"
+    assert result["comparison"] == "not-proven"
     assert result["mean_delta"] == 10
+    assert result["robust_win"] is False
