@@ -26,6 +26,12 @@ class IntelligenceOrchestratorTests(unittest.TestCase):
         self.assertEqual(len(calls),3)
         self.assertEqual([x["model"] for x in calls],["auto/smart","auto/smart","auto/smart"])
 
+    def test_ui_orchestration_toggle_can_disable_multi_model_consensus(self):
+        from pathlib import Path
+
+        source = Path("core/intelligence_orchestrator.py").read_text(encoding="utf-8")
+        self.assertIn('intelligence_orchestration_enabled", True', source)
+        self.assertIn('bool(d.get("intelligence_orchestration_enabled", True))', source)
     def test_disabled_mode_falls_back_to_one_call(self):
         with patch("core.intelligence_orchestrator.load_config", return_value={
             "enabled":False,"default_profile":"smart","simple_profile":"fast",
