@@ -5770,6 +5770,18 @@ class BrahmaLive:
                         p.setdefault("action", parts[2])
                 r = await loop.run_in_executor(None, lambda: google_workspace(parameters=p, player=self.ui, speak=self.speak))
                 result = r or "Google Workspace task completed."
+            elif name == "smart_organizer":
+                from actions.desktop_organizer_mcp import smart_organizer
+                r = await loop.run_in_executor(
+                    None,
+                    lambda: smart_organizer(
+                        parameters=args,
+                        player=self.ui,
+                        speak=self.speak,
+                    ),
+                )
+                result = r or "Desktop organization completed."
+
             elif name == "desktop_environment":
                 controller = self._desktop_controller or getattr(self.ui, "_desktop_controller", None)
                 action = (args.get("action") or "status").strip().lower()
