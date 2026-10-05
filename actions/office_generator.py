@@ -21,18 +21,7 @@ BASE_DIR = get_base_dir()
 
 
 def _call_gemini_json(prompt: str, system_instruction: str) -> Optional[dict]:
-    """Generate structured output through the canonical Gemini runtime."""
-    try:
-        from core.gemini_runtime import generate_json
-        return generate_json(
-            prompt,
-            system_instruction=system_instruction,
-            model_name="gemini-3.8-flash",
-            max_output_tokens=8192,
-        )
-    except Exception as exc:
-        logger.warning(f"[OfficeGen] Canonical Gemini JSON generation failed: {exc}")
-
+    """Generate structured office content through the canonical provider route."""
     try:
         from llm_client import client as ai_client
         return ai_client.chat_json(
@@ -42,8 +31,9 @@ def _call_gemini_json(prompt: str, system_instruction: str) -> Optional[dict]:
             max_tokens=8192,
         )
     except Exception as exc:
-        logger.warning(f"[OfficeGen] Unified AI JSON fallback failed: {exc}")
+        logger.warning(f"[OfficeGen] Unified AI JSON generation failed: {exc}")
     return None
+
 
 
 def generate_presentation_from_prompt(user_prompt: str, player=None, speak: Optional[Callable[[str], None]] = None) -> str:
