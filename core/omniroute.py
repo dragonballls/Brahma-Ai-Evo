@@ -134,12 +134,18 @@ class OmniRouteGateway:
         return data
 
     def configure_provider(self, provider: str, api_key: str) -> dict[str, object]:
-        if not self.provisioner.ensure_running(wait_seconds=15.0):
-            raise RuntimeError("OmniRoute is not ready; provider configuration was not applied.")
+        # Serialize lifecycle-changing work with startup/stop so provider
+        # configuration can never race a gateway process transition.
+        with self._lifecycle_lock:
+            if not self.provisioner.ensure_running(wait_seconds=15.0):
+                raise RuntimeError("OmniRoute is not ready; provider configuration was not applied.")
+            current_base_url = self.provisioner.base_url.rstrip("/")
+
         with self._credentials_lock:
             result = self.provisioner.configure_provider(provider, api_key)
+
         with self._lock:
-            self.base_url = self.provisioner.base_url.rstrip("/")
+            self.base_url = current_base_url
             self._credentials_synced = False
             self._ready = True
             self._last_check_at = time.monotonic()
@@ -168,6 +174,14 @@ class OmniRouteGateway:
 
     def test_provider(self, provider: str) -> dict[str, object]:
         import subprocess
+
+        if not self.ensure_ready():
+            return {
+                "ok": False,
+                "provider": str(provider).strip().lower(),
+                "tested": False,
+                "message": "OmniRoute is not ready",
+            }
 
         command = self.provisioner.command_argv()
         result = subprocess.run(
