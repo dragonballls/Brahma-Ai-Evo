@@ -80,6 +80,7 @@ RETRY_DELAY           = 2    # seconds between retries
 RATE_LIMIT_COOLDOWN   = 60   # seconds before retrying a rate-limited model
 
 _rate_limited: dict[str, float] = {}
+_failed_until: dict[str, float] = {}
 
 class OpenRouterClient:
 
@@ -597,7 +598,7 @@ class OpenRouterClient:
         for round_index in range(max(1, int(max_rounds))):
             response = {}
             for candidate in candidates:
-                if self._is_rate_limited(candidate):
+                if self._is_rate_limited(candidate) or self._is_temporarily_failed(candidate):
                     continue
                 response = self._call_tool_capable(
                     candidate,
