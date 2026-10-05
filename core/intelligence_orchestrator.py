@@ -394,22 +394,24 @@ class IntelligenceOrchestrator:
         pc=self._cfg(profile,c)
         panel=_ensemble_models(c,pc,profile) if profile != "fast" else []
         if panel:
-            futures={}
             roles=_ensemble_roles(profile,len(panel))
-            for index,((provider,model),role) in enumerate(zip(panel,roles),1):
-                futures[_ENSEMBLE_EXECUTOR.submit(
-                    cloud_client.chat,
-                    f"{prompt}\n\nSpecialist role: {role}.\nReturn ONLY one valid JSON object. Solve independently and do not discuss other models.",
-                    system=system+" You are an independent structured-reasoning specialist.",
-                    model=model,max_tokens=max_tokens,temperature=float(pc.get("temperature",0.2)),
-                )]=(index,provider,model)
-            drafts=[]
-            for future in as_completed(futures):
-                try:
-                    value=str(future.result() or "").strip()
-                    if value: drafts.append((futures[future],value))
-                except Exception as exc:
-                    log.debug("structured ensemble member failed: %s",exc)
+            workers=max(1, min(len(panel), int(c.get("parallel_workers",4))))
+            futures={}
+            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="BrahmaStructuredEnsemble") as executor:
+                for index,((provider,model),role) in enumerate(zip(panel,roles),1):
+                    futures[executor.submit(
+                        cloud_client.chat,
+                        prompt=f"{prompt}\n\nSpecialist role: {role}.\nReturn ONLY one valid JSON object. Solve independently and do not discuss other models.",
+                        system=system+" You are an independent structured-reasoning specialist.",
+                        model=model,max_tokens=max_tokens,temperature=float(pc.get("temperature",0.2)),
+                    )]=(index,provider,model)
+                drafts=[]
+                for future in as_completed(futures):
+                    try:
+                        value=str(future.result() or "").strip()
+                        if value: drafts.append((futures[future],value))
+                    except Exception as exc:
+                        log.debug("structured ensemble member failed: %s",exc)
             drafts.sort(key=lambda item:item[0][0])
             if drafts:
                 evidence="\n\n".join(f"=== Draft {i} ===\n{trim(value,10000)}" for (i,_provider,_model),value in drafts)
