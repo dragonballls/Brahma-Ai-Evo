@@ -264,6 +264,23 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertLess(init_pos, start_use_pos)
         self.assertEqual(impl.count("    evolution_engine = None"), 1)
 
+    def test_omniroute_uses_floating_window_without_user_port_ui(self):
+        source = self.read("ui.py")
+        self.assertIn("class OmniRouteFloatingWindow(QDialog):", source)
+        self.assertIn('self.setMinimumSize(640, 480)', source)
+        self.assertIn('self.resize(960, 700)', source)
+        self.assertIn('Qt.WindowType.Window', source)
+        self.assertIn('omniroute_window_width', source)
+        self.assertNotIn("class OmniRouteEmbeddedPage(QWidget):", source)
+        self.assertNotIn("Open OmniRoute Dashboard Inside Brahma", source)
+        self.assertIn("Open OmniRoute", source)
+
+    def test_omniroute_can_select_free_loopback_port_automatically(self):
+        source = self.read("core/omniroute_setup.py")
+        self.assertIn("def _select_loopback_port(self) -> None:", source)
+        self.assertIn("probe.bind((\"127.0.0.1\", 0))", source)
+        self.assertIn("self.base_url = urllib.parse.urlunparse", source)
+
     def test_boot_sentry_runs_after_singleton_import_boundary(self):
         main = self.read("main.py")
         self.assertNotIn("import core.boot_sentry", main)
