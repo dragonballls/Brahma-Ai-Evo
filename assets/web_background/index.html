@@ -103,13 +103,13 @@
 
     function targetFrameDelayMs() {
       if (document.visibilityState !== "visible") return 1000;
-      let fps = 8;
-      if (currentState === "LISTENING") fps = 15;
-      else if (currentState === "SPEAKING") fps = 24;
-      else if (currentState === "THINKING") fps = 30;
-      else if (currentState === "EXECUTING" || currentState === "WORKING") fps = 24;
-      else if (currentState === "SCANNING") fps = 18;
-      if (!document.hasFocus() && (currentState === "IDLE" || currentState === "ONLINE")) fps = 2;
+      let fps = 6;
+      if (currentState === "LISTENING") fps = 12;
+      else if (currentState === "SPEAKING") fps = 20;
+      else if (currentState === "THINKING") fps = 24;
+      else if (currentState === "EXECUTING" || currentState === "WORKING") fps = 20;
+      else if (currentState === "SCANNING") fps = 14;
+      if (!document.hasFocus() && (currentState === "IDLE" || currentState === "ONLINE")) fps = 1;
       if (isCompactMode) fps = Math.min(fps, 10);
       return 1000 / fps;
     }
@@ -499,7 +499,8 @@
           ringIdx: ringIdx,
           angle: t,
           baseScale: scale,
-          pulseSpeed: 1.5 + Math.random() * 2.5
+          pulseSpeed: 1.5 + Math.random() * 2.5,
+          position: new THREE.Vector3()
         };
       }
     }
@@ -566,9 +567,10 @@
     }
 
     function updateWaveManifold(time, effectiveAmp) {
-      const samples = 140;
+      const samples = renderQuality >= 0.95 ? 140 : renderQuality >= 0.75 ? 110 : 84;
 
       standingWaveLines.forEach(item => {
+        if (!item.line.visible) return;
         const u = item.u;
         const phi = Math.asin(u);
         const cosPhi = Math.cos(phi);
@@ -697,7 +699,8 @@
             const lx = ring.rx * Math.cos(uData.angle);
             const ly = ring.ry * Math.sin(uData.angle);
 
-            const pos = new THREE.Vector3(lx, ly, 0);
+            const pos = uData.position;
+            pos.set(lx, ly, 0);
             pos.applyEuler(ring.mesh.rotation);
             sprite.position.copy(pos);
 
@@ -736,6 +739,7 @@
         controls.update();
         composer.render();
         lastRenderMs = now;
+        adaptRenderQuality(performance.now() - now);
       }
       renderTimer = window.setTimeout(renderLoop, Math.max(20, frameDelay));
     }
@@ -816,11 +820,14 @@
       }
     };
 
-    let renderQuality = 1.0;
+    let renderQuality = 0.82;
+    let frameTimeEma = 0.0;
+    let lastQualityAdjustMs = 0.0;
+    let qualityStableSinceMs = 0.0;
 
     function applyRenderQuality() {
       if (!renderer) return;
-      const dpr = Math.min(window.devicePixelRatio || 1, 1.25);
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.0);
       renderer.setPixelRatio(Math.max(0.5, dpr * renderQuality));
       if (composer && bloomPass) {
         const w = Math.max(1, Math.floor(window.innerWidth * 0.65 * renderQuality));
@@ -836,9 +843,38 @@
       }
       if (standingWaveLines && standingWaveLines.length) {
         const stride = renderQuality >= 0.95 ? 1 : renderQuality >= 0.75 ? 2 : 3;
+        const samples = renderQuality >= 0.95 ? 140 : renderQuality >= 0.75 ? 110 : 84;
         standingWaveLines.forEach((entry, index) => {
           entry.line.visible = index % stride === 0;
+          entry.line.geometry.setDrawRange(0, samples);
         });
+      }
+    }
+
+    function adaptRenderQuality(frameCostMs) {
+      if (!Number.isFinite(frameCostMs)) return;
+      frameTimeEma = frameTimeEma === 0.0 ? frameCostMs : (frameTimeEma * 0.85) + (frameCostMs * 0.15);
+      const now = performance.now();
+      if (now - lastQualityAdjustMs < 1500) return;
+
+      if (frameTimeEma > 42.0 && renderQuality > 0.65) {
+        renderQuality = Math.max(0.65, renderQuality - 0.07);
+        lastQualityAdjustMs = now;
+        qualityStableSinceMs = now;
+        applyRenderQuality();
+        return;
+      }
+
+      if (frameTimeEma < 20.0) {
+        if (qualityStableSinceMs === 0.0) qualityStableSinceMs = now;
+        if (now - qualityStableSinceMs >= 5000 && renderQuality < 1.0) {
+          renderQuality = Math.min(1.0, renderQuality + 0.05);
+          lastQualityAdjustMs = now;
+          qualityStableSinceMs = now;
+          applyRenderQuality();
+        }
+      } else {
+        qualityStableSinceMs = now;
       }
     }
 
