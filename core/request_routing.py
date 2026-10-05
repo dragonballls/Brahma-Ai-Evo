@@ -24,7 +24,7 @@ def _looks_like_action_request(text: str) -> bool:
         "schedule ", "remind ", "call ", "message ", "email ", "compose ",
         "write ", "edit ", "fix ", "build ", "implement ", "update ", "connect ",
         "disconnect ", "take a screenshot", "look at my screen",
-        "help me with ", "show me ", "what can you do with ", "use ",
+        "help me with ", "show ", "what can you do with ", "use ",
     )
     if any(low.startswith(phrase) for phrase in action_phrases):
         return True
