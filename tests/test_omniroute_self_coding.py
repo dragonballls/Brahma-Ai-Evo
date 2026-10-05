@@ -107,6 +107,39 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
         self.assertNotIn("self._omniroute_page = OmniRouteEmbeddedPage()", source)
         self.assertNotIn("QDialog(self.window())", source)
 
+    def test_ui_provider_testing_uses_canonical_gateway_lifecycle(self):
+        source = (ROOT / "ui.py").read_text(encoding="utf-8")
+        self.assertIn("gateway().configure_provider(provider, key)", source)
+        self.assertNotIn("gateway().provisioner.configure_provider(provider, key)", source)
+
+    def test_omniroute_lifecycle_lock_keeps_slow_startup_off_state_lock(self):
+        source = (ROOT / "core" / "omniroute.py").read_text(encoding="utf-8")
+        self.assertIn("self._lifecycle_lock = threading.Lock()", source)
+        self.assertIn("with self._lifecycle_lock:", source)
+        self.assertIn("self.provisioner.probe_only()", source)
+        self.assertIn("self.provisioner.ensure_running(wait_seconds=15.0)", source)
+        self.assertIn("with self._lock:", source)
+
+    def test_ensemble_concurrency_honors_parallel_worker_setting(self):
+        source = (ROOT / "core" / "intelligence_orchestrator.py").read_text(encoding="utf-8")
+        self.assertNotIn("_ENSEMBLE_EXECUTOR", source)
+        self.assertIn("int(c.get(\"parallel_workers\",4))", source)
+        self.assertIn('ThreadPoolExecutor(', source)
+        self.assertIn('thread_name_prefix="BrahmaEnsemble"', source)
+        self.assertIn('thread_name_prefix="BrahmaEnsembleCritic"', source)
+
+    def test_auto_heal_backup_names_are_collision_resistant(self):
+        source = (ROOT / "actions" / "auto_heal_engine.py").read_text(encoding="utf-8")
+        self.assertIn("time.time_ns()", source)
+        self.assertIn("uuid.uuid4().hex", source)
+        self.assertIn("backup_name = f\"{file_path.stem}.bak_{stamp}{file_path.suffix}\"", source)
+
+    def test_self_coding_subprocesses_follow_hidden_console_policy(self):
+        source = (ROOT / "core" / "self_coding.py").read_text(encoding="utf-8")
+        self.assertIn("def _hidden_creationflags", source)
+        self.assertIn("creationflags=self._hidden_creationflags()", source)
+        self.assertIn("stdin=subprocess.DEVNULL", source)
+
     def test_omniroute_is_local_and_lazy(self):
         from core.omniroute import OmniRouteGateway
 
