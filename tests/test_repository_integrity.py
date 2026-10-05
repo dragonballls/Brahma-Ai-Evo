@@ -380,6 +380,20 @@ class RepositoryIntegrityTests(unittest.TestCase):
         self.assertIn("if sync_needed:", source)
 
 
+    def test_android_compose_icon_dependency_matches_usage(self):
+        source = self.read("brahma-connect-android/app/build.gradle.kts")
+        self.assertIn('implementation("androidx.compose.material:material-icons-core")', source)
+        for relative in (
+            "brahma-connect-android/app/src/main/java/com/brahma/connect/ui/BrahmaConnectApp.kt",
+            "brahma-connect-android/app/src/main/java/com/brahma/connect/ui/ChatScreen.kt",
+        ):
+            kotlin = self.read(relative)
+            if "androidx.compose.material.icons." in kotlin:
+                self.assertIn(
+                    'implementation("androidx.compose.material:material-icons-core")',
+                    source,
+                )
+
     def test_source_launcher_routes_through_repair_bootstrap(self):
         source = self.read("start_brahma.vbs")
         bootstrap_pos = source.indexOf("ElseIf fso.FileExists(bootstrap) And fso.FileExists(mainPy) Then")
