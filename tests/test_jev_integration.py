@@ -18,9 +18,7 @@ class JevIntegrationTests(unittest.TestCase):
     def test_memory_gate_falls_back_when_jev_unavailable(self):
         from core.jev_memory import should_store
         with patch("core.jev_memory.jev.evaluate", side_effect=Exception("offline")):
-            # Caller remains responsible for fallback when the optional controller fails.
-            with self.assertRaises(Exception):
-                should_store("temporary status", "test")
+            self.assertIsNone(should_store("temporary status", "test"))
 
     def test_browser_adapter_is_nonfatal_without_key(self):
         from core.jev_browser import JevBrowserUnavailable, run_goal
