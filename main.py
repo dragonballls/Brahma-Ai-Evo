@@ -3629,7 +3629,7 @@ class BrahmaLive:
         # probes synchronously on the UI command callback; dispatch them and
         # continue to the normal AI fallback if a router declines the command.
         if source != "instagram":
-            normalized_route = re.sub(r"\\s+", " ", re.sub(r"[^a-z0-9\\s%]", " ", text.lower())).strip()
+            normalized_route = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9\s%]", " ", text.lower())).strip()
             mobile_hint = any(token in normalized_route for token in (
                 "phone", "mobile", "android", "tablet", "brahma connect",
                 "my phone", "my mobile", "my tablet", "my android",
