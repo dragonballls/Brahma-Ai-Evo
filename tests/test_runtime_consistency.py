@@ -619,6 +619,7 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("bootstrap = root &", source)
         self.assertIn("ElseIf fso.FileExists(bootstrap) And fso.FileExists(mainPy) Then", source)
         self.assertNotIn('shell.Run "python.exe ', source)
+        self.assertIn("-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File", source)
         launch_block = source.split("If fso.FileExists(venvPython)", 1)[1].split("ElseIf", 1)[0]
         self.assertIn("venvPython", launch_block)
 
