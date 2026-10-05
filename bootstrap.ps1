@@ -212,12 +212,12 @@ if ($NeedsRepair) {
     if (-not $IsAdministrator) {
         Write-Host "Using the repository-local virtual environment; no elevation is required." -ForegroundColor DarkGray
     }
-    & $VenvPython -m pip install -r requirements.txt
+    & $VenvPython -m pip install --prefer-binary -r requirements.txt
     if ($LASTEXITCODE -ne 0) {
         throw "Dependency installation failed."
     }
     try {
-        & $VenvPython -m playwright install
+        & $VenvPython -m playwright install chromium
     } catch {
         Write-Host "Playwright browser installation skipped: $($_.Exception.Message)" -ForegroundColor Yellow
     }
