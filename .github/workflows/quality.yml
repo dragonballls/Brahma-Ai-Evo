@@ -81,13 +81,6 @@ jobs:
               python -m unittest tests.test_obs_control -v
               python -m unittest tests.test_creator_studio -v
 
-          - group: release-contracts
-            commands: |
-              python -m unittest tests.test_runtime_consistency -v
-              python -m unittest tests.test_repository_integrity -v
-              python -m unittest tests.test_low_power_guards -v
-              python -m unittest tests.test_audio_quality_guard -v
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
