@@ -340,6 +340,13 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
         self.assertIn("Never trade away correctness", policy)
 
 
+    def test_omniroute_provider_operations_are_lifecycle_safe(self):
+        source = Path(ROOT / "core" / "omniroute.py").read_text(encoding="utf-8")
+        self.assertIn("with self._lifecycle_lock:", source)
+        self.assertIn("current_base_url = self.provisioner.base_url.rstrip", source)
+        self.assertIn("if not self.ensure_ready():", source)
+        self.assertIn('"message": "OmniRoute is not ready"', source)
+
     def test_openrouter_failed_model_backoff_contract(self):
         source = Path(ROOT / "or_client.py").read_text(encoding="utf-8")
         self.assertIn("FAILED_MODEL_COOLDOWN = 30", source)
