@@ -186,12 +186,14 @@ class OmniRouteGateway:
         command = self.provisioner.command_argv()
         result = subprocess.run(
             [*command, "--non-interactive", "providers", "test", str(provider).strip().lower()],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
             timeout=60,
             env=self.provisioner.environment(),
+            creationflags=int(getattr(subprocess, "CREATE_NO_WINDOW", 0)),
             check=False,
         )
         return {
