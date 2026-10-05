@@ -3,6 +3,7 @@
 import subprocess
 import os
 import sys
+import uuid
 from datetime import datetime
 
 
@@ -37,7 +38,7 @@ def reminder(
         if target_dt <= datetime.now():
             return "That time is already in the past."
 
-        task_name    = f"MARKReminder_{target_dt.strftime('%Y%m%d_%H%M')}"
+        task_name    = f"MARKReminder_{target_dt.strftime('%Y%m%d_%H%M')}_{uuid.uuid4().hex[:8]}"
         safe_message = message.replace('"', '').replace("'", "").strip()[:200]
 
         python_exe = sys.executable
@@ -127,7 +128,10 @@ except Exception:
 
         result = subprocess.run(
             f'schtasks /Create /TN "{task_name}" /XML "{xml_path}" /F',
-            shell=True, capture_output=True, text=True
+            shell=True,
+            capture_output=True,
+            text=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
 
         try:
