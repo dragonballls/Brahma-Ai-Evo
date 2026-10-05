@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 from core.user_paths import get_user_data_dir
 
 # Packaged-smoke GUI tracing pinpoints slow/hung constructor stages without
