@@ -380,6 +380,15 @@ class RepositoryIntegrityTests(unittest.TestCase):
         self.assertIn("if sync_needed:", source)
 
 
+    def test_source_launcher_routes_through_repair_bootstrap(self):
+        source = self.read("start_brahma.vbs")
+        bootstrap_pos = source.indexOf("ElseIf fso.FileExists(bootstrap) And fso.FileExists(mainPy) Then")
+        fallback_pos = source.indexOf("ElseIf fso.FileExists(venvPython)", bootstrap_pos)
+        self.assertGreaterEqual(bootstrap_pos, 0)
+        self.assertGreater(fallback_pos, bootstrap_pos)
+        self.assertIn("-WindowStyle Hidden -File", source)
+        self.assertIn('shell.Run Chr(34) & powershell & Chr(34)', source[bootstrap_pos:fallback_pos])
+
     def test_ui_launcher_uses_active_interpreter_not_machine_specific_path(self):
         source = self.read("ui.py")
         self.assertNotIn(r"C:\\Users\\ravit\\AppData\\Local\\Programs\\Python\\Python313", source)
