@@ -340,5 +340,39 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
         self.assertIn("Never trade away correctness", policy)
 
 
+    def test_openrouter_failed_model_backoff_contract(self):
+        source = Path(ROOT / "or_client.py").read_text(encoding="utf-8")
+        self.assertIn("FAILED_MODEL_COOLDOWN = 30", source)
+        self.assertIn("_failed_until: dict[str, float] = {}", source)
+        self.assertIn("def _is_temporarily_failed", source)
+        self.assertIn("def _mark_temporarily_failed", source)
+        self.assertIn("if self._is_rate_limited(model) or self._is_temporarily_failed(model):", source)
+        self.assertIn("if self._is_rate_limited(candidate) or self._is_temporarily_failed(candidate):", source)
+
+    def test_openrouter_forbidden_model_skips_instead_of_aborting(self):
+        from unittest.mock import patch
+        import or_client
+
+        client = or_client.OpenRouterClient()
+        client.api_key = "test-key"
+        with patch.object(client, "_refresh_credentials"), patch.object(
+            or_client.requests, "post", return_value=type("Resp", (), {"status_code": 403})()
+        ):
+            result = client._call(
+                "example/forbidden",
+                [{"role": "user", "content": "ping"}],
+                max_tokens=32,
+                temperature=0.1,
+            )
+        self.assertIsNone(result)
+        self.assertTrue(client._is_temporarily_failed("example/forbidden"))
+
+    def test_structured_ensemble_has_no_stale_global_executor(self):
+        source = Path(ROOT / "core" / "intelligence_orchestrator.py").read_text(encoding="utf-8")
+        self.assertNotIn("_ENSEMBLE_EXECUTOR", source)
+        self.assertIn("BrahmaStructuredEnsemble", source)
+        self.assertIn('int(c.get("parallel_workers",4))', source)
+
+
 if __name__ == "__main__":
     unittest.main()
