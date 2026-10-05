@@ -39,6 +39,7 @@ jobs:
           tests.test_omniroute_self_coding.OmniRouteSelfCodingTests.test_omniroute_release_contract
           tests.test_omniroute_self_coding.OmniRouteSelfCodingTests.test_omniroute_is_local_and_lazy
           tests.test_omniroute_self_coding.OmniRouteSelfCodingTests.test_omniroute_lifecycle_lock_keeps_slow_startup_off_state_lock
+          tests.test_omniroute_self_coding.OmniRouteSelfCodingTests.test_omniroute_provider_operations_are_lifecycle_safe
           tests.test_omniroute_self_coding.OmniRouteSelfCodingTests.test_ensemble_concurrency_honors_parallel_worker_setting
           tests.test_omniroute_self_coding.OmniRouteSelfCodingTests.test_openrouter_failed_model_backoff_contract
           tests.test_omniroute_self_coding.OmniRouteSelfCodingTests.test_openrouter_forbidden_model_skips_instead_of_aborting
