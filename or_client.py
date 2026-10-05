@@ -78,6 +78,7 @@ REQUEST_TIMEOUT       = 60   # seconds per request
 MAX_RETRIES_PER_MODEL = 2    # attempts before moving to next model
 RETRY_DELAY           = 2    # seconds between retries
 RATE_LIMIT_COOLDOWN   = 60   # seconds before retrying a rate-limited model
+FAILED_MODEL_COOLDOWN = 30   # seconds before retrying a transiently unavailable model
 
 _rate_limited: dict[str, float] = {}
 _failed_until: dict[str, float] = {}
