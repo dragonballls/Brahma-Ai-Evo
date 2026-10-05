@@ -2906,26 +2906,31 @@ class BrahmaLive:
         lower_exact = re.sub(r"\s+", " ", text.lower()).strip()
 
         if lower_exact in {"omniroute status", "check omniroute", "check omniroute status"}:
-            from core.omniroute import gateway
-            status = gateway().status()
-            self.ui.write_log(
-                f"OmniRoute: {'ready' if status.get('available') else 'unavailable'} "
-                f"v{status.get('version') or '?'} @ {status.get('base_url')}"
-            )
-            self.speak(
-                "OmniRoute is ready." if status.get("available")
-                else "OmniRoute is not ready."
-            )
-            self.ui.set_state("LISTENING")
+            def _omni_status():
+                try:
+                    from core.omniroute import gateway
+                    status = gateway().status()
+                    self.ui.write_log(
+                        f"OmniRoute: {'ready' if status.get('available') else 'unavailable'} "
+                        f"v{status.get('version') or '?'} @ {status.get('base_url')}"
+                    )
+                    self.speak(
+                        "OmniRoute is ready." if status.get("available")
+                        else "OmniRoute is not ready."
+                    )
+                except Exception as exc:
+                    self.ui.write_log(f"ERR: OmniRoute status failed: {exc}")
+                    self.speak("I could not read OmniRoute status.")
+                finally:
+                    self.ui.set_state("LISTENING")
+            threading.Thread(target=_omni_status, daemon=True, name="omniroute-status").start()
             return
 
         if lower_exact in {"sync omniroute keys", "sync omniroute api keys", "sync omniroute providers"}:
             def _sync_omni():
                 try:
                     from core.omniroute import gateway
-                    result = gateway().provisioner.sync_existing_provider_keys(
-                        API_CONFIG_PATH
-                    )
+                    result = gateway().sync_credentials()
                     self.ui.write_log(f"[OmniRoute] Provider sync: {result}")
                     self.speak(
                         f"OmniRoute provider sync finished. "
