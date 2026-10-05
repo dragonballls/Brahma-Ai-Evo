@@ -51,10 +51,12 @@ class NativeTools:
             res = subprocess.run(
                 shell_cmd,
                 cwd=str(self.workspace_dir),
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
-                shell=not is_win
+                shell=not is_win,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             stdout = res.stdout.strip()
             stderr = res.stderr.strip()
