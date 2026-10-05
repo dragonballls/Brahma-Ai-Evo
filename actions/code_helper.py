@@ -463,19 +463,14 @@ def _screen_debug_action(description, file_path, player, speak=None) -> str:
             print(f"[Code] ⚠️ Could not read file: {err}")
 
     try:
-        from google import genai
-        from google.genai import types
+        from llm_client import client as unified_client
 
-        client = genai.Client(api_key=_get_api_key())
-
-        image_bytes  = screenshot_path.read_bytes()
         image_base64 = _image_to_base64(screenshot_path)
-
         user_question = description or "What error or problem do you see on the screen? How can it be fixed?"
 
         context = ""
         if file_content:
-            context = f"\n\nAdditionally, here is the related file content:\n```\n{file_content[:4000]}\n```"
+            context = f"\n\nAdditionally, here is the related file content:\n{file_content[:4000]}"
 
         analysis_prompt = f"""You are an expert programmer and debugger analyzing a screenshot.
 
@@ -485,20 +480,18 @@ Please:
 1. Identify any errors, exceptions, or problems visible on the screen
 2. Explain what is causing the problem in simple terms
 3. Provide a concrete fix or solution
-4. If there's code visible, show the corrected version
+4. If there is code visible, show the corrected version
 
 Be specific and actionable. If you see an error message, quote it exactly."""
 
-        contents = [
-            types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
-            analysis_prompt,
-        ]
-
-        response = client.models.generate_content(
-            model="gemini-flash-latest",
-            contents=contents,
+        response = unified_client.vision(
+            prompt=analysis_prompt,
+            image_b64=image_base64,
+            mime="image/png",
+            system="You are a precise screenshot debugging assistant.",
+            model="auto",
+            max_tokens=2048,
         )
-
         analysis = response.text.strip()
         print(f"[Code] ✅ Screen analysis complete")
 
