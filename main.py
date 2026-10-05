@@ -7171,6 +7171,8 @@ def _main_impl():
     _ensure_desktop_shortcut()
     ui = BrahmaUI(str(BASE_DIR / "assets" / "Brahma_Lite_Logo.png"), show_immediately=True)
 
+    # Initialize the evolution controller before any startup path can reference it.
+    # Construction is lightweight; network/LLM research remains deferred to its worker.
     # Optional desktop environment: initialized separately so a failure can never
     # prevent the normal Brahma UI from starting.
     desktop_controller = None
