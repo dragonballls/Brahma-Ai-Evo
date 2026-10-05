@@ -212,14 +212,15 @@ class IntelligenceOrchestrator:
         if panel:
             ctx=trim(context,int(c.get("max_context_chars",14000)))
             roles=_ensemble_roles(p,len(panel))
-            futures={}
             ensemble_workers = max(
                 1,
                 min(
                     len(panel),
-                    int(c.get("parallel_workers", 4)),
+                    int(c.get("parallel_workers",4)),
                 ),
             )
+            specs = {}
+            for index,((provider,model),role) in enumerate(zip(panel,roles),1):
                 expert_system=(
                     system+
                     "\n\nYou are one independent member of Brahma Evo's cross-provider reasoning panel. "
@@ -231,7 +232,7 @@ class IntelligenceOrchestrator:
                     f"Original request:\n{prompt}\n\nContext:\n{ctx or '[none]'}\n\n"
                     "Produce your best complete analysis/answer independently. Do not discuss the panel."
                 )
-                futures[(index,provider,model)] = (
+                specs[(index,provider,model)] = (
                     expert_prompt,
                     expert_system,
                     model,
@@ -239,6 +240,7 @@ class IntelligenceOrchestrator:
                     float(pc.get("temperature",0.35)),
                     history,
                 )
+
             panel_results=[]
             with ThreadPoolExecutor(
                 max_workers=ensemble_workers,
@@ -246,16 +248,17 @@ class IntelligenceOrchestrator:
             ) as executor:
                 submitted = {
                     executor.submit(self._call, *spec): meta
-                    for meta, spec in futures.items()
+                    for meta, spec in specs.items()
                 }
                 for future in as_completed(submitted):
                     index,provider,model=submitted[future]
                     try:
-                    answer=str(future.result() or "").strip()
-                    if answer:
-                        panel_results.append((index,provider,model,answer))
-                except Exception as exc:
-                    log.warning("ensemble provider %s failed: %s",provider,exc)
+                        answer=str(future.result() or "").strip()
+                        if answer:
+                            panel_results.append((index,provider,model,answer))
+                    except Exception as exc:
+                        log.warning("ensemble provider %s failed: %s",provider,exc)
+
             panel_results.sort(key=lambda row:row[0])
             if panel_results:
                 evidence="\\n\\n".join(
@@ -270,10 +273,6 @@ class IntelligenceOrchestrator:
                     "identify unique useful insights and missing evidence, and resolve conflicts using "
                     "logic and evidence rather than majority vote. Return one authoritative answer to "
                     "the original request."
-                )
-                synth_prompt=(
-                    f"Original request:\n{prompt}\n\nContext:\n{ctx or '[none]'}\n\n"
-                    f"Independent panel analyses:\n{evidence}"
                 )
                 # Cross-examination happens only for the expensive, non-fast path.
                 # Critics see anonymized evidence and target contradictions rather than
@@ -292,26 +291,21 @@ class IntelligenceOrchestrator:
                     "Be skeptical, evidence-driven, and concise. Focus on falsifiable issues."
                 )
                 critique_models = []
-                try:
-                    critique_models.append(
-                        _select_provider_model(
-                            "openai", _catalog_models(), {},
-                        ) or judge_model
-                    )
-                except Exception:
-                    critique_models.append(judge_model)
-                try:
-                    critique_models.append(
-                        _select_provider_model(
-                            "anthropic", _catalog_models(), {},
-                        ) or judge_model
-                    )
-                except Exception:
-                    critique_models.append(judge_model)
+                for critique_provider in ("openai","anthropic"):
+                    try:
+                        critique_models.append(
+                            _select_provider_model(
+                                critique_provider, _catalog_models(), {},
+                            ) or judge_model
+                        )
+                    except Exception:
+                        critique_models.append(judge_model)
+                critic_specs = list(enumerate(tuple(dict.fromkeys(critique_models))[:2], 1))
                 critiques = []
-                critic_specs = list(enumerate(tuple(dict.fromkeys(critique_models))[:2], 1))
-                critic_specs = list(enumerate(tuple(dict.fromkeys(critique_models))[:2], 1))
-                critic_workers = max(1, min(len(critic_specs), int(c.get("parallel_workers", 4))))
+                critic_workers = max(
+                    1,
+                    min(len(critic_specs), int(c.get("parallel_workers",4))),
+                )
                 with ThreadPoolExecutor(
                     max_workers=critic_workers,
                     thread_name_prefix="BrahmaEnsembleCritic",
@@ -334,14 +328,14 @@ class IntelligenceOrchestrator:
                             if critique:
                                 critiques.append((critic_futures[future], trim(critique, 7000)))
                         except Exception as exc:
-                            log.debug("ensemble critic failed: %s", exc)
-                critiques.sort(key=lambda item: item[0])
-                critiques = [value for _index, value in critiques]
+                            log.debug("ensemble critic failed: %s",exc)
+                critiques.sort(key=lambda item:item[0])
+                critiques = [value for _index,value in critiques]
 
                 critique_evidence = (
                     "\n\n".join(
                         f"=== Cross-examination {i} ===\n{value}"
-                        for i, value in enumerate(critiques, 1)
+                        for i,value in enumerate(critiques,1)
                     )
                     or "[no additional critique available]"
                 )
