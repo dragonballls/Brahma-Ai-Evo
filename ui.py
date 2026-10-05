@@ -11488,7 +11488,7 @@ class OmniRouteFloatingWindow(QDialog):
                 with self._gateway_retry_lock:
                     self._gateway_retry_inflight = False
             try:
-                self._gateway_ready.emit(ok)
+                self.gateway_ready.emit(ok)
             except Exception:
                 pass
 
