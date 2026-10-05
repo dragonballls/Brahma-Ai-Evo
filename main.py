@@ -3602,9 +3602,6 @@ class BrahmaLive:
                 return
 
         memory_ctx = _memory_context_for_request(text)
-        if source == "instagram":
-            # The Instagram-specific instruction is attached by the AI fallback
-            # path when needed; keep the command dispatcher itself side-effect free.
         if text.lower() in {"stop meeting mode", "end meeting mode", "close meeting mode"}:
             self._stop_meeting_mode("Meeting mode closed.")
             return
