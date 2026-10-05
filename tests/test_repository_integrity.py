@@ -277,6 +277,31 @@ class RepositoryIntegrityTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertNotIn("Python 3.11", readme)
 
+    def test_auto_heal_uses_canonical_cloud_route(self):
+        source = (ROOT / "actions" / "auto_heal_engine.py").read_text(encoding="utf-8")
+        self.assertIn("from llm_client import client as unified_client", source)
+        self.assertNotIn("from google import genai", source)
+        self.assertNotIn("g_client.models.generate_content(", source)
+
+    def test_holographic_renderer_assets_stay_synchronized(self):
+        desktop = (ROOT / "assets" / "web_background" / "index.html").read_bytes()
+        android = (
+            ROOT / "brahma-connect-android" / "app" / "src" / "main"
+            / "assets" / "web_background" / "index.html"
+        ).read_bytes()
+        self.assertEqual(
+            desktop,
+            android,
+            "Desktop and Android holographic renderer assets must stay byte-for-byte synchronized.",
+        )
+
+    def test_omniroute_slow_sync_does_not_use_gateway_state_lock(self):
+        source = (ROOT / "core" / "omniroute.py").read_text(encoding="utf-8")
+        self.assertIn("self._credentials_lock = threading.Lock()", source)
+        self.assertIn("with self._credentials_lock:", source)
+        self.assertIn("Credential registration can launch slow subprocesses", source)
+        self.assertIn("if sync_needed:", source)
+
 
 if __name__ == "__main__":
     unittest.main()
