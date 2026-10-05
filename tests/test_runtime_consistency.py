@@ -617,7 +617,7 @@ class RuntimeConsistencyTests(unittest.TestCase):
     def test_launcher_does_not_bypass_canonical_runtime(self):
         source = self.read("start_brahma.vbs")
         self.assertIn("bootstrap = root &", source)
-        self.assertIn("ElseIf fso.FileExists(bootstrap) Then", source)
+        self.assertIn("ElseIf fso.FileExists(bootstrap) And fso.FileExists(mainPy) Then", source)
         self.assertNotIn('shell.Run "python.exe ', source)
         launch_block = source.split("If fso.FileExists(venvPython)", 1)[1].split("ElseIf", 1)[0]
         self.assertIn("venvPython", launch_block)
