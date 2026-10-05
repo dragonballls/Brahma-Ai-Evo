@@ -11,7 +11,7 @@ on:
     branches: ["main"]
 
 jobs:
-  syntax-and-resource-guards:
+  static-and-resource-guards:
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -35,57 +35,76 @@ jobs:
       - name: Run Bluetooth media-quality audio regressions
         run: python -m unittest tests.test_audio_quality_guard -v
 
-      - name: Run voice safety regressions
-        run: python -m unittest tests.test_voice_guards -v
-      - name: Run OmniRoute and self-coding regressions
-        run: python -m unittest tests.test_omniroute_self_coding -v
-      - name: Run universal capability regressions
-        run: python -m unittest tests.test_universal_agent -v
-      - name: Run Skill Forge persistence regressions
-        run: python -m pytest -q tests/test_skill_forge.py
-      - name: Run God’s Eye globe regressions
-        run: python -m unittest tests.test_gods_eye_globe -v
-      - name: Run multi-model intelligence regressions
-        run: python -m unittest tests.test_intelligence_orchestrator -v
-      - name: Run intelligence capability meter regressions
-        run: python -m pytest -q tests/test_intellect_meter.py tests/test_cognitive_challenger.py
-      - name: Run adaptive model routing regressions
-        run: python -m pytest -q tests/test_model_performance.py tests/test_adaptive_routing.py
-      - name: Run conversation delivery regressions
-        run: python -m unittest tests.test_conversation_delivery -v
-      - name: Run JEV integration regressions
-        run: python -m unittest tests.test_jev_integration -v
-      - name: Run selected advanced capability regressions
-        run: python -m unittest tests.test_selected_advanced_capabilities -v
-      - name: Run functional self-awareness regressions
-        run: python -m unittest tests.test_self_awareness -v
-      - name: Run Live duplex voice regressions
-        run: python -m unittest tests.test_live_voice_contract -v
-      - name: Run emotional delivery regressions
-        run: python -m unittest tests.test_emotional_controller -v
-      - name: Run emotional feature regressions
-        run: python -m unittest tests.test_emotional_feature -v
-      - name: Run speech prosody regressions
-        run: python -m unittest tests.test_prosody -v
-      - name: Run language lock regressions
-        run: python -m unittest tests.test_language_policy -v
-      - name: Run PC health and autonomous mission regressions
-        run: python -m unittest tests.test_pc_health_and_missions -v
-      - name: Run Brahma desktop environment regressions
-        run: python -m unittest tests.test_desktop_environment -v
-      - name: Run embedded web workspace regressions
-        run: python -m unittest tests.test_desktop_web_host -v
-      - name: Run adaptive performance brain regressions
-        run: python -m unittest tests.test_performance_brain -v
-      - name: Run external desktop integration regressions
-        run: python -m unittest tests.test_desktop_integrations -v
-      - name: Run unified device manager regressions
-        run: python -m unittest tests.test_device_manager -v
-      - name: Run media control and video understanding regressions
-        run: python -m unittest tests.test_media_control -v
-      - name: Run conversational settings regressions
-        run: python -m unittest tests.test_settings_agent -v
-      - name: Run OBS Studio control regressions
-        run: python -m unittest tests.test_obs_control -v
-      - name: Run AI Creator Studio regressions
-        run: python -m unittest tests.test_creator_studio -v
+  parallel-regressions:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        include:
+          - group: omni-intelligence
+            commands: |
+              python -m unittest tests.test_voice_guards -v
+              python -m unittest tests.test_omniroute_self_coding -v
+              python -m unittest tests.test_universal_agent -v
+              python -m pytest -q tests/test_skill_forge.py
+              python -m unittest tests.test_gods_eye_globe -v
+              python -m unittest tests.test_intelligence_orchestrator -v
+              python -m pytest -q tests/test_intellect_meter.py tests/test_cognitive_challenger.py
+              python -m pytest -q tests/test_model_performance.py tests/test_adaptive_routing.py
+
+          - group: conversation-voice
+            commands: |
+              python -m unittest tests.test_conversation_delivery -v
+              python -m unittest tests.test_jev_integration -v
+              python -m unittest tests.test_selected_advanced_capabilities -v
+              python -m unittest tests.test_self_awareness -v
+              python -m unittest tests.test_live_voice_contract -v
+              python -m unittest tests.test_emotional_controller -v
+              python -m unittest tests.test_emotional_feature -v
+              python -m unittest tests.test_prosody -v
+              python -m unittest tests.test_language_policy -v
+
+          - group: desktop-system
+            commands: |
+              python -m unittest tests.test_pc_health_and_missions -v
+              python -m unittest tests.test_desktop_environment -v
+              python -m unittest tests.test_desktop_web_host -v
+              python -m unittest tests.test_performance_brain -v
+              python -m unittest tests.test_desktop_integrations -v
+              python -m unittest tests.test_device_manager -v
+
+          - group: media-settings
+            commands: |
+              python -m unittest tests.test_media_control -v
+              python -m unittest tests.test_settings_agent -v
+              python -m unittest tests.test_obs_control -v
+              python -m unittest tests.test_creator_studio -v
+
+          - group: release-contracts
+            commands: |
+              python -m unittest tests.test_runtime_consistency -v
+              python -m unittest tests.test_repository_integrity -v
+              python -m unittest tests.test_low_power_guards -v
+              python -m unittest tests.test_audio_quality_guard -v
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install lightweight test dependency
+        run: python -m pip install requests psutil pywin32 bleak pytest
+      - name: Run ${{ matrix.group }} regressions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $commands = @'
+          ${{ matrix.commands }}
+          '@
+          & ([scriptblock]::Create($commands))
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
