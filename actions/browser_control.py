@@ -562,6 +562,23 @@ def browser_control(
     action = (parameters or {}).get("action", "").lower().strip()
     result = "Unknown action."
 
+    # High-level JEV Ultrafast path. It is intentionally opt-in through the
+    # caller's action and credentials; every unsupported/failed run falls back
+    # to the existing browser stack below.
+    if action in {"goal", "agent", "ultrafast"}:
+        try:
+            from core.jev_browser import run_goal
+            url = str(parameters.get("url") or "").strip()
+            goal = str(parameters.get("goal") or parameters.get("query") or "").strip()
+            result = run_goal(url, goal, max_steps=int(parameters.get("max_steps", 60)))
+            safe = str(result).encode("ascii", "replace").decode("ascii")
+            _log(f"[Browser/Jev] {safe[:100]}")
+            if player and hasattr(player, "write_log"):
+                player.write_log(f"[browser/jev] {safe[:80]}")
+            return result
+        except Exception as jev_err:
+            _log(f"[Browser/Jev] unavailable ({jev_err}) — using existing browser stack")
+
     # Try Microsoft Playwright MCP first
     try:
         mcp = get_playwright_mcp_client()
