@@ -359,11 +359,14 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertNotIn('["git", "reset", "--hard"', source)
         self.assertIn("from updater import restart_application, update_from_github", source)
 
-    def test_ui_omniroute_uses_central_page_and_gateway_endpoint(self):
+    def test_ui_omniroute_uses_floating_window_and_gateway_endpoint(self):
         source = self.read("ui.py")
-        self.assertIn('"omniroute": 5', source)
+        self.assertIn("class OmniRouteFloatingWindow(QDialog):", source)
         self.assertIn("gateway().base_url", source)
         self.assertIn("gateway().ensure_ready(force=True)", source)
+        self.assertIn("omniroute_window_width", source)
+        self.assertIn("omniroute_window_height", source)
+        self.assertNotIn('"omniroute": 5', source)
 
     def test_discord_explicit_off_state_is_not_overridden_by_token(self):
         source = self.read("ui.py")
