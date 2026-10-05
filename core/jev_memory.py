@@ -103,5 +103,5 @@ def should_evict(content: str, current_state: str = "") -> bool | None:
         if not result:
             return None
         return _probability(result["answers"].get("evict")) >= 0.85
-    except JevUnavailable:
+    except Exception:
         return None
