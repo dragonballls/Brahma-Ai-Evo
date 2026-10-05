@@ -244,6 +244,11 @@ jobs:
           Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
           Wait-Process -Id $proc.Id -Timeout 10 -ErrorAction SilentlyContinue
 
+      - name: Prepare fast portable download
+        shell: pwsh
+        run: |
+          Copy-Item "dist/BrahmaEvoPayload.zip" "dist/Brahma-Evo-Windows-Portable.zip" -Force
+          if (-not (Test-Path "dist/Brahma-Evo-Windows-Portable.zip")) { throw "Portable download archive was not produced." }
       - name: Create checksums
         shell: pwsh
         run: |
@@ -252,17 +257,13 @@ jobs:
             "dist/BrahmaEvo/BrahmaEvoSupervisor.exe",
             "dist/BrahmaEvoSupervisor.exe",
             "dist/BrahmaEvo_Setup.exe",
-            "dist/BrahmaEvoPayload.zip"
+            "dist/BrahmaEvoPayload.zip",
+            "dist/Brahma-Evo-Windows-Portable.zip"
           )
           Get-FileHash $files -Algorithm SHA256 |
             ForEach-Object { "$($_.Hash)  $($_.Path)" } |
             Set-Content dist/SHA256SUMS.txt
 
-      - name: Prepare fast portable download
-        shell: pwsh
-        run: |
-          Copy-Item "dist/BrahmaEvoPayload.zip" "dist/Brahma-Evo-Windows-Portable.zip" -Force
-          if (-not (Test-Path "dist/Brahma-Evo-Windows-Portable.zip")) { throw "Portable download archive was not produced." }
 
       - name: Publish verified Brahma Evo application
         uses: actions/upload-artifact@v4
