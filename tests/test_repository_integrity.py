@@ -367,5 +367,19 @@ class RepositoryIntegrityTests(unittest.TestCase):
         self.assertIn("if sync_needed:", source)
 
 
+    def test_ui_launcher_uses_active_interpreter_not_machine_specific_path(self):
+        source = self.read("ui.py")
+        self.assertNotIn(r"C:\\Users\\ravit\\AppData\\Local\\Programs\\Python\\Python313", source)
+        self.assertIn("python.with_name(\"pythonw.exe\")", source)
+
+    def test_windows_ui_powershell_launches_hide_console_windows(self):
+        source = self.read("ui.py")
+        self.assertGreaterEqual(
+            source.count('creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if _OS == "Windows" else 0'),
+            2,
+            "UI PowerShell helpers must explicitly hide Windows console windows.",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
