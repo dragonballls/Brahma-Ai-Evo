@@ -87,7 +87,7 @@ def analyze_error(
             "user_message":  "Trying a different approach, sir."
         }
 
-    from core.gemini_runtime import generate_json
+    from llm_client import client as unified_client
 
     prompt = f"""Failed step:
 Tool: {step.get('tool')}
@@ -101,11 +101,11 @@ Error:
 Attempt number: {attempt}"""
 
     try:
-        result = generate_json(
+        result = unified_client.chat_json(
             prompt,
-            system_instruction=ERROR_ANALYST_PROMPT,
-            model_name="gemini-3.8-flash",
-            max_output_tokens=2048,
+            system=ERROR_ANALYST_PROMPT,
+            model="auto",
+            max_tokens=2048,
         )
         decision_str = str(result.get("decision", "replan")).strip().lower()
         decision_map = {
@@ -142,7 +142,7 @@ def generate_fix(step: dict, error: str, fix_suggestion: str) -> dict:
 
     Returns a modified step dict.
     """
-    from core.gemini_runtime import generate_text
+    from llm_client import client as unified_client
 
     prompt = f"""A task step failed. Generate a replacement step.
 
@@ -158,11 +158,11 @@ Write a Python script that accomplishes the same goal differently.
 Return ONLY the Python code, no explanation."""
 
     try:
-        code = generate_text(
+        code = unified_client.chat(
             prompt,
-            system_instruction="You are Brahma Evo's safe task-repair agent. Return ONLY Python code.",
-            model_name="gemini-3.8-flash",
-            max_output_tokens=4096,
+            system="You are Brahma Evo's safe task-repair agent. Return ONLY Python code.",
+            model="auto",
+            max_tokens=4096,
             temperature=0.1,
         )
         code = re.sub(r"```(?:python)?", "", code).strip().rstrip("`").strip()
