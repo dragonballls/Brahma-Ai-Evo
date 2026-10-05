@@ -255,8 +255,6 @@ _old_setStyleSheet = QWidget.setStyleSheet
 def _new_setStyleSheet(self, style):
     if style:
         style = style.replace("#00e5ff", getattr(C, "ACC", "#00e5ff"))
-        style = style.replace("#00e5ff", getattr(C, "ACC", "#00e5ff"))
-        style = style.replace("#00e5ff", getattr(C, "ACC", "#00e5ff"))
         style = style.replace("#ffd700", getattr(C, "ACC", "#00e5ff"))
         style = style.replace("#d4af37", getattr(C, "ACC", "#00e5ff"))
         style = style.replace("#80ffff", getattr(C, "ACC2", "#80ffff"))
@@ -1490,12 +1488,14 @@ def _quote_cmd_arg(path: str) -> str:
 
 
 def _hidden_launch_args(*extra_args: str) -> list[str]:
-    pythonw = Path(r"C:\Users\ravit\AppData\Local\Programs\Python\Python313\pythonw.exe")
     python = Path(sys.executable)
     main_py = BASE_DIR / "main.py"
     if getattr(sys, "frozen", False):
         exe = Path(sys.executable)
         return [str(exe), *extra_args]
+    # Prefer pythonw beside the active interpreter so packaged/developer
+    # launches never depend on a machine-specific user path.
+    pythonw = python.with_name("pythonw.exe")
     if pythonw.exists():
         return [str(pythonw), str(main_py), *extra_args]
     return [str(python), str(main_py), *extra_args]
@@ -14019,6 +14019,7 @@ class SystemConnectivityPage(QWidget):
                 check=True,
                 capture_output=True,
                 text=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if _OS == "Windows" else 0,
             )
             
             # Write marker file
@@ -14062,7 +14063,8 @@ class SystemConnectivityPage(QWidget):
             
             res = subprocess.run(
                 [powershell_exe, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", pin_script],
-                capture_output=True
+                capture_output=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if _OS == "Windows" else 0,
             )
             
             if res.returncode == 0:
