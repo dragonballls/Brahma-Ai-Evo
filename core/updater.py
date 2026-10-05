@@ -20,18 +20,28 @@ class UpdateChecker(QObject):
         self.base_dir = Path(base_dir).resolve() if base_dir else Path(__file__).resolve().parent.parent
         self._stop_event = threading.Event()
         self._check_thread = None
+        self._lifecycle_lock = threading.Lock()
 
     def start(self):
-        if self._check_thread is None:
+        with self._lifecycle_lock:
+            if self._check_thread is not None and self._check_thread.is_alive():
+                return
             self._stop_event.clear()
-            self._check_thread = threading.Thread(target=self._check_loop, daemon=True, name="updater-thread")
+            self._check_thread = threading.Thread(
+                target=self._check_loop,
+                daemon=True,
+                name="updater-thread",
+            )
             self._check_thread.start()
 
     def stop(self):
         self._stop_event.set()
-        if self._check_thread:
-            self._check_thread.join(timeout=1.0)
-            if not self._check_thread.is_alive():
+        with self._lifecycle_lock:
+            thread = self._check_thread
+        if thread:
+            thread.join(timeout=1.0)
+        with self._lifecycle_lock:
+            if self._check_thread is thread and (thread is None or not thread.is_alive()):
                 self._check_thread = None
 
     def check_now(self) -> str | None:
@@ -49,6 +59,8 @@ class UpdateChecker(QObject):
                 ["git", "rev-parse", "HEAD"],
                 cwd=self.base_dir,
                 stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                creationflags=int(getattr(subprocess, "CREATE_NO_WINDOW", 0)),
             )
             return output.decode("utf-8").strip()
         except Exception:
@@ -79,8 +91,9 @@ class UpdateChecker(QObject):
                 # Poll every 6 hours and sleep in one interruptible wait.
                 self._stop_event.wait(timeout=21600)
         finally:
-            if self._check_thread is threading.current_thread():
-                self._check_thread = None
+            with self._lifecycle_lock:
+                if self._check_thread is threading.current_thread():
+                    self._check_thread = None
 
 def apply_update_and_restart(base_dir=None):
     """Apply only fast-forward updates, then restart; never discard local work."""
