@@ -9685,7 +9685,7 @@ class MainWindow(QMainWindow):
     def _set_page(self, page: str):
         self._current_page = page
         if hasattr(self, "_center_stack") and isinstance(self._center_stack, QStackedWidget):
-            index = {"dashboard": 0, "home": 1, "devices": 2, "settings": 3, "omniroute": 5}.get(page, 0)
+            index = {"dashboard": 0, "home": 1, "devices": 2, "settings": 3}.get(page, 0)
             self._center_stack.setCurrentIndex(index)
         if page == "devices" and hasattr(self, "_devices_page"):
             try:
@@ -10891,8 +10891,7 @@ class MainWindow(QMainWindow):
         self._settings_hub_page = SettingsHubPage(lambda page: self._set_page(page))
         self._center_stack.addWidget(self._settings_hub_page)
 
-        self._omniroute_page = OmniRouteEmbeddedPage()
-        self._center_stack.addWidget(self._omniroute_page)
+        self._omniroute_window = None
 
         self._center_stack.setCurrentIndex(0)
         return self._center_stack
@@ -11263,81 +11262,131 @@ class SystemConnectivitySidebar(QFrame):
 
 
 
-class OmniRouteEmbeddedPage(QWidget):
-    """OmniRoute dashboard as a first-class, lazily-created Brahma settings page."""
-    def __init__(self, parent=None):
-        super().__init__(parent)
+class OmniRouteFloatingWindow(QDialog):
+    """Native-feeling, movable/resizable OmniRoute dashboard window.
+
+    OmniRoute still uses its own loopback HTTP server internally because the
+    upstream dashboard is server-backed. Brahma owns that implementation detail;
+    the user never needs to configure or enter a port.
+    """
+    def __init__(self, owner=None):
+        super().__init__(owner)
+        self._owner = owner
         self._started = False
         self._web = None
         self._retry_timer = None
         self._gateway_retry_lock = threading.Lock()
         self._gateway_retry_inflight = False
 
+        self.setWindowTitle("OmniRoute")
+        self.setModal(False)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
+        self.setMinimumSize(640, 480)
+        self.resize(960, 700)
+        self.setWindowFlags(
+            Qt.WindowType.Window
+            | Qt.WindowType.WindowTitleHint
+            | Qt.WindowType.WindowSystemMenuHint
+            | Qt.WindowType.WindowMinimizeButtonHint
+            | Qt.WindowType.WindowMaximizeButtonHint
+            | Qt.WindowType.WindowCloseButtonHint
+        )
+        self.setStyleSheet(
+            f"QDialog {{ background: {C.BG}; color: {C.WHITE}; }}"
+        )
+
         root = QVBoxLayout(self)
-        root.setContentsMargins(24, 18, 24, 18)
-        root.setSpacing(10)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        header = QHBoxLayout()
+        toolbar = QHBoxLayout()
+        toolbar.setContentsMargins(10, 8, 10, 8)
+        toolbar.setSpacing(8)
         title = QLabel("OmniRoute")
-        title.setFont(QFont("Segoe UI", 24, QFont.Weight.Black))
+        title.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
         title.setStyleSheet(f"color: {C.WHITE};")
-        header.addWidget(title)
+        toolbar.addWidget(title)
 
-        self._status = QLabel("Ready to connect")
+        self._status = QLabel("Starting…")
         self._status.setStyleSheet(f"color: {C.ACC}; font-weight: 700;")
-        header.addWidget(self._status)
-        header.addStretch(1)
-
-        back = QPushButton("← Settings")
-        back.clicked.connect(self._back_to_settings)
-        header.addWidget(back)
+        toolbar.addWidget(self._status)
+        toolbar.addStretch(1)
 
         refresh = QPushButton("Refresh")
+        refresh.setCursor(Qt.CursorShape.PointingHandCursor)
+        refresh.setToolTip("Reload the OmniRoute dashboard")
         refresh.clicked.connect(self._reload)
-        header.addWidget(refresh)
-        root.addLayout(header)
-
-        hint = QLabel(
-            "Real OmniRoute dashboard. Configure provider API keys, endpoints, routing, "
-            "and model combinations here without leaving Brahma."
-        )
-        hint.setWordWrap(True)
-        hint.setStyleSheet(f"color: {C.TEXT_DIM};")
-        root.addWidget(hint)
+        toolbar.addWidget(refresh)
+        root.addLayout(toolbar)
 
         self._content_host = QWidget(self)
-        self._content_layout = QVBoxLayout(self._content_host)
-        self._content_layout.setContentsMargins(0, 0, 0, 0)
-        self._content_layout.addWidget(
-            QLabel("OmniRoute dashboard will initialize when this page is opened.")
-        )
+        content_layout = QVBoxLayout(self._content_host)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
+        self._content_layout = content_layout
+        placeholder = QLabel("Starting OmniRoute…")
+        placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        placeholder.setStyleSheet(f"color: {C.TEXT_DIM};")
+        content_layout.addWidget(placeholder)
         root.addWidget(self._content_host, 1)
 
-    def _back_to_settings(self):
-        win = self.window()
-        if hasattr(win, "_set_page"):
-            win._set_page("settings")
+    def _restore_geometry(self):
+        owner = self._owner or self.parentWidget()
+        settings = {}
+        try:
+            if owner is not None and hasattr(owner, "_load_app_settings"):
+                settings = owner._load_app_settings()
+        except Exception:
+            settings = {}
+        try:
+            w = max(640, int(settings.get("omniroute_window_width", self.width())))
+            h = max(480, int(settings.get("omniroute_window_height", self.height())))
+            self.resize(w, h)
+            x = settings.get("omniroute_window_x")
+            y = settings.get("omniroute_window_y")
+            screen = QApplication.primaryScreen().availableGeometry()
+            if isinstance(x, int) and isinstance(y, int):
+                x = max(screen.left(), min(x, screen.right() - self.width() + 1))
+                y = max(screen.top(), min(y, screen.bottom() - self.height() + 1))
+                self.move(x, y)
+            else:
+                self.move(
+                    screen.left() + max(0, (screen.width() - self.width()) // 2),
+                    screen.top() + max(0, (screen.height() - self.height()) // 2),
+                )
+        except Exception:
+            pass
+
+    def _persist_geometry(self):
+        owner = self._owner or self.parentWidget()
+        if owner is None or not hasattr(owner, "_load_app_settings") or not hasattr(owner, "_save_app_settings"):
             return
-        stack = getattr(win, "_center_stack", None)
-        page = getattr(win, "_settings_hub_page", None)
-        if stack is not None and page is not None:
-            stack.setCurrentWidget(page)
+        try:
+            settings = owner._load_app_settings()
+            settings.update({
+                "omniroute_window_x": int(self.x()),
+                "omniroute_window_y": int(self.y()),
+                "omniroute_window_width": int(self.width()),
+                "omniroute_window_height": int(self.height()),
+            })
+            owner._save_app_settings(settings)
+        except Exception:
+            pass
 
     def _ensure_view(self):
         if self._web is not None:
             return
         if not WEB_ENGINE_AVAILABLE:
             label = QLabel(
-                "Qt WebEngine is unavailable in this build, so the OmniRoute dashboard cannot be embedded."
+                "The OmniRoute dashboard runtime is unavailable in this build."
             )
             label.setWordWrap(True)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             label.setStyleSheet(f"color: {C.RED};")
             placeholder = self._content_layout.itemAt(0).widget()
             if placeholder is not None:
                 self._content_layout.replaceWidget(placeholder, label)
                 placeholder.deleteLater()
-            else:
-                self._content_layout.addWidget(label)
             return
 
         placeholder = self._content_layout.itemAt(0).widget()
@@ -11346,37 +11395,42 @@ class OmniRouteEmbeddedPage(QWidget):
 
         self._web = QWebEngineView(self)
         self._web.setStyleSheet("background: #020306; border: none;")
-        self._web.loadStarted.connect(
-            lambda: self._status.setText("Connecting to OmniRoute…")
-        )
+        self._web.loadStarted.connect(lambda: self._status.setText("Connecting…"))
         self._web.loadFinished.connect(self._load_finished)
         self._content_layout.addWidget(self._web, 1)
+
+    def _dashboard_url(self):
+        from core.omniroute import gateway
+        from core.runtime_paths import OMNIROUTE_DEFAULT_BASE_URL
+        base = str(getattr(gateway(), "base_url", "") or OMNIROUTE_DEFAULT_BASE_URL).rstrip("/")
+        if base.endswith("/v1"):
+            base = base[:-3]
+        return QUrl(base + "/")
 
     def _reload(self):
         self._ensure_view()
         if self._web is not None:
             try:
-                from urllib.parse import urlsplit
-                from core.omniroute import gateway
-                from core.runtime_paths import OMNIROUTE_DEFAULT_BASE_URL
-                parsed = urlsplit(gateway().base_url or OMNIROUTE_DEFAULT_BASE_URL)
-                scheme = parsed.scheme or "http"
-                authority = parsed.netloc or urlsplit(OMNIROUTE_DEFAULT_BASE_URL).netloc
-                self._web.load(QUrl(f"{scheme}://{authority}/"))
-            except Exception:
-                from core.runtime_paths import OMNIROUTE_DEFAULT_BASE_URL
-                self._web.load(QUrl(OMNIROUTE_DEFAULT_BASE_URL.replace("/v1", "")))
+                self._web.load(self._dashboard_url())
+            except Exception as exc:
+                self._status.setText("OmniRoute unavailable")
+                try:
+                    import logging
+                    logging.getLogger("BrahmaUI").debug("OmniRoute dashboard reload failed: %s", exc)
+                except Exception:
+                    pass
 
     def _start_gateway(self):
         self._ensure_view()
-        if self._started or self._web is None:
+        if self._started:
             return
         self._started = True
 
         def ensure_gateway():
+            ok = False
             try:
                 from core.omniroute import gateway
-                gateway().ensure_ready(force=True)
+                ok = bool(gateway().ensure_ready(force=True))
             except Exception as exc:
                 try:
                     import logging
@@ -11385,6 +11439,10 @@ class OmniRouteEmbeddedPage(QWidget):
                     )
                 except Exception:
                     pass
+            try:
+                self._gateway_ready.emit(ok)
+            except Exception:
+                pass
 
         threading.Thread(
             target=ensure_gateway,
@@ -11392,34 +11450,43 @@ class OmniRouteEmbeddedPage(QWidget):
             name="brahma-omniroute-dashboard-start",
         ).start()
 
-        self._retry_timer = QTimer(self)
-        self._retry_timer.setInterval(1500)
-        self._retry_timer.timeout.connect(self._retry_gateway_and_reload)
-        QTimer.singleShot(300, self._reload)
+    gateway_ready = pyqtSignal(bool)
 
-    def _retry_gateway_and_reload(self):
-        """Retry gateway startup without blocking the Qt GUI thread."""
-        self._reload()
+    def _on_gateway_ready(self, ok: bool):
+        if ok:
+            self._status.setText("Connected")
+            self._reload()
+            if self._retry_timer is not None:
+                self._retry_timer.stop()
+        else:
+            self._status.setText("Starting…")
+            if self._retry_timer is None:
+                self._retry_timer = QTimer(self)
+                self._retry_timer.setInterval(2000)
+                self._retry_timer.timeout.connect(self._retry_gateway)
+            if not self._retry_timer.isActive():
+                self._retry_timer.start()
+
+    def _retry_gateway(self):
         with self._gateway_retry_lock:
             if self._gateway_retry_inflight:
                 return
             self._gateway_retry_inflight = True
 
         def worker():
+            ok = False
             try:
                 from core.omniroute import gateway
-                gateway().ensure_ready()
-            except Exception as exc:
-                try:
-                    import logging
-                    logging.getLogger("BrahmaUI").debug(
-                        "OmniRoute retry failed: %s", exc
-                    )
-                except Exception:
-                    pass
+                ok = bool(gateway().ensure_ready())
+            except Exception:
+                pass
             finally:
                 with self._gateway_retry_lock:
                     self._gateway_retry_inflight = False
+            try:
+                self._gateway_ready.emit(ok)
+            except Exception:
+                pass
 
         threading.Thread(
             target=worker,
@@ -11429,18 +11496,28 @@ class OmniRouteEmbeddedPage(QWidget):
 
     def _load_finished(self, ok: bool):
         if ok:
+            self._status.setText("Connected")
             if self._retry_timer is not None:
                 self._retry_timer.stop()
-            self._status.setText("OmniRoute connected")
         else:
-            self._status.setText("OmniRoute is starting — retrying…")
-            if self._retry_timer is not None and not self._retry_timer.isActive():
+            self._status.setText("Connecting…")
+            if self._retry_timer is None:
+                self._retry_timer = QTimer(self)
+                self._retry_timer.setInterval(2000)
+                self._retry_timer.timeout.connect(self._retry_gateway)
+            if not self._retry_timer.isActive():
                 self._retry_timer.start()
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._restore_geometry()
+        self._gateway_ready.connect(self._on_gateway_ready, Qt.ConnectionType.QueuedConnection)
         self._start_gateway()
 
+    def closeEvent(self, event):
+        self._persist_geometry()
+        self.hide()
+        event.ignore()
 
 class SettingsHubPage(QWidget):
     def __init__(self, navigation_callback, parent=None):
@@ -13507,18 +13584,17 @@ class SystemConnectivityPage(QWidget):
             self._ctrl()._win._show_setup(self._ctrl()._win._load_api_defaults())
 
     def _open_omniroute_dashboard(self):
-        """Show OmniRoute as a first-class in-app Brahma page, not a detached window."""
+        """Open OmniRoute as a native-feeling floating app window."""
         win = self.window()
-        stack = getattr(win, "_center_stack", None)
-        page = getattr(win, "_omniroute_page", None)
-        if stack is None or page is None:
-            if self._ctrl() and hasattr(self._ctrl(), "write_log"):
-                self._ctrl().write_log("ERR: OmniRoute page is unavailable.")
+        if not isinstance(win, QMainWindow):
             return
-        if hasattr(win, "_set_page"):
-            win._set_page("omniroute")
-        else:
-            stack.setCurrentWidget(page)
+        dialog = getattr(win, "_omniroute_window", None)
+        if dialog is None:
+            dialog = OmniRouteFloatingWindow(owner=win)
+            win._omniroute_window = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _save_cloud_provider_key(self, provider: str, field: str, key: str, status_lbl):
         key = (key or "").strip()
