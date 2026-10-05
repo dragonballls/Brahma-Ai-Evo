@@ -70,14 +70,21 @@ class SelfCodingAgent:
     def checkpoint_dir(self) -> Path:
         return self.repo / ".git" / "brahma-checkpoints"
 
+    @staticmethod
+    def _hidden_creationflags() -> int:
+        """Keep Git/self-coding subprocesses invisible during normal GUI operation."""
+        return int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
     def _run(self, args: list[str] | tuple[str, ...], timeout: int = 900) -> subprocess.CompletedProcess[str]:
         try:
             return subprocess.run(
                 list(args),
                 cwd=self.repo,
+                stdin=subprocess.DEVNULL,
                 text=True,
                 capture_output=True,
                 timeout=timeout,
+                creationflags=self._hidden_creationflags(),
                 check=False,
             )
         except (OSError, subprocess.SubprocessError) as exc:
