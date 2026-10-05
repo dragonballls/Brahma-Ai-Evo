@@ -333,10 +333,10 @@ def get_api_key() -> str:
         if API_CONFIG_PATH.exists():
             with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
                 d = json.load(f)
-                return d.get("gemini_api_key", "").strip()
+                return str(__import__("config").get_api_key("Gemini") or "").strip()
     except Exception:
         pass
-    return os.environ.get("GEMINI_API_KEY", "")
+    return str(__import__("config").get_api_key("Gemini") or "")
 
 
 def solve_circuit_with_ai(prompt: str, image_bytes: Optional[bytes] = None) -> Optional[Dict[str, Any]]:
@@ -350,10 +350,8 @@ def solve_circuit_with_ai(prompt: str, image_bytes: Optional[bytes] = None) -> O
         return None
 
     try:
-        from google import genai
-        from google.genai import types
+        from core.gemini_runtime import create_model
 
-        client = genai.Client(api_key=api_key)
         system_instruction = (
             "You are Brahma Circuit Architect, an expert electrical engineer and embedded systems designer. "
             "Your task is to analyze electronic components (either identified from the screen image or the user's description) "
@@ -388,7 +386,7 @@ def solve_circuit_with_ai(prompt: str, image_bytes: Optional[bytes] = None) -> O
         contents = []
         if image_bytes:
             contents.append(
-                types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
+                image_bytes
             )
             contents.append(
                 f"Identify the electronic parts on my screen and tell me how to assemble them. Query: {prompt or 'assemble these parts'}"
@@ -398,15 +396,13 @@ def solve_circuit_with_ai(prompt: str, image_bytes: Optional[bytes] = None) -> O
                 f"Design the wiring diagram and assembly instructions for these parts: {prompt}"
             )
 
-        resp = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                temperature=0.2,
-                response_mime_type="application/json",
-            ),
-        )
+        resp = create_model(
+            "gemini-2.5-flash",
+            system_instruction=system_instruction,
+        ).generate_content(contents, generation_config={
+            "temperature": 0.2,
+            "response_mime_type": "application/json",
+        })
 
         raw = (resp.text or "").strip()
         # Clean any markdown if model wrapped it
