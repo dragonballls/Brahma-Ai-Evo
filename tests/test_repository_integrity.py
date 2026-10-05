@@ -398,7 +398,7 @@ class RepositoryIntegrityTests(unittest.TestCase):
         bootstrap = self.read("bootstrap.ps1")
         setup = self.read("setup.py")
         self.assertIn("--prefer-binary -r requirements.txt", bootstrap)
-        self.assertIn('"-m", "playwright", "install", "chromium"', bootstrap)
+        self.assertIn("-m playwright install chromium", bootstrap)
         self.assertIn('"--prefer-binary", "-r", "requirements.txt"', setup)
         self.assertIn('"playwright", "install", "chromium"', setup)
         self.assertNotIn('"playwright", "install"],', setup)
