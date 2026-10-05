@@ -1,11 +1,13 @@
 from __future__ import annotations
 import asyncio
-import json
 import logging
 from collections import deque
 import threading
 from pathlib import Path
 from typing import Callable, Optional
+
+logger = logging.getLogger("brahma_evo.discord")
+
 
 def _load_discord_module():
     try:
@@ -21,62 +23,11 @@ discord = _load_discord_module()
 from llm_client import client as unified_cloud_client
 
 
-logger = logging.getLogger("brahma_evo.discord")
-
-
 def _base_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
 BASE_DIR = _base_dir()
-API_KEYS_FILE = API_CONFIG_PATH
-
-
-def _load_api_keys() -> dict:
-    try:
-        data = json.loads(API_KEYS_FILE.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            return data
-    except Exception:
-        pass
-    return {}
-
-
-def _extract_gemini_text(response) -> str:
-    text_parts: list[str] = []
-    try:
-        for candidate in getattr(response, "candidates", []) or []:
-            content = getattr(candidate, "content", None)
-            if not content:
-                continue
-            for part in getattr(content, "parts", []) or []:
-                part_text = getattr(part, "text", None)
-                if part_text:
-                    text_parts.append(part_text)
-    except Exception:
-        pass
-
-    text = "".join(text_parts).strip()
-    if text:
-        return text
-
-    try:
-        return (getattr(response, "text", "") or "").strip()
-    except Exception:
-        return ""
-
-
-def _looks_like_limit_error(exc: Exception) -> bool:
-    msg = str(exc).lower()
-    return any(token in msg for token in (
-        "429",
-        "quota",
-        "rate limit",
-        "resource_exhausted",
-        "too many requests",
-        "limit",
-        "exceeded",
-    ))
 
 
 class DiscordBotService:
