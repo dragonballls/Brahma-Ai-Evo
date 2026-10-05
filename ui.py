@@ -11277,7 +11277,7 @@ class OmniRouteFloatingWindow(QDialog):
         self._retry_timer = None
         self._gateway_retry_lock = threading.Lock()
         self._gateway_retry_inflight = False
-        self._gateway_ready.connect(
+        self.gateway_ready.connect(
             self._on_gateway_ready,
             Qt.ConnectionType.QueuedConnection,
         )
@@ -11444,7 +11444,7 @@ class OmniRouteFloatingWindow(QDialog):
                 except Exception:
                     pass
             try:
-                self._gateway_ready.emit(ok)
+                self.gateway_ready.emit(ok)
             except Exception:
                 pass
 
