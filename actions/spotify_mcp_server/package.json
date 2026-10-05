@@ -2,7 +2,7 @@
   "type": "module",
   "name": "spotify-mcp-server",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "build/index.js",
   "bin": {
     "spotify-mcp": "./build/index.js"
   },
