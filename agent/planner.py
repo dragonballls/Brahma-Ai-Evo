@@ -361,48 +361,26 @@ def _planner_system_prompt() -> str:
 
 
 def _get_api_key() -> str:
+    """Compatibility helper retained for legacy callers; provider routing owns credentials."""
     from config import get_api_key
-    key = get_api_key("Gemini")
-    if not key:
-        raise RuntimeError("Gemini API key is not configured.")
-    return key
+    return str(get_api_key("Gemini") or "").strip()
 
 
 def _gemini_generate_text(prompt: str, system_prompt: str) -> str | None:
-    """Use the current google-genai SDK with a bounded model fallback ladder."""
-    from google import genai
-    from google.genai import types
-
-    client = genai.Client(
-        api_key=_get_api_key(),
-        http_options={"api_version": "v1beta"},
-    )
-    candidates = (
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-lite",
-        "gemini-3.1-flash-lite",
-        "gemini-flash-latest",
-    )
-    last_error = None
-    for model_name in candidates:
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_prompt,
-                    temperature=0.2,
-                    max_output_tokens=8192,
-                ),
-            )
-            text = (getattr(response, "text", "") or "").strip()
-            if text:
-                return text
-        except Exception as exc:
-            last_error = exc
-            print(f"[Planner] model {model_name} failed: {exc}")
-    print(f"[Planner] Gemini generation failed: {last_error}")
-    return None
+    """Route agent planning through the same unified client as the main assistant."""
+    try:
+        from llm_client import client as unified_client
+        text = unified_client.chat(
+            prompt,
+            system=system_prompt,
+            model="auto",
+            max_tokens=8192,
+            temperature=0.2,
+        )
+        return str(text or "").strip() or None
+    except Exception as exc:
+        print(f"[Planner] unified generation failed: {exc}")
+        return None
 
 
 def _looks_like_website_goal(goal: str) -> bool:
