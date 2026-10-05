@@ -142,16 +142,32 @@ $VenvDir = Join-Path -Path $WorkingDir -ChildPath ".venv"
 $VenvPython = Join-Path -Path $VenvDir -ChildPath "Scripts\python.exe"
 $VenvPythonW = Join-Path -Path $VenvDir -ChildPath "Scripts\pythonw.exe"
 
-if (-not (Test-Path $VenvPython)) {
+$VenvNeedsRecreate = -not (Test-Path $VenvPython)
+if (-not $VenvNeedsRecreate) {
+    try {
+        $VenvVersionCheck = & $VenvPython -c "import sys; expected=tuple(int(x) for x in '$PythonMajorMinor'.split('.')); raise SystemExit(0 if sys.version_info[:2] == expected else 1)"
+        if ($LASTEXITCODE -ne 0) {
+            $VenvNeedsRecreate = $true
+            Write-Host "Existing .venv uses a different Python major/minor; recreating it." -ForegroundColor Yellow
+        }
+    } catch {
+        $VenvNeedsRecreate = $true
+        Write-Host "Existing .venv could not be validated; recreating it." -ForegroundColor Yellow
+    }
+}
+if ($VenvNeedsRecreate) {
     Write-Host "Creating Virtual Environment in .venv..." -ForegroundColor Cyan
     if (Test-Path $VenvDir) { Remove-Item -Recurse -Force $VenvDir }
     $venvArgs = @()
     $venvArgs += $PythonArgs
     $venvArgs += @("-m", "venv", ".venv")
     Start-Process -FilePath $PythonExe -ArgumentList $venvArgs -Wait -NoNewWindow
+    if (-not (Test-Path $VenvPython)) {
+        throw "Virtual environment creation failed: $VenvPython was not created."
+    }
     Write-Host "Virtual Environment created." -ForegroundColor Green
 } else {
-    Write-Host "Virtual Environment already exists." -ForegroundColor Green
+    Write-Host "Virtual Environment already exists and matches Python $PythonMajorMinor." -ForegroundColor Green
 }
 
 # 6. Verify/repair dependencies against the actual application import graph.
