@@ -226,10 +226,11 @@ class OpenRouterClient:
                     )
 
                 if resp.status_code == 403:
-                    raise PermissionError(
-                        f"[OpenRouter] Access denied for model {model} (HTTP 403). "
-                        "Check your account permissions and model access."
+                    self._mark_temporarily_failed(model)
+                    logger.warning(
+                        f"[OpenRouter] Access denied for model {model} (HTTP 403); skipping model"
                     )
+                    return None
 
                 if resp.status_code == 429:
                     self._mark_rate_limited(model)
@@ -395,7 +396,11 @@ class OpenRouterClient:
                 if resp.status_code == 401:
                     raise PermissionError("[OpenRouter] Authentication failed.")
                 if resp.status_code == 403:
-                    raise PermissionError(f"[OpenRouter] Access denied for model {model}.")
+                    self._mark_temporarily_failed(model)
+                    logger.warning(
+                        f"[OpenRouter] tool-capable {model} -> HTTP 403; skipping model"
+                    )
+                    return {}
                 if resp.status_code == 429:
                     self._mark_rate_limited(model)
                     return {}
