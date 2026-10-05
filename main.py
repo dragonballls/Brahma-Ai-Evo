@@ -3602,9 +3602,9 @@ class BrahmaLive:
                 return
 
         memory_ctx = _memory_context_for_request(text)
-        routed_text = f"{memory_ctx}\n\nCurrent User Request:\n{text}" if memory_ctx else text
         if source == "instagram":
-            routed_text = f"Owner sent this via Instagram DM: {text}\n(SYSTEM: If this is an action like opening an app or running a command, you MUST execute it using your tools rather than just replying with text.)"
+            # The Instagram-specific instruction is attached by the AI fallback
+            # path when needed; keep the command dispatcher itself side-effect free.
         if text.lower() in {"stop meeting mode", "end meeting mode", "close meeting mode"}:
             self._stop_meeting_mode("Meeting mode closed.")
             return
@@ -3650,14 +3650,13 @@ class BrahmaLive:
                 ).start()
                 return
 
-        active_home_device = ""
         generic_home_hint = False
         if source != "instagram":
             try:
                 from smart_home.smart_device_manager import SmartDeviceManager
-                active_home_device = SmartDeviceManager().get_active_device_name() or ""
-                generic_home_hint = bool(active_home_device) and (
-                    SmartDeviceManager().route_command(text, []) != text
+                manager = SmartDeviceManager()
+                generic_home_hint = bool(manager.get_active_device_name()) and (
+                    manager.route_command(text, []) != text
                 )
             except Exception:
                 pass
