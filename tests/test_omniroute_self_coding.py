@@ -374,5 +374,14 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
         self.assertIn('int(c.get("parallel_workers",4))', source)
 
 
+    def test_device_and_smart_home_routing_is_off_ui_thread(self):
+        source = Path(ROOT / "main.py").read_text(encoding="utf-8")
+        self.assertIn("target=_run_brahma_connect", source)
+        self.assertIn('name="brahma-connect-routing"', source)
+        self.assertIn("target=_run_smart_home", source)
+        self.assertIn('name="smart-home-routing"', source)
+        self.assertIn('normalized_route = re.sub(r"\\s+", " "', source)
+
+
 if __name__ == "__main__":
     unittest.main()
