@@ -109,6 +109,22 @@ class OpenRouterClient:
             f"cooling down for {RATE_LIMIT_COOLDOWN}s"
         )
 
+    def _is_temporarily_failed(self, model: str) -> bool:
+        until = _failed_until.get(model)
+        if until is None:
+            return False
+        if time.time() >= until:
+            _failed_until.pop(model, None)
+            return False
+        return True
+
+    def _mark_temporarily_failed(self, model: str) -> None:
+        _failed_until[model] = time.time() + FAILED_MODEL_COOLDOWN
+        logger.warning(
+            f"[OpenRouter] Temporarily unavailable: {model} — "
+            f"cooling down for {FAILED_MODEL_COOLDOWN}s"
+        )
+
     def _omniroute_enabled(self) -> bool:
         import os
         return os.environ.get("BRAHMA_OMNIROUTE_ENABLED", "1").strip().lower() not in {
@@ -183,6 +199,9 @@ class OpenRouterClient:
         if response_format:
             payload["response_format"] = response_format
 
+        if self._is_rate_limited(model) or self._is_temporarily_failed(model):
+            return None
+
         self._refresh_credentials()
         if not self.api_key:
             raise PermissionError(
@@ -214,6 +233,13 @@ class OpenRouterClient:
                     self._mark_rate_limited(model)
                     return None
 
+                if resp.status_code in {400, 404, 422}:
+                    self._mark_temporarily_failed(model)
+                    logger.warning(
+                        f"[OpenRouter] {model} -> non-retryable HTTP {resp.status_code}; skipping model"
+                    )
+                    return None
+
                 if resp.status_code == 200:
                     data    = resp.json()
                     content = (
@@ -233,13 +259,19 @@ class OpenRouterClient:
                     f"[OpenRouter] {model} → Timeout "
                     f"(attempt {attempt}/{MAX_RETRIES_PER_MODEL})"
                 )
+                if attempt == MAX_RETRIES_PER_MODEL:
+                    self._mark_temporarily_failed(model)
             except PermissionError:
                 raise
             except Exception as e:
                 logger.error(f"[OpenRouter] {model} → Unexpected error: {e}")
+                if attempt == MAX_RETRIES_PER_MODEL:
+                    self._mark_temporarily_failed(model)
 
             if attempt < MAX_RETRIES_PER_MODEL:
                 time.sleep(RETRY_DELAY)
+            else:
+                self._mark_temporarily_failed(model)
 
         return None
 
@@ -268,7 +300,7 @@ class OpenRouterClient:
                 raise
 
         for m in pool:
-            if self._is_rate_limited(m):
+            if self._is_rate_limited(m) or self._is_temporarily_failed(m):
                 continue
             logger.info(f"[OpenRouter] Trying: {m}")
             result = self._call(m, messages, max_tokens, temperature, response_format)
@@ -335,6 +367,8 @@ class OpenRouterClient:
         temperature: float = DEFAULT_TEMPERATURE,
     ) -> dict:
         """Make one OpenRouter request that preserves structured tool calls."""
+        if self._is_rate_limited(model) or self._is_temporarily_failed(model):
+            return {}
         self._refresh_credentials()
         if not self.api_key:
             raise PermissionError(
@@ -363,6 +397,12 @@ class OpenRouterClient:
                 if resp.status_code == 429:
                     self._mark_rate_limited(model)
                     return {}
+                if resp.status_code in {400, 404, 422}:
+                    self._mark_temporarily_failed(model)
+                    logger.warning(
+                        f"[OpenRouter] tool-capable {model} -> non-retryable HTTP {resp.status_code}; skipping model"
+                    )
+                    return {}
                 if resp.status_code == 200:
                     data = resp.json()
                     return data if isinstance(data, dict) else {}
@@ -375,12 +415,18 @@ class OpenRouterClient:
                     f"[OpenRouter] tool-capable {model} timed out "
                     f"(attempt {attempt}/{MAX_RETRIES_PER_MODEL})"
                 )
+                if attempt == MAX_RETRIES_PER_MODEL:
+                    self._mark_temporarily_failed(model)
             except PermissionError:
                 raise
             except Exception as exc:
                 logger.error(f"[OpenRouter] tool-capable {model} failed: {exc}")
+                if attempt == MAX_RETRIES_PER_MODEL:
+                    self._mark_temporarily_failed(model)
             if attempt < MAX_RETRIES_PER_MODEL:
                 time.sleep(RETRY_DELAY)
+            else:
+                self._mark_temporarily_failed(model)
         return {}
 
     def _call_omniroute_tool_capable(
