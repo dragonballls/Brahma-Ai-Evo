@@ -233,6 +233,41 @@ class RepositoryIntegrityTests(unittest.TestCase):
         self.assertIn("def stop(self)", gateway)
         self.assertIn("atexit.register(_gateway.stop)", gateway)
 
+    def test_direct_google_genai_usage_is_limited_to_specialized_transports(self):
+        allowed = {
+            "core/gemini_runtime.py",
+            "main.py",
+            "actions/screen_processor.py",
+            "actions/meeting_assistant.py",
+            "actions/video_understanding.py",
+            "actions/web_search.py",
+        }
+        offenders = []
+        for path in _all_python_files():
+            rel = path.relative_to(ROOT).as_posix()
+            source = path.read_text(encoding="utf-8", errors="replace")
+            if (
+                ("from google import genai" in source or "from google.genai import" in source)
+                and rel not in allowed
+            ):
+                offenders.append(rel)
+        self.assertEqual(
+            offenders,
+            [],
+            "Direct google-genai usage must stay limited to canonical/specialized transports: "
+            + ", ".join(offenders),
+        )
+
+    def test_discord_optional_dependency_logging_is_initialized_before_use(self):
+        source = self.read("discord_bot.py")
+        self.assertLess(
+            source.index('logger = logging.getLogger("brahma_evo.discord")'),
+            source.index("discord = _load_discord_module()"),
+        )
+        self.assertIn("from llm_client import client as unified_cloud_client", source)
+        self.assertNotIn("API_KEYS_FILE = API_CONFIG_PATH", source)
+        self.assertNotIn("genai.Client(", source)
+
     def test_legacy_google_generativeai_sdk_is_not_used(self):
         offenders = []
         for path in _all_python_files():
