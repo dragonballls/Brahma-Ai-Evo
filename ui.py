@@ -1,6 +1,21 @@
 from __future__ import annotations
 from core.user_paths import get_user_data_dir
 
+# Packaged-smoke GUI tracing pinpoints slow/hung constructor stages without
+# adding work to normal interactive launches.
+_SMOKE_TRACE_ENABLED = os.environ.get("BRAHMA_EVO_TEST_MODE", "").strip() == "1"
+
+def _smoke_trace_ui(message: str) -> None:
+    if not _SMOKE_TRACE_ENABLED:
+        return
+    try:
+        from core.runtime_paths import STARTUP_LOG_PATH
+        STARTUP_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with STARTUP_LOG_PATH.open("a", encoding="utf-8") as _fh:
+            _fh.write(f"[smoke-ui] {message}\n")
+    except Exception:
+        pass
+
 import asyncio
 import json
 import html as html_lib
@@ -9027,6 +9042,7 @@ class MainWindow(QMainWindow):
         return _logo_icon()
 
     def __init__(self, face_path: str):
+        _smoke_trace_ui("MainWindow constructor entered")
         super().__init__()
         self.setWindowFlag(Qt.WindowType.Tool, False)
         self.setWindowFlag(Qt.WindowType.Window, True)
@@ -9072,7 +9088,9 @@ class MainWindow(QMainWindow):
         self._meeting_overlay_collapsed = False
         self._chat_source_queue: deque[str] = deque()
 
+        _smoke_trace_ui("MainWindow before BackgroundWidget")
         central = BackgroundWidget(BACKGROUND_IMAGE_FILE if BACKGROUND_IMAGE_FILE.exists() else None)
+        _smoke_trace_ui("MainWindow BackgroundWidget complete")
         central.setStyleSheet("background: transparent;")
         self._bg_widget = central
         self.setCentralWidget(central)
@@ -9114,12 +9132,16 @@ class MainWindow(QMainWindow):
         self._floating_gesture_card = FloatingGestureCard(self.centralWidget())
         self._floating_gesture_card.show()
 
+        _smoke_trace_ui("MainWindow before center panel")
         self._center_panel = self._build_center_panel_modern(face_path)
+        _smoke_trace_ui("MainWindow center panel complete")
         body.addWidget(self._center_panel, stretch=1)
         _attach_pulse_glow(self._center_panel, color=C.PRI, blur_min=6.0, blur_max=14.0, alpha=36, period_ms=4200)
 
         self._right_collapsed = False
+        _smoke_trace_ui("MainWindow before right panel")
         self._right_panel = self._build_right_panel_modern()
+        _smoke_trace_ui("MainWindow right panel complete")
         body.addWidget(self._right_panel, stretch=0)
 
         # Unified wireless device workspace. It remains optional and lazy; if an
@@ -9148,7 +9170,9 @@ class MainWindow(QMainWindow):
         self._metric_tmr = QTimer(self)
         self._metric_tmr.timeout.connect(self._update_metrics)
         self._metric_tmr.start(5000)
+        _smoke_trace_ui("MainWindow before initial metrics")
         self._update_metrics()
+        _smoke_trace_ui("MainWindow initial metrics complete")
 
         self._log_sig.connect(self._on_log_text)
         self._state_sig.connect(self._apply_state)
@@ -9177,6 +9201,7 @@ class MainWindow(QMainWindow):
         import threading
         self._screen_capture_event = threading.Event()
 
+        _smoke_trace_ui("MainWindow constructor complete")
         self._ready = False
         self._card_hide_tmr = QTimer(self)
         self._card_hide_tmr.setSingleShot(True)
@@ -15909,6 +15934,7 @@ class _RootShim:
 
 class BrahmaUI:
     def __init__(self, face_path: str, size=None, *, show_immediately: bool = True):
+        _smoke_trace_ui("BrahmaUI constructor entered")
         self._app = QApplication.instance() or QApplication(sys.argv)
         self._app.setStyle("Fusion")
         self._deep_idle = False
@@ -15926,16 +15952,22 @@ class BrahmaUI:
         self._app.setApplicationDisplayName("Brahma Evo")
         self._app.setWindowIcon(self._make_app_icon())
         try:
+            _smoke_trace_ui("BrahmaUI before workspace rollover")
             current_store = workspace_store()
             current_store.rollover_active_conversation_on_startup()
+            _smoke_trace_ui("BrahmaUI workspace rollover complete")
         except Exception:
             pass
+        _smoke_trace_ui("BrahmaUI before MainWindow")
         self._win = MainWindow(face_path)
+        _smoke_trace_ui("BrahmaUI MainWindow complete")
         try:
+            _smoke_trace_ui("BrahmaUI before updater")
             from core.updater import UpdateChecker
             self._updater = UpdateChecker(base_dir=BASE_DIR)
             self._updater.update_available_sig.connect(self._show_update_prompt)
             self._updater.start()
+            _smoke_trace_ui("BrahmaUI updater started")
         except Exception as e:
             print(f"Failed to start updater: {e}")
         try:
@@ -15943,6 +15975,7 @@ class BrahmaUI:
         except Exception:
             pass
         self._win.set_settings_bridge(self)
+        _smoke_trace_ui("BrahmaUI before Discord service")
         self._discord_service = DiscordBotService(
             status_callback=self._win.discord_status_changed.emit,
             log_callback=self._win._log_sig.emit,
@@ -15951,6 +15984,7 @@ class BrahmaUI:
         self._win.discord_config_changed.connect(self._on_discord_config_changed)
         self._win.on_chat_event = self._on_chat_event
         self._app.aboutToQuit.connect(self._discord_service.stop)
+        _smoke_trace_ui("BrahmaUI before launcher stack")
         self._launcher = FloatingLauncher()
         self._command_bar = CommandBar()
         self._workspace_sidebar = WorkspaceSidebar()
@@ -15981,6 +16015,7 @@ class BrahmaUI:
             self._clip_sentry.start()
         except Exception:
             pass
+        _smoke_trace_ui("BrahmaUI before tray")
         self._tray = QSystemTrayIcon(self._make_app_icon(), self._app)
         self._tray.setToolTip("Brahma Evo")
         self._tray.activated.connect(self._on_tray_activated)
@@ -15994,6 +16029,7 @@ class BrahmaUI:
         if inline_workspace is not None:
             self._win._task_workspace_sig.connect(inline_workspace.apply_task_workspace)
         self._on_discord_config_changed(self._win._load_discord_settings())
+        _smoke_trace_ui("BrahmaUI integrations complete")
         launcher_pos = self._load_app_settings().get("launcher_pos")
         if isinstance(launcher_pos, (list, tuple)) and len(launcher_pos) == 2:
             try:
@@ -16015,6 +16051,7 @@ class BrahmaUI:
         else:
             self._show_floating_icon()
         self.root = _RootShim(self._app)
+        _smoke_trace_ui("BrahmaUI constructor complete")
 
     def _make_app_icon(self) -> QIcon:
         return _logo_icon()
