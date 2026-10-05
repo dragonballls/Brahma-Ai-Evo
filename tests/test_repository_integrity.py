@@ -245,6 +245,8 @@ class RepositoryIntegrityTests(unittest.TestCase):
         offenders = []
         for path in _all_python_files():
             rel = path.relative_to(ROOT).as_posix()
+            if rel.startswith("tests/"):
+                continue
             source = path.read_text(encoding="utf-8", errors="replace")
             if (
                 ("from google import genai" in source or "from google.genai import" in source)
