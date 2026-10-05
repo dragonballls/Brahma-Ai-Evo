@@ -27,34 +27,26 @@ def get_base_dir() -> Path:
 BASE_DIR        = get_base_dir()
 
 def _get_api_key() -> str:
+    """Compatibility helper retained for legacy callers; credentials are provider-managed."""
     from config import get_api_key
-    key = get_api_key("Gemini")
-    if not key:
-        raise RuntimeError("Gemini API key is not configured.")
-    return key
+    return str(get_api_key("Gemini") or "").strip()
 
 
 def _gemini_generate(prompt: str, *, system: str = "") -> str:
-    from google import genai
-    from google.genai import types
-
-    client = genai.Client(
-        api_key=_get_api_key(),
-        http_options={"api_version": "v1beta"},
+    """Route executor support generation through the unified provider client."""
+    from llm_client import client as unified_client
+    result = unified_client.chat(
+        prompt,
+        system=system or "You are Brahma Evo's task execution assistant.",
+        model="auto",
+        max_tokens=4096,
+        temperature=0.2,
     )
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=system or None,
-            temperature=0.2,
-            max_output_tokens=4096,
-        ),
-    )
-    text = (getattr(response, "text", "") or "").strip()
+    text = str(result or "").strip()
     if not text:
-        raise RuntimeError("Gemini returned an empty response.")
+        raise RuntimeError("Unified AI client returned an empty response.")
     return text
+
 
 def _run_skill_forge(
     goal: str,
