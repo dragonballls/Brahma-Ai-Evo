@@ -1,5 +1,4 @@
 from core.user_paths import get_user_data_dir
-from core.runtime_paths import API_CONFIG_PATH
 import subprocess
 import sys
 import json
@@ -20,20 +19,27 @@ GEMINI_MODEL       = "gemini-flash-latest"
 
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    from config import get_api_key
+    return str(get_api_key("Gemini") or "").strip()
 
 
 def _get_gemini(model: str = GEMINI_MODEL):
-    from google import genai
-    _c = genai.Client(api_key=_get_api_key())
+    """Compatibility adapter routed through Brahma unified provider client."""
+    from llm_client import client as unified_client
 
     class _W:
         def generate_content(self, contents):
-            return _c.models.generate_content(model=model, contents=contents)
+            prompt = "\n".join(str(item) if not isinstance(item, bytes) else "[binary input]" for item in contents) if isinstance(contents, (list, tuple)) else str(contents)
+            result = unified_client.chat(
+                prompt,
+                system="You are Brahma Evo's coding assistant. Return accurate, production-ready output.",
+                model="auto",
+                max_tokens=8192,
+                temperature=0.2,
+            )
+            return type("Response", (), {"text": str(result or "")})()
 
     return _W()
-
 
 def _clean_code(text: str) -> str:
     text = text.strip()
