@@ -12180,7 +12180,6 @@ class SystemConnectivityPage(QWidget):
 
         _populate_models()
         self._local_model_combo.currentTextChanged.connect(lambda t: self._set_setting("local_ai_model", t))
-        self.local_model_pull_update.connect(_handle_model_pull_update)
         model_row.addWidget(self._local_model_combo, 1)
 
         btn_refresh = QPushButton("🔄 Refresh")
@@ -12199,6 +12198,8 @@ class SystemConnectivityPage(QWidget):
                 _populate_models()
                 btn_pull.setEnabled(True)
                 btn_pull.setText("📥 Pull Qwen 2.5 (3B)")
+
+        self.local_model_pull_update.connect(_handle_model_pull_update)
 
         # 1-Click Model Download Helper Button
         action_row = QHBoxLayout()
