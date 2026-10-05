@@ -512,14 +512,18 @@ class RuntimeConsistencyTests(unittest.TestCase):
 
     def test_omniroute_dashboard_retries_gateway_startup(self):
         source = self.read("ui.py")
-        self.assertIn("def _retry_gateway_and_reload(self)", source)
+        self.assertIn("class OmniRouteFloatingWindow(QDialog):", source)
+        self.assertIn("def _retry_gateway(self)", source)
         self.assertIn("gateway().ensure_ready()", source)
         self.assertIn("self._gateway_retry_inflight", source)
+        self.assertIn("QTimer", source)
 
-    def test_navigation_back_to_settings_uses_central_controller(self):
+    def test_navigation_to_omniroute_uses_floating_window_controller(self):
         source = self.read("ui.py")
-        self.assertIn('win._set_page("settings")', source)
-        self.assertIn('win._set_page("omniroute")', source)
+        self.assertIn('self._omniroute_window = None', source)
+        self.assertIn('dialog = OmniRouteFloatingWindow(owner=win)', source)
+        self.assertIn('dialog.show()', source)
+        self.assertNotIn('win._set_page("omniroute")', source)
 
     def test_instagram_browser_login_uses_shared_config_writer(self):
         source = self.read("actions/instagram_mcp.py")
