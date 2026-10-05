@@ -66,6 +66,9 @@ class OmniRouteGateway:
 
             try:
                 ready = self.provisioner.ensure_running(wait_seconds=15.0)
+                # The provisioner may have moved to an automatic free loopback port.
+                # Keep every Brahma caller on the same internal endpoint.
+                self.base_url = self.provisioner.base_url.rstrip("/")
             except Exception:
                 self._ready = False
                 self._last_check_at = now
@@ -111,6 +114,7 @@ class OmniRouteGateway:
         if not self.provisioner.ensure_running(wait_seconds=15.0):
             raise RuntimeError("OmniRoute is not ready; provider configuration was not applied.")
         with self._lock:
+            self.base_url = self.provisioner.base_url.rstrip("/")
             result = self.provisioner.configure_provider(provider, api_key)
             self._credentials_synced = False
             self._ready = True
