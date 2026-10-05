@@ -422,7 +422,7 @@ class BackgroundWidget(QWidget):
         except Exception:
             pass
         now = time.monotonic()
-        if (now - self._last_audio_js_time) < 0.05:  # 20 Hz is sufficient for the adaptive visualizer
+        if (now - self._last_audio_js_time) < 0.10:  # 10 Hz keeps the Qt-WebEngine bridge responsive under load
             return
         self._last_audio_js_time = now
         if self._web_view:
