@@ -14,6 +14,13 @@ class RuntimeConsistencyTests(unittest.TestCase):
     def read(self, rel: str) -> str:
         return (ROOT / rel).read_text(encoding="utf-8")
 
+    def test_settings_load_uses_file_signature_cache(self):
+        source = self.read("memory/config_manager.py")
+        self.assertIn("_SETTINGS_CACHE:", source)
+        self.assertIn("def _settings_signature()", source)
+        self.assertIn("_SETTINGS_CACHE[0] == signature", source)
+        self.assertIn("_SETTINGS_CACHE = (_settings_signature(), dict(current))", source)
+
     def test_runtime_paths_are_shared(self):
         from core.runtime_paths import (
             API_CONFIG_PATH,
