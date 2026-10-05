@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.user_paths import get_user_data_dir
-from core.runtime_paths import API_CONFIG_PATH
 
 logger = logging.getLogger("CircuitAssembler")
 
@@ -328,15 +327,9 @@ def capture_screen_image() -> Optional[bytes]:
 
 
 def get_api_key() -> str:
-    """Loads Gemini API key from user config."""
-    try:
-        if API_CONFIG_PATH.exists():
-            with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-                d = json.load(f)
-                return str(__import__("config").get_api_key("Gemini") or "").strip()
-    except Exception:
-        pass
-    return str(__import__("config").get_api_key("Gemini") or "")
+    """Load the Gemini credential through the canonical configuration accessor."""
+    from config import get_api_key as get_configured_api_key
+    return str(get_configured_api_key("Gemini") or "").strip()
 
 
 def solve_circuit_with_ai(prompt: str, image_bytes: Optional[bytes] = None) -> Optional[Dict[str, Any]]:
