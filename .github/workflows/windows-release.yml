@@ -258,14 +258,19 @@ jobs:
             ForEach-Object { "$($_.Hash)  $($_.Path)" } |
             Set-Content dist/SHA256SUMS.txt
 
+      - name: Prepare fast portable download
+        shell: pwsh
+        run: |
+          Copy-Item "dist/BrahmaEvoPayload.zip" "dist/Brahma-Evo-Windows-Portable.zip" -Force
+          if (-not (Test-Path "dist/Brahma-Evo-Windows-Portable.zip")) { throw "Portable download archive was not produced." }
+
       - name: Publish verified Brahma Evo application
         uses: actions/upload-artifact@v4
         with:
           name: Brahma-Evo-Windows-App-${{ github.run_number }}
           compression-level: 0
           path: |
-            dist/BrahmaEvo/**
-            dist/BrahmaEvoPayload.zip
+            dist/Brahma-Evo-Windows-Portable.zip
             dist/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
