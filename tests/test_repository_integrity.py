@@ -226,6 +226,16 @@ class RepositoryIntegrityTests(unittest.TestCase):
             source,
         )
 
+    def test_spotify_mcp_package_entrypoint_matches_build_output(self):
+        package = ROOT / "actions" / "spotify_mcp_server" / "package.json"
+        data = __import__("json").loads(package.read_text(encoding="utf-8"))
+        self.assertEqual(data.get("main"), "build/index.js")
+        self.assertTrue((package.parent / "src" / "index.ts").is_file())
+        self.assertEqual(
+            data.get("bin", {}).get("spotify-mcp"),
+            "./build/index.js",
+        )
+
     def test_omniroute_has_one_runtime_owner_and_clean_shutdown(self):
         setup = (ROOT / "core" / "omniroute_setup.py").read_text(encoding="utf-8")
         gateway = (ROOT / "core" / "omniroute.py").read_text(encoding="utf-8")
