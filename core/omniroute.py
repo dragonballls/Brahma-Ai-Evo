@@ -26,6 +26,7 @@ class OmniRouteGateway:
         ).rstrip("/")
         self.provisioner = OmniRouteProvisioner(self.base_url)
         self._lock = threading.Lock()
+        self._credentials_lock = threading.Lock()
         self._ready = False
         self._credentials_synced = False
         self._last_check_at = 0.0
@@ -51,6 +52,7 @@ class OmniRouteGateway:
             return False
 
         now = time.monotonic()
+        sync_needed = False
         with self._lock:
             if not force and self._ready and (now - self._last_check_at) < self._check_cache_seconds:
                 return True
@@ -61,38 +63,44 @@ class OmniRouteGateway:
                 self._ready = True
                 self._last_check_at = now
                 self._retry_after = 0.0
-                self._sync_credentials_once()
-                return True
+                sync_needed = True
+                ready = True
+            else:
+                try:
+                    ready = self.provisioner.ensure_running(wait_seconds=15.0)
+                    # The provisioner may have moved to an automatic free loopback port.
+                    # Keep every Brahma caller on the same internal endpoint.
+                    self.base_url = self.provisioner.base_url.rstrip("/")
+                except Exception:
+                    self._ready = False
+                    self._last_check_at = now
+                    self._retry_after = now + self._failure_cooldown_seconds
+                    return False
 
-            try:
-                ready = self.provisioner.ensure_running(wait_seconds=15.0)
-                # The provisioner may have moved to an automatic free loopback port.
-                # Keep every Brahma caller on the same internal endpoint.
-                self.base_url = self.provisioner.base_url.rstrip("/")
-            except Exception:
-                self._ready = False
+                self._ready = bool(ready)
                 self._last_check_at = now
-                self._retry_after = now + self._failure_cooldown_seconds
-                return False
+                self._retry_after = 0.0 if self._ready else now + self._failure_cooldown_seconds
+                sync_needed = self._ready
 
-            self._ready = bool(ready)
-            self._last_check_at = now
-            self._retry_after = 0.0 if self._ready else now + self._failure_cooldown_seconds
-            if self._ready:
-                self._sync_credentials_once()
-            return self._ready
+        # Credential registration can launch slow subprocesses; keep it off the
+        # gateway state lock so UI/status/request coordination stays responsive.
+        if sync_needed:
+            self._sync_credentials_once()
+        return bool(self._ready)
 
     def _sync_credentials_once(self) -> None:
-        if self._credentials_synced:
-            return
-        try:
-            result = self.provisioner.sync_existing_provider_keys(
-                API_CONFIG_PATH
-            )
-            self._credentials_synced = not bool(result.get("skipped"))
-        except Exception:
-            # Leave the flag false so a later healthy gateway can retry the sync.
-            self._credentials_synced = False
+        """Synchronize saved provider keys once without serializing the gateway state lock."""
+        with self._credentials_lock:
+            if self._credentials_synced:
+                return
+            try:
+                result = self.provisioner.sync_existing_provider_keys(
+                    API_CONFIG_PATH
+                )
+                self._credentials_synced = not bool(result.get("skipped"))
+            except Exception:
+                # Leave the flag false so a later healthy gateway can retry the sync.
+                self._credentials_synced = False
 
     def status(self) -> dict[str, Any]:
         try:
