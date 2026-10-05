@@ -1,5 +1,4 @@
 from core.user_paths import get_user_data_dir
-from core.runtime_paths import API_CONFIG_PATH
 import subprocess
 import sys
 import json
@@ -21,17 +20,32 @@ MODEL_PLANNER    = "gemini-flash-latest"
 MODEL_WRITER     = "gemini-flash-latest"
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    """Compatibility helper retained for legacy callers; use canonical config access."""
+    from config import get_api_key
+    return str(get_api_key("Gemini") or "").strip()
 
 
 def _get_model(model_name: str):
-    from google import genai
-    _c = genai.Client(api_key=_get_api_key())
+    """Compatibility adapter routed through Brahma's unified provider client."""
+    from llm_client import client as unified_client
 
     class _W:
         def generate_content(self, contents):
-            return _c.models.generate_content(model=model_name, contents=contents)
+            if isinstance(contents, (list, tuple)):
+                prompt = "\n".join(
+                    str(item) if not isinstance(item, bytes) else "[binary input]"
+                    for item in contents
+                )
+            else:
+                prompt = str(contents)
+            result = unified_client.chat(
+                prompt,
+                system="You are Brahma Evo's development agent. Produce accurate production-ready output.",
+                model="auto",
+                max_tokens=8192,
+                temperature=0.2,
+            )
+            return type("Response", (), {"text": str(result or "")})()
 
     return _W()
 
