@@ -118,7 +118,6 @@ def trim(s:str,n:int)->str:
 
 
 _MODEL_CACHE = None
-_ENSEMBLE_EXECUTOR = ThreadPoolExecutor(max_workers=12, thread_name_prefix="BrahmaEnsemble")
 _PROVIDER_KEYS = {
     "openai":"openai_api_key", "anthropic":"anthropic_api_key", "gemini":"gemini_api_key",
     "openrouter":"openrouter_api_key", "groq":"groq_api_key", "xai":"xai_api_key",
@@ -214,7 +213,13 @@ class IntelligenceOrchestrator:
             ctx=trim(context,int(c.get("max_context_chars",14000)))
             roles=_ensemble_roles(p,len(panel))
             futures={}
-            for index,((provider,model),role) in enumerate(zip(panel,roles),1):
+            ensemble_workers = max(
+                1,
+                min(
+                    len(panel),
+                    int(c.get("parallel_workers", 4)),
+                ),
+            )
                 expert_system=(
                     system+
                     "\n\nYou are one independent member of Brahma Evo's cross-provider reasoning panel. "
@@ -226,19 +231,26 @@ class IntelligenceOrchestrator:
                     f"Original request:\n{prompt}\n\nContext:\n{ctx or '[none]'}\n\n"
                     "Produce your best complete analysis/answer independently. Do not discuss the panel."
                 )
-                futures[_ENSEMBLE_EXECUTOR.submit(
-                    self._call,
+                futures[(index,provider,model)] = (
                     expert_prompt,
                     expert_system,
                     model,
                     int(pc.get("max_tokens",4096)),
                     float(pc.get("temperature",0.35)),
                     history,
-                )]=(index,provider,model)
+                )
             panel_results=[]
-            for future in as_completed(futures):
-                index,provider,model=futures[future]
-                try:
+            with ThreadPoolExecutor(
+                max_workers=ensemble_workers,
+                thread_name_prefix="BrahmaEnsemble",
+            ) as executor:
+                submitted = {
+                    executor.submit(self._call, *spec): meta
+                    for meta, spec in futures.items()
+                }
+                for future in as_completed(submitted):
+                    index,provider,model=submitted[future]
+                    try:
                     answer=str(future.result() or "").strip()
                     if answer:
                         panel_results.append((index,provider,model,answer))
@@ -298,25 +310,31 @@ class IntelligenceOrchestrator:
                     critique_models.append(judge_model)
                 critiques = []
                 critic_specs = list(enumerate(tuple(dict.fromkeys(critique_models))[:2], 1))
-                critic_futures = {
-                    _ENSEMBLE_EXECUTOR.submit(
-                        self._call,
-                        critique_prompt,
-                        critique_system + f"\nCritic slot: {critique_index}.",
-                        critique_model,
-                        max(1024, int(pc.get("max_tokens",4096)) // 2),
-                        0.1,
-                        None,
-                    ): critique_index
-                    for critique_index, critique_model in critic_specs
-                }
-                for future in as_completed(critic_futures):
-                    try:
-                        critique = str(future.result() or "").strip()
-                        if critique:
-                            critiques.append((critic_futures[future], trim(critique, 7000)))
-                    except Exception as exc:
-                        log.debug("ensemble critic failed: %s", exc)
+                critic_specs = list(enumerate(tuple(dict.fromkeys(critique_models))[:2], 1))
+                critic_workers = max(1, min(len(critic_specs), int(c.get("parallel_workers", 4))))
+                with ThreadPoolExecutor(
+                    max_workers=critic_workers,
+                    thread_name_prefix="BrahmaEnsembleCritic",
+                ) as executor:
+                    critic_futures = {
+                        executor.submit(
+                            self._call,
+                            critique_prompt,
+                            critique_system + f"\nCritic slot: {critique_index}.",
+                            critique_model,
+                            max(1024, int(pc.get("max_tokens",4096)) // 2),
+                            0.1,
+                            None,
+                        ): critique_index
+                        for critique_index, critique_model in critic_specs
+                    }
+                    for future in as_completed(critic_futures):
+                        try:
+                            critique = str(future.result() or "").strip()
+                            if critique:
+                                critiques.append((critic_futures[future], trim(critique, 7000)))
+                        except Exception as exc:
+                            log.debug("ensemble critic failed: %s", exc)
                 critiques.sort(key=lambda item: item[0])
                 critiques = [value for _index, value in critiques]
 
