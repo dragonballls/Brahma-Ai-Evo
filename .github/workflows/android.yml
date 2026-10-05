@@ -39,8 +39,8 @@ jobs:
           gradle-home-cache-cleanup: true
 
       - name: Verify Gradle wrapper
-        run: ./gradlew --version
+        run: bash ./gradlew --version
 
       - name: Assemble Android debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: bash ./gradlew assembleDebug --stacktrace
 
