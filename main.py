@@ -672,49 +672,7 @@ def _wakeword_detected(text: str) -> bool:
     return any(compact == phrase or compact.startswith(phrase + " ") for phrase in phrases)
 
 
-def _looks_like_action_request(text: str) -> bool:
-    """Conservative guard: tool-capable routing should handle likely side effects before text-only reasoning."""
-    low = re.sub(r"\s+", " ", (text or "").casefold()).strip()
-    if not low:
-        return False
-    action_phrases = (
-        "open ", "launch ", "start ", "run ", "execute ", "set ", "change ",
-        "turn on", "turn off", "mute ", "unmute ", "increase ", "decrease ",
-        "send ", "post ", "publish ", "create ", "delete ", "remove ", "move ",
-        "copy ", "rename ", "download ", "install ", "search ", "browse ",
-        "navigate ", "check ", "diagnose ", "control ", "play ", "pause ", "stop ",
-        "schedule ", "remind ", "call ", "message ", "email ", "compose ",
-        "write ", "edit ", "fix ", "build ", "implement ", "update ", "connect ",
-        "disconnect ", "take a screenshot", "look at my screen",
-        "help me with ", "show me ", "what can you do with ", "use ",
-    )
-    if any(low.startswith(phrase) for phrase in action_phrases):
-        return True
-    if any(
-        re.search(rf"\b(?:can|could|would|will|please) you\s+{re.escape(verb)}\b", low)
-        for verb in (
-            "open", "launch", "start", "run", "execute", "set", "change",
-            "turn", "send", "post", "create", "delete", "move", "copy",
-            "rename", "download", "install", "search", "browse", "navigate",
-            "check", "diagnose", "control", "play", "pause", "stop", "schedule",
-            "remind", "call", "message", "email", "write", "edit", "fix",
-            "build", "implement", "update", "connect", "disconnect", "show",
-        )
-    ):
-        return True
-    try:
-        from core.capability_catalog import CAPABILITY_ROUTING_TERMS
-        # Only distinctive feature terms should influence routing. Generic words
-        # such as "app" or "phone" are too common in ordinary conversation.
-        if any(
-            re.search(rf"\b{re.escape(term.casefold())}\b", low)
-            for term in CAPABILITY_ROUTING_TERMS
-        ):
-            return True
-    except Exception:
-        pass
-    return False
-
+from core.request_routing import _looks_like_action_request
 
 def _build_task_plan(text: str) -> list[str]:
     t = (text or "").lower()
