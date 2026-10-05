@@ -417,6 +417,11 @@ def _gemini_tool_reply(
     max_rounds: int = 6,
 ) -> str:
     """Compatibility name for the unified OmniRoute tool-calling path."""
+    try:
+        from core.capability_catalog import prompt_block as capability_prompt_block
+        system_prompt = system_prompt.rstrip() + "\n\n" + capability_prompt_block()
+    except Exception:
+        pass
     from llm_client import client as unified_cloud_client
     return unified_cloud_client.chat_with_tools(
         messages=[
@@ -445,6 +450,11 @@ def _cloud_tool_reply(
     try:
         from core.language_policy import prompt_block as language_prompt_block
         system_prompt = system_prompt.rstrip() + "\n\n" + language_prompt_block()
+    except Exception:
+        pass
+    try:
+        from core.capability_catalog import prompt_block as capability_prompt_block
+        system_prompt = system_prompt.rstrip() + "\n\n" + capability_prompt_block()
     except Exception:
         pass
     if is_local(provider):
@@ -4844,10 +4854,17 @@ class BrahmaLive:
                         language_directive = language_prompt_block()
                     except Exception:
                         pass
+                    capability_directive = ""
+                    try:
+                        from core.capability_catalog import prompt_block as capability_prompt_block
+                        capability_directive = capability_prompt_block()
+                    except Exception:
+                        pass
                     system_prompt = (
                         f"{prompt_txt}\n\n"
                         f"{emotional_prompt}\n"
                         f"{language_directive}\n"
+                        f"{capability_directive}\n"
                         "CRITICAL OPERATING SYSTEM DIRECTIVE:\n"
                         "- You have FULL DIRECT ACCESS and authority over this Windows PC via your tools.\n"
                         "- NEVER state that you are a text-based AI, that you cannot perform automations, or that you lack real-time access.\n"
