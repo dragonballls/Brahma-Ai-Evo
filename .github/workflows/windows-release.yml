@@ -92,6 +92,20 @@ jobs:
           if (-not (Test-Path "dist/BrahmaEvoSupervisor.exe")) { throw "BrahmaEvoSupervisor.exe was not produced." }
           Copy-Item "dist/BrahmaEvoSupervisor.exe" "dist/BrahmaEvo/BrahmaEvoSupervisor.exe" -Force
 
+      - name: Verify complete runnable Brahma Evo tree
+        shell: pwsh
+        run: |
+          $required = @(
+            "dist/BrahmaEvo/BrahmaEvo.exe",
+            "dist/BrahmaEvo/BrahmaEvoSupervisor.exe",
+            "dist/BrahmaEvo/_internal/python312.dll",
+            "dist/BrahmaEvo/_internal/python3.dll"
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path $path -PathType Leaf)) { throw "Runnable package file missing: $path" }
+          }
+          Write-Host "Complete runnable Brahma Evo tree verified, including bundled Python runtime."
+
       - name: Restore cached Brahma Evo payload
         id: payload-cache
         uses: actions/cache/restore@v4
@@ -250,9 +264,8 @@ jobs:
           name: Brahma-Evo-Windows-App-${{ github.run_number }}
           compression-level: 0
           path: |
+            dist/BrahmaEvo/**
             dist/BrahmaEvoPayload.zip
-            dist/BrahmaEvo/BrahmaEvo.exe
-            dist/BrahmaEvo/BrahmaEvoSupervisor.exe
             dist/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
