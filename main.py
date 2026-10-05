@@ -86,6 +86,10 @@ from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
     should_extract_memory, extract_memory, auto_learn_interaction
 )
+try:
+    from core import jev_memory
+except Exception:
+    jev_memory = None
 
 _smoke_trace("before action imports")
 from actions.file_processor import file_processor
@@ -753,6 +757,17 @@ def _update_memory_async(user_text: str, brahma_text: str) -> None:
     _last_memory_input = user_text
 
     # Fast deterministic heuristic extraction (Pillar 5 - Living Knowledge Graph)
+    # Jev-Mem's System-One admission gate runs before the slower model extractor
+    # when a TypeSafe key is configured. A failure never blocks normal memory.
+    if jev_memory is not None:
+        try:
+            admission = jev_memory.should_store(user_text, brahma_text)
+            if admission is False:
+                _startup_log("Jev memory gate rejected transient observation")
+                return
+        except Exception as exc:
+            _startup_log(f"Jev memory gate unavailable; using Brahma memory fallback: {exc}")
+
     try:
         learned = auto_learn_interaction(user_text, brahma_text)
         if learned:
@@ -774,7 +789,27 @@ def _update_memory_async(user_text: str, brahma_text: str) -> None:
 
 def _memory_context_for_request(text: str) -> str:
     try:
-        return workspace_store().memory_context(text, limit=5)
+        ws = workspace_store()
+        memories = ws.search_memories(text, limit=8)
+        if not memories:
+            return ""
+        ordered = memories
+        if jev_memory is not None:
+            try:
+                selected = jev_memory.score_relevance(
+                    [item.get("content", "") for item in memories],
+                    text,
+                    max_results=5,
+                )
+                if selected:
+                    first = selected[0]
+                    ordered = [memories[first], *[item for idx, item in enumerate(memories) if idx != first]]
+            except Exception as exc:
+                _startup_log(f"Jev memory retrieval gate unavailable; keeping deterministic ranking: {exc}")
+        lines = ["Relevant Memories:"]
+        for memory in ordered[:5]:
+            lines.append(f"- {memory['content']}")
+        return "\n".join(lines)
     except Exception:
         return ""
 
