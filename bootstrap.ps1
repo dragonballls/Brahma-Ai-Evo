@@ -103,8 +103,22 @@ $PythonDisplay = if ($PythonArgs.Count) { "$PythonExe $($PythonArgs -join ' ')" 
 Write-Host "Using supported Python: $PythonDisplay" -ForegroundColor Green
 
 # 4. Check for the canonical Node.js runtime
-if (-not (Get-Command "node" -ErrorAction SilentlyContinue)) {
-    Write-Host "Node.js not found. Downloading Node v$NodeVersion..." -ForegroundColor Yellow
+$NodeNeedsRepair = $true
+if (Get-Command "node" -ErrorAction SilentlyContinue) {
+    try {
+        $NodeDetected = (& node --version).Trim().TrimStart("v")
+        if ($NodeDetected -eq $NodeVersion) {
+            $NodeNeedsRepair = $false
+            Write-Host "Node.js is already installed at the canonical version v$NodeVersion." -ForegroundColor Green
+        } else {
+            Write-Host "Node.js version $NodeDetected is not the canonical v$NodeVersion; repairing it..." -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host "Node.js version could not be verified; repairing it..." -ForegroundColor Yellow
+    }
+}
+if ($NodeNeedsRepair) {
+    Write-Host "Downloading Node v$NodeVersion..." -ForegroundColor Yellow
     $NodeUrl = "https://nodejs.org/dist/v$NodeVersion/node-v$NodeVersion-x64.msi"
     $NodeInstaller = "$env:TEMP\node-v$NodeVersion-installer.msi"
     Invoke-WebRequest -Uri $NodeUrl -OutFile $NodeInstaller
@@ -112,10 +126,15 @@ if (-not (Get-Command "node" -ErrorAction SilentlyContinue)) {
     Write-Host "Installing Node.js v$NodeVersion (Silent Mode)..." -ForegroundColor Yellow
     Start-Process -FilePath "msiexec.exe" -ArgumentList @("/i", $NodeInstaller, "/qn") -Wait
     
-    Write-Host "Node.js installed successfully." -ForegroundColor Green
     Update-Environment
-} else {
-    Write-Host "Node.js is already installed: $(Get-Command node | Select-Object -ExpandProperty Source)" -ForegroundColor Green
+    try {
+        $NodeDetected = (& node --version).Trim().TrimStart("v")
+    } catch {
+        $NodeDetected = ""
+    }
+    if ($NodeDetected -ne $NodeVersion) {
+        throw "Installed Node.js version '$NodeDetected' does not match canonical version '$NodeVersion'."
+    }
 }
 
 # 5. Virtual Environment Setup
@@ -135,13 +154,18 @@ if (-not (Test-Path $VenvPython)) {
     Write-Host "Virtual Environment already exists." -ForegroundColor Green
 }
 
-# 6. Verify/repair dependencies only when the venv cannot import the app.
+# 6. Verify/repair dependencies against the actual application import graph.
 $NeedsRepair = $false
 try {
-    & $VenvPython -c "import PyQt6, requests, psutil" | Out-Null
+    $env:BRAHMA_EVO_TEST_MODE = "1"
+    $env:BRAHMA_SKIP_STARTUP_UPDATE = "1"
+    & $VenvPython -c "import main" | Out-Null
     if ($LASTEXITCODE -ne 0) { $NeedsRepair = $true }
 } catch {
     $NeedsRepair = $true
+} finally {
+    Remove-Item Env:BRAHMA_EVO_TEST_MODE -ErrorAction SilentlyContinue
+    Remove-Item Env:BRAHMA_SKIP_STARTUP_UPDATE -ErrorAction SilentlyContinue
 }
 if ($NeedsRepair) {
     Write-Host "Brahma dependencies need repair; installing into .venv..." -ForegroundColor Cyan
