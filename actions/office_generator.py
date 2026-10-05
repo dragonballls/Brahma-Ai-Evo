@@ -21,66 +21,29 @@ BASE_DIR = get_base_dir()
 
 
 
-import concurrent.futures
-
 def _call_gemini_json(prompt: str, system_instruction: str) -> Optional[dict]:
-    """Generates structured JSON using Gemini with model failover, timeouts, and retries."""
+    """Generate structured output through the canonical Gemini runtime."""
     try:
-        with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-            keys = json.load(f)
-        gemini_key = keys.get("gemini_api_key", "").strip()
-
-        if gemini_key:
-            from google import genai
-            client = genai.Client(api_key=gemini_key)
-
-            models_to_try = [
-                "gemini-3.1-flash-lite",
-                "gemini-3.5-flash-lite",
-                "gemini-2.5-flash-lite",
-                "gemini-flash-latest",
-                "gemini-2.5-flash",
-                "gemini-3.6-flash",
-            ]
-
-            def _query_model(m_name: str):
-                return client.models.generate_content(
-                    model=m_name,
-                    contents=prompt,
-                    config={
-                        "system_instruction": system_instruction,
-                        "temperature": 0.2,
-                        "response_mime_type": "application/json"
-                    }
-                )
-
-            for model_name in models_to_try:
-                try:
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                        future = executor.submit(_query_model, model_name)
-                        resp = future.result(timeout=14)
-                    if resp and resp.text:
-                        clean = resp.text.strip()
-                        return json.loads(clean)
-                except concurrent.futures.TimeoutError:
-                    logger.warning(f"[OfficeGen] Model {model_name} timed out after 14s")
-                    continue
-                except Exception as e:
-                    logger.warning(f"[OfficeGen] Model {model_name} failed: {e}")
-                    continue
+        from core.gemini_runtime import generate_json
+        return generate_json(
+            prompt,
+            system_instruction=system_instruction,
+            model_name="gemini-3.8-flash",
+            max_output_tokens=8192,
+        )
     except Exception as exc:
-        logger.warning(f"[OfficeGen] Gemini direct call error: {exc}")
+        logger.warning(f"[OfficeGen] Canonical Gemini JSON generation failed: {exc}")
 
-    # Fallback to UnifiedAIClient if OpenRouter has key
     try:
-        with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-            or_key = json.load(f).get("openrouter_api_key", "").strip()
-        if or_key:
-            from llm_client import client as ai_client
-            return ai_client.chat_json(prompt, system=system_instruction)
-    except Exception:
-        pass
-
+        from llm_client import client as ai_client
+        return ai_client.chat_json(
+            prompt,
+            system=system_instruction,
+            model="auto",
+            max_tokens=8192,
+        )
+    except Exception as exc:
+        logger.warning(f"[OfficeGen] Unified AI JSON fallback failed: {exc}")
     return None
 
 
