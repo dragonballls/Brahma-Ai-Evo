@@ -10,20 +10,16 @@ from pathlib import Path
 from typing import Any
 
 from core.user_paths import get_user_data_dir
-from core.runtime_paths import API_CONFIG_PATH
 
 
 DEFAULT_VIDEO_MODEL = os.environ.get("BRAHMA_VIDEO_MODEL", "gemini-2.5-flash")
 
 
 def _gemini_api_key() -> str:
-    try:
-        data = json.loads(API_CONFIG_PATH.read_text(encoding="utf-8"))
-    except Exception as exc:
-        raise RuntimeError(f"Could not load Brahma API configuration: {exc}") from exc
-    key = str(data.get("gemini_api_key") or "").strip()
+    from config import get_api_key
+    key = str(get_api_key("Gemini") or "").strip()
     if not key:
-        raise RuntimeError("No Gemini API key is configured.")
+        raise RuntimeError("Gemini API key is not configured.")
     return key
 
 
