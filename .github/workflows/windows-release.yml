@@ -134,6 +134,7 @@ jobs:
           BRAHMA_EVO_TEST_AUTO_EXIT_SECONDS: "5"
           BRAHMA_SKIP_STARTUP_UPDATE: "1"
           BRAHMA_EVOLUTION_ENABLED: "0"
+          BRAHMA_EVO_TEST_SUPERVISOR_TIMEOUT: "90"
         run: |
           $supervisor = (Resolve-Path "dist/BrahmaEvo/BrahmaEvoSupervisor.exe").Path
           $proc = Start-Process -FilePath $supervisor -WorkingDirectory (Split-Path $supervisor) -PassThru
