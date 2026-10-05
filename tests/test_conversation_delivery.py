@@ -271,5 +271,29 @@ class ConversationDeliveryTests(unittest.TestCase):
         self.assertIn("Live turn produced transcription but no usable response audio/text.", source)
 
 
+    def test_local_or_offline_voice_skips_gemini_live_startup(self):
+        from pathlib import Path
+
+        source = Path("main.py").read_text(encoding="utf-8")
+        self.assertIn("voice_fallback_mode =", source)
+        self.assertIn("if voice_fallback_mode:", source)
+        block = source.split("if voice_fallback_mode:", 1)[1].split("client = genai.Client(", 1)[0]
+        self.assertIn("await self._run_text_voice_fallback_loop(reason=reason)", block)
+
+    def test_phone_audio_has_one_relay_consumer(self):
+        from pathlib import Path
+
+        source = Path("main.py").read_text(encoding="utf-8")
+        self.assertEqual(source.count("asyncio.create_task(self._relay_phone_audio())"), 1)
+        self.assertEqual(source.count("tg.create_task(self._relay_phone_audio())"), 0)
+
+    def test_live_text_without_audio_uses_native_tts_and_reconnects(self):
+        from pathlib import Path
+
+        source = Path("main.py").read_text(encoding="utf-8")
+        self.assertIn("text_only_live_turn = bool(full_out) and not had_usable_audio", source)
+        self.assertIn("self.speak(full_out, proactive=True, use_live=False)", source)
+        self.assertIn("Live turn produced response text but no usable response audio.", source)
+
 if __name__ == "__main__":
     unittest.main()
