@@ -6871,6 +6871,7 @@ class BrahmaLive:
 
                             full_out = " ".join(out_buf).strip()
                             degraded_turn = bool(full_in) and not full_out and not had_usable_audio
+                            text_only_live_turn = bool(full_out) and not had_usable_audio
                             if full_out:
                                 # Live voice has no pending text-command source marker,
                                 # so persist the assistant turn through the canonical
@@ -6905,6 +6906,18 @@ class BrahmaLive:
                                 raise RuntimeError(
                                     "Live turn produced transcription but no usable response audio/text."
                                 )
+                            if text_only_live_turn:
+                                # The model produced a textual transcript but no
+                                # usable PCM. Deliver that exact response locally so
+                                # the user hears it, then reconnect the Live session
+                                # instead of leaving a silently degraded voice path.
+                                self._voice_audio_degraded = True
+                                self.ui.write_log(
+                                    "SYS: Live returned response text without usable audio; "
+                                    "using native TTS and rotating the Live session."
+                                )
+                                self.speak(full_out, proactive=True, use_live=False)
+
                             out_buf = []
                             turn_audio_bytes = 0
                             tiny_audio_chunks = 0
@@ -6918,6 +6931,11 @@ class BrahmaLive:
                                 ).start()
                             self._voice_tool_gate.finish_turn()
                             self._barge_in_gate.reset()
+
+                            if text_only_live_turn:
+                                raise RuntimeError(
+                                    "Live turn produced response text but no usable response audio."
+                                )
 
                     if response.tool_call:
                         self.ui.set_state("EXECUTING")
@@ -7019,20 +7037,13 @@ class BrahmaLive:
                 except Exception:
                     pass
 
-    async def run_text_voice_fallback(self):
-        """Keep microphone voice available when Gemini Live is unavailable."""
-        if not _VOICE_SESSION_GUARD.acquire(blocking=False):
-            try:
-                self.ui.write_log("SYS: Voice session already active; text-voice fallback ignored.")
-                self.ui.set_state("LISTENING")
-            except Exception:
-                pass
-            return
+    async def _run_text_voice_fallback_loop(self, *, reason: str = "Live voice is unavailable.") -> None:
+        """Run the microphone through text transcription + canonical reply delivery."""
         self._text_voice_fallback = True
         try:
             self.ui.write_log(
-                "SYS: Gemini Live voice unavailable; text/TTS voice fallback is active. "
-                "Speech is transcribed through the text command path."
+                f"SYS: {reason} Text/TTS voice fallback is active; "
+                "speech is transcribed through the text command path."
             )
             self.ui.set_state("LISTENING")
             while not self._shutdown_event.is_set():
@@ -7046,6 +7057,19 @@ class BrahmaLive:
         finally:
             self._text_voice_fallback = False
             self.set_speaking(False)
+
+    async def run_text_voice_fallback(self):
+        """Keep microphone voice available when Gemini Live is unavailable."""
+        if not _VOICE_SESSION_GUARD.acquire(blocking=False):
+            try:
+                self.ui.write_log("SYS: Voice session already active; text-voice fallback ignored.")
+                self.ui.set_state("LISTENING")
+            except Exception:
+                pass
+            return
+        try:
+            await self._run_text_voice_fallback_loop()
+        finally:
             _VOICE_SESSION_GUARD.release()
     async def run(self):
         if not _VOICE_SESSION_GUARD.acquire(blocking=False):
@@ -7081,6 +7105,17 @@ class BrahmaLive:
             self.ui.set_state("LISTENING")
             _startup_log("[LIVE] packaged smoke-test mode complete")
             return
+
+        voice_settings = {}
+        try:
+            voice_settings = config_manager.load_settings()
+        except Exception:
+            voice_settings = {}
+        voice_fallback_mode = (
+            is_local(voice_settings.get("default_ai_provider"))
+            or bool(voice_settings.get("offline_mode_enabled", False))
+        )
+
         try:
             self.ui.boot_set_step_status("Start attention monitor", "done")
             self.ui.boot_set_progress(12, "Attention monitor online")
@@ -7096,11 +7131,24 @@ class BrahmaLive:
                 except Exception:
                     pass
             asyncio.create_task(self._consume_remote_commands())
-            asyncio.create_task(self._relay_phone_audio())
+            # Phone audio is only meaningful when a live audio session exists.
+            # Starting a relay before that session would consume and discard mobile
+            # audio, and a second relay below could race for the same queue.
+            if not voice_fallback_mode:
+                asyncio.create_task(self._relay_phone_audio())
         try:
             self.ui.boot_set_progress(36, "Initializing AI client")
         except Exception:
             pass
+
+        if voice_fallback_mode:
+            reason = (
+                "Offline Mode is enabled."
+                if bool(voice_settings.get("offline_mode_enabled", False))
+                else "Local AI is configured as the active provider."
+            )
+            await self._run_text_voice_fallback_loop(reason=reason)
+            return
 
         client = genai.Client(
             api_key=_get_api_key(),
@@ -7140,7 +7188,6 @@ class BrahmaLive:
 
                         tg.create_task(self._send_realtime())
                         tg.create_task(self._listen_audio())
-                        tg.create_task(self._relay_phone_audio())
                         tg.create_task(self._receive_audio())
                         tg.create_task(self._play_audio())
                         if not self._startup_briefing_started:
