@@ -336,6 +336,11 @@ class RepositoryIntegrityTests(unittest.TestCase):
         self.assertIn('model="auto"', executor)
         self.assertIn('model="auto"', handler)
 
+    def test_auto_heal_does_not_auto_promote_to_main(self):
+        source = self.read("core/repository_sync.py")
+        self.assertIn('BRAHMA_AUTO_PUBLISH_REPAIRS", "0"', source)
+        self.assertIn("Auto-heal may repair the local runtime, but promotion to main is explicit.", source)
+
     def test_auto_heal_uses_canonical_cloud_route(self):
         source = (ROOT / "actions" / "auto_heal_engine.py").read_text(encoding="utf-8")
         self.assertIn("from llm_client import client as unified_client", source)
