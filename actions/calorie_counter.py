@@ -1,5 +1,4 @@
 from core.user_paths import get_user_data_dir
-from core.runtime_paths import API_CONFIG_PATH, APP_SETTINGS_PATH
 """
 Brahma AI — Calorie & Nutrition Vision Engine.
 
@@ -59,19 +58,6 @@ PLUGIN = {
         "required": ["query"],
     },
 }
-
-def _get_api_config() -> dict:
-    for cfg_path in [
-        API_CONFIG_PATH,
-        APP_SETTINGS_PATH,
-    ]:
-        if cfg_path.exists():
-            try:
-                with open(cfg_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                pass
-    return {}
 
 def _capture_webcam_snapshot(camera_index: int = 0) -> Optional[np.ndarray]:
     """Safely opens webcam, grabs a clean stabilized frame, and immediately releases the device."""
