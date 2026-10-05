@@ -52,15 +52,11 @@ SYSTEM_PROMPT = (
 
 
 def _get_api_key() -> str:
-    try:
-        with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-            keys = json.load(f)
-        key = keys.get("gemini_api_key", "")
-        if not key:
-            raise ValueError("gemini_api_key not found")
-        return key
-    except Exception as e:
-        raise RuntimeError(f"Could not load API key: {e}")
+    from config import get_api_key
+    key = str(get_api_key("Gemini") or "").strip()
+    if not key:
+        raise RuntimeError("Gemini API key is not configured.")
+    return key
 
 
 def _get_camera_index() -> int:
