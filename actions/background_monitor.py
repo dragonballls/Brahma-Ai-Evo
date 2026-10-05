@@ -9,6 +9,7 @@ import threading
 import time
 import requests
 import json
+import uuid
 from datetime import datetime
 from actions.system_manager import get_system_health
 
@@ -53,16 +54,17 @@ def _monitor_loop():
 
 def _ensure_monitor_thread() -> None:
     global _monitor_thread, _monitor_running
-    if _monitor_running and _monitor_thread and _monitor_thread.is_alive():
-        _monitor_wakeup.set()
-        return
-    _monitor_running = True
-    _monitor_thread = threading.Thread(
-        target=_monitor_loop,
-        daemon=True,
-        name="background-monitor",
-    )
-    _monitor_thread.start()
+    with _monitor_lock:
+        if _monitor_running and _monitor_thread and _monitor_thread.is_alive():
+            _monitor_wakeup.set()
+            return
+        _monitor_running = True
+        _monitor_thread = threading.Thread(
+            target=_monitor_loop,
+            daemon=True,
+            name="background-monitor",
+        )
+        _monitor_thread.start()
 
 def _run_check(m_id, m):
     try:
@@ -110,7 +112,7 @@ def _run_check(m_id, m):
 # permanent polling thread when unused.
 
 def add_monitor(monitor_type: str, target: str, threshold: float, condition: str = "above", interval_sec: int = 60) -> str:
-    m_id = f"{monitor_type}_{target}_{int(time.time())}"
+    m_id = f"{monitor_type}_{target}_{time.time_ns()}_{uuid.uuid4().hex[:6]}"
     with _monitor_lock:
         _monitors[m_id] = {
             "type": monitor_type,
