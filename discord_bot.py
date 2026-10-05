@@ -1,6 +1,4 @@
 from __future__ import annotations
-from core.runtime_paths import API_CONFIG_PATH
-
 import asyncio
 import json
 import logging
@@ -20,9 +18,7 @@ def _load_discord_module():
 
 discord = _load_discord_module()
 
-from google import genai
-
-from llm_client import client as openrouter_client
+from llm_client import client as unified_cloud_client
 
 
 logger = logging.getLogger("brahma_evo.discord")
@@ -386,42 +382,20 @@ class DiscordBotService:
         if not prompt:
             return "Tell me what you need help with."
 
-        keys = _load_api_keys()
-        gemini_key = (keys.get("gemini_api_key") or "").strip()
-        openrouter_key = (keys.get("openrouter_api_key") or "").strip()
         system_prompt = (
             "You are Brahma Evo inside Discord. You are a self-evolving AI assistant. "
             "Be concise, accurate, and helpful. "
             "Keep replies friendly and under 250 words unless the user asks for detail."
         )
-
-        if gemini_key:
-            try:
-                client = genai.Client(
-                    api_key=gemini_key,
-                    http_options={"api_version": "v1beta"},
-                )
-                response = client.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=f"{system_prompt}\n\nUser: {prompt}",
-                    config={"temperature": 0.5},
-                )
-                text = _extract_gemini_text(response)
-                if text:
-                    return text
-            except Exception as exc:
-                if not _looks_like_limit_error(exc):
-                    logger.warning("Gemini Discord reply failed, falling back to OpenRouter: %s", exc)
-
-        if openrouter_key:
-            try:
-                return openrouter_client.chat(
-                    prompt,
-                    system=system_prompt,
-                    temperature=0.5,
-                    max_tokens=900,
-                ).strip()
-            except Exception as exc:
-                logger.warning("OpenRouter Discord reply failed: %s", exc)
-
-        return "I couldn’t reach the AI providers right now."
+        try:
+            response = unified_cloud_client.chat(
+                prompt,
+                system=system_prompt,
+                model="auto",
+                max_tokens=900,
+                temperature=0.5,
+            )
+            return str(response or "").strip() or "I couldn’t generate a response right now."
+        except Exception as exc:
+            logger.warning("Discord unified AI reply failed: %s", exc)
+            return "I couldn’t reach the AI providers right now."
