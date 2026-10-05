@@ -41,6 +41,7 @@ def _run(repo: Path, args: Iterable[str], timeout: int = 120) -> subprocess.Comp
         text=True,
         capture_output=True,
         timeout=timeout,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         check=False,
     )
 
