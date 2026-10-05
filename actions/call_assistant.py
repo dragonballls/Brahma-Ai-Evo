@@ -35,7 +35,7 @@ except Exception:
     _MATPLOTLIB_OK = False
 
 from core.user_paths import get_user_data_dir
-from core.runtime_paths import API_CONFIG_PATH, CONFIG_DIR
+from core.runtime_paths import CONFIG_DIR
 from core.identity import identity
 
 logger = logging.getLogger("CallAssistant")
@@ -44,16 +44,9 @@ DELIVERABLES_DIR = get_user_data_dir() / "deliverables"
 
 
 def _get_api_key() -> str:
-    if API_CONFIG_PATH.exists():
-        try:
-            with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                key = data.get("gemini_api_key", "").strip()
-                if key:
-                    return key
-        except Exception:
-            pass
-    return (os.environ.get("GEMINI_API_KEY", "") or os.environ.get("GOOGLE_API_KEY", "")).strip()
+    """Compatibility helper using the canonical configuration accessor."""
+    from config import get_api_key
+    return str(get_api_key("Gemini") or "").strip()
 
 
 def _get_audio_loopback_device() -> dict:
@@ -456,21 +449,14 @@ class CallAssistant:
             return ""
 
     def _transcribe_audio(self, wav_bytes: bytes) -> str:
-        """Sends audio chunk to Gemini for fast speech-to-text."""
-        api_key = _get_api_key()
-        if not api_key:
-            return ""
+        """Transcribe call audio through the canonical Gemini runtime adapter."""
         try:
-            from google import genai
-            from google.genai import types
-            client = genai.Client(api_key=api_key, http_options={"api_version": "v1beta"})
-            response = client.models.generate_content(
-                model="gemini-2.5-flash-lite",
-                contents=[
-                    types.Part.from_bytes(data=wav_bytes, mime_type="audio/wav"),
-                    "Transcribe the spoken audio verbatim. Return only the transcribed text, nothing else.",
-                ],
-            )
+            from core.gemini_runtime import create_model
+            model = create_model("gemini-2.5-flash-lite")
+            response = model.generate_content([
+                wav_bytes,
+                "Transcribe the spoken audio verbatim. Return only the transcribed text, nothing else.",
+            ])
             return (getattr(response, "text", "") or "").strip()
         except Exception as e:
             logger.warning(f"[CallAssistant] Speech-to-text notice: {e}")
