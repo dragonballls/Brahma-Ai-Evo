@@ -63,6 +63,8 @@ def get_api_key(provider: str) -> str:
         GEMINI: "gemini",
         OPENROUTER: "openrouter",
         LOCAL: "local",
+        "TypeSafe": "typesafe",
+        "Jev": "typesafe",
     }
     key_name = storage_names.get(normalized, normalized.casefold().replace(" ", "_"))
     return str(get_config().get(f"{key_name}_api_key", "") or "").strip()
