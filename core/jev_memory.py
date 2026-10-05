@@ -40,7 +40,7 @@ def should_store(content: str, context: str = "") -> bool | None:
         if not result:
             return None
         return _probability(result["answers"].get("durable")) >= 0.60
-    except JevUnavailable:
+    except (JevUnavailable, Exception):
         return None
 
 
