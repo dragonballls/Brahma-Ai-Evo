@@ -396,8 +396,8 @@ class RepositoryIntegrityTests(unittest.TestCase):
 
     def test_source_launcher_routes_through_repair_bootstrap(self):
         source = self.read("start_brahma.vbs")
-        bootstrap_pos = source.indexOf("ElseIf fso.FileExists(bootstrap) And fso.FileExists(mainPy) Then")
-        fallback_pos = source.indexOf("ElseIf fso.FileExists(venvPython)", bootstrap_pos)
+        bootstrap_pos = source.index("ElseIf fso.FileExists(bootstrap) And fso.FileExists(mainPy) Then")
+        fallback_pos = source.index("ElseIf fso.FileExists(venvPython)", bootstrap_pos)
         self.assertGreaterEqual(bootstrap_pos, 0)
         self.assertGreater(fallback_pos, bootstrap_pos)
         self.assertIn("-WindowStyle Hidden -File", source)
