@@ -11406,7 +11406,7 @@ class OmniRouteFloatingWindow(QDialog):
     def _dashboard_url(self):
         from core.omniroute import gateway
         from core.runtime_paths import OMNIROUTE_DEFAULT_BASE_URL
-        base = str(getattr(gateway(), "base_url", "") or OMNIROUTE_DEFAULT_BASE_URL).rstrip("/")
+        base = str(gateway().base_url or OMNIROUTE_DEFAULT_BASE_URL).rstrip("/")
         if base.endswith("/v1"):
             base = base[:-3]
         return QUrl(base + "/")
