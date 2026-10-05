@@ -25,16 +25,16 @@ class CapabilityUsabilityTests(unittest.TestCase):
     def test_main_uses_catalog_for_natural_feature_requests(self):
         source = (ROOT / "main.py").read_text(encoding="utf-8")
         self.assertIn("from core.capability_catalog import prompt_block as capability_prompt_block", source)
-        self.assertIn("from core.capability_catalog import capability_terms", source)
+        self.assertIn("from core.request_routing import _looks_like_action_request", source)
 
     def test_action_router_avoids_common_word_false_positives(self):
-        import main
+        from core.request_routing import _looks_like_action_request
 
-        self.assertFalse(main._looks_like_action_request("Tell me about phone cases."))
-        self.assertFalse(main._looks_like_action_request("What do you think about my room?"))
-        self.assertFalse(main._looks_like_action_request("Can you explain what an app is?"))
-        self.assertTrue(main._looks_like_action_request("Show my connected devices."))
-        self.assertTrue(main._looks_like_action_request("Play something on Spotify."))
+        self.assertFalse(_looks_like_action_request("Tell me about phone cases."))
+        self.assertFalse(_looks_like_action_request("What do you think about my room?"))
+        self.assertFalse(_looks_like_action_request("Can you explain what an app is?"))
+        self.assertTrue(_looks_like_action_request("Show my connected devices."))
+        self.assertTrue(_looks_like_action_request("Play something on Spotify."))
 
     def test_chat_exposes_one_consistent_quick_action_surface(self):
         source = (ROOT / "ui.py").read_text(encoding="utf-8")
