@@ -256,6 +256,14 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn('OMNIROUTE_VERSION = "3.8.50"', contract)
         self.assertIn('NODE_VERSION = "24.21.0"', contract)
 
+    def test_evolution_engine_is_initialized_before_startup_use(self):
+        source = self.read("main.py")
+        impl = source[source.index("def _main_impl():"):]
+        init_pos = impl.index("    evolution_engine = None")
+        start_use_pos = impl.index("    if evolution_engine is not None and not BRAHMA_EVO_TEST_MODE:")
+        self.assertLess(init_pos, start_use_pos)
+        self.assertEqual(impl.count("    evolution_engine = None"), 1)
+
     def test_boot_sentry_runs_after_singleton_import_boundary(self):
         main = self.read("main.py")
         self.assertNotIn("import core.boot_sentry", main)
