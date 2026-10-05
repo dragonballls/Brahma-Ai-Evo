@@ -110,6 +110,9 @@ class OmniRouteProvisioner:
         self.data_dir = (data_dir or default_data_dir()).expanduser()
         self._resolved: tuple[str, ...] | None = None
         self._source = "unavailable"
+        self.probe_timeout_seconds = max(
+            0.25, float(os.environ.get("BRAHMA_OMNIROUTE_PROBE_TIMEOUT_SECONDS", "0.75"))
+        )
         self._process: subprocess.Popen[bytes] | None = None
 
     @property
@@ -289,7 +292,7 @@ class OmniRouteProvisioner:
             try:
                 with urllib.request.urlopen(
                     urllib.request.Request(url, headers={"Accept": "application/json"}),
-                    timeout=1.5,
+                    timeout=self.probe_timeout_seconds,
                 ) as response:
                     if 200 <= int(response.status) < 300:
                         return True
