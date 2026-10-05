@@ -29,14 +29,6 @@ PATCH_HISTORY_FILE = PATCH_HISTORY_PATH
 BACKUPS_DIR = PATCH_BACKUPS_DIR
 
 
-def _get_gemini_api_key() -> str:
-    try:
-        from core.gemini_runtime import get_api_key
-        return get_api_key()
-    except Exception:
-        return (os.environ.get("GEMINI_API_KEY", "") or os.environ.get("GOOGLE_API_KEY", "")).strip()
-
-
 # Core files strictly protected from modification to prevent self-destruction
 PROTECTED_CORE_FILES = {
     "boot_sentry.py",
@@ -469,47 +461,12 @@ Do NOT include markdown fences outside the JSON. Return only the valid JSON obje
         except Exception as or_err:
             logger.warning(f"[AutoHeal] OpenRouter fallback failed: {or_err}")
 
-        # 3. Final emergency fallback: native Gemini. This path is deliberately
-        # last so ordinary self-healing remains provider-consistent with chat.
-        gemini_key = _get_gemini_api_key()
-        if gemini_key:
-            try:
-                from google import genai
-                g_client = genai.Client(
-                    api_key=gemini_key,
-                    http_options={"api_version": "v1beta"},
-                )
-                for model_name in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
-                    try:
-                        resp = g_client.models.generate_content(
-                            model=model_name,
-                            contents=prompt,
-                            config={
-                                "temperature": 0.1,
-                                "response_mime_type": "application/json",
-                            },
-                        )
-                        raw_text = getattr(resp, "text", "") or ""
-                        if raw_text.strip():
-                            clean_json = raw_text.strip()
-                            if clean_json.startswith("```"):
-                                clean_json = re.sub(r"^```[a-zA-Z]*\\n?", "", clean_json)
-                                clean_json = re.sub(r"\\n?```$", "", clean_json).strip()
-                            data = json.loads(clean_json)
-                            if "target_chunk" in data and "replacement_chunk" in data:
-                                data["success"] = True
-                                return data
-                    except Exception as model_err:
-                        logger.warning(
-                            f"[AutoHeal] Gemini emergency model {model_name} failed: {model_err}"
-                        )
-                        continue
-            except Exception as g_err:
-                logger.warning(f"[AutoHeal] Gemini emergency fallback failed: {g_err}")
-
+        # OmniRoute/unified cloud plus its bounded provider fallback is the complete
+        # recovery path. Do not create a second direct Gemini client here; that would
+        # bypass the canonical provider and credential-routing contract.
         return {
             "success": False,
-            "error": "All LLM synthesis backends failed. Please verify your configured Gemini credential."
+            "error": "All unified AI synthesis backends failed. Check OmniRoute/provider connectivity."
         }
 
 
