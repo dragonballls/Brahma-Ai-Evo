@@ -26,6 +26,7 @@ class OmniRouteGateway:
         ).rstrip("/")
         self.provisioner = OmniRouteProvisioner(self.base_url)
         self._lock = threading.Lock()
+        self._lifecycle_lock = threading.Lock()
         self._credentials_lock = threading.Lock()
         self._ready = False
         self._credentials_synced = False
@@ -46,47 +47,61 @@ class OmniRouteGateway:
         return value not in {"0", "false", "no", "off"}
 
     def ensure_ready(self, *, force: bool = False) -> bool:
-        """Return gateway readiness without repeatedly reprovisioning a failed runtime."""
+        """Return gateway readiness without holding state locks across slow I/O or startup."""
         if not self.enabled:
-            self._ready = False
+            with self._lock:
+                self._ready = False
             return False
 
-        now = time.monotonic()
-        sync_needed = False
-        with self._lock:
-            if not force and self._ready and (now - self._last_check_at) < self._check_cache_seconds:
-                return True
-            if not force and not self._ready and now < self._retry_after:
-                return False
+        def _cached_ready(now: float) -> bool | None:
+            with self._lock:
+                if not force and self._ready and (now - self._last_check_at) < self._check_cache_seconds:
+                    return True
+                if not force and not self._ready and now < self._retry_after:
+                    return False
+            return None
 
-            if self.provisioner.probe_only():
-                self._ready = True
-                self._last_check_at = now
-                self._retry_after = 0.0
-                sync_needed = True
-                ready = True
-            else:
-                try:
-                    ready = self.provisioner.ensure_running(wait_seconds=15.0)
-                    # The provisioner may have moved to an automatic free loopback port.
-                    # Keep every Brahma caller on the same internal endpoint.
-                    self.base_url = self.provisioner.base_url.rstrip("/")
-                except Exception:
+        now = time.monotonic()
+        cached = _cached_ready(now)
+        if cached is not None:
+            return cached
+
+        # Only one thread performs the slow gateway probe/start sequence at a time.
+        # Gateway state readers remain free because the state lock is never held while
+        # probe_only()/ensure_running() performs loopback I/O or process startup.
+        with self._lifecycle_lock:
+            now = time.monotonic()
+            cached = _cached_ready(now)
+            if cached is not None:
+                return cached
+
+            try:
+                if self.provisioner.probe_only():
+                    ready = True
+                else:
+                    ready = bool(self.provisioner.ensure_running(wait_seconds=15.0))
+            except Exception:
+                with self._lock:
                     self._ready = False
                     self._last_check_at = now
                     self._retry_after = now + self._failure_cooldown_seconds
-                    return False
+                return False
 
+            with self._lock:
+                # The provisioner may have moved to an automatic free loopback port.
+                # Keep every Brahma caller on the same internal endpoint.
+                self.base_url = self.provisioner.base_url.rstrip("/")
                 self._ready = bool(ready)
                 self._last_check_at = now
                 self._retry_after = 0.0 if self._ready else now + self._failure_cooldown_seconds
                 sync_needed = self._ready
 
-        # Credential registration can launch slow subprocesses; keep it off the
-        # gateway state lock so UI/status/request coordination stays responsive.
+        # Credential registration can launch slow subprocesses; keep it off both
+        # the gateway state and lifecycle locks so UI/status/request coordination stays responsive.
         if sync_needed:
             self._sync_credentials_once()
-        return bool(self._ready)
+        with self._lock:
+            return bool(self._ready)
 
     def _sync_credentials_once(self) -> None:
         """Synchronize saved provider keys once without serializing the gateway state lock."""
@@ -174,12 +189,15 @@ class OmniRouteGateway:
 
     def stop(self) -> None:
         """Stop OmniRoute if this application launched the process."""
-        with self._lock:
-            self.provisioner.stop()
-            self._ready = False
-            self._credentials_synced = False
-            self._last_check_at = 0.0
-            self._retry_after = 0.0
+        with self._lifecycle_lock:
+            try:
+                self.provisioner.stop()
+            finally:
+                with self._lock:
+                    self._ready = False
+                    self._credentials_synced = False
+                    self._last_check_at = 0.0
+                    self._retry_after = 0.0
 
 
 _gateway = OmniRouteGateway()
