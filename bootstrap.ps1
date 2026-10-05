@@ -80,8 +80,20 @@ if (-not $PythonExe -and (Get-Command "python" -ErrorAction SilentlyContinue)) {
 if (-not $PythonExe) {
     Write-Host "Python $PythonMajorMinor not found. Downloading Python $PythonBootstrapVersion..." -ForegroundColor Yellow
     $PythonUrl = "https://www.python.org/ftp/python/$PythonBootstrapVersion/python-$PythonBootstrapVersion-amd64.exe"
-    $PythonInstaller = "$env:TEMP\python-$PythonBootstrapVersion-installer.exe"
-    Invoke-WebRequest -Uri $PythonUrl -OutFile $PythonInstaller
+    $DownloadCache = Join-Path $env:LOCALAPPDATA "BrahmaAI\\downloads"
+    New-Item -ItemType Directory -Force -Path $DownloadCache | Out-Null
+    $PythonInstaller = Join-Path $DownloadCache "python-$PythonBootstrapVersion-amd64.exe"
+    if (-not (Test-Path $PythonInstaller -PathType Leaf) -or (Get-Item $PythonInstaller).Length -lt 1MB) {
+        $tempPythonInstaller = "$PythonInstaller.download"
+        Remove-Item $tempPythonInstaller -Force -ErrorAction SilentlyContinue
+        Invoke-WebRequest -Uri $PythonUrl -OutFile $tempPythonInstaller
+        if (-not (Test-Path $tempPythonInstaller -PathType Leaf) -or (Get-Item $tempPythonInstaller).Length -lt 1MB) {
+            throw "Python bootstrap download was incomplete."
+        }
+        Move-Item -Force $tempPythonInstaller $PythonInstaller
+    } else {
+        Write-Host "Using cached Python installer: $PythonInstaller" -ForegroundColor DarkGray
+    }
 
     Write-Host "Installing Python $PythonBootstrapVersion (Silent Mode)..." -ForegroundColor Yellow
     Start-Process -FilePath $PythonInstaller -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1 Include_test=0" -Wait
@@ -120,8 +132,20 @@ if (Get-Command "node" -ErrorAction SilentlyContinue) {
 if ($NodeNeedsRepair) {
     Write-Host "Downloading Node v$NodeVersion..." -ForegroundColor Yellow
     $NodeUrl = "https://nodejs.org/dist/v$NodeVersion/node-v$NodeVersion-x64.msi"
-    $NodeInstaller = "$env:TEMP\node-v$NodeVersion-installer.msi"
-    Invoke-WebRequest -Uri $NodeUrl -OutFile $NodeInstaller
+    $DownloadCache = Join-Path $env:LOCALAPPDATA "BrahmaAI\\downloads"
+    New-Item -ItemType Directory -Force -Path $DownloadCache | Out-Null
+    $NodeInstaller = Join-Path $DownloadCache "node-v$NodeVersion-x64.msi"
+    if (-not (Test-Path $NodeInstaller -PathType Leaf) -or (Get-Item $NodeInstaller).Length -lt 1MB) {
+        $tempNodeInstaller = "$NodeInstaller.download"
+        Remove-Item $tempNodeInstaller -Force -ErrorAction SilentlyContinue
+        Invoke-WebRequest -Uri $NodeUrl -OutFile $tempNodeInstaller
+        if (-not (Test-Path $tempNodeInstaller -PathType Leaf) -or (Get-Item $tempNodeInstaller).Length -lt 1MB) {
+            throw "Node bootstrap download was incomplete."
+        }
+        Move-Item -Force $tempNodeInstaller $NodeInstaller
+    } else {
+        Write-Host "Using cached Node installer: $NodeInstaller" -ForegroundColor DarkGray
+    }
     
     Write-Host "Installing Node.js v$NodeVersion (Silent Mode)..." -ForegroundColor Yellow
     Start-Process -FilePath "msiexec.exe" -ArgumentList @("/i", $NodeInstaller, "/qn") -Wait
