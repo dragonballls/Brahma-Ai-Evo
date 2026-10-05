@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import time
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -115,6 +116,35 @@ class OmniRouteProvisioner:
     def port(self) -> int:
         parsed = urllib.parse.urlparse(self.base_url)
         return int(parsed.port or DEFAULT_PORT)
+
+    def _select_loopback_port(self) -> None:
+        """Silently move OmniRoute to a free loopback port when its default is occupied."""
+        parsed = urllib.parse.urlparse(self.base_url)
+        host = parsed.hostname or "127.0.0.1"
+        current = int(parsed.port or DEFAULT_PORT)
+        if host not in {"127.0.0.1", "localhost", "::1"} or current != DEFAULT_PORT:
+            return
+        try:
+            probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                probe.bind(("127.0.0.1", current))
+            finally:
+                probe.close()
+            return
+        except OSError:
+            pass
+
+        try:
+            probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            probe.bind(("127.0.0.1", 0))
+            free_port = int(probe.getsockname()[1])
+            probe.close()
+            self.base_url = urllib.parse.urlunparse(
+                (parsed.scheme or "http", f"127.0.0.1:{free_port}", parsed.path or "/v1", "", "", "")
+            ).rstrip("/")
+        except OSError:
+            return
 
     def _packaged_command(self) -> tuple[str, ...] | None:
         root = _packaged_runtime_root()
@@ -276,6 +306,9 @@ class OmniRouteProvisioner:
     def ensure_running(self, *, wait_seconds: float = 15.0) -> bool:
         if self._probe():
             return True
+        self._select_loopback_port()
+        self._resolved = None
+        self._source = "unavailable"
         command = self.command_argv(for_start=True)
         if self._process is None or self._process.poll() is not None:
             self._process = subprocess.Popen(
