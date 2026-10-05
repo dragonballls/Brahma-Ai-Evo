@@ -703,10 +703,13 @@ def _looks_like_action_request(text: str) -> bool:
     ):
         return True
     try:
-        from core.capability_catalog import capability_terms
-        # Feature-oriented requests should reach the tool-capable router so
-        # users can name a capability naturally without memorizing a command.
-        if any(term in low for term in capability_terms()):
+        from core.capability_catalog import CAPABILITY_ROUTING_TERMS
+        # Only distinctive feature terms should influence routing. Generic words
+        # such as "app" or "phone" are too common in ordinary conversation.
+        if any(
+            re.search(rf"\b{re.escape(term.casefold())}\b", low)
+            for term in CAPABILITY_ROUTING_TERMS
+        ):
             return True
     except Exception:
         pass
