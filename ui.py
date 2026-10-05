@@ -11277,6 +11277,10 @@ class OmniRouteFloatingWindow(QDialog):
         self._retry_timer = None
         self._gateway_retry_lock = threading.Lock()
         self._gateway_retry_inflight = False
+        self._gateway_ready.connect(
+            self._on_gateway_ready,
+            Qt.ConnectionType.QueuedConnection,
+        )
 
         self.setWindowTitle("OmniRoute")
         self.setModal(False)
@@ -11511,7 +11515,6 @@ class OmniRouteFloatingWindow(QDialog):
     def showEvent(self, event):
         super().showEvent(event)
         self._restore_geometry()
-        self._gateway_ready.connect(self._on_gateway_ready, Qt.ConnectionType.QueuedConnection)
         self._start_gateway()
 
     def closeEvent(self, event):
@@ -12112,7 +12115,7 @@ class SystemConnectivityPage(QWidget):
         # Open OmniRoute's actual dashboard inside Brahma. This uses the same
         # local gateway Brahma talks to, so provider setup/testing is not a
         # second, parallel implementation.
-        omni_btn = QPushButton("Open OmniRoute Dashboard Inside Brahma")
+        omni_btn = QPushButton("Open OmniRoute")
         omni_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         omni_btn.setStyleSheet(f"""
             QPushButton {{
@@ -12128,7 +12131,7 @@ class SystemConnectivityPage(QWidget):
                 border: 1px solid rgba(0, 229, 255, 0.62);
             }}
         """)
-        omni_btn.setToolTip("Open OmniRoute as an in-app Brahma settings page for providers, API keys, endpoints, and routing.")
+        omni_btn.setToolTip("Open OmniRoute in a separate movable, resizable Brahma window. Connection and port management are automatic.")
         omni_btn.clicked.connect(self._open_omniroute_dashboard)
         lay1.addWidget(omni_btn)
 
