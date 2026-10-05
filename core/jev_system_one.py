@@ -36,6 +36,15 @@ class JevSystemOne:
         return os.getenv("BRAHMA_JEV_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
 
     def _api_key(self) -> str:
+        # Prefer Brahma's persistent credential store, with the documented
+        # environment variable as a deployment/CI override.
+        try:
+            from config import get_api_key
+            configured = get_api_key("TypeSafe") or get_api_key("Jev")
+            if configured:
+                return configured.strip()
+        except Exception:
+            pass
         return os.getenv("TYPESAFE_API_KEY", "").strip()
 
     def evaluate(
