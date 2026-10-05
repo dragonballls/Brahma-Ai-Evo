@@ -187,10 +187,25 @@ jobs:
       - name: Smoke-test packaged crash recovery mode
         shell: pwsh
         run: |
+          # Keep the recovery-mode contract hermetic. The normal GUI smoke test
+          # writes user-scoped state, so never let that state determine this check.
+          $recoveryRoot = Join-Path $env:RUNNER_TEMP "BrahmaRecoverySmoke"
+          Remove-Item -Recurse -Force $recoveryRoot -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $recoveryRoot | Out-Null
+          $env:LOCALAPPDATA = $recoveryRoot
+
           $supervisor = (Resolve-Path "dist/BrahmaEvo/BrahmaEvoSupervisor.exe").Path
-          $proc = Start-Process -FilePath $supervisor -ArgumentList "--recover-crash" -WorkingDirectory (Split-Path $supervisor) -PassThru -Wait
+          $stdout = Join-Path $recoveryRoot "stdout.log"
+          $stderr = Join-Path $recoveryRoot "stderr.log"
+          $proc = Start-Process -FilePath $supervisor -ArgumentList "--recover-crash" -WorkingDirectory (Split-Path $supervisor) -PassThru -Wait -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+
+          $out = if (Test-Path $stdout) { Get-Content $stdout -Raw } else { "" }
+          $err = if (Test-Path $stderr) { Get-Content $stderr -Raw } else { "" }
+          Write-Host "Recovery worker stdout: $out"
+          if ($err) { Write-Host "Recovery worker stderr: $err" }
+
           if ($proc.ExitCode -ne 0) {
-            throw "BrahmaEvoSupervisor.exe crash-recovery mode exited with code $($proc.ExitCode)."
+            throw "BrahmaEvoSupervisor.exe crash-recovery mode exited with code $($proc.ExitCode). Result: $out"
           }
           Write-Host "Packaged crash-recovery worker mode passed."
 
