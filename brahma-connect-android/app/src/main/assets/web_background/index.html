@@ -95,6 +95,25 @@
     let targetPulseMod = 1.0;
     let currentPulseMod = 1.0;
 
+    // Adaptive render scheduling keeps the visual responsive while avoiding
+    // an uncapped render loop that continuously burns CPU/GPU power at idle.
+    let renderTimer = null;
+    let lastRenderMs = 0.0;
+    let isDeepIdle = false;
+
+    function targetFrameDelayMs() {
+      if (document.visibilityState !== "visible") return 1000;
+      let fps = 6;
+      if (currentState === "LISTENING") fps = 12;
+      else if (currentState === "SPEAKING") fps = 20;
+      else if (currentState === "THINKING") fps = 24;
+      else if (currentState === "EXECUTING" || currentState === "WORKING") fps = 20;
+      else if (currentState === "SCANNING") fps = 14;
+      if (!document.hasFocus() && (currentState === "IDLE" || currentState === "ONLINE")) fps = 1;
+      if (isCompactMode) fps = Math.min(fps, 10);
+      return 1000 / fps;
+    }
+
     // Reactivity & Audio
     let currentAudioLevel = 0.0;
     let targetAudioLevel = 0.0;
@@ -179,11 +198,11 @@
       camera.position.set(0, 0, 46);
 
       renderer = new THREE.WebGLRenderer({
-        antialias: true,
-        powerPreference: 'high-performance'
+        antialias: false,
+        powerPreference: 'low-power',
       });
       renderer.setSize(w, h);
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      applyRenderQuality();
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       renderer.toneMappingExposure = 1.05;
       container.appendChild(renderer.domElement);
@@ -197,7 +216,7 @@
 
       const renderPass = new THREE.RenderPass(scene, camera);
       bloomPass = new THREE.UnrealBloomPass(
-        new THREE.Vector2(w, h),
+        new THREE.Vector2(Math.max(1, Math.floor(w * 0.65)), Math.max(1, Math.floor(h * 0.65))),
         BLOOM_STRENGTH,
         BLOOM_RADIUS,
         BLOOM_THRESHOLD
@@ -206,6 +225,8 @@
       composer = new THREE.EffectComposer(renderer);
       composer.addPass(renderPass);
       composer.addPass(bloomPass);
+
+      applyRenderQuality();
 
       mainGroup = new THREE.Group();
       scene.add(mainGroup);
@@ -478,7 +499,8 @@
           ringIdx: ringIdx,
           angle: t,
           baseScale: scale,
-          pulseSpeed: 1.5 + Math.random() * 2.5
+          pulseSpeed: 1.5 + Math.random() * 2.5,
+          position: new THREE.Vector3()
         };
       }
     }
@@ -545,9 +567,10 @@
     }
 
     function updateWaveManifold(time, effectiveAmp) {
-      const samples = 140;
+      const samples = renderQuality >= 0.95 ? 140 : renderQuality >= 0.75 ? 110 : 84;
 
       standingWaveLines.forEach(item => {
+        if (!item.line.visible) return;
         const u = item.u;
         const phi = Math.asin(u);
         const cosPhi = Math.cos(phi);
@@ -676,7 +699,8 @@
             const lx = ring.rx * Math.cos(uData.angle);
             const ly = ring.ry * Math.sin(uData.angle);
 
-            const pos = new THREE.Vector3(lx, ly, 0);
+            const pos = uData.position;
+            pos.set(lx, ly, 0);
             pos.applyEuler(ring.mesh.rotation);
             sprite.position.copy(pos);
 
@@ -703,13 +727,21 @@
     }
 
     function renderLoop() {
-      requestAnimationFrame(renderLoop);
-      const dt = Math.min(clock.getDelta(), 0.05);
-      
-      updateSimulation(dt);
-
-      controls.update();
-      composer.render();
+      if (isDeepIdle) {
+        renderTimer = null;
+        return;
+      }
+      const now = performance.now();
+      const frameDelay = targetFrameDelayMs();
+      if (now - lastRenderMs >= frameDelay) {
+        const dt = Math.min(clock.getDelta(), 0.05);
+        updateSimulation(dt);
+        controls.update();
+        composer.render();
+        lastRenderMs = now;
+        adaptRenderQuality(performance.now() - now);
+      }
+      renderTimer = window.setTimeout(renderLoop, Math.max(20, frameDelay));
     }
 
     function onWindowResize() {
@@ -725,7 +757,10 @@
         renderer.setSize(w, h);
         composer.setSize(w, h);
         if (bloomPass && bloomPass.resolution) {
-          bloomPass.resolution.set(w, h);
+          bloomPass.resolution.set(
+            Math.max(1, Math.floor(w * 0.65)),
+            Math.max(1, Math.floor(h * 0.65))
+          );
         }
       }
     }
@@ -782,6 +817,84 @@
         targetCameraZ = 46.0;
         targetSpeedMult = 1.0;
         targetPulseMod = 1.0;
+      }
+    };
+
+    let renderQuality = 0.82;
+    let frameTimeEma = 0.0;
+    let lastQualityAdjustMs = 0.0;
+    let qualityStableSinceMs = 0.0;
+
+    function applyRenderQuality() {
+      if (!renderer) return;
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.0);
+      renderer.setPixelRatio(Math.max(0.5, dpr * renderQuality));
+      if (composer && bloomPass) {
+        const w = Math.max(1, Math.floor(window.innerWidth * 0.65 * renderQuality));
+        const h = Math.max(1, Math.floor(window.innerHeight * 0.65 * renderQuality));
+        try {
+          bloomPass.setSize(w, h);
+        } catch (_) {}
+      }
+      if (standingWaveParticles && standingWaveParticles.geometry) {
+        const total = 18000;
+        const visible = Math.floor(total * renderQuality);
+        standingWaveParticles.geometry.setDrawRange(0, Math.max(1000, visible));
+      }
+      if (standingWaveLines && standingWaveLines.length) {
+        const stride = renderQuality >= 0.95 ? 1 : renderQuality >= 0.75 ? 2 : 3;
+        const samples = renderQuality >= 0.95 ? 140 : renderQuality >= 0.75 ? 110 : 84;
+        standingWaveLines.forEach((entry, index) => {
+          entry.line.visible = index % stride === 0;
+          entry.line.geometry.setDrawRange(0, samples);
+        });
+      }
+    }
+
+    function adaptRenderQuality(frameCostMs) {
+      if (!Number.isFinite(frameCostMs)) return;
+      frameTimeEma = frameTimeEma === 0.0 ? frameCostMs : (frameTimeEma * 0.85) + (frameCostMs * 0.15);
+      const now = performance.now();
+      if (now - lastQualityAdjustMs < 1500) return;
+
+      if (frameTimeEma > 42.0 && renderQuality > 0.65) {
+        renderQuality = Math.max(0.65, renderQuality - 0.07);
+        lastQualityAdjustMs = now;
+        qualityStableSinceMs = now;
+        applyRenderQuality();
+        return;
+      }
+
+      if (frameTimeEma < 20.0) {
+        if (qualityStableSinceMs === 0.0) qualityStableSinceMs = now;
+        if (now - qualityStableSinceMs >= 5000 && renderQuality < 1.0) {
+          renderQuality = Math.min(1.0, renderQuality + 0.05);
+          lastQualityAdjustMs = now;
+          qualityStableSinceMs = now;
+          applyRenderQuality();
+        }
+      } else {
+        qualityStableSinceMs = now;
+      }
+    }
+
+    window.setRenderQuality = function(level) {
+      const key = String(level || "full").toLowerCase();
+      renderQuality = key === "low" ? 0.65 : key === "balanced" ? 0.82 : 1.0;
+      applyRenderQuality();
+    };
+
+    window.setDeepIdle = function(enabled) {
+      isDeepIdle = !!enabled;
+      if (isDeepIdle) {
+        if (renderTimer !== null) {
+          window.clearTimeout(renderTimer);
+          renderTimer = null;
+        }
+        targetAudioLevel = 0.0;
+      } else if (window._hasBooted && renderTimer === null) {
+        lastRenderMs = performance.now();
+        renderLoop();
       }
     };
 
@@ -903,6 +1016,10 @@
       if (window._hasBooted) return;
       window._hasBooted = true;
       initScene();
+      if (renderTimer !== null) {
+        window.clearTimeout(renderTimer);
+      }
+      lastRenderMs = performance.now();
       renderLoop();
       // Ensure layout sync after DOM updates
       setTimeout(onWindowResize, 30);
