@@ -394,6 +394,13 @@ class RepositoryIntegrityTests(unittest.TestCase):
                     source,
                 )
 
+    def test_bootstrap_validates_existing_venv_python_version(self):
+        source = self.read("bootstrap.ps1")
+        self.assertIn("$VenvNeedsRecreate = -not (Test-Path $VenvPython)", source)
+        self.assertIn("$VenvVersionCheck = & $VenvPython -c", source)
+        self.assertIn("Existing .venv uses a different Python major/minor; recreating it.", source)
+        self.assertIn("if (-not (Test-Path $VenvPython))", source)
+
     def test_source_launcher_routes_through_repair_bootstrap(self):
         source = self.read("start_brahma.vbs")
         bootstrap_pos = source.index("ElseIf fso.FileExists(bootstrap) And fso.FileExists(mainPy) Then")
