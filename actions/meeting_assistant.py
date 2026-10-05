@@ -42,11 +42,10 @@ AUD_CHUNK_SECONDS = 5.0
 
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        keys = json.load(f)
-    key = keys.get("gemini_api_key", "")
+    from config import get_api_key
+    key = str(get_api_key("Gemini") or "").strip()
     if not key:
-        raise RuntimeError("gemini_api_key not found")
+        raise RuntimeError("Gemini API key is not configured.")
     return key
 
 
