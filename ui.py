@@ -3880,6 +3880,56 @@ class WorkspaceSidebar(QWidget):
         self._feed = ConversationFeed()
         lay.addWidget(self._feed, 1)
 
+        # One consistent, discoverable feature surface. These buttons submit
+        # ordinary-language requests through the exact same text/voice router
+        # instead of introducing a second command system.
+        quick_row = QHBoxLayout()
+        quick_row.setContentsMargins(0, 0, 0, 2)
+        quick_row.setSpacing(6)
+        quick_label = QLabel("QUICK")
+        quick_label.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        quick_label.setStyleSheet(f"color: {C.TEXT_DIM};")
+        quick_row.addWidget(quick_label)
+        for label, prompt in (
+            ("Computer", "Take a screenshot"),
+            ("Web", "Search the web for something useful"),
+            ("Create", "Make a spreadsheet for me"),
+            ("Media", "Play something on Spotify"),
+            ("Devices", "Show my connected devices"),
+            ("More", "What can you do?"),
+        ):
+            chip = QPushButton(label)
+            chip.setCursor(Qt.CursorShape.PointingHandCursor)
+            chip.setToolTip(prompt)
+            chip.setFixedHeight(26)
+            chip.setStyleSheet(
+                f"""
+                QPushButton {{
+                    background: rgba(255,255,255,0.035);
+                    color: rgba(255,255,255,0.78);
+                    border: 1px solid rgba(0,229,255,0.18);
+                    border-radius: 13px;
+                    padding: 0 10px;
+                    font-size: 8px;
+                    font-weight: 700;
+                }}
+                QPushButton:hover {{
+                    background: rgba(0,229,255,0.10);
+                    color: #FFFFFF;
+                    border-color: rgba(0,229,255,0.42);
+                }}
+                """
+            )
+            chip.clicked.connect(
+                lambda checked=False, command=prompt: (
+                    self._ensure_active_conversation(command),
+                    self.command_submitted.emit(command),
+                )
+            )
+            quick_row.addWidget(chip)
+        quick_row.addStretch(1)
+        lay.addLayout(quick_row)
+
         # Sleek modern chat input container for Workspace
         input_container = QFrame()
         input_container.setStyleSheet(
