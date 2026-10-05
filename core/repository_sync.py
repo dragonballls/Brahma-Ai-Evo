@@ -72,7 +72,10 @@ def publish_verified_repair(target_file: str | Path, patch_id: str, explanation:
     This deliberately does not touch self-coding checkpoints. It only publishes the
     file changed by AutoHealEngine after AST + py_compile verification have passed.
     """
-    if os.environ.get("BRAHMA_AUTO_PUBLISH_REPAIRS", "1").strip().lower() in {"0", "false", "no", "off"}:
+    # Auto-heal may repair the local runtime, but promotion to main is explicit.
+    # This keeps self-coding checkpoint/approval semantics intact unless the user
+    # deliberately opts into automatic repository publication.
+    if os.environ.get("BRAHMA_AUTO_PUBLISH_REPAIRS", "0").strip().lower() in {"0", "false", "no", "off"}:
         return {"published": False, "reason": "disabled"}
 
     repo = resolve_repository()
