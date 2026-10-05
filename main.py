@@ -7173,6 +7173,18 @@ def _main_impl():
 
     # Initialize the evolution controller before any startup path can reference it.
     # Construction is lightweight; network/LLM research remains deferred to its worker.
+    evolution_engine = None
+    try:
+        from core.evolution_engine import get_evolution_engine
+        evolution_engine = get_evolution_engine(
+            repo_path=BASE_DIR,
+            notify=lambda message: ui.write_log(f"[Evolution] {message}"),
+        )
+    except Exception as exc:
+        _startup_log(f"continuous evolution controller init skipped: {exc}")
+
+    # Initialize the evolution controller before any startup path can reference it.
+    # Construction is lightweight; network/LLM research remains deferred to its worker.
     # Optional desktop environment: initialized separately so a failure can never
     # prevent the normal Brahma UI from starting.
     desktop_controller = None
@@ -7332,16 +7344,6 @@ def _main_impl():
         plugin_manager.load_plugins()
     except Exception:
         plugin_manager = None
-
-    evolution_engine = None
-    try:
-        from core.evolution_engine import get_evolution_engine
-        evolution_engine = get_evolution_engine(
-            repo_path=BASE_DIR,
-            notify=lambda message: ui.write_log(f"[Evolution] {message}"),
-        )
-    except Exception as exc:
-        _startup_log(f"continuous evolution controller init skipped: {exc}")
 
     live_holder = {"instance": None}
 
