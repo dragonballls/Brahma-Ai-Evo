@@ -15,6 +15,7 @@ from core.runtime_paths import CONFIG_DIR, APP_SETTINGS_PATH
 BSE_DIR = Path(__file__).resolve().parent.parent
 SETTINGS_FILE = APP_SETTINGS_PATH
 _SETTINGS_LOCK = threading.RLock()
+_SETTINGS_CACHE: tuple[tuple[int, int], Dict[str, Any]] | None = None
 
 
 
@@ -22,16 +23,32 @@ def _ensure_config() -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _settings_signature() -> tuple[int, int]:
+    try:
+        stat = SETTINGS_FILE.stat()
+        return stat.st_mtime_ns, stat.st_size
+    except OSError:
+        return (-1, -1)
+
+
 def load_settings() -> Dict[str, Any]:
+    global _SETTINGS_CACHE
     with _SETTINGS_LOCK:
         _ensure_config()
-        if not SETTINGS_FILE.exists():
+        signature = _settings_signature()
+        if _SETTINGS_CACHE is not None and _SETTINGS_CACHE[0] == signature:
+            return dict(_SETTINGS_CACHE[1])
+        if signature == (-1, -1):
+            _SETTINGS_CACHE = (signature, {})
             return {}
+
         try:
             data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-            return dict(data) if isinstance(data, dict) else {}
+            normalized = dict(data) if isinstance(data, dict) else {}
         except (OSError, json.JSONDecodeError):
-            return {}
+            normalized = {}
+        _SETTINGS_CACHE = (signature, normalized)
+        return dict(normalized)
 
 
 def save_settings(data: Dict[str, Any]) -> None:
@@ -48,6 +65,8 @@ def save_settings(data: Dict[str, Any]) -> None:
                 encoding="utf-8",
             )
             temp_path.replace(SETTINGS_FILE)
+            global _SETTINGS_CACHE
+            _SETTINGS_CACHE = (_settings_signature(), dict(current))
         except Exception as e:
             try:
                 temp_path.unlink(missing_ok=True)
