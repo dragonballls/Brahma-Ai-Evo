@@ -3239,17 +3239,6 @@ class BrahmaLive:
             ).start()
             return
 
-        try:
-            from smart_home.smart_device_manager import SmartDeviceManager
-            sd_mgr = SmartDeviceManager()
-            devices = self._smart_home.list_devices()
-            routed_text_home = sd_mgr.route_command(text, devices)
-            if routed_text_home != text:
-                print(f"[BRAHMA EVO] Redirection: '{text}' -> '{routed_text_home}'")
-                text = routed_text_home
-        except Exception as e:
-            print(f"[BRAHMA EVO] Redirection error: {e}")
-
         developer_settings = self.ui._load_app_settings() if hasattr(self.ui, "_load_app_settings") else {}
         developer_workspace = str(developer_settings.get("developer_mode_workspace", "")).strip()
         if not developer_workspace:
@@ -3661,17 +3650,39 @@ class BrahmaLive:
                 ).start()
                 return
 
-        smart_home_hint = any(word in normalized_route for word in (
-            "fan", "fans", "light", "lights", "lamp", "plug", "socket", "outlet",
-            "bulb", "kasa", "atomberg", "bedroom", "living room", "kitchen",
-            "office room", "balcony", "bathroom", "hall", "dining",
-            "smart home", "smart-home", "ac", "air conditioner", "thermostat",
-        )) if source != "instagram" else False
+        active_home_device = ""
+        generic_home_hint = False
+        if source != "instagram":
+            try:
+                from smart_home.smart_device_manager import SmartDeviceManager
+                active_home_device = SmartDeviceManager().get_active_device_name() or ""
+                generic_home_hint = bool(active_home_device) and (
+                    SmartDeviceManager().route_command(text, []) != text
+                )
+            except Exception:
+                pass
+        smart_home_hint = (
+            any(word in normalized_route for word in (
+                "fan", "fans", "light", "lights", "lamp", "plug", "socket", "outlet",
+                "bulb", "kasa", "atomberg", "bedroom", "living room", "kitchen",
+                "office room", "balcony", "bathroom", "hall", "dining",
+                "smart home", "smart-home", "ac", "air conditioner", "thermostat",
+            ))
+            or generic_home_hint
+        ) if source != "instagram" else False
         if smart_home_hint:
             def _run_smart_home():
                 try:
+                    from smart_home.smart_device_manager import SmartDeviceManager
+                    sd_mgr = SmartDeviceManager()
+                    devices = self._smart_home.list_devices()
+                    routed_command = sd_mgr.route_command(text, devices)
+                    if routed_command != text:
+                        self.ui.write_log(
+                            f"[Brahma SmartHome] Redirection: '{text}' -> '{routed_command}'"
+                        )
                     handled = self._handle_smart_home_command(
-                        text, source=source or "local"
+                        routed_command, source=source or "local"
                     )
                     if not handled:
                         self._fallback_reply(
