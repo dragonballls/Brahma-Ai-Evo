@@ -277,6 +277,28 @@ class RepositoryIntegrityTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertNotIn("Python 3.11", readme)
 
+    def test_agent_ai_stack_uses_unified_provider_route(self):
+        planner = self.read("agent/planner.py")
+        executor = self.read("agent/executor.py")
+        handler = self.read("agent/error_handler.py")
+
+        for name, source in (
+            ("agent/planner.py", planner),
+            ("agent/executor.py", executor),
+            ("agent/error_handler.py", handler),
+        ):
+            self.assertNotIn("from google import genai", source, name)
+            self.assertNotIn("google.genai", source, name)
+            self.assertNotIn("generate_content(", source, name)
+            self.assertNotIn("core.gemini_runtime import", source, name)
+
+        self.assertIn("from llm_client import client as unified_client", planner)
+        self.assertIn("from llm_client import client as unified_client", executor)
+        self.assertIn("from llm_client import client as unified_client", handler)
+        self.assertIn('model="auto"', planner)
+        self.assertIn('model="auto"', executor)
+        self.assertIn('model="auto"', handler)
+
     def test_auto_heal_uses_canonical_cloud_route(self):
         source = (ROOT / "actions" / "auto_heal_engine.py").read_text(encoding="utf-8")
         self.assertIn("from llm_client import client as unified_client", source)
