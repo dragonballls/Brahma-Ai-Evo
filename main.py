@@ -3625,9 +3625,72 @@ class BrahmaLive:
             self.ui.begin_task_workspace(text, _build_task_plan(text), source=source or "local")
         except Exception:
             pass
-        if source != "instagram" and self._handle_brahma_connect_command(text, source=source or "local"):
-            return
-        if self._handle_smart_home_command(text, source=source or "local"):
+        # Device/smart-home routing may perform network I/O. Never run those
+        # probes synchronously on the UI command callback; dispatch them and
+        # continue to the normal AI fallback if a router declines the command.
+        if source != "instagram":
+            normalized_route = re.sub(r"\\s+", " ", re.sub(r"[^a-z0-9\\s%]", " ", text.lower())).strip()
+            mobile_hint = any(token in normalized_route for token in (
+                "phone", "mobile", "android", "tablet", "brahma connect",
+                "my phone", "my mobile", "my tablet", "my android",
+                "flashlight", "torch",
+            ))
+            if mobile_hint:
+                def _run_brahma_connect():
+                    try:
+                        handled = self._handle_brahma_connect_command(
+                            text, source=source or "local"
+                        )
+                        if not handled:
+                            self._fallback_reply(
+                                text,
+                                memory_ctx=memory_ctx,
+                                source=source or "local",
+                            )
+                    except Exception as exc:
+                        self.ui.write_log(f"ERR: Device routing failed: {exc}")
+                        self._fallback_reply(
+                            text,
+                            memory_ctx=memory_ctx,
+                            source=source or "local",
+                        )
+                threading.Thread(
+                    target=_run_brahma_connect,
+                    daemon=True,
+                    name="brahma-connect-routing",
+                ).start()
+                return
+
+        smart_home_hint = any(word in normalized_route for word in (
+            "fan", "fans", "light", "lights", "lamp", "plug", "socket", "outlet",
+            "bulb", "kasa", "atomberg", "bedroom", "living room", "kitchen",
+            "office room", "balcony", "bathroom", "hall", "dining",
+            "smart home", "smart-home", "ac", "air conditioner", "thermostat",
+        )) if source != "instagram" else False
+        if smart_home_hint:
+            def _run_smart_home():
+                try:
+                    handled = self._handle_smart_home_command(
+                        text, source=source or "local"
+                    )
+                    if not handled:
+                        self._fallback_reply(
+                            text,
+                            memory_ctx=memory_ctx,
+                            source=source or "local",
+                        )
+                except Exception as exc:
+                    self.ui.write_log(f"ERR: Smart-home routing failed: {exc}")
+                    self._fallback_reply(
+                        text,
+                        memory_ctx=memory_ctx,
+                        source=source or "local",
+                    )
+            threading.Thread(
+                target=_run_smart_home,
+                daemon=True,
+                name="smart-home-routing",
+            ).start()
             return
         if _looks_like_screen_request(text):
             try:
