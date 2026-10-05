@@ -44,6 +44,15 @@ CAPABILITY_GROUPS: tuple[dict[str, object], ...] = (
     },
 )
 
+# These are deliberately distinctive enough to help routing. Generic words such as
+# "app", "phone", "room", "play", and "web" stay out of the detector because
+# they occur frequently in ordinary conversation.
+CAPABILITY_ROUTING_TERMS: tuple[str, ...] = (
+    "spotify", "instagram", "discord", "calendar", "spreadsheet", "excel",
+    "powerpoint", "ppt", "smart home", "obs", "omniroute", "brightness",
+    "screenshot", "clipboard", "bluetooth", "flight", "weather",
+)
+
 QUICK_ACTIONS: tuple[tuple[str, str], ...] = (
     ("Computer", "Take a screenshot"),
     ("Web", "Search the web for something useful"),
