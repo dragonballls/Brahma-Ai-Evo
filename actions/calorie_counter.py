@@ -176,29 +176,19 @@ def _analyze_food_multimodal(image_b64: Optional[str], query: str) -> dict:
     except Exception as e:
         logger.warning(f"Unified LLM vision failed ({e}), attempting direct Gemini fallback...")
 
-    # Direct Gemini API fallback
+    # Canonical Gemini runtime fallback keeps credentials and model failover centralized.
     try:
-        cfg = _get_api_config()
-        api_key = cfg.get("gemini_api_key")
-        if api_key:
-            from google import genai
-            from google.genai import types as gtypes
-            client = genai.Client(api_key=api_key)
-            contents: list[Any] = []
-            if image_b64:
-                raw_bytes = base64.b64decode(image_b64)
-                contents.append(gtypes.Part.from_bytes(data=raw_bytes, mime_type="image/jpeg"))
-            contents.append(f"{system_prompt}\n\nUser request: {query}")
-
-            resp = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=contents,
-            )
-            text = (resp.text or "").strip()
-            start = text.find("{")
-            end = text.rfind("}")
-            if start != -1 and end != -1:
-                return json.loads(text[start : end + 1])
+        from core.gemini_runtime import create_model
+        contents: list[Any] = []
+        if image_b64:
+            contents.append(base64.b64decode(image_b64))
+        contents.append(f"{system_prompt}\n\nUser request: {query}")
+        response = create_model("gemini-2.5-flash").generate_content(contents)
+        text = (getattr(response, "text", "") or "").strip()
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1:
+            return json.loads(text[start : end + 1])
     except Exception as e2:
         logger.error(f"Gemini fallback failed: {e2}")
 
