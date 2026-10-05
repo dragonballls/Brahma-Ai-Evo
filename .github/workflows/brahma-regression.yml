@@ -45,3 +45,8 @@ jobs:
           tests.test_omniroute_self_coding.OmniRouteSelfCodingTests.test_openrouter_forbidden_model_skips_instead_of_aborting
           tests.test_omniroute_self_coding.OmniRouteSelfCodingTests.test_structured_ensemble_has_no_stale_global_executor
           tests.test_omniroute_self_coding.OmniRouteSelfCodingTests.test_device_and_smart_home_routing_is_off_ui_thread
+          tests.test_repository_integrity.RepositoryIntegrityTests.test_first_party_import_targets_exist
+          tests.test_repository_integrity.RepositoryIntegrityTests.test_android_compose_icon_dependency_matches_usage
+          tests.test_repository_integrity.RepositoryIntegrityTests.test_bootstrap_validates_existing_venv_python_version
+          tests.test_repository_integrity.RepositoryIntegrityTests.test_bootstrap_caches_and_validates_runtime_installers
+          tests.test_capability_usability
