@@ -175,7 +175,7 @@ class SkillCrucible:
                 elif dep == "cv2":
                     check_script = "import cv2; assert hasattr(cv2, 'imread')"
                 check_cmd = [py_exe, "-c", check_script]
-                proc = subprocess.run(check_cmd, capture_output=True, timeout=5)
+                proc = subprocess.run(check_cmd, capture_output=True, timeout=5, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 if proc.returncode == 0:
                     is_healthy = True
             except Exception:
@@ -187,9 +187,9 @@ class SkillCrucible:
             logger.info(f"[Crucible] Installing missing or repairing dependency: {pip_name}")
             try:
                 if dep == "speedtest":
-                    subprocess.run([py_exe, "-m", "pip", "uninstall", "-y", "speedtest"], capture_output=True, timeout=30)
+                    subprocess.run([py_exe, "-m", "pip", "uninstall", "-y", "speedtest"], capture_output=True, timeout=30, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 install_cmd = [py_exe, "-m", "pip", "install", pip_name, "--quiet"]
-                proc = subprocess.run(install_cmd, capture_output=True, text=True, timeout=180)
+                proc = subprocess.run(install_cmd, capture_output=True, text=True, timeout=180, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 if proc.returncode != 0:
                     err_sample = proc.stderr.strip()[:180] or "Unknown pip error"
                     return False, f"Failed to install dependency '{pip_name}': {err_sample}"
@@ -276,7 +276,8 @@ if __name__ == '__main__':
                 [py_exe, "-c", harness_script],
                 capture_output=True,
                 text=True,
-                timeout=timeout
+                timeout=timeout,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             elapsed = time.time() - start_time
             if proc.returncode != 0:
