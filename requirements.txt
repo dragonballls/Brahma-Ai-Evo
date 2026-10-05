@@ -44,3 +44,8 @@ google-api-python-client>=2.0,<3
 google-auth-oauthlib>=1.2,<2
 SpeechRecognition>=3.10,<4
 pocketsphinx>=5.0.0,<6
+
+typesafe-sdk>=0.7,<1
+httpx[http2]>=0.28,<1
+browser-harness==0.1.13
+jev-ultrafast @ git+https://github.com/browser-use/jev-ultrafast.git@1231850a0bf1a0c0341fe408ef1668dbbfdfac46
