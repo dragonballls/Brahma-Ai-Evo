@@ -128,7 +128,9 @@ class SafetySandbox:
     @staticmethod
     def create_backup(file_path: Path) -> Path:
         BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
-        stamp = int(time.time())
+        # Use nanosecond time plus entropy so rapid consecutive repairs to the
+        # same file can never overwrite each other's rollback backup.
+        stamp = f"{time.time_ns()}_{uuid.uuid4().hex[:12]}"
         backup_name = f"{file_path.stem}.bak_{stamp}{file_path.suffix}"
         backup_path = BACKUPS_DIR / backup_name
         shutil.copy2(file_path, backup_path)
