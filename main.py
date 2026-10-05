@@ -342,6 +342,11 @@ def _load_system_prompt() -> str:
             base_prompt = base_prompt.rstrip() + "\n\n" + language_prompt_block()
         except Exception:
             pass
+        try:
+            from core.capability_catalog import prompt_block as capability_prompt_block
+            base_prompt = base_prompt.rstrip() + "\n\n" + capability_prompt_block()
+        except Exception:
+            pass
 
         return identity_str + base_prompt
     except Exception as e:
@@ -671,18 +676,31 @@ def _looks_like_action_request(text: str) -> bool:
         "schedule ", "remind ", "call ", "message ", "email ", "compose ",
         "write ", "edit ", "fix ", "build ", "implement ", "update ", "connect ",
         "disconnect ", "take a screenshot", "look at my screen",
+        "help me with ", "show me ", "what can you do with ", "use ",
     )
-    return any(low.startswith(phrase) for phrase in action_phrases) or any(
-        re.search(rf"\b(?:can|could|would|will) you\s+{re.escape(verb)}\b", low)
+    if any(low.startswith(phrase) for phrase in action_phrases):
+        return True
+    if any(
+        re.search(rf"\b(?:can|could|would|will|please) you\s+{re.escape(verb)}\b", low)
         for verb in (
             "open", "launch", "start", "run", "execute", "set", "change",
             "turn", "send", "post", "create", "delete", "move", "copy",
             "rename", "download", "install", "search", "browse", "navigate",
             "check", "diagnose", "control", "play", "pause", "stop", "schedule",
             "remind", "call", "message", "email", "write", "edit", "fix",
-            "build", "implement", "update", "connect", "disconnect",
+            "build", "implement", "update", "connect", "disconnect", "show",
         )
-    )
+    ):
+        return True
+    try:
+        from core.capability_catalog import capability_terms
+        # Feature-oriented requests should reach the tool-capable router so
+        # users can name a capability naturally without memorizing a command.
+        if any(term in low for term in capability_terms()):
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def _build_task_plan(text: str) -> list[str]:
