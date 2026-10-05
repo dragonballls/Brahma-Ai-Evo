@@ -48,10 +48,6 @@ Return ONLY valid JSON:
 """
 
 
-def _get_api_key() -> str:
-    from core.gemini_runtime import get_api_key
-    return get_api_key()
-
 
 def analyze_error(
     step: dict,
