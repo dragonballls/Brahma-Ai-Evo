@@ -30,7 +30,7 @@ class LowPowerGuardTests(unittest.TestCase):
         self.assertIn("fmt.setSwapInterval(1)", main)
         self.assertIn("fmt.setSwapInterval(1)", globe)
         self.assertIn("powerPreference: 'low-power'", html)
-        self.assertIn("Math.min(window.devicePixelRatio || 1, 1.25)", html)
+        self.assertIn("Math.min(window.devicePixelRatio || 1, 1.0)", html)
         self.assertNotIn("requestAnimationFrame(renderLoop)", html)
         self.assertIn("window.setTimeout(renderLoop", html)
 
