@@ -343,8 +343,6 @@ def solve_circuit_with_ai(prompt: str, image_bytes: Optional[bytes] = None) -> O
         return None
 
     try:
-        from core.gemini_runtime import create_model
-
         system_instruction = (
             "You are Brahma Circuit Architect, an expert electrical engineer and embedded systems designer. "
             "Your task is to analyze electronic components (either identified from the screen image or the user's description) "
@@ -375,34 +373,35 @@ def solve_circuit_with_ai(prompt: str, image_bytes: Optional[bytes] = None) -> O
             '  "arduino_code": "// Full working Arduino C++ sketch\\nvoid setup() {...}\\nvoid loop() {...}"\n'
             "}"
         )
+        from llm_client import client as unified_client
 
-        contents = []
+        user_prompt = (
+            f"Identify the electronic parts on my screen and tell me how to assemble them. "
+            f"Query: {prompt or 'assemble these parts'}"
+            if image_bytes
+            else f"Design the wiring diagram and assembly instructions for these parts: {prompt}"
+        )
         if image_bytes:
-            contents.append(
-                image_bytes
-            )
-            contents.append(
-                f"Identify the electronic parts on my screen and tell me how to assemble them. Query: {prompt or 'assemble these parts'}"
+            encoded = base64.b64encode(image_bytes).decode("ascii")
+            response_text = unified_client.vision(
+                prompt=user_prompt,
+                image_b64=encoded,
+                mime="image/jpeg",
+                system=system_instruction,
+                model="auto",
+                max_tokens=4096,
             )
         else:
-            contents.append(
-                f"Design the wiring diagram and assembly instructions for these parts: {prompt}"
+            response_text = unified_client.chat_json(
+                user_prompt,
+                system=system_instruction,
+                model="auto",
+                max_tokens=4096,
             )
-
-        resp = create_model(
-            "gemini-2.5-flash",
-            system_instruction=system_instruction,
-        ).generate_content(contents, generation_config={
-            "temperature": 0.2,
-            "response_mime_type": "application/json",
-        })
-
-        raw = (resp.text or "").strip()
-        # Clean any markdown if model wrapped it
-        raw = re.sub(r"^```(?:json)?", "", raw, flags=re.MULTILINE)
-        raw = re.sub(r"```$", "", raw, flags=re.MULTILINE).strip()
-        data = json.loads(raw)
-        return data
+        raw = (response_text or "").strip()
+        raw = re.sub(r"^\s*```(?:json)?", "", raw, flags=re.IGNORECASE)
+        raw = re.sub(r"```\s*$", "", raw).strip()
+        return json.loads(raw)
     except Exception as e:
         logger.error(f"[CircuitAssembler] AI circuit solver failed: {e}")
         return None
