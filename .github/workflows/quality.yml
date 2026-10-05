@@ -9,6 +9,7 @@ on:
     branches: ["main", "optimize/**"]
   pull_request:
     branches: ["main"]
+  workflow_dispatch:
 
 jobs:
   static-and-resource-guards:
