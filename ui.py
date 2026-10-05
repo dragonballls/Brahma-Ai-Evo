@@ -13637,7 +13637,7 @@ class SystemConnectivityPage(QWidget):
         def worker():
             try:
                 from core.omniroute import gateway
-                gateway().provisioner.configure_provider(provider, key)
+                gateway().configure_provider(provider, key)
                 result = gateway().test_provider(provider)
                 msg = f"SYS: {provider} test {'passed' if result.get('ok') else 'failed'}."
             except Exception as exc:
