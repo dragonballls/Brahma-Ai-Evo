@@ -394,6 +394,15 @@ class RepositoryIntegrityTests(unittest.TestCase):
                     source,
                 )
 
+    def test_setup_prefers_binary_wheels_and_only_installs_chromium_fallback(self):
+        bootstrap = self.read("bootstrap.ps1")
+        setup = self.read("setup.py")
+        self.assertIn("--prefer-binary -r requirements.txt", bootstrap)
+        self.assertIn('"-m", "playwright", "install", "chromium"', bootstrap)
+        self.assertIn('"--prefer-binary", "-r", "requirements.txt"', setup)
+        self.assertIn('"playwright", "install", "chromium"', setup)
+        self.assertNotIn('"playwright", "install"],', setup)
+
     def test_bootstrap_caches_and_validates_runtime_installers(self):
         source = self.read("bootstrap.ps1")
         self.assertIn('BrahmaAI\\\\downloads', source)
