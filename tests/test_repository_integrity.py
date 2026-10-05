@@ -47,6 +47,9 @@ def _module_path(module: str) -> Path | None:
 
 
 class RepositoryIntegrityTests(unittest.TestCase):
+    def read(self, relative_path: str) -> str:
+        return (ROOT / relative_path).read_text(encoding="utf-8", errors="replace")
+
     def test_first_party_import_targets_exist(self):
         missing = []
         for path in _all_python_files():
