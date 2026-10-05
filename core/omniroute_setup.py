@@ -36,6 +36,11 @@ def _is_windows() -> bool:
     return sys.platform == "win32"
 
 
+def _hidden_creationflags() -> int:
+    """Keep OmniRoute helper subprocesses invisible in GUI builds."""
+    return int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+
 def _split_command(value: str) -> list[str]:
     return shlex.split(value, posix=not _is_windows())
 
@@ -194,6 +199,7 @@ class OmniRouteProvisioner:
                 errors="replace",
                 timeout=15,
                 env=env,
+                creationflags=_hidden_creationflags(),
                 check=False,
             )
         except (OSError, subprocess.SubprocessError):
@@ -229,6 +235,7 @@ class OmniRouteProvisioner:
             errors="replace",
             timeout=PROVISION_TIMEOUT_SECONDS,
             env=env,
+            creationflags=_hidden_creationflags(),
             check=False,
         )
         if result.returncode != 0 or not package_json.is_file():
@@ -320,7 +327,7 @@ class OmniRouteProvisioner:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 env=self.environment(),
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                creationflags=_hidden_creationflags(),
                 close_fds=True,
             )
         deadline = time.monotonic() + max(0.5, float(wait_seconds))
@@ -387,6 +394,7 @@ class OmniRouteProvisioner:
             errors="replace",
             timeout=PROVISION_TIMEOUT_SECONDS,
             env=self.environment(),
+            creationflags=_hidden_creationflags(),
             check=False,
         )
         if result.returncode != 0:
