@@ -394,6 +394,16 @@ class RepositoryIntegrityTests(unittest.TestCase):
                     source,
                 )
 
+    def test_bootstrap_caches_and_validates_runtime_installers(self):
+        source = self.read("bootstrap.ps1")
+        self.assertIn('BrahmaAI\\\\downloads', source)
+        self.assertIn('$tempPythonInstaller = "$PythonInstaller.download"', source)
+        self.assertIn('$tempNodeInstaller = "$NodeInstaller.download"', source)
+        self.assertIn('Move-Item -Force $tempPythonInstaller $PythonInstaller', source)
+        self.assertIn('Move-Item -Force $tempNodeInstaller $NodeInstaller', source)
+        self.assertIn('Using cached Python installer', source)
+        self.assertIn('Using cached Node installer', source)
+
     def test_bootstrap_validates_existing_venv_python_version(self):
         source = self.read("bootstrap.ps1")
         self.assertIn("$VenvNeedsRecreate = -not (Test-Path $VenvPython)", source)
