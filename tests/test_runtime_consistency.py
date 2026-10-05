@@ -166,6 +166,28 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertNotIn('"llama3.2"', client)
         self.assertIn("or LOCAL_DEFAULT_MODEL", client)
 
+    def test_omniroute_control_commands_are_nonblocking(self):
+        main = self.read("main.py")
+        status = main.split('if lower_exact in {"omniroute status"', 1)[1].split(
+            'if lower_exact in {"sync omniroute keys"', 1
+        )[0]
+        self.assertIn('name="omniroute-status"', status)
+        self.assertIn("gateway().status()", status)
+        self.assertNotIn("status = gateway().status()", status.split("def _omni_status", 1)[0])
+
+        sync = main.split('if lower_exact in {"sync omniroute keys"', 1)[1].split(
+            'm = re.fullmatch(r"(?:test )?omniroute provider', 1
+        )[0]
+        self.assertIn("gateway().sync_credentials()", sync)
+        self.assertNotIn("gateway().provisioner.sync_existing_provider_keys", sync)
+
+    def test_omniroute_windows_helpers_hide_subprocesses(self):
+        setup = self.read("core/omniroute_setup.py")
+        gateway = self.read("core/omniroute.py")
+        self.assertIn("def _hidden_creationflags()", setup)
+        self.assertGreaterEqual(setup.count("creationflags=_hidden_creationflags()"), 2)
+        self.assertIn("creationflags=int(getattr(subprocess, \"CREATE_NO_WINDOW\", 0))", gateway)
+
     def test_omniroute_readiness_is_cached(self):
         from core.omniroute import OmniRouteGateway
 
