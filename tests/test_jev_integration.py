@@ -32,6 +32,13 @@ class JevIntegrationTests(unittest.TestCase):
         self.assertIn('action in {"goal", "agent", "ultrafast"}', source)
         self.assertIn("run_goal", source)
 
+    def test_ui_signal_handler_is_defined_before_connection(self):
+        from pathlib import Path
+        source = Path("ui.py").read_text(encoding="utf-8")
+        connection = source.index("self.local_model_pull_update.connect(_handle_model_pull_update)")
+        handler = source.index("def _handle_model_pull_update(update):")
+        self.assertLess(handler, connection)
+
     def test_memory_manager_calls_jev_admission_gate(self):
         from pathlib import Path
         source = Path("main.py").read_text(encoding="utf-8")
