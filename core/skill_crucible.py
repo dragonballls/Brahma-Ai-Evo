@@ -116,6 +116,11 @@ BANNED_IMPORT_MODULES = {
     "pty",
     "sqlite3",
     "mmap",
+    # Native/C/device modules cannot be safely confined by Python-level Crucible hooks.
+    "cffi", "numpy", "cv2", "mss", "psutil", "pyautogui", "pygetwindow", "pywinauto",
+    "sounddevice", "pyaudio", "comtypes", "pycaw", "mediapipe", "send2trash",
+    "playwright", "browser_harness", "PyQt6", "win10toast", "pocketsphinx",
+    "webbrowser", "pickle", "marshal", "zipimport", "faulthandler", "shelve", "dbm",
     # Native Windows modules can open files/processes or query protected system state.
     "winreg",
     "_winreg",
@@ -156,6 +161,12 @@ BANNED_CALLS = {
     ("pathlib.Path", "exists"), ("pathlib.Path", "is_file"), ("pathlib.Path", "is_dir"),
     ("pathlib.Path", "is_symlink"), ("pathlib.Path", "readlink"),
     ("pathlib.Path", "owner"), ("pathlib.Path", "group"),
+    ("pathlib.Path", "chmod"), ("pathlib.Path", "lchmod"), ("pathlib.Path", "touch"),
+    ("concurrent.futures", "ProcessPoolExecutor"),
+    ("webbrowser", "open"), ("webbrowser", "open_new"), ("webbrowser", "open_new_tab"),
+    ("builtins", "__import__"), ("builtins", "eval"), ("builtins", "exec"),
+    ("builtins", "compile"), ("sys", "_getframe"), ("sys", "_current_frames"),
+    ("object", "__subclasses__"), ("type", "__subclasses__"),
     ("ssl", "_create_unverified_context"),
 }
 
@@ -241,11 +252,27 @@ class SkillCrucible:
         imported_dangerous_names: set[str] = set()
         module_aliases: dict[str, str] = {}
         symbol_aliases: dict[str, str] = {}
-        sensitive_modules = {"os", "shutil", "ssl", "pathlib"}
+        sensitive_modules = {"os", "shutil", "ssl", "pathlib", "sys", "builtins"}
+        banned_attributes = {
+            ("sys", "modules"),
+            ("sys", "_getframe"),
+            ("sys", "_current_frames"),
+            ("builtins", "__import__"),
+            ("builtins", "eval"),
+            ("builtins", "exec"),
+            ("builtins", "compile"),
+        }
         dangerous_names = {
             "system", "popen", "remove", "unlink", "rmdir", "removedirs",
             "replace", "rename", "startfile", "_create_unverified_context",
             "rmtree", "copytree", "make_archive",
+            "listdir", "scandir", "walk", "fwalk", "stat", "lstat", "access",
+            "readlink", "realpath", "abspath", "exists", "lexists", "getsize",
+            "getmtime", "getatime", "getctime", "getmode", "samefile",
+            "symlink", "link", "mkdir", "makedirs", "chmod", "chown", "lchown",
+            "utime", "truncate", "ftruncate", "chdir", "fchdir", "seteuid",
+            "setuid", "setgid", "setgroups", "initgroups", "__import__", "eval",
+            "exec", "compile", "_getframe", "_current_frames", "__subclasses__",
             "listdir", "scandir", "walk", "fwalk", "stat", "lstat", "access",
             "readlink", "realpath", "abspath", "exists", "lexists", "getsize",
             "getmtime", "getatime", "getctime", "getmode", "samefile",
@@ -280,6 +307,13 @@ class SkillCrucible:
                     "system", "popen", "remove", "unlink", "rmdir", "removedirs",
                     "replace", "rename", "startfile", "_create_unverified_context",
                     "rmtree", "copytree", "make_archive",
+            "listdir", "scandir", "walk", "fwalk", "stat", "lstat", "access",
+            "readlink", "realpath", "abspath", "exists", "lexists", "getsize",
+            "getmtime", "getatime", "getctime", "getmode", "samefile",
+            "symlink", "link", "mkdir", "makedirs", "chmod", "chown", "lchown",
+            "utime", "truncate", "ftruncate", "chdir", "fchdir", "seteuid",
+            "setuid", "setgid", "setgroups", "initgroups", "__import__", "eval",
+            "exec", "compile", "_getframe", "_current_frames", "__subclasses__",
                     "listdir", "scandir", "walk", "fwalk", "stat", "lstat", "access",
                     "readlink", "realpath", "abspath", "exists", "lexists", "getsize",
                     "getmtime", "getatime", "getctime", "getmode", "samefile",
@@ -294,6 +328,12 @@ class SkillCrucible:
                         if alias.name in dangerous_names:
                             imported_dangerous_names.add(alias.asname or alias.name)
 
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+                owner = module_aliases.get(node.value.id, node.value.id)
+                if (owner, node.attr) in banned_attributes:
+                    return False, f"Security Violation: prohibited attribute '{owner}.{node.attr}'."
+
         # Block powerful runtime primitives that would let a generated skill
         # escape the Crucible's intended safety boundary. Skills can still use
         # ordinary Python, network clients, and deterministic local processing.
@@ -307,6 +347,10 @@ class SkillCrucible:
                 root = (node.module or "").split(".")[0]
                 if root in BANNED_IMPORT_MODULES:
                     return False, f"Security Violation: prohibited import '{root}'."
+                if node.module == "concurrent.futures":
+                    for alias in node.names:
+                        if alias.name == "ProcessPoolExecutor":
+                            return False, "Security Violation: ProcessPoolExecutor is prohibited."
             elif isinstance(node, ast.Call):
                 func = node.func
                 if isinstance(func, ast.Name) and func.id in {
@@ -525,6 +569,7 @@ _real_os_mkdir = os.mkdir
 _real_os_makedirs = os.makedirs
 _real_os_symlink = os.symlink
 _real_os_link = os.link
+_real_os_chdir = os.chdir
 _real_os_startfile = getattr(os, "startfile", None)
 
 def _sandbox_open(file, *args, **kwargs):
@@ -553,6 +598,9 @@ def _sandbox_fwalk(top=".", *args, **kwargs):
     if kwargs.get("dir_fd") is not None:
         raise PermissionError("Crucible sandbox denied dir_fd filesystem access.")
     return _real_os_fwalk(_sandbox_path(top), *args, **kwargs)
+
+def _sandbox_chdir(path):
+    return _real_os_chdir(_sandbox_path(path))
 
 def _sandbox_readlink(path, *args, **kwargs):
     if kwargs.get("dir_fd") is not None or (len(args) >= 1 and args[0] is not None):
@@ -595,6 +643,7 @@ os.walk = _sandbox_walk
 if _real_os_fwalk is not None:
     os.fwalk = _sandbox_fwalk
 os.readlink = _sandbox_readlink
+os.chdir = _sandbox_chdir
 os.remove = _sandbox_mutation(_real_os_remove)
 os.unlink = _sandbox_mutation(_real_os_unlink)
 os.rmdir = _sandbox_mutation(_real_os_rmdir)

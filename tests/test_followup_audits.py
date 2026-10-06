@@ -765,6 +765,25 @@ def execute(**kwargs):
     assert "Crucible sandbox denied filesystem access outside its temporary root." in message
 
 
+
+def test_crucible_blocks_native_and_dynamic_escape_surfaces():
+    from core.skill_crucible import SkillCrucible
+    cases = [
+        "import numpy\ndef execute(**kwargs):\n    return numpy.load('/tmp/secret.npy')",
+        "import webbrowser\ndef execute(**kwargs):\n    return webbrowser.open('https://example.com')",
+        "import builtins\ndef execute(**kwargs):\n    return builtins.__import__('ctypes')",
+        "import pickle\ndef execute(**kwargs):\n    return pickle.loads(b'')",
+        "import concurrent.futures\ndef execute(**kwargs):\n    return concurrent.futures.ProcessPoolExecutor()",
+        "import os\ndef execute(**kwargs):\n    return os.truncate('/tmp/secret', 0)",
+        "import sys\ndef execute(**kwargs):\n    return sys.modules",
+        "def execute(**kwargs):\n    return object.__subclasses__()",
+    ]
+    for code in cases:
+        ok, error = SkillCrucible.validate_ast(code)
+        assert ok is False
+        assert "Security Violation" in (error or "")
+
+
 def test_crucible_blocks_native_windows_escape_modules():
     from core.skill_crucible import SkillCrucible
     cases = [
