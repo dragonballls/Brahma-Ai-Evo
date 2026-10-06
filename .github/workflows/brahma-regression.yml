@@ -68,6 +68,7 @@ jobs:
           tests.test_youtube_video_safety
           tests.test_send_message_safety
           tests.test_crash_recovery_security
+          tests.test_self_awareness
           tests.test_auto_heal_history_atomicity
           tests.test_dynamic_registry_security
           tests.test_local_endpoint_security
