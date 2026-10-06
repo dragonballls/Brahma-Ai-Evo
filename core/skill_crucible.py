@@ -57,6 +57,8 @@ def _sandbox_environment(root: Path) -> dict[str, str]:
     env["TEMP"] = str(root)
     env["TMP"] = str(root)
     env["PYTHONNOUSERSITE"] = "1"
+    for key in ("PYTHONPATH", "PYTHONHOME", "PYTHONUSERBASE", "PYTHONSTARTUP", "PYTHONBREAKPOINT"):
+        env.pop(key, None)
     return env
 
 # Dangerous calls and patterns that synthetic skills must NEVER execute
