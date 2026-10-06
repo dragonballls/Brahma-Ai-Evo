@@ -123,7 +123,13 @@ def _portable_secret_key() -> bytes:
         return key
     key = secrets.token_bytes(32)
     flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
-    fd = os.open(_PORTABLE_KEY_FILE, flags, 0o600)
+    try:
+        fd = os.open(_PORTABLE_KEY_FILE, flags, 0o600)
+    except FileExistsError:
+        existing = _PORTABLE_KEY_FILE.read_bytes()
+        if len(existing) != 32:
+            raise RuntimeError("Portable secret key is invalid.")
+        return existing
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(key)
