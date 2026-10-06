@@ -9,6 +9,8 @@ from core.user_paths import get_user_data_dir
 
 import json
 import logging
+import os
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -23,6 +25,8 @@ RULES_FILE = CONFIG_DIR / "learned_rules.json"
 
 class LearnedRulesEngine:
     """Manages persistent behavioral rules and directives learned from the user."""
+
+    _lock = threading.RLock()
 
     @staticmethod
     def _load_raw() -> List[Dict[str, Any]]:
@@ -39,12 +43,25 @@ class LearnedRulesEngine:
     @staticmethod
     def _save_raw(rules: List[Dict[str, Any]]) -> bool:
         try:
-            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            with open(RULES_FILE, "w", encoding="utf-8") as f:
-                json.dump(rules, f, indent=4)
+            with LearnedRulesEngine._lock:
+                CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+                temp = RULES_FILE.with_name(
+                    f".{RULES_FILE.name}.{os.getpid()}-{uuid.uuid4().hex}.tmp"
+                )
+                try:
+                    temp.write_text(
+                        json.dumps(rules, indent=4, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+                    os.replace(temp, RULES_FILE)
+                finally:
+                    try:
+                        temp.unlink(missing_ok=True)
+                    except OSError:
+                        pass
             return True
         except Exception as e:
-            logger.error(f"[LearnedRules] Failed to save rules: {e}")
+            logger.error("[LearnedRules] Failed to save rules: %s", e)
             return False
 
     @classmethod
