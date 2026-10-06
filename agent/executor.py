@@ -426,6 +426,22 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None, player: Any 
             lambda: (start_call_proxy(event, ui=player, speak_fn=speak) and "Call screening started."),
         )
 
+    elif tool == "universal_task":
+        from core.universal_agent import run as run_universal_task
+        p = dict(parameters or {})
+        request = str(p.get("request") or p.get("goal") or "").strip()
+        if not request:
+            raise ValueError("universal_task requires a request")
+        result = run_universal_task(request, context=str(p.get("context") or ""))
+        if isinstance(result, dict):
+            return str(
+                result.get("result")
+                or result.get("message")
+                or result.get("output")
+                or result
+            ).strip()
+        return str(result or "Task completed.").strip()
+
     elif tool == "skill_forge":
         p = parameters or {}
         if str(p.get("action", "forge")).lower() == "list":
