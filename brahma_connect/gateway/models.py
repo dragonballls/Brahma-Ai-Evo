@@ -55,6 +55,8 @@ class PairingOffer:
     pairing_token: str
     pairing_code: str
     expires_at: float
+    tls_enabled: bool = True
+    tls_certificate_sha256: str = ""
     created_at: str = field(default_factory=utc_now_iso)
 
     def to_dict(self) -> dict[str, Any]:
@@ -65,6 +67,8 @@ class PairingOffer:
             "pairing_token": self.pairing_token,
             "pairing_code": self.pairing_code,
             "expires": int(max(0, self.expires_at - datetime.now(timezone.utc).timestamp())),
+            "tls": self.tls_enabled,
+            "tls_certificate_sha256": self.tls_certificate_sha256,
             "created_at": self.created_at,
         }
 
