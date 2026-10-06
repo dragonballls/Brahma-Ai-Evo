@@ -802,3 +802,47 @@ class RuntimeConsistencyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_planner_rejects_malformed_or_oversized_model_plans(self):
+        from unittest.mock import patch
+        import agent.planner as planner
+
+        bad_parameter_plan = '{"steps":[{"step":1,"tool":"web_search","description":"x","parameters":[],"critical":true}]}'
+        oversized_plan = '{"steps":' + '[' + ','.join(
+            '{"step":1,"tool":"web_search","description":"x","parameters":{}}' for _ in range(6)
+        ) + ']}'
+
+        with patch.object(planner, "_gemini_generate_text", return_value=bad_parameter_plan):
+            fallback = planner.create_plan("test malformed plan")
+        self.assertTrue(fallback["steps"])
+        self.assertIsInstance(fallback["steps"][0]["parameters"], dict)
+
+        with patch.object(planner, "_gemini_generate_text", return_value=oversized_plan):
+            fallback2 = planner.create_plan("test oversized plan")
+        self.assertLessEqual(len(fallback2["steps"]), 5)
+
+
+    def test_crucible_blocks_module_alias_and_getattr_bypass_patterns(self):
+        from core.skill_crucible import SkillCrucible
+
+        cases = (
+            'import os as ops\ndef execute(**kwargs):\n    return ops.system("whoami")',
+            'import shutil as s\ndef execute(**kwargs):\n    return s.rmtree("x")',
+            'import ssl as tls\ndef execute(**kwargs):\n    return tls._create_unverified_context()',
+            'import pathlib as p\ndef execute(**kwargs):\n    return p.Path("x").unlink()',
+            'import os as ops\ndef execute(**kwargs):\n    return getattr(ops, "system")("whoami")',
+            'from pathlib import Path as P\ndef execute(**kwargs):\n    return getattr(P, "unlink")("x")',
+        )
+        for code in cases:
+            ok, error = SkillCrucible.validate_ast(code)
+            self.assertFalse(ok, code)
+            self.assertIn("Security Violation", error or "")
+
+
+    def test_dashboard_upload_destination_is_atomically_reserved(self):
+        source = self.read("dashboard/server.py")
+        self.assertIn("def _open_unique_upload(root: Path, safe_name: str)", source)
+        self.assertIn('candidate.open("xb")', source)
+        upload = source.split("async def upload_file", 1)[1].split("async def list_files", 1)[0]
+        self.assertIn("_open_unique_upload(self._uploads_dir, safe)", upload)
+        self.assertNotIn("while dest.exists():", upload)
