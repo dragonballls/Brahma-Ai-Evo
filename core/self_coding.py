@@ -8,7 +8,7 @@ approval before main is changed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import os
 import json
@@ -16,9 +16,13 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import threading
 from typing import Any
 
 from core.efficiency_policy import EFFICIENCY_DIRECTIVE
+
+
+_SELF_CODING_LOCK = threading.RLock()
 
 
 class SelfCodingError(RuntimeError):
@@ -286,7 +290,11 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
                 "manual cleanup is required before another self-coding run."
             )
 
-    def preview(
+    def preview(self, goal: str, *, max_passes: int = 1, return_to_base: bool = False) -> dict[str, Any]:
+        with _SELF_CODING_LOCK:
+            return self._preview_unlocked(goal, max_passes=max_passes, return_to_base=return_to_base)
+
+    def _preview_unlocked(
         self,
         goal: str,
         *,
@@ -371,9 +379,15 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
             raise SelfCodingError(f"Self-coding failed safely: {exc}") from exc
 
     def approve(self, checkpoint_id: str) -> str:
+        with _SELF_CODING_LOCK:
+            return self._approve_unlocked(checkpoint_id)
+
+    def _approve_unlocked(self, checkpoint_id: str) -> str:
         checkpoint = self._load(checkpoint_id)
         if checkpoint.state != "pending":
             raise SelfCodingError(f"Checkpoint is not pending: {checkpoint.state}")
+        if checkpoint.base_branch != "main":
+            raise SelfCodingError("Only checkpoints created from main can be promoted or undone.")
         self.validate_repo()
         head = self._git("rev-parse", checkpoint.branch)
         if head.returncode != 0 or head.stdout.strip() != checkpoint.commits[-1]:
@@ -388,7 +402,7 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
         if remote.stdout.strip() != checkpoint.baseline or local.stdout.strip() != checkpoint.baseline:
             raise SelfCodingError("main changed since preview; refusing promotion.")
         previous = self._branch()
-        self._save(Checkpoint(**{**checkpoint.__dict__, "state": "promoting"}))
+        self._save(replace(checkpoint, state="promoting"))
         switched = self._git("switch", "main")
         if switched.returncode != 0:
             self._save(checkpoint)
@@ -410,20 +424,26 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
             self._save(checkpoint)
             raise SelfCodingError(pushed.stderr.strip() or "Approval publish failed safely.")
         approved = Checkpoint(
-            **{**checkpoint.__dict__, "state": "approved", "promoted_sha": promoted_sha}
+            replace(checkpoint, state="approved", promoted_sha=promoted_sha)
         )
         self._save(approved)
         return promoted_sha
 
     def undo(self, checkpoint_id: str) -> str:
+        with _SELF_CODING_LOCK:
+            return self._undo_unlocked(checkpoint_id)
+
+    def _undo_unlocked(self, checkpoint_id: str) -> str:
         checkpoint = self._load(checkpoint_id)
         self.validate_repo()
+        if checkpoint.base_branch != "main":
+            raise SelfCodingError("Only checkpoints created from main can be promoted or undone.")
         if checkpoint.state == "pending":
             current = self._branch()
             if current == checkpoint.branch:
                 self._git("switch", checkpoint.base_branch)
             self._git("branch", "-D", checkpoint.branch)
-            undone = Checkpoint(**{**checkpoint.__dict__, "state": "undone"})
+            undone = Checkpoint(replace(checkpoint, state="undone"))
             self._save(undone)
             return "undone"
         if checkpoint.state != "approved" or not checkpoint.promoted_sha:
@@ -457,7 +477,7 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
                 self._git("switch", current)
                 raise SelfCodingError(pushed.stderr.strip() or "Unable to publish checkpoint undo.")
             undone = Checkpoint(
-                **{**checkpoint.__dict__, "state": "undone", "undo_commits": tuple(undo_commits)}
+                replace(checkpoint, state="undone", undo_commits=tuple(undo_commits))
             )
             self._save(undone)
             return "undone"
