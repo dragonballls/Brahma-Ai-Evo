@@ -433,3 +433,29 @@ def test_android_remote_file_boundary_is_canonical_and_protected():
     assert 'if (parts.any { it == ".." })' in source
     assert 'Deleting a storage root is not allowed.' in source
     assert '10 MB remote-read limit' in source
+
+def test_connection_hub_set_pending_cancels_when_device_is_missing():
+    async def scenario():
+        hub = ConnectionHub()
+        future = await hub.set_pending("missing-device", "req-1")
+        return future
+
+    future = asyncio.run(scenario())
+    assert future.cancelled()
+
+
+def test_connection_hub_current_socket_guard_rejects_replaced_connection():
+    class Socket:
+        pass
+
+    async def scenario():
+        hub = ConnectionHub()
+        old_socket = Socket()
+        new_socket = Socket()
+        await hub.register(old_socket, "device-1")
+        await hub.register(new_socket, "device-1")
+        return await hub.is_current(old_socket, "device-1"), await hub.is_current(new_socket, "device-1")
+
+    old_current, new_current = asyncio.run(scenario())
+    assert old_current is False
+    assert new_current is True
