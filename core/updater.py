@@ -44,11 +44,57 @@ class UpdateChecker(QObject):
             if self._check_thread is thread and (thread is None or not thread.is_alive()):
                 self._check_thread = None
 
+    def _remote_is_safe_update(self, remote_hash: str) -> bool:
+        if not remote_hash:
+            return False
+        try:
+            fetch = subprocess.run(
+                ["git", "fetch", "origin", self.branch, "--quiet"],
+                cwd=self.base_dir,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=30,
+                creationflags=int(getattr(subprocess, "CREATE_NO_WINDOW", 0)),
+                check=False,
+            )
+            if fetch.returncode != 0:
+                return False
+            local = self._get_local_hash()
+            if not local:
+                return False
+            upstream = subprocess.run(
+                ["git", "rev-parse", f"origin/{self.branch}"],
+                cwd=self.base_dir,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+                text=True,
+                creationflags=int(getattr(subprocess, "CREATE_NO_WINDOW", 0)),
+                check=False,
+            )
+            if upstream.returncode != 0 or upstream.stdout.strip() != remote_hash:
+                return False
+            ancestry = subprocess.run(
+                ["git", "merge-base", "--is-ancestor", local, remote_hash],
+                cwd=self.base_dir,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+                creationflags=int(getattr(subprocess, "CREATE_NO_WINDOW", 0)),
+                check=False,
+            )
+            return ancestry.returncode == 0 and local != remote_hash
+        except (OSError, subprocess.SubprocessError):
+            return False
+
     def check_now(self) -> str | None:
         """Check GitHub once and emit when a newer commit is available."""
         local_hash = self._get_local_hash()
         remote_hash = self._get_remote_hash()
-        if local_hash and remote_hash and local_hash != remote_hash:
+        if local_hash and remote_hash and self._remote_is_safe_update(remote_hash):
             self.update_available_sig.emit(remote_hash)
             return remote_hash
         return None
@@ -83,10 +129,10 @@ class UpdateChecker(QObject):
                 local_hash = self._get_local_hash()
                 remote_hash = self._get_remote_hash()
 
-                if local_hash and remote_hash and local_hash != remote_hash:
+                if local_hash and remote_hash and self._remote_is_safe_update(remote_hash):
                     print(f"[Updater] Update detected! Local: {local_hash[:7]}, Remote: {remote_hash[:7]}")
                     self.update_available_sig.emit(remote_hash)
-                    break  # Stop checking once an update is detected.
+                    break  # Stop checking once a safe fast-forward update is detected.
 
                 # Poll every 6 hours and sleep in one interruptible wait.
                 self._stop_event.wait(timeout=21600)
