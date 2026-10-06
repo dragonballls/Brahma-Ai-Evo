@@ -151,6 +151,32 @@ class SkillCrucible:
             return False, "Skill code must define an 'execute(**kwargs)' or 'async def execute(**kwargs)' function."
 
         imported_dangerous_names: set[str] = set()
+        module_aliases: dict[str, str] = {}
+        symbol_aliases: dict[str, str] = {}
+        sensitive_modules = {"os", "shutil", "ssl", "pathlib"}
+        dangerous_names = {
+            "system", "popen", "remove", "unlink", "rmdir", "removedirs",
+            "replace", "rename", "startfile", "_create_unverified_context",
+            "rmtree", "copytree", "make_archive",
+        }
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    root = alias.name.split(".")[0]
+                    if root in sensitive_modules:
+                        module_aliases[alias.asname or root] = root
+
+            elif isinstance(node, ast.ImportFrom):
+                module_root = (node.module or "").split(".")[0]
+                if module_root in sensitive_modules:
+                    for alias in node.names:
+                        if alias.name == "*":
+                            return False, f"Security Violation: wildcard import from '{module_root}' is prohibited."
+                        symbol_aliases[alias.asname or alias.name] = f"{module_root}.{alias.name}"
+                        if alias.name in dangerous_names:
+                            imported_dangerous_names.add(alias.asname or alias.name)
+
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
                 module_root = (node.module or "").split(".")[0]
@@ -179,37 +205,35 @@ class SkillCrucible:
                     return False, f"Security Violation: prohibited import '{root}'."
             elif isinstance(node, ast.Call):
                 func = node.func
-                if isinstance(func, ast.Name) and func.id in {"eval", "exec", "__import__"}:
+                if isinstance(func, ast.Name) and func.id in {
+                    "eval", "exec", "__import__", "globals", "locals", "vars"
+                }:
                     return False, f"Security Violation: prohibited dynamic execution '{func.id}'."
                 if isinstance(func, ast.Name) and func.id in imported_dangerous_names:
                     return False, f"Security Violation: prohibited imported call '{func.id}'."
+                if isinstance(func, ast.Call) and isinstance(func.func, ast.Name) and func.func.id == "getattr":
+                    if len(func.args) >= 2 and isinstance(func.args[0], ast.Name) and isinstance(func.args[1], ast.Constant):
+                        module_root = module_aliases.get(func.args[0].id)
+                        symbol_root = symbol_aliases.get(func.args[0].id)
+                        attr_name = str(func.args[1].value)
+                        if module_root in sensitive_modules and attr_name in dangerous_names:
+                            return False, f"Security Violation: prohibited dynamic access '{module_root}.{attr_name}'."
+                        if symbol_root == "pathlib.Path" and attr_name in {"unlink", "rmdir", "replace", "rename"}:
+                            return False, f"Security Violation: prohibited dynamic access 'pathlib.Path.{attr_name}'."
                 if isinstance(func, ast.Attribute):
                     owner = ""
                     if isinstance(func.value, ast.Name):
-                        owner = func.value.id
-                    elif (
-                        isinstance(func.value, ast.Attribute)
-                        and isinstance(func.value.value, ast.Name)
-                        and func.value.value.id == "pathlib"
-                    ):
-                        owner = "pathlib." + func.value.value.id
+                        owner = module_aliases.get(func.value.id, func.value.id)
+                        owner = symbol_aliases.get(func.value.id, owner)
+                    elif isinstance(func.value, ast.Attribute) and isinstance(func.value.value, ast.Name):
+                        root_id = func.value.value.id
+                        root = module_aliases.get(root_id, root_id)
+                        owner = f"{root}.{func.value.attr}"
                     call_key = (owner, func.attr)
                     if call_key in BANNED_CALLS or (owner, "*") in BANNED_CALLS:
                         return False, f"Security Violation: prohibited call '{owner}.{func.attr}'."
-                    if (
-                        isinstance(func.value, ast.Name)
-                        and func.value.id == "Path"
-                        and func.attr in {"unlink", "rmdir", "replace", "rename"}
-                    ):
+                    if owner == "pathlib.Path" and func.attr in {"unlink", "rmdir", "replace", "rename"}:
                         return False, f"Security Violation: prohibited Path.{func.attr} call."
-                    if (
-                        isinstance(func.value, ast.Attribute)
-                        and isinstance(func.value.value, ast.Name)
-                        and func.value.value.id == "pathlib"
-                        and func.value.attr == "Path"
-                        and func.attr in {"unlink", "rmdir", "replace", "rename"}
-                    ):
-                        return False, f"Security Violation: prohibited pathlib.Path.{func.attr} call."
                 for keyword in node.keywords:
                     if keyword.arg == "verify" and isinstance(keyword.value, ast.Constant):
                         if keyword.value.value is False:
