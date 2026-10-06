@@ -47,3 +47,17 @@ def test_organizer_history_failure_rolls_back_changes():
     assert "def _rollback_moves" in source
     assert "Organization was rolled back because its undo history could not be persisted." in source
     assert "Unable to read persistent organizer history." in source
+
+
+def test_organizer_undo_does_not_claim_durable_success_when_history_save_fails():
+    source = (ROOT / "actions" / "desktop_organizer_mcp.py").read_text(encoding="utf-8")
+    assert "if not self._save_history(history):" in source
+    assert "Undo restored {restored} file(s), but the undo history could not be persisted" in source
+
+
+def test_organizer_archive_rolls_back_when_history_persistence_fails():
+    source = (ROOT / "actions" / "desktop_organizer_mcp.py").read_text(encoding="utf-8")
+    start = source.index("def archive_old")
+    block = source[start:]
+    assert "if not self._save_history(history):" in block
+    assert "Archive was rolled back because its undo history could not be persisted." in block
