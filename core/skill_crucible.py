@@ -280,10 +280,22 @@ class SkillCrucible:
                 continue
 
             logger.info(f"[Crucible] Installing missing or repairing dependency: {pip_name}")
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", str(pip_name or "")):
+                return False, f"Rejected unsafe dependency name '{pip_name}'."
             try:
                 if dep == "speedtest":
-                    subprocess.run([py_exe, "-m", "pip", "uninstall", "-y", "speedtest"], capture_output=True, timeout=30, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-                install_cmd = [py_exe, "-m", "pip", "install", pip_name, "--quiet"]
+                    subprocess.run(
+                        [py_exe, "-m", "pip", "--isolated", "uninstall", "-y", "speedtest"],
+                        capture_output=True,
+                        timeout=30,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    )
+                install_cmd = [
+                    py_exe, "-m", "pip", "--isolated", "install",
+                    "--index-url", "https://pypi.org/simple",
+                    "--disable-pip-version-check", "--no-input",
+                    pip_name, "--quiet",
+                ]
                 proc = subprocess.run(install_cmd, capture_output=True, text=True, timeout=180, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 if proc.returncode != 0:
                     err_sample = proc.stderr.strip()[:180] or "Unknown pip error"
