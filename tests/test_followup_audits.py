@@ -584,3 +584,8 @@ def test_ota_rejects_mismatched_supplied_checksum(monkeypatch, tmp_path: Path):
         expected_sha256="b" * 64,
     )
     assert result is False
+
+
+def test_dynamic_registry_redacts_credential_like_errors():
+    from core.dynamic_registry import _redact_text
+    assert _redact_text("failed bearer sk-proj-abcdefghijklmnopqrstuvwxyz123456") == "failed bearer [REDACTED]"
