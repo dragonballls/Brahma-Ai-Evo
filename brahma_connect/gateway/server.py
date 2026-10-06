@@ -264,32 +264,67 @@ class BrahmaGateway:
         ]
 
     async def approve_pending_request(self, pending_id: str) -> dict[str, Any]:
-        item = self._pending_requests.pop(str(pending_id), None)
-        if item is None:
-            return {"success": False, "error": "Pending request not found."}
+        key = str(pending_id)
+        with self._pending_lock:
+            item = self._pending_requests.get(key)
+            if item is None:
+                return {"success": False, "error": "Pending request not found."}
+            if item.get("_approving"):
+                return {"success": False, "error": "Pairing request is already being approved."}
+            item["_approving"] = True
+
         websocket = item.get("websocket")
         if websocket is None:
+            with self._pending_lock:
+                self._pending_requests.pop(key, None)
             return {"success": False, "error": "Device is no longer connected."}
 
-        record, secret = self.device_manager.create_from_pairing(
-            name=str(item.get("device_name") or "Unknown Device"),
-            platform=str(item.get("platform") or "unknown"),
-            os_version=str(item.get("os_version") or ""),
-            agent_version=str(item.get("agent_version") or ""),
-            ip=str(item.get("ip") or ""),
-            battery=item.get("battery"),
-            capabilities=list(item.get("capabilities") or []),
-            permissions=list(item.get("permissions") or []),
-            metadata=dict(item.get("metadata") or {}),
-        )
-        self._append_log("PAIR_APPROVED", device=record.device_id, name=record.name, platform=record.platform)
-        await websocket.send_json(
-            build_message(
-                ProtocolTypes.PAIR_APPROVED,
-                {"device": record.to_dict(), "device_secret": secret},
-                request_id=str(item.get("request_id") or ""),
+        try:
+            record, secret = self.device_manager.create_from_pairing(
+                name=str(item.get("device_name") or "Unknown Device"),
+                platform=str(item.get("platform") or "unknown"),
+                os_version=str(item.get("os_version") or ""),
+                agent_version=str(item.get("agent_version") or ""),
+                ip=str(item.get("ip") or ""),
+                battery=item.get("battery"),
+                capabilities=list(item.get("capabilities") or []),
+                permissions=list(item.get("permissions") or []),
+                metadata=dict(item.get("metadata") or {}),
             )
-        )
+        except Exception:
+            with self._pending_lock:
+                current = self._pending_requests.get(key)
+                if current is item:
+                    item.pop("_approving", None)
+            return {"success": False, "error": "Unable to persist the device approval; the request can be retried."}
+
+        try:
+            await websocket.send_json(
+                build_message(
+                    ProtocolTypes.PAIR_APPROVED,
+                    {"device": record.to_dict(), "device_secret": secret},
+                    request_id=str(item.get("request_id") or ""),
+                )
+            )
+        except Exception:
+            try:
+                self.device_manager.remove(record.device_id)
+            except Exception:
+                try:
+                    self.device_manager.revoke(record.device_id)
+                except Exception:
+                    pass
+            with self._pending_lock:
+                current = self._pending_requests.get(key)
+                if current is item:
+                    self._pending_requests.pop(key, None)
+            return {"success": False, "error": "Device approval could not be delivered; no credentials were retained."}
+
+        with self._pending_lock:
+            current = self._pending_requests.get(key)
+            if current is item:
+                self._pending_requests.pop(key, None)
+        self._append_log("PAIR_APPROVED", device=record.device_id, name=record.name, platform=record.platform)
         return {"success": True, "device": record.to_dict(), "device_secret": secret}
 
     def reject_pending_request(self, pending_id: str) -> bool:
@@ -336,8 +371,9 @@ class BrahmaGateway:
             )
             return {"success": False, "error": "Invalid or expired pairing token."}
 
-        # Consume the single-use offer only after credential persistence succeeds.
-        # This keeps pairing retryable when registry storage has a transient failure.
+        claimed_offer = self.pairing_manager.claim(offer.pairing_token)
+        if claimed_offer is None:
+            return {"success": False, "error": "Pairing offer is already being used."}
         self._pair_attempts.pop(client_ip, None)
 
         device_name = str(payload.get("device_name") or "Unknown Device").strip()
@@ -348,18 +384,22 @@ class BrahmaGateway:
         capabilities = list(payload.get("capabilities") or [])
         permissions = list(payload.get("permissions") or [])
         metadata = dict(payload.get("metadata") or {})
-        record, secret = self.device_manager.create_from_pairing(
-            name=device_name,
-            platform=platform,
-            os_version=os_version,
-            agent_version=agent_version,
-            ip=client_ip,
-            battery=int(battery) if isinstance(battery, (int, float, str)) and str(battery).isdigit() else None,
-            capabilities=capabilities,
-            permissions=permissions,
-            metadata=metadata,
-        )
-        approved_offer = self.pairing_manager.approve(offer.pairing_token)
+        try:
+            record, secret = self.device_manager.create_from_pairing(
+                name=device_name,
+                platform=platform,
+                os_version=os_version,
+                agent_version=agent_version,
+                ip=client_ip,
+                battery=int(battery) if isinstance(battery, (int, float, str)) and str(battery).isdigit() else None,
+                capabilities=capabilities,
+                permissions=permissions,
+                metadata=metadata,
+            )
+        except Exception:
+            self.pairing_manager.release(claimed_offer.pairing_token)
+            raise
+        approved_offer = self.pairing_manager.approve(claimed_offer.pairing_token)
         if approved_offer is None:
             self.device_manager.remove(record.device_id)
             return {"success": False, "error": "Pairing offer was consumed concurrently; no credentials were retained."}
