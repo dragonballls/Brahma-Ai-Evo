@@ -18,6 +18,7 @@ class ConnectionState:
     role: str = "agent"
     authenticated: bool = False
     pending: dict[str, asyncio.Future] = field(default_factory=dict)
+    send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 class ConnectionHub:
@@ -86,19 +87,21 @@ class ConnectionHub:
             )
 
     async def send_to_device(self, device_id: str, message: dict[str, Any]) -> bool:
-        # Serialize lookup and send so a device cannot be replaced between
-        # selecting a socket and dispatching a privileged command.
+        # Hold only the connection-state lock for lookup. Socket I/O is serialized
+        # per connection so slow sends cannot block registration, disconnects, or
+        # other devices behind the global connection lock.
         async with self._lock:
             state = self._connections.get(str(device_id))
             if state is None or not state.authenticated:
                 return False
-            try:
+        try:
+            async with state.send_lock:
                 await asyncio.wait_for(
                     state.websocket.send_json(message), timeout=SOCKET_SEND_TIMEOUT_SECONDS
                 )
-            except Exception:
-                return False
-            return True
+        except Exception:
+            return False
+        return True
 
     async def broadcast_chat_message(self, message: dict[str, Any]) -> None:
         async with self._lock:
