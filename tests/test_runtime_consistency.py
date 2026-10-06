@@ -846,3 +846,13 @@ if __name__ == "__main__":
         upload = source.split("async def upload_file", 1)[1].split("async def list_files", 1)[0]
         self.assertIn("_open_unique_upload(self._uploads_dir, safe)", upload)
         self.assertNotIn("while dest.exists():", upload)
+
+    def test_executor_does_not_treat_tool_failures_as_success(self):
+        from agent.executor import _raise_for_failed_tool_result
+
+        with self.assertRaises(RuntimeError):
+            _raise_for_failed_tool_result({"success": False, "error": "offline"})
+        with self.assertRaises(RuntimeError):
+            _raise_for_failed_tool_result('{"success": false, "error": "failed"}')
+        with self.assertRaises(RuntimeError):
+            _raise_for_failed_tool_result("")
