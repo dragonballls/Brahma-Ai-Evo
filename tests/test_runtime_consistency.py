@@ -749,6 +749,14 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("headers=headers,", source)
         self.assertNotIn("headers=self._headers,", source)
 
+    def test_openrouter_tool_responses_require_usable_content_or_calls(self):
+        source = self.read("or_client.py")
+        self.assertIn("tool-capable response had no choices; trying next model", source)
+        self.assertIn("tool-capable response had no usable content or tool calls; trying next model", source)
+        block = source[source.index("if resp.status_code == 200:", source.index("def _call_tool_capable")):]
+        block = block[:block.index("if resp.status_code == 403:")]
+        self.assertIn("return {}", block)
+
     def test_dashboard_encryption_contract_is_consistent(self):
         server = self.read("dashboard/server.py")
         app = self.read("dashboard/static/app.html")
