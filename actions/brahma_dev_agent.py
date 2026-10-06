@@ -41,6 +41,18 @@ class NativeTools:
             except Exception:
                 pass
 
+    def _workspace_path(self, value: str) -> Path:
+        raw = str(value or "").strip()
+        if not raw:
+            raise ValueError("A workspace-relative path is required.")
+        candidate = Path(raw)
+        target = candidate.resolve() if candidate.is_absolute() else (self.workspace_dir / candidate).resolve()
+        try:
+            target.relative_to(self.workspace_dir)
+        except ValueError as exc:
+            raise ValueError("Path escapes the configured developer workspace.") from exc
+        return target
+
     def bash(self, command: str, timeout: int = 120) -> str:
         """Executes a shell command in the workspace directory."""
         self._notify(f"⚡ Running command: {command}")
@@ -78,7 +90,7 @@ class NativeTools:
 
     def file_read(self, file_path: str, offset: int = 1, limit: int = 2000) -> str:
         """Reads a file with line numbers starting at offset up to limit lines."""
-        path = (self.workspace_dir / file_path).resolve() if not Path(file_path).is_absolute() else Path(file_path)
+        path = self._workspace_path(file_path)
         self._notify(f"📖 Reading file: {path.name}")
         if not path.exists():
             return f"Error: File does not exist: {path}"
@@ -103,7 +115,7 @@ class NativeTools:
 
     def file_write(self, file_path: str, content: str) -> str:
         """Writes entire content to a file, creating parent folders if needed."""
-        path = (self.workspace_dir / file_path).resolve() if not Path(file_path).is_absolute() else Path(file_path)
+        path = self._workspace_path(file_path)
         self._notify(f"📝 Writing file: {path.name}")
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -115,7 +127,7 @@ class NativeTools:
 
     def file_edit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> str:
         """Surgically edits a file by replacing old_string with new_string."""
-        path = (self.workspace_dir / file_path).resolve() if not Path(file_path).is_absolute() else Path(file_path)
+        path = self._workspace_path(file_path)
         self._notify(f"✏️ Editing file: {path.name}")
         if not path.exists():
             return f"Error: File does not exist: {path}"
@@ -149,7 +161,7 @@ class NativeTools:
 
     def glob(self, pattern: str, path: str = ".") -> str:
         """Finds files matching glob pattern."""
-        search_root = (self.workspace_dir / path).resolve()
+        search_root = self._workspace_path(path)
         self._notify(f"🔍 Searching files for '{pattern}'")
         if not search_root.exists():
             return f"Error: Path does not exist: {search_root}"
@@ -250,7 +262,7 @@ class NativeTools:
 
     def grep(self, pattern: str, path: str = ".", case_sensitive: bool = True) -> str:
         """Searches for regex/literal text inside files."""
-        search_root = (self.workspace_dir / path).resolve()
+        search_root = self._workspace_path(path)
         self._notify(f"🔎 Grepping '{pattern}'")
         flags = 0 if case_sensitive else re.IGNORECASE
         try:
