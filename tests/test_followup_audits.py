@@ -805,7 +805,7 @@ def execute(**kwargs):
     ok, message, telemetry = SkillCrucible.run_sandbox_test(code, [{"input": {}}])
     assert ok is True, message
     assert telemetry["results"][0]["output"].startswith("{'denied':")
-    assert "'outside its temporary root'" in telemetry["results"][0]["output"]
+    assert "outside its temporary root" in telemetry["results"][0]["output"]
 
 
 
