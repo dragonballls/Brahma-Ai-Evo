@@ -77,12 +77,28 @@ class BrahmaWebSocketClient(
     @Volatile private var connectionGeneration = 0L
     private var lastConnectUptime = 0L
 
-    fun connect(endpoint: GatewayEndpoint, credential: DeviceCredential? = storage.loadCredential(), offer: PairingOffer? = null) {
+    fun connect(endpoint: GatewayEndpoint, credential: DeviceCredential? = null, offer: PairingOffer? = null) {
         if (socket != null && currentEndpoint == endpoint) {
             currentCredential = credential ?: currentCredential
             currentOffer = offer ?: currentOffer
             AgentStateStore.setGateway(endpoint)
             return
+        }
+        val resolvedCredential = if (credential != null) {
+            credential
+        } else {
+            try {
+                storage.loadCredential()
+            } catch (exc: IllegalStateException) {
+                currentEndpoint = endpoint
+                currentCredential = null
+                currentOffer = offer
+                AgentStateStore.setGateway(endpoint)
+                AgentStateStore.setConnectionState(ConnectionState.DISCONNECTED)
+                AgentStateStore.setError(exc.message)
+                AgentStateStore.setStatus("Stored credentials corrupted")
+                return
+            }
         }
         if (!endpoint.tls) {
             currentEndpoint = endpoint
@@ -96,7 +112,7 @@ class BrahmaWebSocketClient(
         }
         connectionGeneration += 1
         currentEndpoint = endpoint
-        currentCredential = credential
+        currentCredential = resolvedCredential
         currentOffer = offer
         manualDisconnect = false
         reconnectAttempt = 0
@@ -274,7 +290,7 @@ class BrahmaWebSocketClient(
             }
             reconnectAttempt = 0
             AgentStateStore.setConnectionState(ConnectionState.CONNECTING)
-            if (currentCredential != null || storage.loadCredential() != null) {
+            if (currentCredential != null) {
                 sendAuthenticate()
             } else if (currentOffer != null) {
                 sendPairRequest()
