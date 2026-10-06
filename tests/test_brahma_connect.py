@@ -141,6 +141,60 @@ def test_connection_hub_old_socket_cannot_unregister_new_connection():
 
 
 
+
+def test_pairing_offer_is_single_use(tmp_path: Path):
+    from brahma_connect.gateway.server import BrahmaGateway, BrahmaGatewayConfig
+
+    class Socket:
+        class Client:
+            host = "192.168.1.50"
+        client = Client()
+
+    gateway = BrahmaGateway(
+        tmp_path,
+        BrahmaGatewayConfig(
+            config_path=tmp_path / "config.json",
+            registry_path=tmp_path / "devices.json",
+        ),
+    )
+    offer = gateway.pairing_manager.create_offer("192.168.1.2", 8765)
+    socket = Socket()
+
+    async def scenario():
+        first = await gateway._pair_device(
+            {
+                "pairing_token": offer.pairing_token,
+                "device_name": "Phone",
+                "platform": "android",
+            },
+            socket,
+        )
+        second = await gateway._pair_device(
+            {
+                "pairing_token": offer.pairing_token,
+                "device_name": "Phone 2",
+                "platform": "android",
+            },
+            socket,
+        )
+        return first, second
+
+    first, second = asyncio.run(scenario())
+    assert first["success"] is True
+    assert second["success"] is False
+    assert "invalid or expired" in second["error"].lower()
+
+
+def test_gateway_management_routes_are_local_only():
+    source = Path(__file__).resolve().parents[1] / "brahma_connect" / "gateway" / "server.py"
+    text_value = source.read_text(encoding="utf-8")
+    assert "def _local_management_allowed(req: Request)" in text_value
+    assert text_value.count("if not _local_management_allowed(req):") >= 8
+    assert 'return JSONResponse({"ok": False, "error": "Local management endpoint."}, status_code=403)' in text_value
+
+
+
+
 def test_command_router_cleans_pending_when_device_send_fails(tmp_path: Path):
     registry_path = tmp_path / "devices.json"
     manager = DeviceManager(registry_path)
