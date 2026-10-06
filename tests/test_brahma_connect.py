@@ -221,6 +221,72 @@ def test_capability_normalization_tolerates_non_strings():
 
 
 
+def test_connection_hub_broadcast_removes_dead_socket():
+    class DeadSocket:
+        async def send_json(self, message):
+            raise RuntimeError("socket closed")
+
+    async def scenario():
+        hub = ConnectionHub()
+        state = await hub.register(DeadSocket(), "dead-device")
+        future = await hub.set_pending("dead-device", "req-1")
+        await hub.broadcast_chat_message({"type": "CHAT"})
+        current = await hub.get("dead-device")
+        return state, future, current
+
+    state, future, current = asyncio.run(scenario())
+    assert state.pending == {}
+    assert future.done()
+    assert current is None
+    try:
+        future.result()
+    except RuntimeError as exc:
+        assert "broadcast" in str(exc).lower()
+    else:
+        raise AssertionError("Dead socket pending future was not rejected")
+
+
+def test_service_route_command_uses_gateway_loop(tmp_path: Path):
+    from brahma_connect.service import BrahmaConnectService
+
+    service = object.__new__(BrahmaConnectService)
+    service._lock = __import__("threading").RLock()
+    service._loop = asyncio.new_event_loop()
+    service.gateway = type(
+        "Gateway",
+        (),
+        {"config": type("Config", (), {"request_timeout_seconds": 1})()},
+    )()
+
+    async def fake_route(target, action, parameters):
+        return {
+            "success": True,
+            "device": target,
+            "action": action,
+            "parameters": parameters,
+        }
+
+    service.gateway.route_command = fake_route
+
+    def run_loop():
+        asyncio.set_event_loop(service._loop)
+        service._loop.run_forever()
+
+    thread = __import__("threading").Thread(target=run_loop, daemon=True)
+    thread.start()
+    try:
+        result = service.route_command("phone", "ping", {"x": 1})
+        assert result["success"] is True
+        assert result["device"] == "phone"
+        assert result["action"] == "ping"
+    finally:
+        service._loop.call_soon_threadsafe(service._loop.stop)
+        thread.join(timeout=2)
+        service._loop.close()
+
+
+
+
 def test_command_router_cleans_pending_when_device_send_fails(tmp_path: Path):
     registry_path = tmp_path / "devices.json"
     manager = DeviceManager(registry_path)
