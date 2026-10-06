@@ -272,14 +272,19 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
 
     def _rollback(self, baseline: str, branch: str, base_branch: str) -> None:
         self._git("reset", "--hard", baseline)
-        self._git("clean", "-fd")
         current = self._branch()
         if current == branch:
             self._git("switch", base_branch)
         self._git("branch", "-D", branch)
         status = self._git("status", "--porcelain")
         if status.stdout.strip():
-            raise SelfCodingError("Rollback left the repository dirty.")
+            # Never run git clean here: untracked files may have been created by
+            # another process while self-coding was in progress. Preserve them
+            # rather than risking unrelated user data loss.
+            raise SelfCodingError(
+                "Rollback preserved untracked or working-tree changes; "
+                "manual cleanup is required before another self-coding run."
+            )
 
     def preview(
         self,
