@@ -431,6 +431,19 @@ class RepositoryIntegrityTests(unittest.TestCase):
         self.assertIn(probe, setup)
         self.assertNotIn('print("Installing Playwright browsers...")', setup)
 
+    def test_hidden_smart_devices_section_does_not_poll(self):
+        source = self.read("ui.py")
+        start = source.index("class SmartDevicesSection(QFrame):")
+        end = source.index("\nclass ", start + len("class SmartDevicesSection"))
+        section = source[start:end]
+        self.assertIn("self._poll_tmr = QTimer(self)", section)
+        self.assertIn("def showEvent(self, event):", section)
+        self.assertIn("self._poll_tmr.start(2500)", section)
+        self.assertIn("def hideEvent(self, event):", section)
+        self.assertIn("self._poll_tmr.stop()", section)
+        constructor = section[:section.index("    def showEvent(self, event):")]
+        self.assertNotIn("self._poll_tmr.start(2500)", constructor)
+
     def test_source_launcher_routes_through_repair_bootstrap(self):
         source = self.read("start_brahma.vbs")
         bootstrap_pos = source.index("ElseIf fso.FileExists(bootstrap) And fso.FileExists(mainPy) Then")
