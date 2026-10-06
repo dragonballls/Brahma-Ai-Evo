@@ -678,6 +678,76 @@ class RuntimeConsistencyTests(unittest.TestCase):
                 names.append(line.split("[", 1)[0].split("=", 1)[0].split("<", 1)[0].split(">", 1)[0].strip().lower())
         self.assertEqual(len(names), len(set(names)))
 
+    def test_hardening_dashboard_payloads_are_authenticated_and_ws_tokens_are_not_query_params(self):
+        server = self.read("dashboard/server.py")
+        app = self.read("dashboard/static/app.html")
+        self.assertIn("hmac.compare_digest", server)
+        self.assertIn("HMAC-SHA256", server)
+        self.assertIn('subprotocol=f"brahma-auth.{tok}"', server)
+        self.assertNotIn('async def download_file(filename: str, token: str = "")', server)
+        self.assertNotIn("/ws?token=", app)
+        self.assertNotIn("/ws/phone-audio?token=", app)
+        self.assertIn("CryptoJS.HmacSHA256", app)
+        self.assertIn("brahma-auth.", app)
+
+    def test_ota_and_bootstrap_verify_download_integrity(self):
+        ota = self.read("core/updater_ota.py")
+        bootstrap = self.read("bootstrap.ps1")
+        self.assertIn("SHA-256 digest", ota)
+        self.assertIn("def _sha256", ota)
+        self.assertIn("actual = _sha256(temp_path)", ota)
+        self.assertIn("OTA installer SHA-256 verification failed", ota)
+        self.assertIn("def Get-Sha256", bootstrap)
+        self.assertIn("Get-NodeChecksum", bootstrap)
+        self.assertIn("Test-Authenticode", bootstrap)
+        self.assertIn("Node.js installer SHA256 verification failed", bootstrap)
+
+    def test_ensemble_and_balanced_profile_are_bounded(self):
+        source = self.read("core/intelligence_orchestrator.py")
+        config = self.read("config/intelligence.json")
+        self.assertIn('"balanced"', source)
+        self.assertIn('profiles = c.get("profiles", {})', source)
+        self.assertIn("provider_cap = max(2", source)
+        self.assertIn('"balanced"', config)
+        self.assertIn('"ensemble_max_providers": 3', config)
+
+    def test_action_planner_has_safe_universal_fallback(self):
+        planner = self.read("agent/planner.py")
+        executor = self.read("agent/executor.py")
+        self.assertIn("universal_task", planner)
+        self.assertIn('tool": "universal_task"', planner)
+        self.assertIn('elif tool == "universal_task":', executor)
+        self.assertIn("run_universal_task", executor)
+        self.assertNotIn('tool["tool"] = "web_search"', planner)
+
+    def test_task_queue_can_restart_after_stop(self):
+        source = self.read("agent/task_queue.py")
+        self.assertIn("thread.join(timeout=2.0)", source)
+        self.assertIn("self._worker_thread = None", source)
+        self.assertIn("with self._condition:", source)
+
+    def test_workspace_active_conversation_can_be_cleared(self):
+        source = self.read("workspace_store.py")
+        self.assertIn("DELETE FROM state WHERE key = 'active_conversation_id'", source)
+
+    def test_omniroute_probe_requires_models_contract_and_retries_port_races(self):
+        source = self.read("core/omniroute_setup.py")
+        self.assertIn("payload = json.loads(response.read().decode", source)
+        self.assertIn('isinstance(payload.get("data"), list)', source)
+        self.assertIn("for attempt in range(3):", source)
+        self.assertIn("self._select_loopback_port()", source)
+
+    def test_openrouter_credentials_are_snapshotted_per_request(self):
+        source = self.read("or_client.py")
+        self.assertIn("def _request_headers", source)
+        self.assertIn("headers = self._request_headers()", source)
+        self.assertNotIn("def _refresh_credentials", source)
+
+    def test_startup_health_marker_waits_for_stable_event_loop(self):
+        source = self.read("main.py")
+        self.assertIn("QTimer.singleShot(15000, _mark_startup_healthy)", source)
+        self.assertNotIn("mark_startup_healthy()\n        _startup_log("startup health marker cleared")", source)
+
 
 if __name__ == "__main__":
     unittest.main()
