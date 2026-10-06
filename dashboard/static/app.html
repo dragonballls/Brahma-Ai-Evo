@@ -682,7 +682,7 @@
     }
 
     function esc(s) {
-      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     }
 
     // ── File helpers ──────────────────────────────────────────────────────────
@@ -809,10 +809,14 @@
           <div class="fc-lbl">Received</div>
           <div class="fc-name">${esc(m.name)}</div>
           <div class="fc-size">${_fmtSize(m.size)}</div>
-          <button class="fc-dl" onclick="_downloadFile(${JSON.stringify(m.name)})">⬇ Download</button>
         </div>
         <div class="fc-status done">✓</div>
       `;
+      const dlButton = document.createElement('button');
+      dlButton.className = 'fc-dl';
+      dlButton.textContent = '⬇ Download';
+      dlButton.addEventListener('click', () => _downloadFile(String(m.name || '')));
+      card.querySelector('.fc-meta').appendChild(dlButton);
       feed.appendChild(card);
       feed.scrollTop = feed.scrollHeight;
       toast('File received on computer!');
