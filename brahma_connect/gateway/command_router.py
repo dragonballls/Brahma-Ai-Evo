@@ -75,8 +75,18 @@ class CommandRouter:
             }
 
         requested_capabilities = parameters.pop("required_capabilities", [])
-        canonical_capabilities = ACTION_CAPABILITIES.get(str(action or "").strip().lower(), ())
+        normalized_action = str(action or "").strip().lower()
+        canonical_capabilities = ACTION_CAPABILITIES.get(normalized_action)
+        if canonical_capabilities is None:
+            return {
+                "success": False,
+                "device": device.device_id,
+                "action": action,
+                "error": f"Unsupported device action: '{action}'.",
+                "error_code": "ACTION_UNSUPPORTED",
+            }
         required = list(canonical_capabilities)
+        action = normalized_action
         if isinstance(requested_capabilities, str):
             requested_capabilities = [requested_capabilities]
         for capability in list(requested_capabilities or []):
