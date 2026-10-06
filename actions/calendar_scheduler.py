@@ -12,11 +12,15 @@ import os
 import re
 import sys
 import uuid
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 EVENTS_FILE = get_user_data_dir() / "memory" / "calendar_events.json"
+_EVENTS_LOCK = threading.RLock()
+_MAX_EVENTS = 5000
+_MAX_TEXT = 5000
 
 PLUGIN = {
     "name": "calendar_scheduler",
@@ -66,22 +70,41 @@ PLUGIN = {
 
 
 def _load_events() -> list[dict]:
-    try:
-        if EVENTS_FILE.exists():
-            with open(EVENTS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return []
+    with _EVENTS_LOCK:
+        if not EVENTS_FILE.exists():
+            return []
+        try:
+            data = json.loads(EVENTS_FILE.read_text(encoding="utf-8"))
+            if not isinstance(data, list) or len(data) > _MAX_EVENTS:
+                raise ValueError("Calendar event store is malformed.")
+            return [event for event in data if isinstance(event, dict)]
+        except Exception as exc:
+            print(f"[Calendar] Load error: {exc}")
+            raise RuntimeError("Calendar data is corrupt; refusing to replace it with an empty calendar.") from exc
 
 
 def _save_events(events: list[dict]) -> None:
-    try:
+    with _EVENTS_LOCK:
+        if len(events) > _MAX_EVENTS:
+            raise ValueError("Calendar contains too many events.")
         EVENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(EVENTS_FILE, "w", encoding="utf-8") as f:
-            json.dump(events, f, indent=2, ensure_ascii=False)
-    except Exception as e:
-        print(f"[Calendar] Save error: {e}")
+        temp = EVENTS_FILE.with_name(f".{EVENTS_FILE.name}.{uuid.uuid4().hex}.tmp")
+        temp.write_text(
+            json.dumps(events, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        temp.replace(EVENTS_FILE)
+
+
+def _ics_escape(value: object) -> str:
+    return (
+        str(value or "")[:_MAX_TEXT]
+        .replace("\\", "\\\\")
+        .replace(";", "\\;")
+        .replace(",", "\\,")
+        .replace("\r", " ")
+        .replace("\n", " ")
+    )
 
 
 def _parse_date(date_str: str | None) -> str:
@@ -138,9 +161,14 @@ def calendar_scheduler(
     title = p.get("title", "").strip()
     date_str = _parse_date(p.get("date"))
     time_str = _parse_time(p.get("time"))
-    duration = int(p.get("duration_minutes") or 30)
-    location = p.get("location", "").strip()
-    desc = p.get("description", "").strip()
+    try:
+        duration = int(p.get("duration_minutes") or 30)
+    except (TypeError, ValueError):
+        return "Duration must be a whole number of minutes."
+    if duration < 1 or duration > 10080:
+        return "Duration must be between 1 minute and 7 days."
+    location = str(p.get("location", "") or "").strip()[:_MAX_TEXT]
+    desc = str(p.get("description", "") or "").strip()[:_MAX_TEXT]
     event_id = p.get("event_id", "").strip()
 
     events = _load_events()
@@ -159,6 +187,8 @@ def calendar_scheduler(
             "description": desc,
             "created_at": datetime.now().isoformat(),
         }
+        if len(events) >= _MAX_EVENTS:
+            return "Calendar event limit reached; please remove older events first."
         events.append(new_event)
         # Keep sorted by date and time
         events.sort(key=lambda x: (x.get("date", ""), x.get("time", "")))
@@ -232,9 +262,9 @@ def calendar_scheduler(
                     f"DTSTAMP:{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}",
                     f"DTSTART:{dt_start.strftime('%Y%m%dT%H%M%S')}",
                     f"DTEND:{dt_end.strftime('%Y%m%dT%H%M%S')}",
-                    f"SUMMARY:{ev.get('title')}",
-                    f"DESCRIPTION:{ev.get('description', '')}",
-                    f"LOCATION:{ev.get('location', '')}",
+                    f"SUMMARY:{_ics_escape(ev.get('title'))}",
+                    f"DESCRIPTION:{_ics_escape(ev.get('description', ''))}",
+                    f"LOCATION:{_ics_escape(ev.get('location', ''))}",
                     "END:VEVENT",
                 ])
             except Exception:
