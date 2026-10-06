@@ -765,6 +765,27 @@ def execute(**kwargs):
     assert "Crucible sandbox denied filesystem access outside its temporary root." in message
 
 
+def test_crucible_realpath_and_dynamic_path_queries_are_safely_confined():
+    from core.skill_crucible import SkillCrucible
+
+    code = """
+import os
+from pathlib import Path
+def execute(**kwargs):
+    outside = Path.cwd().parent
+    try:
+        os.path.realpath(outside)
+        getattr(os.path, "exists")(outside)
+    except PermissionError as exc:
+        return {"denied": str(exc)}
+    return {"denied": False}
+"""
+    ok, message, telemetry = SkillCrucible.run_sandbox_test(code, [{"input": {}}])
+    assert ok is True, message
+    assert telemetry["results"][0]["output"].startswith("{'denied':")
+    assert "'outside its temporary root'" in telemetry["results"][0]["output"]
+
+
 
 def test_crucible_blocks_native_and_dynamic_escape_surfaces():
     from core.skill_crucible import SkillCrucible
