@@ -246,10 +246,11 @@ class DeviceManager:
                 if exact_or_word_match:
                     matches.append(record)
                     continue
-                if "phone" in normalized and platform in {"android", "ios"}:
+                category_words = set(re.findall(r"(?<!\w)(phone|tablet|pc|laptop|computer|windows)(?!\w)", normalized))
+                if "phone" in category_words and platform in {"android", "ios"}:
                     matches.append(record)
-                elif "tablet" in normalized and "tablet" in name:
+                elif "tablet" in category_words and "tablet" in name:
                     matches.append(record)
-                elif any(term in normalized for term in ("pc", "laptop", "computer", "windows")) and platform in {"windows", "desktop", "pc"}:
+                elif category_words.intersection({"pc", "laptop", "computer", "windows"}) and platform in {"windows", "desktop", "pc"}:
                     matches.append(record)
             return matches
