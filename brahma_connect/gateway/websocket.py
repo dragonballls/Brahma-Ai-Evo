@@ -83,12 +83,28 @@ class ConnectionHub:
 
     async def broadcast_chat_message(self, message: dict[str, Any]) -> None:
         async with self._lock:
-            states = list(self._connections.values())
-        for state in states:
+            states = list(self._connections.items())
+        dead: list[tuple[str, int]] = []
+        for device_id, state in states:
             try:
                 await state.websocket.send_json(message)
             except Exception:
-                pass
+                dead.append((device_id, id(state.websocket)))
+
+        if dead:
+            async with self._lock:
+                pending: list[asyncio.Future] = []
+                for device_id, socket_id in dead:
+                    current = self._connections.get(device_id)
+                    if current is None or id(current.websocket) != socket_id:
+                        continue
+                    self._connections.pop(device_id, None)
+                    self._socket_index.pop(socket_id, None)
+                    pending.extend(current.pending.values())
+                    current.pending.clear()
+            for future in pending:
+                if not future.done():
+                    future.set_exception(RuntimeError("Device connection failed during broadcast."))
 
     async def set_pending(self, device_id: str, request_id: str) -> asyncio.Future:
         loop = asyncio.get_running_loop()
