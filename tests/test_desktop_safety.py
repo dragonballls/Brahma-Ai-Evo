@@ -24,3 +24,15 @@ def test_platform_script_paths_are_escaped_before_interpolation():
     assert "escaped_path = _escape_script_string(str(path))" in source
     assert 'POSIX file "{escaped_path}"' in source
     assert "file://{_escape_script_string(str(path))}" in source
+
+
+def test_remote_wallpaper_download_is_scheme_bounded_and_size_bounded():
+    source = (ROOT / "actions" / "desktop.py").read_text(encoding="utf-8")
+    start = source.index("def set_wallpaper_from_url")
+    end = source.index("\ndef get_current_wallpaper", start)
+    block = source[start:end]
+    assert "urlparse" in block
+    assert 'parsed.scheme.lower() not in {"http", "https"}' in block
+    assert "max_bytes = 20 * 1024 * 1024" in block
+    assert "tempfile.mkstemp" in block
+    assert "urlretrieve" not in block
