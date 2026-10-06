@@ -1130,7 +1130,7 @@ def test_update_memory_rejects_secret_bypass(tmp_path, monkeypatch):
     monkeypatch.setattr(memory, "MEMORY_PATH", path)
     with __import__("pytest").raises(ValueError, match="Credential-like values"):
         memory.update_memory({
-            "notes": {"secret": {"value": "api_key=sk-abcdefghijklmnopqrstuvwxyz123456"}}
+            "notes": {"secret": {"value": "api_key=sk-abcdefghijklmnopqrstuvwxyz123456"}}}
         )
     assert not path.exists()
 
