@@ -10,6 +10,7 @@ from core.runtime_paths import API_CONFIG_PATH, CONFIG_DIR, PATCH_HISTORY_PATH, 
 from core.efficiency_policy import EFFICIENCY_DIRECTIVE
 
 import ast
+import hashlib
 import json
 import logging
 import os
@@ -377,6 +378,12 @@ class AutoHealEngine:
 
         # Create atomic backup
         backup_path = SafetySandbox.create_backup(target_path)
+        try:
+            preimage_sha256 = hashlib.sha256(
+                backup_path.read_text(encoding="utf-8").replace("\r\n", "\n").encode("utf-8")
+            ).hexdigest()
+        except (OSError, UnicodeError) as exc:
+            return {"success": False, "message": f"Unable to fingerprint original source safely: {exc}"}
 
         # Publish the verified source atomically so a process crash cannot leave
         # a partially rewritten target before rollback history is durable.
@@ -404,6 +411,17 @@ class AutoHealEngine:
             except Exception as restore_err:
                 return {"success": False, "message": f"Post-write compilation failed and rollback failed: {restore_err}"}
             return {"success": False, "message": f"Post-write compilation failed, rolled back: {pyc_err}"}
+
+        try:
+            postimage_sha256 = hashlib.sha256(
+                target_path.read_text(encoding="utf-8").replace("\r\n", "\n").encode("utf-8")
+            ).hexdigest()
+        except (OSError, UnicodeError) as exc:
+            try:
+                SafetySandbox._restore_backup_atomically(backup_path, target_path)
+            except Exception as restore_err:
+                return {"success": False, "message": f"Unable to fingerprint repaired source and rollback failed: {restore_err}"}
+            return {"success": False, "message": f"Unable to fingerprint repaired source; patch rolled back: {exc}"}
 
         patch_id = str(uuid.uuid4())[:8]
         entry = {
@@ -460,6 +478,8 @@ class AutoHealEngine:
                 patch_id,
                 explanation=explanation,
                 repository_relative_path=relative_target,
+                expected_preimage_sha256=preimage_sha256,
+                expected_postimage_sha256=postimage_sha256,
             )
             logger.info("[AutoHeal] Repository publication: %s", publication)
         except Exception as publish_err:
