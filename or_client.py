@@ -622,6 +622,12 @@ class OpenRouterClient:
             return omni_result
 
         normalized_messages = [dict(message) for message in messages]
+        normalized_tools = self._normalize_tools(tools)
+        declared_names = {
+            str(item.get("function", {}).get("name") or "").strip()
+            for item in normalized_tools
+        }
+        declared_names.discard("")
         candidates = []
         if model and not model.startswith("auto"):
             candidates.append(model)
@@ -691,6 +697,8 @@ class OpenRouterClient:
 
                 if not name:
                     result = "The model returned an invalid tool call with no tool name."
+                elif name not in declared_names:
+                    result = f"The model requested an undeclared tool: {name}."
 
                 if result is None:
                     try:
