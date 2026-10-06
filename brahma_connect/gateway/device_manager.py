@@ -29,16 +29,32 @@ class DeviceManager:
             except Exception:
                 raw = {}
             devices = raw.get("devices", raw) if isinstance(raw, dict) else {}
-            self._devices = {
-                device_id: DeviceRecord.from_dict(item)
-                for device_id, item in (devices or {}).items()
-                if isinstance(item, dict)
-            }
+            loaded: dict[str, DeviceRecord] = {}
+            for device_id, item in (devices or {}).items():
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    record = DeviceRecord.from_dict(item)
+                except Exception:
+                    continue
+                key = str(record.device_id or device_id).strip()
+                if not key:
+                    continue
+                record.device_id = key
+                loaded[key] = record
+            self._devices = loaded
 
     def save(self) -> None:
         with self._lock:
             payload = {"devices": {device_id: record.to_dict() for device_id, record in self._devices.items()}}
-            self.registry_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+            temp_path = self.registry_path.with_name(
+                f"{self.registry_path.name}.tmp"
+            )
+            temp_path.write_text(
+                json.dumps(payload, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            temp_path.replace(self.registry_path)
 
     def list_devices(self) -> list[dict[str, Any]]:
         with self._lock:
