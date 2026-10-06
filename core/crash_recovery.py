@@ -8,7 +8,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import shutil
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -18,18 +20,36 @@ from core.runtime_paths import (
     FATAL_CRASH_LOG_PATH,
     PATCH_HISTORY_PATH,
     CONFIG_DIR,
+    PATCH_BACKUPS_DIR,
 )
 
 logger = logging.getLogger("CrashRecovery")
+BASE_DIR = Path(__file__).resolve().parent.parent
+BACKUPS_DIR = PATCH_BACKUPS_DIR
+PROTECTED_RECOVERY_FILES = {
+    "boot_sentry.py",
+    "auto_heal_engine.py",
+    "crash_recovery.py",
+    "process_supervisor.py",
+    "setup.py",
+    "requirements.txt",
+    "version.txt",
+}
 
 MAX_CRASH_AGE_SECONDS = 300.0
 
 
 def _utc_safe_write(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}-{uuid.uuid4().hex}.tmp")
+    try:
+        tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _log(message: str) -> None:
@@ -86,9 +106,26 @@ def _recent_patch(crash_time: float) -> dict[str, Any] | None:
 
 
 def _rollback_entry(entry: dict[str, Any], reason: str) -> dict[str, Any]:
-    target = Path(str(entry.get("target_file") or ""))
-    backup = Path(str(entry.get("backup_path") or ""))
-    if not target.exists() or not backup.exists():
+    try:
+        target = Path(str(entry.get("target_file") or "")).resolve()
+        backup = Path(str(entry.get("backup_path") or "")).resolve()
+        target.relative_to(BASE_DIR.resolve())
+        backup.relative_to(BACKUPS_DIR.resolve())
+    except (OSError, ValueError):
+        return {
+            "success": False,
+            "action": "rollback_failed",
+            "message": "Automatic repair rollback paths are outside protected roots.",
+            "patch_id": entry.get("patch_id"),
+        }
+    if target.name in PROTECTED_RECOVERY_FILES:
+        return {
+            "success": False,
+            "action": "rollback_failed",
+            "message": "Automatic repair recovery refused to modify a protected safety file.",
+            "patch_id": entry.get("patch_id"),
+        }
+    if not target.is_file() or not backup.is_file():
         return {
             "success": False,
             "action": "rollback_failed",
@@ -96,10 +133,12 @@ def _rollback_entry(entry: dict[str, Any], reason: str) -> dict[str, Any]:
             "patch_id": entry.get("patch_id"),
         }
     try:
-        target_tmp = target.with_name(f".{target.name}.rollback-{__import__("os").getpid()}.tmp")
+        target_tmp = target.with_name(
+            f".{target.name}.rollback-{os.getpid()}-{uuid.uuid4().hex}.tmp"
+        )
         try:
             shutil.copy2(backup, target_tmp)
-            target_tmp.replace(target)
+            os.replace(target_tmp, target)
         finally:
             try:
                 target_tmp.unlink(missing_ok=True)
