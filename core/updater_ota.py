@@ -156,14 +156,18 @@ def download_and_apply_update(
     expected_size: int = 0,
 ):
     """Download, verify, then launch a release installer."""
+    temp_path: Path | None = None
     try:
         supplied_digest = str(expected_sha256 or "").strip().lower()
-        if expected_size and int(expected_size) > _MAX_INSTALLER_BYTES:
+        expected_size = int(expected_size or 0)
+        if expected_size < 0 or expected_size > _MAX_INSTALLER_BYTES:
             raise RuntimeError("OTA installer exceeds the 1 GiB safety limit.")
+
         release = _get_release()
         asset = _release_asset(release or {}, url)
         if asset is None:
             raise RuntimeError("OTA update rejected: URL is not a current GitHub release asset.")
+
         trusted_digest = _asset_digest(release or {}, asset) or ""
         if not trusted_digest:
             raise RuntimeError("OTA update rejected: release installer has no verifiable SHA-256 digest.")
@@ -174,39 +178,45 @@ def download_and_apply_update(
         update_dir = __import__("core.user_paths", fromlist=["get_user_data_dir"]).get_user_data_dir() / "updates"
         update_dir.mkdir(parents=True, exist_ok=True)
         setup_path = update_dir / "BrahmaEvo_Setup_Update.exe"
+
         with _OTA_APPLY_LOCK:
-            fd, temp_name = __import__("tempfile").mkstemp(
+            import tempfile
+            fd, temp_name = tempfile.mkstemp(
                 prefix=f"{setup_path.stem}.{uuid.uuid4().hex}.",
                 suffix=".exe.download",
                 dir=str(update_dir),
             )
             os.close(fd)
             temp_path = Path(temp_name)
+
             req = urllib.request.Request(url, headers={"User-Agent": "BrahmaEvo-OTA"})
             with urllib.request.urlopen(req, timeout=30) as response, temp_path.open("wb") as output:
                 total_size = int(response.info().get("Content-Length", 0) or 0)
                 if total_size > _MAX_INSTALLER_BYTES:
                     raise RuntimeError("OTA installer exceeds the 1 GiB safety limit.")
+
                 downloaded = 0
-                max_download = _MAX_INSTALLER_BYTES
-            while True:
-                chunk = response.read(1024 * 1024)
-                if not chunk:
-                    break
-                downloaded += len(chunk)
-                if downloaded > max_download:
-                    raise RuntimeError("OTA installer is unexpectedly large.")
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    downloaded += len(chunk)
+                    if downloaded > _MAX_INSTALLER_BYTES:
+                        raise RuntimeError("OTA installer is unexpectedly large.")
                     output.write(chunk)
                     if ui_callback and total_size > 0:
-                        ui_callback(int(downloaded / total_size * 100))
+                        ui_callback(min(100, int(downloaded / total_size * 100)))
 
-            if expected_size and temp_path.stat().st_size != int(expected_size):
-            raise RuntimeError("OTA installer size does not match the release asset.")
+            if expected_size and temp_path.stat().st_size != expected_size:
+                raise RuntimeError("OTA installer size does not match the release asset.")
+
             actual = _sha256(temp_path)
             if actual != digest:
                 raise RuntimeError("OTA installer SHA-256 verification failed; download was not executed.")
 
             temp_path.replace(setup_path)
+            temp_path = None
+
         DETACHED_PROCESS = int(getattr(subprocess, "DETACHED_PROCESS", 0x00000008))
         CREATE_NO_WINDOW = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
         subprocess.Popen(
@@ -214,11 +224,14 @@ def download_and_apply_update(
             creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS,
         )
         raise SystemExit(0)
+    except SystemExit:
+        raise
     except Exception as e:
-        try:
-            if 'temp_path' in locals():
+        if temp_path is not None:
+            try:
                 temp_path.unlink(missing_ok=True)
-        except Exception:
-            pass
+            except Exception:
+                pass
         print(f"[OTA] Failed to download or apply update: {e}")
         return False
+
