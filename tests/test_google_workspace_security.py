@@ -11,3 +11,10 @@ def test_google_workspace_local_reader_confines_paths_to_brahma_workspace():
     assert ".resolve()" in block
     assert "target.relative_to(root)" in block
     assert "Requested file is outside the BrahmaAI workspace." in block
+
+def test_google_workspace_credential_initialization_is_serialized_and_atomic():
+    source = (ROOT / "actions" / "google_workspace_mcp.py").read_text(encoding="utf-8")
+    assert "_CREDENTIAL_LOCK = threading.RLock()" in source
+    assert "temp.replace(EMAIL_KEY_FILE)" in source
+    assert "temp.replace(EMAIL_CREDENTIALS_FILE)" in source
+    assert "uuid.uuid4().hex" in source
