@@ -20,6 +20,7 @@ import shutil
 import threading
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -505,24 +506,35 @@ class DynamicToolRegistry:
 
     @classmethod
     def toggle_skill(cls, name: str, active: Optional[bool] = None) -> bool:
-        """Enables or disables a synthetic skill."""
+        """Enables or disables a synthetic skill without leaving memory/persistence split."""
         skill = cls.get_skill(name)
         if not skill:
             return False
 
         with cls._registry_lock:
             new_status = not skill.active if active is None else bool(active)
+            manifest_path = skill.skill_dir / "manifest.json"
+            updated_manifest = dict(skill.manifest)
+            updated_manifest["active"] = new_status
+            temp_path = manifest_path.with_name(
+                f".{manifest_path.name}.{os.getpid()}-{uuid.uuid4().hex}.tmp"
+            )
+            try:
+                temp_path.write_text(
+                    json.dumps(updated_manifest, indent=4, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                os.replace(temp_path, manifest_path)
+            except Exception as e:
+                try:
+                    temp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                logger.error(f"[Registry] Failed to save toggle status for '{name}': {_redact_text(e)}")
+                return False
+            skill.manifest = updated_manifest
             skill.active = new_status
-
-        manifest_path = skill.skill_dir / "manifest.json"
-        try:
-            skill.manifest["active"] = new_status
-            with open(manifest_path, "w", encoding="utf-8") as f:
-                json.dump(skill.manifest, f, indent=4)
             return True
-        except Exception as e:
-            logger.error(f"[Registry] Failed to save toggle status for '{name}': {_redact_text(e)}")
-            return False
 
     @classmethod
     def delete_skill(cls, name: str) -> bool:
