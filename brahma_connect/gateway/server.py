@@ -340,7 +340,7 @@ class BrahmaGateway:
                 "error_code": "DISCONNECT_PERSISTENCE_FAILED",
             }
 
-        self._append_log
+        self._append_log(
             "DEVICE_DISCONNECTED",
             device_id=record.device_id,
             name=record.name,
