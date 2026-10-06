@@ -378,6 +378,12 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertNotIn("ui.root.quit()", source)
         self.assertNotIn("ui.root.destroy()", source)
         self.assertNotIn("QTimer.singleShot(int(test_exit_seconds * 1000), _finish_packaged_smoke_test)", source)
+    def test_main_verification_workflows_supersede_obsolete_pushes(self):
+        quality = self.read(".github/workflows/quality.yml")
+        windows = self.read(".github/workflows/windows-release.yml")
+        self.assertIn("cancel-in-progress: true", quality)
+        self.assertIn("cancel-in-progress: true", windows)
+
     def test_windows_omniroute_cache_skips_rebuild_on_exact_hit(self):
         workflow = self.read(".github/workflows/windows-release.yml")
         self.assertIn("id: omni-cache", workflow)
