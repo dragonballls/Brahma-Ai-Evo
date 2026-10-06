@@ -63,6 +63,9 @@ class PlaywrightMCPClient:
                 return True
 
             npx_cmd = "npx.cmd" if platform.system() == "Windows" else "npx"
+            resolved_npx = shutil.which(npx_cmd)
+            if resolved_npx:
+                npx_cmd = resolved_npx
             cmd = [
                 npx_cmd,
                 "-y",
@@ -83,7 +86,7 @@ class PlaywrightMCPClient:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
-                    shell=(platform.system() == "Windows"),
+                    shell=False,
                     bufsize=0,
                     encoding="utf-8",
                     errors="replace",
