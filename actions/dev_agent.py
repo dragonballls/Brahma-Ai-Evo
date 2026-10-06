@@ -341,6 +341,23 @@ def _open_vscode(project_dir: Path) -> bool:
             continue
     return False
 
+def _validate_run_arguments(parts: list[str], project_dir: Path) -> None:
+    root = project_dir.resolve()
+    for arg in parts[1:]:
+        value = str(arg)
+        normalized = value.replace("\\", "/")
+        if value.startswith("~") or Path(value).is_absolute() or ".." in Path(normalized).parts:
+            try:
+                resolved = Path(value).expanduser().resolve()
+                resolved.relative_to(root)
+            except (OSError, ValueError) as exc:
+                raise ValueError("Run blocked: command arguments may not access paths outside the generated project.") from exc
+        elif normalized.startswith("./"):
+            try:
+                Path(value).resolve().relative_to(root)
+            except (OSError, ValueError) as exc:
+                raise ValueError("Run blocked: command arguments may not access paths outside the generated project.") from exc
+
 def _run_project(run_command: str, project_dir: Path, timeout: int = 30) -> str:
     print(f"[DevAgent] Running: {run_command}")
     try:
@@ -359,6 +376,10 @@ def _run_project(run_command: str, project_dir: Path, timeout: int = 30) -> str:
             return f"Run blocked: unsupported development executable '{parts[0]}'."
         if any(str(arg).casefold() in _BLOCKED_RUN_FLAGS for arg in parts[1:]):
             return "Run blocked: interpreter evaluation flags are not permitted."
+        try:
+            _validate_run_arguments(parts, project_dir)
+        except ValueError as exc:
+            return str(exc)
 
         if program in {"python", "python3"} and parts[0].casefold() == "python":
             parts[0] = sys.executable
