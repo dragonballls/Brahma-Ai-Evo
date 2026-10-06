@@ -600,7 +600,7 @@
     }
 
     // ── Local session encryption (CryptoJS) ──────────────────────────────────
-    const _AES_SALT = 'BRAHMA EVO-DASHBOARD-v1';
+    const _AES_SALT = 'BRAHMA-DASHBOARD-v1';
     let _aesKey = null;
 
     function _initCrypto(key) {
@@ -620,7 +620,7 @@
         const ivHex = iv.toString(CryptoJS.enc.Hex);
         const ctHex = enc.ciphertext.toString(CryptoJS.enc.Hex);
         const bodyHex = ivHex + ctHex;
-        const tagHex = CryptoJS.HmacSHA256(bodyHex, _aesKey).toString(CryptoJS.enc.Hex);
+        const tagHex = CryptoJS.HmacSHA256(CryptoJS.enc.Hex.parse(bodyHex), _aesKey).toString(CryptoJS.enc.Hex);
         const hex = bodyHex + tagHex;
         const bytes = new Uint8Array(hex.length / 2);
         for (let i = 0; i < bytes.length; i++)
