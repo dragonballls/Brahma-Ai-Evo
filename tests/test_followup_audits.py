@@ -1120,3 +1120,15 @@ def test_learned_rules_mutations_do_not_report_success_when_save_fails(monkeypat
 
     assert toggled["success"] is False
     assert deleted["success"] is False
+
+
+def test_save_memory_rejects_secret_bypass(tmp_path, monkeypatch):
+    import memory.memory_manager as memory
+
+    path = tmp_path / "long_term.json"
+    monkeypatch.setattr(memory, "MEMORY_PATH", path)
+    payload = {"notes": {"secret": {"value": "api_key=sk-abcdefghijklmnopqrstuvwxyz123456"}}}
+
+    with pytest.raises(ValueError, match="Credential-like values"):
+        memory.save_memory(payload)
+    assert not path.exists()

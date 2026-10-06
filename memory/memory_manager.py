@@ -188,9 +188,22 @@ def _atomic_write_json(path: Path, value: object) -> None:
 def save_memory(memory: dict) -> None:
     if not isinstance(memory, dict):
         return
-    memory = _trim_to_limit(memory)
-    MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    def contains_secret(value) -> bool:
+        if isinstance(value, str):
+            return bool(_SECRET_RE.search(value) or _TOKEN_RE.search(value))
+        if isinstance(value, dict):
+            return any(contains_secret(item) for item in value.values())
+        if isinstance(value, list):
+            return any(contains_secret(item) for item in value)
+        return False
+
+    if contains_secret(memory):
+        raise ValueError("Credential-like values cannot be persisted in long-term memory.")
+
     with _lock:
+        memory = _trim_to_limit(memory)
+        MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_json(MEMORY_PATH, memory)
 
 
