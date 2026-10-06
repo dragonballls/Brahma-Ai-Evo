@@ -65,7 +65,7 @@ game_updater
   shutdown_when_done: boolean (optional)
 
 browser_control
-  action: "go_to" | "search" | "click" | "hover" | "type" | "press" | "scroll" | "fill_form" | "snapshot" | "find" | "evaluate" | "screenshot" | "tabs" | "wait_for" | "select_option" | "upload" | "close" (required)
+  action: "go_to" | "search" | "click" | "hover" | "type" | "press" | "scroll" | "fill_form" | "snapshot" | "find" | "screenshot" | "tabs" | "wait_for" | "select_option" | "upload" | "close" (required)
   url: string (for go_to / navigate)
   query: string (for search / find)
   text: string (for click / type / wait_for)
@@ -74,7 +74,6 @@ browser_control
   fields: dict or list of fields (for fill_form)
   direction: "up" | "down" (for scroll)
   key: string (for press, e.g. "Enter", "Tab", "Escape")
-  expression: string (for evaluate, JavaScript expression)
   path: string (for screenshot / upload)
 
 file_controller
