@@ -685,6 +685,9 @@ class DashboardServer:
 
         @app.post("/login")
         async def login(req: Request):
+            # Prune attacker-controlled failure entries before every new login
+            # attempt so rotating source IPs cannot grow this map indefinitely.
+            self._prune_auth_state()
             body = await req.json()
             entered = str(body.get("pin", "")).strip().upper()
             now = time.time()
