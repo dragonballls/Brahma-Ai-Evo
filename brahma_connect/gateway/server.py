@@ -732,11 +732,15 @@ class BrahmaGateway:
                 return
             self._shutdown.clear()
             self._running = True
-        advertised = False
-        if self.config.advertise:
-            advertised = self.discovery.start(host=self.config.host, port=self.config.port, properties={"service": "brahma", "version": "1"})
-        self._append_log("GATEWAY_STARTING", host=self.config.host, port=self.config.port, advertised=advertised)
         try:
+            advertised = False
+            if self.config.advertise:
+                advertised = self.discovery.start(
+                    host=self.config.host,
+                    port=self.config.port,
+                    properties={"service": "brahma", "version": "1"},
+                )
+            self._append_log("GATEWAY_STARTING", host=self.config.host, port=self.config.port, advertised=advertised)
             cfg = uvicorn.Config(
                 self.app,
                 host=self.config.host,
