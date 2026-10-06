@@ -574,11 +574,11 @@ class DashboardServer:
         self._pending_keys[key] = now + expiry_secs
         return key
     def get_url(self) -> str:
-        return f"http://{self._ip}:{PORT}"
+        return f"https://{self._ip}:{PORT}"
 
     def get_manual_url(self) -> str:
         """URL for manual browser entry on the local network."""
-        return f"http://{self._ip}:{PORT}"
+        return f"https://{self._ip}:{PORT}"
 
     def _aes_key(self, session_key: str) -> bytes:
         if session_key not in self._aes_cache:
