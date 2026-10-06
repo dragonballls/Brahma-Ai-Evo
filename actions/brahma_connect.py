@@ -290,12 +290,12 @@ def connect_execute(parameters: dict[str, Any] | None = None, player=None, speak
         service = _service()
         result = service.route_command(target, action, command_parameters)
         if not isinstance(result, dict):
-            return _dump({
-                "success": True,
-                "device": target,
-                "action": action,
-                "data": result,
-            })
+            return _fail(
+                "Gateway returned a malformed command result.",
+                "MALFORMED_RESULT",
+                device=target,
+                action=action,
+            )
 
         result.setdefault("device", target)
         result.setdefault("action", action)
