@@ -1,3 +1,4 @@
+import json
 from unittest.mock import patch
 import asyncio
 from pathlib import Path
@@ -664,3 +665,23 @@ def test_pairing_offer_survives_transient_registry_failure(tmp_path: Path):
         return gateway.pairing_manager.get_offer(offer.pairing_token) is not None
 
     assert asyncio.run(scenario()) is True
+
+
+def test_connect_execute_rejects_non_dict_gateway_result():
+    from actions.brahma_connect import connect_execute, set_service_provider
+
+    class Service:
+        def route_command(self, *_args, **_kwargs):
+            return "not a structured result"
+
+    set_service_provider(lambda: Service())
+    try:
+        result = json.loads(connect_execute({
+            "target": "Phone 1",
+            "action": "get_device_info",
+        }))
+    finally:
+        set_service_provider(None)
+
+    assert result["success"] is False
+    assert result["error_code"] == "MALFORMED_RESULT"
