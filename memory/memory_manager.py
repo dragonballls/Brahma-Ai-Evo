@@ -249,7 +249,7 @@ def update_memory(memory_update: dict) -> dict:
         return False
 
     if contains_secret(memory_update):
-        return load_memory()
+        raise ValueError("Credential-like values cannot be persisted in long-term memory.")
 
     memory = load_memory()
     if _recursive_update(memory, memory_update):
