@@ -22,8 +22,12 @@ SAFE_COMMANDS = {
     "where",
     "dir",
     "echo",
-    "python",
-    "node",
+}
+
+_BLOCKED_OPEN_EXTENSIONS = {
+    ".exe", ".com", ".bat", ".cmd", ".ps1", ".psm1", ".msi", ".msp",
+    ".scr", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".hta",
+    ".py", ".pyw", ".pyc", ".sh", ".bash", ".zsh", ".fish",
 }
 
 
@@ -74,6 +78,8 @@ def _open_target(task: str) -> str | None:
     target = next((p for p in candidates if p.exists()), None)
     if target is None:
         return f"Could not find the requested file or application: {remainder}"
+    if target.is_file() and target.suffix.casefold() in _BLOCKED_OPEN_EXTENSIONS:
+        return "Opening executable or script files is blocked by the legacy command adapter. Use a dedicated, explicit application-control action."
 
     if os.name == "nt":
         os.startfile(str(target))
