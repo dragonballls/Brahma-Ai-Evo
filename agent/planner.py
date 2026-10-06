@@ -158,6 +158,9 @@ daily_briefing
   category: "all" | "tech" | "world" (optional)
   Use whenever user asks for their morning briefing, daily briefing, or news update.
 
+universal_task
+  request: string (required) — last-resort request fulfillment using an existing dynamic skill or verified skill synthesis. Use when no first-class tool clearly matches the user's request.
+
 claude_code
   description: string (required)
   workspace_path: string (optional)
@@ -413,9 +416,9 @@ def _rewrite_generated_step(step: dict, goal: str) -> None:
           "description": desc[:1200],
         }
         return
-    print(f"[Planner] ⚠️ generated_code detected in step {step.get('step')} — replacing with web_search")
-    step["tool"] = "web_search"
-    step["parameters"] = {"query": desc[:200]}
+    print(f"[Planner] ⚠️ generated_code detected in step {step.get('step')} — replacing with universal_task")
+    step["tool"] = "universal_task"
+    step["parameters"] = {"request": desc[:1200]}
 
 
 def create_plan(goal: str, context: str = "") -> dict:
@@ -467,6 +470,21 @@ def _fallback_plan(goal: str) -> dict:
             }
           ],
         }
+    try:
+        from core.request_routing import _looks_like_action_request
+        if _looks_like_action_request(goal):
+            return {
+                "goal": goal,
+                "steps": [{
+                    "step": 1,
+                    "tool": "universal_task",
+                    "description": f"Fulfill the requested action: {goal}",
+                    "parameters": {"request": goal},
+                    "critical": True,
+                }],
+            }
+    except Exception:
+        pass
     return {
         "goal": goal,
         "steps": [
