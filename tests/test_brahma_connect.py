@@ -60,6 +60,43 @@ def test_pairing_manager_returns_expiring_offer():
     assert pairing.get_offer_by_code(offer.pairing_code) is not None
 
 
+def test_command_router_cleans_pending_when_device_send_fails(tmp_path: Path):
+    registry_path = tmp_path / "devices.json"
+    manager = DeviceManager(registry_path)
+    record = DeviceRecord(
+        device_id="android_002",
+        name="Galaxy S24",
+        platform="android",
+        online=True,
+        capabilities=["launch_app"],
+    )
+    manager._devices[record.device_id] = record
+    manager.save()
+
+    class FailingHub:
+        def __init__(self):
+            self.rejected = []
+
+        async def set_pending(self, device_id, request_id):
+            return asyncio.get_running_loop().create_future()
+
+        async def send_to_device(self, device_id, message):
+            return False
+
+        async def reject_pending(self, device_id, request_id, error):
+            self.rejected.append((device_id, request_id, error))
+
+    hub = FailingHub()
+    router = CommandRouter(manager, hub, CapabilityManager())
+    result = asyncio.run(
+        router.route("Galaxy S24", "launch_app", {"package": "com.spotify.music"})
+    )
+
+    assert result["success"] is False
+    assert result["error_code"] == "DEVICE_UNAVAILABLE"
+    assert hub.rejected
+
+
 def test_command_router_reports_offline_device(tmp_path: Path):
     registry_path = tmp_path / "devices.json"
     manager = DeviceManager(registry_path)
