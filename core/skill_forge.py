@@ -31,11 +31,16 @@ CONFIG_DIR = get_user_data_dir() / "config"
 _PERSISTENCE_LOCK = threading.RLock()
 
 
-def _redact_data(value: Any) -> Any:
+_SENSITIVE_DATA_KEYS = ("API_KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "AUTH", "PRIVATE", "COOKIE", "SESSION", "PIN")
+
+
+def _redact_data(value: Any, key: str = "") -> Any:
+    if any(marker in key.upper() for marker in _SENSITIVE_DATA_KEYS):
+        return "[REDACTED]"
     if isinstance(value, str):
         return _redact_text(value)
     if isinstance(value, dict):
-        return {key: _redact_data(item) for key, item in value.items()}
+        return {str(item_key): _redact_data(item, str(item_key)) for item_key, item in value.items()}
     if isinstance(value, list):
         return [_redact_data(item) for item in value]
     if isinstance(value, tuple):
