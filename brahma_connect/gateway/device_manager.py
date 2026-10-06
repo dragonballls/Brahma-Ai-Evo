@@ -109,30 +109,47 @@ class DeviceManager:
 
     def remove(self, device_id: str) -> bool:
         with self._lock:
-            removed = self._devices.pop(str(device_id), None)
+            key = str(device_id)
+            removed = self._devices.pop(key, None)
             if removed is None:
                 return False
-            self.save()
+            try:
+                self.save()
+            except Exception:
+                self._devices[key] = removed
+                return False
             return True
 
     def rename(self, device_id: str, new_name: str) -> DeviceRecord | None:
         with self._lock:
-            record = self._devices.get(str(device_id))
+            key = str(device_id)
+            record = self._devices.get(key)
             if record is None:
                 return None
+            previous = DeviceRecord.from_dict(record.to_storage_dict())
             record.name = str(new_name or "").strip() or record.name
-            self.save()
+            try:
+                self.save()
+            except Exception:
+                self._devices[key] = previous
+                raise
             return record
 
     def revoke(self, device_id: str) -> bool:
         with self._lock:
-            record = self._devices.get(str(device_id))
+            key = str(device_id)
+            record = self._devices.get(key)
             if record is None:
                 return False
+            previous = DeviceRecord.from_dict(record.to_storage_dict())
             record.revoked = True
             record.online = False
             record.last_seen = now_iso()
-            self.save()
+            try:
+                self.save()
+            except Exception:
+                self._devices[key] = previous
+                return False
             return True
 
     def create_from_pairing(
@@ -189,44 +206,68 @@ class DeviceManager:
                 return None
             if not constant_time_equals(record.secret_hash, hash_secret(secret)):
                 return None
+            key = str(device_id)
+            previous = DeviceRecord.from_dict(record.to_storage_dict())
             record.online = True
             record.last_seen = now_iso()
             record.ip = ip or record.ip
             record.connection_id = connection_id or record.connection_id
-            self.save()
+            try:
+                self.save()
+            except Exception:
+                self._devices[key] = previous
+                return None
             return record
 
     def mark_offline(self, device_id: str) -> None:
         with self._lock:
-            record = self._devices.get(str(device_id))
+            key = str(device_id)
+            record = self._devices.get(key)
             if record is None:
                 return
+            previous = DeviceRecord.from_dict(record.to_storage_dict())
             record.online = False
             record.last_seen = now_iso()
             record.connection_id = ""
-            self.save()
+            try:
+                self.save()
+            except Exception:
+                self._devices[key] = previous
+                raise
 
     def touch(self, device_id: str, *, ip: str = "") -> None:
         with self._lock:
-            record = self._devices.get(str(device_id))
+            key = str(device_id)
+            record = self._devices.get(key)
             if record is None:
                 return
+            previous = DeviceRecord.from_dict(record.to_storage_dict())
             record.last_seen = now_iso()
             record.online = True
             if ip:
                 record.ip = ip
-            self.save()
+            try:
+                self.save()
+            except Exception:
+                self._devices[key] = previous
+                raise
 
     def update_capabilities(self, device_id: str, capabilities: list[str], permissions: list[str] | None = None) -> DeviceRecord | None:
         with self._lock:
             record = self._devices.get(str(device_id))
             if record is None:
                 return None
+            key = str(device_id)
+            previous = DeviceRecord.from_dict(record.to_storage_dict())
             record.capabilities = list(dict.fromkeys(capabilities or []))
             if permissions is not None:
                 record.permissions = list(dict.fromkeys(permissions or []))
             record.last_seen = now_iso()
-            self.save()
+            try:
+                self.save()
+            except Exception:
+                self._devices[key] = previous
+                raise
             return record
 
     def resolve(self, query: str) -> list[DeviceRecord]:
