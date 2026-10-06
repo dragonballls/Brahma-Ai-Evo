@@ -203,7 +203,12 @@ def test_service_gateway_timeout_cancels_submitted_future():
 
     service = object.__new__(BrahmaConnectService)
     service._lock = threading.RLock()
-    service._loop = object()
+    class LoopState:
+        def is_closed(self):
+            return False
+        def is_running(self):
+            return True
+    service._loop = LoopState()
     service.gateway = type("Gateway", (), {
         "config": type("Config", (), {"request_timeout_seconds": 1})(),
     })()
@@ -423,13 +428,20 @@ def test_task_queue_stop_cancels_queued_work():
     assert queue._queue == []
 
 
-def test_corrupt_gateway_device_registry_fails_closed(tmp_path: Path):
+def test_corrupt_gateway_device_registry_is_quarantined():
     from brahma_connect.gateway.device_manager import DeviceManager
 
-    path = tmp_path / "devices.json"
-    path.write_text("{not-json", encoding="utf-8")
-    with pytest.raises(RuntimeError, match="corrupted"):
-        DeviceManager(path)
+    path = Path("corrupt-device-registry-test.json")
+    path.write_text("{broken", encoding="utf-8")
+    try:
+        manager = DeviceManager(path)
+        assert manager.list_devices() == []
+        assert not path.exists()
+        assert list(path.parent.glob(path.name + ".corrupt-*"))
+    finally:
+        for candidate in path.parent.glob(path.name + ".corrupt-*"):
+            candidate.unlink(missing_ok=True)
+
 
 
 def test_self_coding_undo_checks_branch_switch_result():
