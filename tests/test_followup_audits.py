@@ -1227,3 +1227,32 @@ def test_smart_home_credential_key_is_created_private_and_atomic():
     assert "os.O_WRONLY" in source
     assert "os.open(self._key_file, flags, 0o600)" in source
     assert "os.fsync(handle.fileno())" in source
+
+
+def test_confirmation_gate_does_not_convert_explicit_false_to_done(monkeypatch):
+    import core.confirm as confirm
+
+    logs = []
+    confirm.bind(lambda *_args: None, lambda: None, logs.append)
+    with confirm._lock:
+        confirm._pending = confirm._Pending(
+            key="test",
+            title="Dangerous operation",
+            detail="detail",
+            run=lambda: False,
+            at=time.monotonic(),
+        )
+    confirm.resolve(True)
+
+    deadline = time.time() + 1.0
+    while not logs and time.time() < deadline:
+        time.sleep(0.01)
+
+    assert any("failed" in entry.lower() for entry in logs)
+    assert not any("done." in entry.lower() for entry in logs)
+
+
+def test_universal_task_preserves_structured_failure_for_executor_validation():
+    source = Path("agent/executor.py").read_text(encoding="utf-8")
+    block = source.split('elif tool == "universal_task"', 1)[1].split('elif tool == "skill_forge"', 1)[0]
+    assert "if isinstance(result, (dict, list, bool)):" in block
