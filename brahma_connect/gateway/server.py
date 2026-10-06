@@ -550,18 +550,44 @@ class BrahmaGateway:
                         continue
 
                     if msg_type == ProtocolTypes.EVENT:
+                        if not device_id:
+                            await websocket.send_json(
+                                build_message(
+                                    ProtocolTypes.ERROR,
+                                    {"error": "Authentication required for device events."},
+                                    request_id=request_id,
+                                )
+                            )
+                            continue
                         self._append_log("EVENT", device_id=device_id, payload=payload)
                         continue
 
                     if msg_type == ProtocolTypes.CHAT_MESSAGE:
+                        if not device_id:
+                            await websocket.send_json(
+                                build_message(
+                                    ProtocolTypes.ERROR,
+                                    {"error": "Authentication required for chat messages."},
+                                    request_id=request_id,
+                                )
+                            )
+                            continue
                         if self.on_chat_message and payload.get("text"):
                             self.on_chat_message(payload.get("text"))
                         continue
 
                     if msg_type == ProtocolTypes.DEVICE_OFFLINE:
-                        if device_id:
-                            self.device_manager.mark_offline(device_id)
-                            self._append_log("DEVICE_DISCONNECTED", device_id=device_id)
+                        if not device_id:
+                            await websocket.send_json(
+                                build_message(
+                                    ProtocolTypes.ERROR,
+                                    {"error": "Authentication required for device status changes."},
+                                    request_id=request_id,
+                                )
+                            )
+                            continue
+                        self.device_manager.mark_offline(device_id)
+                        self._append_log("DEVICE_DISCONNECTED", device_id=device_id)
                         continue
 
                     await websocket.send_json(build_message(ProtocolTypes.ERROR, {"error": f"Unsupported message type: {msg_type}."}, request_id=request_id))
