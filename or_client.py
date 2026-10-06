@@ -406,7 +406,7 @@ class OpenRouterClient:
             try:
                 resp = requests.post(
                     API_URL,
-                    headers=self._headers,
+                    headers=headers,
                     json=payload,
                     timeout=REQUEST_TIMEOUT,
                 )
