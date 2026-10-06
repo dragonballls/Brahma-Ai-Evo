@@ -459,3 +459,21 @@ def test_connection_hub_current_socket_guard_rejects_replaced_connection():
     old_current, new_current = asyncio.run(scenario())
     assert old_current is False
     assert new_current is True
+
+def test_android_remote_url_handler_rejects_non_web_schemes():
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "brahma-connect-android"
+        / "app"
+        / "src"
+        / "main"
+        / "java"
+        / "com"
+        / "brahma"
+        / "connect"
+        / "commands"
+        / "DeviceCommandHandler.kt"
+    ).read_text(encoding="utf-8")
+    assert 'scheme !in setOf("http", "https")' in source
+    assert 'UNSUPPORTED_URL_SCHEME' in source
+    assert "Only http and https URLs can be opened remotely." in source
