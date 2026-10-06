@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import threading
 from dataclasses import dataclass
 from dataclasses import field
@@ -66,11 +67,16 @@ class BrahmaConnectService:
         with self._lock:
             loop = self._loop
         if loop is not None and not loop.is_closed():
+            future = asyncio.run_coroutine_threadsafe(coro, loop)
             try:
-                return asyncio.run_coroutine_threadsafe(coro, loop).result(
+                return future.result(
                     timeout=max(1.0, float(self.gateway.config.request_timeout_seconds) + 5.0)
                 )
+            except concurrent.futures.TimeoutError:
+                future.cancel()
+                raise TimeoutError("Gateway operation timed out and was cancelled.")
             except RuntimeError:
+                future.cancel()
                 pass
         return asyncio.run(coro)
 
