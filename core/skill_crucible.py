@@ -50,6 +50,8 @@ def _sandbox_environment(root: Path) -> dict[str, str]:
         key: value for key, value in os.environ.items()
         if not any(part in key.upper() for part in blocked)
     }
+    root = root.resolve()
+    env["BRAHMA_CRUCIBLE_ROOT"] = str(root)
     env["LOCALAPPDATA"] = str(root)
     env["APPDATA"] = str(root)
     env["HOME"] = str(root)
@@ -60,6 +62,31 @@ def _sandbox_environment(root: Path) -> dict[str, str]:
     for key in ("PYTHONPATH", "PYTHONHOME", "PYTHONUSERBASE", "PYTHONSTARTUP", "PYTHONBREAKPOINT"):
         env.pop(key, None)
     return env
+
+
+def _normalize_distribution_name(value: object) -> str:
+    """Normalize a Python distribution name according to PyPI naming rules."""
+    return re.sub(r"[-_.]+", "-", str(value or "").strip()).casefold()
+
+
+def _approved_auto_install_packages() -> set[str]:
+    """Return only distributions explicitly declared by Brahma's runtime."""
+    requirements = Path(__file__).resolve().parents[1] / "requirements.txt"
+    try:
+        lines = requirements.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return set()
+
+    approved: set[str] = set()
+    for raw_line in lines:
+        line = raw_line.split("#", 1)[0].strip()
+        if not line or line.startswith(("-", "git+", "http://", "https://")):
+            continue
+        distribution = re.split(r"[<>=!~;@]", line, maxsplit=1)[0].split("[", 1)[0].strip()
+        normalized = _normalize_distribution_name(distribution)
+        if normalized:
+            approved.add(normalized)
+    return approved
 
 # Dangerous calls and patterns that synthetic skills must NEVER execute
 BANNED_AST_PATTERNS = [
@@ -87,6 +114,8 @@ BANNED_IMPORT_MODULES = {
     "importlib",
     "runpy",
     "pty",
+    "sqlite3",
+    "mmap",
 }
 
 BANNED_CALLS = {
@@ -332,8 +361,13 @@ class SkillCrucible:
         py_exe = _get_python_executable()
         installed_any = []
 
+        approved_packages = _approved_auto_install_packages()
         for dep in dependencies:
             pip_name = IMPORT_TO_PIP.get(dep, dep)
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", str(pip_name or "")):
+                return False, f"Rejected unsafe dependency name '{pip_name}'."
+            if _normalize_distribution_name(pip_name) not in approved_packages:
+                return False, f"Dependency '{pip_name}' is not an approved Brahma runtime package."
             # Check if importable and healthy
             is_healthy = False
             try:
@@ -354,9 +388,7 @@ class SkillCrucible:
             if is_healthy:
                 continue
 
-            logger.info(f"[Crucible] Installing missing or repairing dependency: {pip_name}")
-            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", str(pip_name or "")):
-                return False, f"Rejected unsafe dependency name '{pip_name}'."
+            logger.info(f"[Crucible] Installing missing or repairing approved dependency: {pip_name}")
             try:
                 if dep == "speedtest":
                     subprocess.run(
@@ -369,6 +401,7 @@ class SkillCrucible:
                     py_exe, "-m", "pip", "--isolated", "install",
                     "--index-url", "https://pypi.org/simple",
                     "--disable-pip-version-check", "--no-input",
+                    "--no-deps", "--only-binary=:all:",
                     pip_name, "--quiet",
                 ]
                 proc = subprocess.run(install_cmd, capture_output=True, text=True, timeout=180, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
@@ -404,6 +437,43 @@ import json
 import traceback
 import asyncio
 import inspect
+import builtins as _builtins
+import io as _io
+from pathlib import Path as _SandboxPath
+
+_SANDBOX_ROOT = _SandboxPath(os.environ["BRAHMA_CRUCIBLE_ROOT"]).resolve()
+
+def _sandbox_path(value):
+    if isinstance(value, (str, bytes, os.PathLike)):
+        candidate = _SandboxPath(value)
+        if not candidate.is_absolute():
+            candidate = _SANDBOX_ROOT / candidate
+        resolved = candidate.resolve()
+        try:
+            resolved.relative_to(_SANDBOX_ROOT)
+        except ValueError as exc:
+            raise PermissionError("Crucible sandbox denied filesystem access outside its temporary root.") from exc
+        return resolved
+    return value
+
+_real_open = _builtins.open
+_real_io_open = _io.open
+_real_os_open = os.open
+
+def _sandbox_open(file, *args, **kwargs):
+    return _real_open(_sandbox_path(file), *args, **kwargs)
+
+def _sandbox_io_open(file, *args, **kwargs):
+    return _real_io_open(_sandbox_path(file), *args, **kwargs)
+
+def _sandbox_os_open(path, flags, mode=0o777, *, dir_fd=None):
+    if dir_fd is not None:
+        raise PermissionError("Crucible sandbox denied dir_fd filesystem access.")
+    return _real_os_open(_sandbox_path(path), flags, mode)
+
+_builtins.open = _sandbox_open
+_io.open = _sandbox_io_open
+os.open = _sandbox_os_open
 
 {skill_code}
 
@@ -461,6 +531,7 @@ if __name__ == '__main__':
                     capture_output=True,
                     text=True,
                     timeout=timeout,
+                    cwd=str(sandbox_root),
                     env=_sandbox_environment(sandbox_root),
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )

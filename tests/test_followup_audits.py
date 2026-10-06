@@ -712,3 +712,30 @@ def test_android_stored_credentials_carry_tls_pin():
     source = Path("brahma-connect-android/app/src/main/java/com/brahma/connect/pairing/PairingStorage.kt").read_text(encoding="utf-8")
     assert 'put("tls_certificate_sha256", credential.tlsCertificateSha256)' in source
     assert 'tlsCertificateSha256 = json.optString("tls_certificate_sha256")' in source
+
+
+def test_crucible_sandbox_confines_execution_to_temporary_root():
+    source = Path("core/skill_crucible.py").read_text(encoding="utf-8")
+    assert 'env["BRAHMA_CRUCIBLE_ROOT"] = str(root)' in source
+    assert 'cwd=str(sandbox_root)' in source
+    assert "_sandbox_path(value)" in source
+    assert "Crucible sandbox denied filesystem access outside its temporary root." in source
+
+
+def test_crucible_dependency_auto_install_is_runtime_allowlisted():
+    from core.skill_crucible import _approved_auto_install_packages, _normalize_distribution_name
+    approved = _approved_auto_install_packages()
+    assert _normalize_distribution_name("requests") in approved
+    assert _normalize_distribution_name("definitely-not-a-brahma-package") not in approved
+
+
+def test_crucible_rejects_unapproved_dependency_before_import_probe(monkeypatch):
+    import core.skill_crucible as crucible
+
+    def unexpected_import_probe(*_args, **_kwargs):
+        raise AssertionError("Unapproved dependencies must be rejected before import execution.")
+
+    monkeypatch.setattr(crucible.subprocess, "run", unexpected_import_probe)
+    ok, message = crucible.SkillCrucible.resolve_dependencies(["definitely_not_approved"])
+    assert ok is False
+    assert "not an approved Brahma runtime package" in message

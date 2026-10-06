@@ -118,7 +118,7 @@ jobs:
         uses: actions/cache/restore@v6.1.0
         with:
           path: dist/BrahmaEvoPayload.zip
-          key: windows-payload-${{ hashFiles('dist/BrahmaEvo/**') }}
+          key: windows-payload-${{ github.sha }}
 
       - name: Pack verified Brahma Evo payload
         if: ${{ steps.payload-cache.outputs.cache-hit != 'true' }}
@@ -139,7 +139,7 @@ jobs:
         uses: actions/cache/save@v6.1.0
         with:
           path: dist/BrahmaEvoPayload.zip
-          key: windows-payload-${{ hashFiles('dist/BrahmaEvo/**') }}
+          key: windows-payload-${{ github.sha }}
 
       - name: Build setup wizard
         shell: pwsh
