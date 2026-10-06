@@ -5461,6 +5461,7 @@ class BrahmaLive:
         except Exception:
             pass
 
+        execution_failed = False
         try:
             self.ui.update_task_workspace(
                 title=f"Running {name}",
@@ -6469,6 +6470,7 @@ class BrahmaLive:
                 result = f"Unknown tool: {name}"
 
         except Exception as e:
+            execution_failed = True
             result = f"Tool '{name}' failed: {e}"
             tb_str = traceback.format_exc()
             traceback.print_exc()
@@ -6486,9 +6488,14 @@ class BrahmaLive:
             self.speak_error(name, e)
 
         try:
-            if not getattr(fc, "silent_completion", False):
-                self.speak(f"{name.replace('_', ' ')} completed.")
-            self.ui.finish_task_workspace(result, "Task completed.", 100)
+            if execution_failed:
+                if not getattr(fc, "silent_completion", False):
+                    self.speak(f"{name.replace('_', ' ')} failed.")
+                self.ui.finish_task_workspace(result, "Task failed.", 0)
+            else:
+                if not getattr(fc, "silent_completion", False):
+                    self.speak(f"{name.replace('_', ' ')} completed.")
+                self.ui.finish_task_workspace(result, "Task completed.", 100)
         except Exception:
             pass
 
