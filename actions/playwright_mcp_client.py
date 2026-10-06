@@ -456,8 +456,18 @@ class PlaywrightMCPClient:
         res = self.call_tool("browser_handle_dialog", args)
         return res.get("text") or res.get("error") or "Dialog handled."
 
-    def file_upload(self, paths: List[str]) -> str:
-        res = self.call_tool("browser_file_upload", {"paths": paths})
+    def file_upload(
+        self,
+        paths: List[str],
+        element: Optional[str] = None,
+        selector: Optional[str] = None,
+    ) -> str:
+        args: Dict[str, Any] = {"paths": paths}
+        if element:
+            args["element"] = element
+        if selector:
+            args["selector"] = selector
+        res = self.call_tool("browser_file_upload", args)
         return res.get("text") or res.get("error") or "File uploaded."
 
     def console_messages(self, level: str = "info") -> str:

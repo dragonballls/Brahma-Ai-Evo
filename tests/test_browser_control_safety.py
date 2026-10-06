@@ -69,3 +69,11 @@ def test_browser_navigation_rejects_local_and_script_url_schemes():
     assert validate_browser_url("http://127.0.0.1:8080/health") == "http://127.0.0.1:8080/health"
     assert validate_browser_url("localhost:8765") == "https://localhost:8765"
     assert validate_browser_url("about:blank") == "about:blank"
+
+
+def test_playwright_file_upload_accepts_target_arguments_used_by_browser_control():
+    source = Path("actions/playwright_mcp_client.py").read_text(encoding="utf-8")
+    assert "def file_upload(" in source
+    assert "element: Optional[str] = None" in source
+    assert "selector: Optional[str] = None" in source
+    assert '"browser_file_upload", args' in source
