@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 import shutil
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -27,6 +28,7 @@ from core.dynamic_registry import DynamicToolRegistry
 logger = logging.getLogger("SkillForge")
 
 CONFIG_DIR = get_user_data_dir() / "config"
+_PERSISTENCE_LOCK = threading.RLock()
 
 
 class SkillForge:
@@ -187,36 +189,71 @@ class SkillForge:
             feature_code = header + feature_code
 
         # The package directory is the single authoritative persisted form.
-        target_dir = (skills_dir / actual_name).resolve()
-        try:
-            target_dir.relative_to(skills_dir.resolve())
-        except ValueError:
-            return {"success": False, "message": "Generated skill path escaped the skill vault."}
-        if target_dir.exists():
-            return {
-                "success": False,
-                "message": f"Skill '{actual_name}' already exists; refusing to overwrite an existing capability.",
-            }
+        # Generated skills live in the per-user vault and are never written into the Git checkout.
+        from core.dynamic_registry import APPDATA_SKILLS_DIR
+        skills_dir = APPDATA_SKILLS_DIR
+        skills_dir.mkdir(parents=True, exist_ok=True)
+
+        # Prepare triggers & aliases
+        triggers = list(manifest.get("triggers", []))
+        if goal and goal.strip() not in triggers:
+            triggers.append(goal.strip())
+
+        clean_goal = re.sub(
+            r"^(?:please\s+|can\s+you\s+|use\s+(?:the\s+)?(?:skill|feature)\s+to\s+|run\s+(?:the\s+)?(?:skill|feature)\s+to\s+|test\s+(?:the\s+)?(?:skill|feature)\s+to\s+)",
+            "",
+            goal.lower().strip(),
+        )
+        if clean_goal and clean_goal not in triggers:
+            triggers.append(clean_goal)
+
+        name_words_trigger = actual_name.replace("_", " ")
+        if name_words_trigger not in triggers:
+            triggers.append(name_words_trigger)
+
+        aliases = list(manifest.get("aliases", []))
+        clean_alias = actual_name.replace("_", "")
+        if clean_alias not in aliases:
+            aliases.append(clean_alias)
+
+        manifest["name"] = actual_name
+        manifest["triggers"] = list(dict.fromkeys(triggers))
+        manifest["aliases"] = list(dict.fromkeys(aliases))
+        manifest["created_at"] = time.time()
+        manifest["version"] = "1.0.0"
+        manifest["author"] = "Project Ultron Autonomous Self-Evolution Engine"
+        manifest["active"] = True
+
+        feature_code = code
+        if "FEATURE_METADATA" not in feature_code:
+            meta_str = repr(manifest)
+            header = (
+                f'"""
+'
+                f'Feature: {actual_name}
+'
+                f'Description: {manifest.get("description", "")}
+'
+                f'Autonomous Evolutionary Capability synthesized by Brahma AI.
+'
+                f'"""
+
+'
+                f'FEATURE_METADATA = {meta_str}
+
+'
+            )
+            feature_code = header + feature_code
+
         target_dir = (skills_dir / actual_name).resolve()
         try:
             target_dir.relative_to(skills_dir.resolve())
         except ValueError:
             return {"success": False, "message": "Generated skill path escaped the skill vault."}
 
-        # Reserve the final directory atomically, then populate it from a complete
-        # sibling staging directory. This prevents concurrent forge calls from
-        # overwriting one another and prevents partial skill packages from becoming
-        # the persistent source of truth after an interrupted write.
-        try:
-            target_dir.mkdir(parents=True, exist_ok=False)
-        except FileExistsError:
-            return {
-                "success": False,
-                "message": f"Skill '{actual_name}' already exists; refusing to overwrite an existing capability.",
-            }
-        except Exception as e:
-            return {"success": False, "message": f"Failed reserving skill directory: {e}"}
-
+        # Build a complete sibling package first. The final directory is promoted
+        # with one directory rename under a lock, so an interrupted write can never
+        # expose a half-populated skill package.
         staging_dir = Path(tempfile.mkdtemp(prefix=f".{actual_name}-", dir=str(skills_dir)))
         committed = False
         try:
@@ -227,12 +264,16 @@ class SkillForge:
             with open(staging_dir / "test_cases.json", "w", encoding="utf-8") as handle:
                 json.dump(test_cases, handle, indent=4, ensure_ascii=False)
 
-            for filename in ("manifest.json", "skill.py", "test_cases.json"):
-                (staging_dir / filename).replace(target_dir / filename)
-            staging_dir.rmdir()
-            committed = True
+            with _PERSISTENCE_LOCK:
+                if target_dir.exists():
+                    return {
+                        "success": False,
+                        "message": f"Skill '{actual_name}' already exists; refusing to overwrite an existing capability.",
+                    }
+                staging_dir.replace(target_dir)
+                staging_dir = None
+                committed = True
 
-            # 4. Hot-load into Dynamic Registry only after the whole package is committed.
             DynamicToolRegistry.initialize()
             if not DynamicToolRegistry.has_tool(actual_name):
                 raise RuntimeError(f"Generated feature '{actual_name}' was not registered.")
