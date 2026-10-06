@@ -600,10 +600,11 @@ class DashboardServer:
                 return False
             expiry = self._token_expiry.get(token, 0.0)
             if expiry and expiry <= time.time():
+                session_key = self._token_keys.pop(token, None)
                 self._tokens.discard(token)
-                self._token_keys.pop(token, None)
                 self._token_expiry.pop(token, None)
-                self._aes_cache.pop(token, None)
+                if session_key:
+                    self._aes_cache.pop(session_key, None)
                 return False
             return True
 
