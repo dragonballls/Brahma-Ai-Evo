@@ -38,10 +38,40 @@ class CredentialVault:
         self._fernet = Fernet(self._load_or_create_key())
 
     def _load_or_create_key(self) -> bytes:
-        if self._key_file.exists():
-            return self._key_file.read_bytes().strip()
+        if self._key_file.is_file():
+            key = self._key_file.read_bytes().strip()
+            if len(key) != 44:
+                raise RuntimeError("Smart-home credential key is invalid.")
+            if os.name != "nt":
+                try:
+                    os.chmod(self._key_file, 0o600)
+                except OSError as exc:
+                    raise RuntimeError("Smart-home credential key permissions could not be secured.") from exc
+            return key
+
         key = Fernet.generate_key()
-        self._key_file.write_bytes(key)
+        self._key_file.parent.mkdir(parents=True, exist_ok=True)
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+        try:
+            fd = os.open(self._key_file, flags, 0o600)
+        except FileExistsError:
+            existing = self._key_file.read_bytes().strip()
+            if len(existing) != 44:
+                raise RuntimeError("Smart-home credential key is invalid.")
+            return existing
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(key)
+                handle.flush()
+                os.fsync(handle.fileno())
+            if os.name != "nt":
+                os.chmod(self._key_file, 0o600)
+        except Exception:
+            try:
+                self._key_file.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
         return key
 
     def encrypt_json(self, payload: dict[str, Any]) -> str:

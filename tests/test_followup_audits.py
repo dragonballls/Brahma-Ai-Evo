@@ -1219,3 +1219,11 @@ def test_executor_does_not_claim_forged_skill_executed_after_exception():
     source = Path("agent/executor.py").read_text(encoding="utf-8")
     assert "Execution failed:" in source
     assert "Executed, but returned:" not in source
+
+
+def test_smart_home_credential_key_is_created_private_and_atomic():
+    source = Path("smart_home/storage.py").read_text(encoding="utf-8")
+    assert "os.O_EXCL" in source
+    assert "os.O_WRONLY" in source
+    assert "os.open(self._key_file, flags, 0o600)" in source
+    assert "os.fsync(handle.fileno())" in source
