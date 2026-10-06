@@ -40,6 +40,6 @@ def test_remote_wallpaper_download_is_scheme_bounded_and_size_bounded():
 
 def test_desktop_task_rejects_explicitly_unsafe_plans_and_bounds_inputs():
     source = (ROOT / "actions" / "desktop.py").read_text(encoding="utf-8")
-    assert "plan.get("unsafe")" in source
+    assert 'plan.get("unsafe")' in source
     assert "10,000-character safety limit" in source
     assert "screenshots must remain inside the user's home directory" in source
