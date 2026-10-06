@@ -10,6 +10,7 @@ from .models import DeviceRecord
 
 SOCKET_SEND_TIMEOUT_SECONDS = 10.0
 MAX_ACTIVE_CONNECTIONS = 128
+MAX_PENDING_PER_CONNECTION = 32
 
 
 @dataclass(slots=True)
@@ -31,9 +32,9 @@ class ConnectionHub:
     async def attach(self, websocket: WebSocket, *, role: str = "agent") -> ConnectionState | None:
         state = ConnectionState(websocket=websocket, role=role)
         async with self._lock:
-            if len(self._socket_index) >= MAX_ACTIVE_CONNECTIONS:
-                return None
             key = id(websocket)
+            if key not in self._socket_index and len(self._socket_index) >= MAX_ACTIVE_CONNECTIONS:
+                return None
             self._socket_index[key] = ""
         return state
 
@@ -44,6 +45,7 @@ class ConnectionHub:
         async with self._lock:
             previous = self._connections.get(device_id)
             if previous is not None and previous.websocket is not websocket:
+                previous.authenticated = False
                 stale_socket = previous.websocket
                 stale_pending = list(previous.pending.values())
                 previous.pending.clear()
@@ -160,6 +162,8 @@ class ConnectionHub:
         async with self._lock:
             state = self._connections.get(str(device_id))
             if state is None or not state.authenticated:
+                return None
+            if request_id in state.pending or len(state.pending) >= MAX_PENDING_PER_CONNECTION:
                 return None
             future: asyncio.Future = loop.create_future()
             state.pending[request_id] = future
