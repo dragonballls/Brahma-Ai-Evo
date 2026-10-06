@@ -43,3 +43,10 @@ def test_desktop_task_rejects_explicitly_unsafe_plans_and_bounds_inputs():
     assert 'plan.get("unsafe")' in source
     assert "10,000-character safety limit" in source
     assert "screenshots must remain inside the user's home directory" in source
+
+
+def test_windows_wallpaper_conversion_uses_race_safe_temp_creation():
+    source = (ROOT / "actions" / "desktop.py").read_text(encoding="utf-8")
+    assert "tempfile.mkstemp(suffix=\".bmp\")" in source
+    assert "os.close(fd)" in source
+    assert "tempfile.mktemp(" not in source
