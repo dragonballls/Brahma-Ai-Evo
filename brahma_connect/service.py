@@ -102,6 +102,7 @@ class BrahmaConnectService:
         with self._lock:
             if self._thread and self._thread.is_alive():
                 return
+            self.gateway.prepare_start()
 
             def _runner():
                 loop = asyncio.new_event_loop()
