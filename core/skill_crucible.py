@@ -542,7 +542,7 @@ def _sandbox_lstat(path, *args, **kwargs):
 def _sandbox_access(path, *args, **kwargs):
     if kwargs.get("dir_fd") is not None or (len(args) >= 2 and args[1] is not None):
         raise PermissionError("Crucible sandbox denied dir_fd filesystem access.")
-    return _real_os_access(_sandbox_path(path), *args[:1], **{k: v for k, v in kwargs.items() if k != "dir_fd"})
+    return _real_os_access(_sandbox_path(path), *args[:1], **{{k: v for k, v in kwargs.items() if k != "dir_fd"}})
 
 def _sandbox_walk(top, *args, **kwargs):
     return _real_os_walk(_sandbox_path(top), *args, **kwargs)
