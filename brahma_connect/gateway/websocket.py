@@ -33,9 +33,26 @@ class ConnectionHub:
 
     async def register(self, websocket: WebSocket, device_id: str, *, role: str = "agent") -> ConnectionState:
         state = ConnectionState(websocket=websocket, device_id=device_id, role=role, authenticated=True)
+        stale_pending: list[asyncio.Future] = []
+        stale_socket: WebSocket | None = None
         async with self._lock:
+            previous = self._connections.get(device_id)
+            if previous is not None and previous.websocket is not websocket:
+                stale_socket = previous.websocket
+                stale_pending = list(previous.pending.values())
+                previous.pending.clear()
+                self._socket_index.pop(id(previous.websocket), None)
             self._connections[device_id] = state
             self._socket_index[id(websocket)] = device_id
+
+        for future in stale_pending:
+            if not future.done():
+                future.set_exception(RuntimeError("Device connection was replaced."))
+        if stale_socket is not None:
+            try:
+                await stale_socket.close(code=1000, reason="Replaced by newer device connection")
+            except Exception:
+                pass
         return state
 
     async def unregister(self, websocket: WebSocket) -> str:
@@ -43,8 +60,9 @@ class ConnectionHub:
         async with self._lock:
             device_id = self._socket_index.pop(id(websocket), "")
             if device_id:
-                state = self._connections.pop(device_id, None)
-                if state is not None:
+                state = self._connections.get(device_id)
+                if state is not None and state.websocket is websocket:
+                    self._connections.pop(device_id, None)
                     pending = list(state.pending.values())
                     state.pending.clear()
         for future in pending:
