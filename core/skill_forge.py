@@ -31,6 +31,18 @@ CONFIG_DIR = get_user_data_dir() / "config"
 _PERSISTENCE_LOCK = threading.RLock()
 
 
+def _redact_data(value: Any) -> Any:
+    if isinstance(value, str):
+        return _redact_text(value)
+    if isinstance(value, dict):
+        return {key: _redact_data(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_data(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_data(item) for item in value)
+    return value
+
+
 class SkillForge:
     """Autonomous synthesizer of new Brahma AI skills."""
 
@@ -88,12 +100,12 @@ class SkillForge:
         if not synthesis.get("success"):
             return {
                 "success": False,
-                "message": f"Skill synthesis generation failed: {synthesis.get('error')}",
+                "message": f"Skill synthesis generation failed: {_redact_text(synthesis.get('error'))}",
             }
 
-        manifest = synthesis["manifest"]
-        code = synthesis["code"]
-        test_cases = synthesis.get("test_cases", [{"input": {}}])
+        manifest = _redact_data(synthesis["manifest"])
+        code = _redact_text(synthesis["code"])
+        test_cases = _redact_data(synthesis.get("test_cases", [{"input": {}}]))
         raw_name = manifest.get("name", name_hint or "custom_skill")
         if not isinstance(raw_name, str):
             return {"success": False, "message": "Skill synthesis returned an invalid skill name."}
@@ -117,13 +129,13 @@ class SkillForge:
                     if repair.get("success"):
                         code = repair["code"]
                         continue
-                return {"success": False, "message": f"Crucible AST rejected skill: {ast_err}"}
+                return {"success": False, "message": f"Crucible AST rejected skill: {_redact_text(ast_err)}"}
 
             # Stage B: Dependency Auto-Resolver
             deps = SkillCrucible.extract_dependencies(code)
             deps_ok, deps_msg = SkillCrucible.resolve_dependencies(deps)
             if not deps_ok:
-                return {"success": False, "message": f"Dependency resolution failed: {deps_msg}"}
+                return {"success": False, "message": f"Dependency resolution failed: {_redact_text(deps_msg)}"}
 
             # Stage C: Sandboxed Execution Tests
             test_ok, test_msg, test_telemetry = SkillCrucible.run_sandbox_test(code, test_cases)
@@ -134,7 +146,7 @@ class SkillForge:
                     if repair.get("success"):
                         code = repair["code"]
                         continue
-                return {"success": False, "message": f"Crucible Sandbox tests failed: {test_msg}", "telemetry": test_telemetry}
+                return {"success": False, "message": f"Crucible Sandbox tests failed: {_redact_text(test_msg)}", "telemetry": test_telemetry}
 
             # All stages passed!
             break
@@ -246,7 +258,7 @@ class SkillForge:
                     shutil.rmtree(target_dir)
                 except Exception:
                     pass
-            return {"success": False, "message": f"Failed saving synthesized skill: {e}"}
+            return {"success": False, "message": f"Failed saving synthesized skill: {_redact_text(e)}"}
         finally:
             try:
                 if staging_dir is not None and staging_dir.exists():
