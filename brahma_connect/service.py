@@ -45,7 +45,7 @@ class BrahmaConnectService:
         from .gateway.protocol import ProtocolTypes, build_message
         with self._lock:
             loop = self._loop
-        if loop is None or loop.is_closed():
+        if loop is None or loop.is_closed() or not loop.is_running():
             return False
         msg = build_message(ProtocolTypes.CHAT_MESSAGE, event)
         try:
@@ -66,7 +66,7 @@ class BrahmaConnectService:
         """
         with self._lock:
             loop = self._loop
-        if loop is not None and not loop.is_closed():
+        if loop is not None and not loop.is_closed() and loop.is_running():
             future = asyncio.run_coroutine_threadsafe(coro, loop)
             try:
                 return future.result(
@@ -84,7 +84,7 @@ class BrahmaConnectService:
         """Await a gateway coroutine on its owning loop without nesting event loops."""
         with self._lock:
             loop = self._loop
-        if loop is None or loop.is_closed():
+        if loop is None or loop.is_closed() or not loop.is_running():
             return await coro
         try:
             current = asyncio.get_running_loop()
