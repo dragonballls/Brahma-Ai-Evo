@@ -812,6 +812,18 @@ class BrahmaGateway:
                         continue
 
                     if msg_type == ProtocolTypes.AUTHENTICATE:
+                        # One WebSocket has one authenticated device identity for its lifetime.
+                        # Re-authentication on an active socket would otherwise orphan pending
+                        # requests or leave the previous device marked online.
+                        if device_id:
+                            await websocket.send_json(
+                                build_message(
+                                    ProtocolTypes.ERROR,
+                                    {"error": "This WebSocket is already authenticated; reconnect to change devices."},
+                                    request_id=request_id,
+                                )
+                            )
+                            continue
                         attempted_device_id = str(payload.get("device_id") or "").strip()
                         secret = str(payload.get("device_secret") or "").strip()
                         record = self.device_manager.authenticate(
