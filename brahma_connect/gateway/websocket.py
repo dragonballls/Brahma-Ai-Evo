@@ -116,6 +116,10 @@ class ConnectionHub:
                 return False
         try:
             async with state.send_lock:
+                async with self._lock:
+                    current = self._connections.get(str(device_id))
+                    if current is not state or not state.authenticated:
+                        return False
                 await asyncio.wait_for(
                     state.websocket.send_json(message), timeout=SOCKET_SEND_TIMEOUT_SECONDS
                 )
@@ -135,6 +139,10 @@ class ConnectionHub:
         for device_id, state in states:
             try:
                 async with state.send_lock:
+                    async with self._lock:
+                        current = self._connections.get(str(device_id))
+                        if current is not state or not state.authenticated:
+                            continue
                     await asyncio.wait_for(
                         state.websocket.send_json(message),
                         timeout=SOCKET_SEND_TIMEOUT_SECONDS,
@@ -151,6 +159,7 @@ class ConnectionHub:
                         continue
                     self._connections.pop(device_id, None)
                     self._socket_index.pop(socket_id, None)
+                    current.authenticated = False
                     pending.extend(current.pending.values())
                     current.pending.clear()
             for future in pending:
@@ -205,12 +214,13 @@ class ConnectionHub:
         pending: list[asyncio.Future] = []
         async with self._lock:
             current = self._connections.get(key)
-            if current is state:
-                self._connections.pop(key, None)
-                state.authenticated = False
-                self._socket_index.pop(id(state.websocket), None)
-                pending = list(state.pending.values())
-                state.pending.clear()
+            if current is not state or not state.authenticated:
+                return False
+            self._connections.pop(key, None)
+            state.authenticated = False
+            self._socket_index.pop(id(state.websocket), None)
+            pending = list(state.pending.values())
+            state.pending.clear()
 
         for future in pending:
             if not future.done():
