@@ -728,25 +728,47 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
     dest = dest.resolve()
     dest.mkdir(parents=True, exist_ok=True)
 
+    def preflight(members):
+        total_size = 0
+        planned: list[tuple[object, Path]] = []
+        seen_files: set[Path] = set()
+        for member in members:
+            size = max(0, int(getattr(member, "file_size", getattr(member, "size", 0))))
+            total_size += size
+            if total_size > MAX_ARCHIVE_BYTES:
+                raise ValueError("Archive expands beyond the 1 GiB extraction limit.")
+            name = getattr(member, "filename", getattr(member, "name", ""))
+            target = _safe_archive_target(dest, name)
+            if target != dest and target.exists():
+                raise ValueError(f"Archive would overwrite an existing path: {target.name}")
+            if target in seen_files:
+                raise ValueError(f"Archive contains duplicate output path: {target.name}")
+            seen_files.add(target)
+
+            if isinstance(member, zipfile.ZipInfo):
+                mode = (member.external_attr >> 16) & 0o170000
+                if mode == 0o120000:
+                    raise ValueError("Archive symlink members are not allowed.")
+            else:
+                if member.issym() or member.islnk():
+                    raise ValueError("Archive link members are not allowed.")
+                if not member.isdir() and not member.isfile():
+                    raise ValueError("Archive special-file members are not allowed.")
+            planned.append((member, target))
+        return planned
+
     if path.suffix.lower() == ".zip":
         with zipfile.ZipFile(path) as archive:
             infos = archive.infolist()
             if len(infos) > MAX_ARCHIVE_MEMBERS:
                 raise ValueError("Archive contains too many members.")
-            total_size = 0
-            for info in infos:
-                total_size += max(0, int(info.file_size))
-                if total_size > MAX_ARCHIVE_BYTES:
-                    raise ValueError("Archive expands beyond the 1 GiB extraction limit.")
-                target = _safe_archive_target(dest, info.filename)
-                mode = (info.external_attr >> 16) & 0o170000
-                if mode == 0o120000:
-                    raise ValueError("Archive symlink members are not allowed.")
+            planned = preflight(infos)
+            for info, target in planned:
                 if info.is_dir():
                     target.mkdir(parents=True, exist_ok=True)
                     continue
                 target.parent.mkdir(parents=True, exist_ok=True)
-                with archive.open(info, "r") as source, target.open("wb") as output:
+                with archive.open(info, "r") as source, target.open("xb") as output:
                     shutil.copyfileobj(source, output)
         return
 
@@ -754,26 +776,17 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
         members = archive.getmembers()
         if len(members) > MAX_ARCHIVE_MEMBERS:
             raise ValueError("Archive contains too many members.")
-        total_size = 0
-        for member in members:
-            total_size += max(0, int(member.size))
-            if total_size > MAX_ARCHIVE_BYTES:
-                raise ValueError("Archive expands beyond the 1 GiB extraction limit.")
-            target = _safe_archive_target(dest, member.name)
-            if member.issym() or member.islnk():
-                raise ValueError("Archive link members are not allowed.")
+        planned = preflight(members)
+        for member, target in planned:
             if member.isdir():
                 target.mkdir(parents=True, exist_ok=True)
                 continue
-            if not member.isfile():
-                raise ValueError("Archive special-file members are not allowed.")
             target.parent.mkdir(parents=True, exist_ok=True)
             source = archive.extractfile(member)
             if source is None:
                 raise ValueError("Archive member could not be read safely.")
-            with source, target.open("wb") as output:
+            with source, target.open("xb") as output:
                 shutil.copyfileobj(source, output)
-
 
 def _process_archive(path: Path, action: str, params: dict, speak=None) -> str:
     action = action or "list"
