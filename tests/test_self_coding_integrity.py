@@ -34,3 +34,7 @@ def test_self_coding_approve_has_one_remote_push_and_persists_promoting_before_i
     assert block.count('self._git("push", "origin", "main"') == 1
     assert "self._save(promoting)" in block
     assert block.index("self._save(promoting)") < block.index('self._git("push", "origin", "main"')
+
+def test_self_coding_rejects_checkpoint_filename_id_mismatch():
+    source = (ROOT / "core" / "self_coding.py").read_text(encoding="utf-8")
+    assert "checkpoint.checkpoint_id != checkpoint_id" in source
