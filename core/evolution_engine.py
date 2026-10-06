@@ -165,8 +165,13 @@ class EvolutionEngine:
 
     def _set_state(self, **updates: Any) -> None:
         with self._state_lock:
+            previous = dict(self._state)
             self._state.update(updates)
-            self._save_state()
+            try:
+                self._save_state()
+            except Exception:
+                self._state = previous
+                raise
 
     def _notify(self, message: str) -> None:
         logger.info("%s", message)
