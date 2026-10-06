@@ -20,6 +20,7 @@ import socket
 import urllib.error
 import urllib.parse
 import urllib.request
+from urllib.request import HTTPRedirectHandler
 
 from core.runtime_contract import OMNIROUTE_VERSION
 from core.runtime_paths import API_CONFIG_PATH, OMNIROUTE_DEFAULT_BASE_URL, OMNIROUTE_DEFAULT_PORT
@@ -111,7 +112,8 @@ class OmniRouteProvisioner:
         base_url: str = OMNIROUTE_DEFAULT_BASE_URL,
         data_dir: Path | None = None,
     ) -> None:
-        self.base_url = base_url.rstrip("/")
+        from core.local_endpoint import validate_local_endpoint
+        self.base_url = validate_local_endpoint(base_url)
         self.data_dir = (data_dir or default_data_dir()).expanduser()
         self._resolved: tuple[str, ...] | None = None
         self._source = "unavailable"
@@ -291,7 +293,12 @@ class OmniRouteProvisioner:
         # Validate the OpenAI-compatible /models contract rather than trusting a
         # generic health endpoint on the same loopback port.
         try:
-            with urllib.request.urlopen(
+            class _NoRedirect(HTTPRedirectHandler):
+                def redirect_request(self, req, fp, code, msg, headers, newurl):
+                    raise urllib.error.URLError("Redirects are not permitted for OmniRoute probes.")
+
+            opener = urllib.request.build_opener(_NoRedirect)
+            with opener.open(
                 urllib.request.Request(
                     self.base_url + "/models",
                     headers={"Accept": "application/json"},
