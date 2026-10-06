@@ -581,8 +581,8 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
 
     def _ffmpeg_available() -> bool:
         try:
-            subprocess.run(["ffmpeg", "-version"], capture_output=True, timeout=3)
-            return True
+            result = subprocess.run(["ffmpeg", "-version"], capture_output=True, timeout=3)
+            return result.returncode == 0
         except Exception:
             return False
 
@@ -612,10 +612,12 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
             return "ffmpeg not found. Install ffmpeg to extract audio."
         out = _output_path(path, "audio", ".mp3")
         try:
-            subprocess.run(
+            result = subprocess.run(
                 ["ffmpeg", "-i", str(path), "-q:a", "0", "-map", "a", str(out), "-y"],
                 capture_output=True, timeout=300
             )
+            if result.returncode != 0:
+                return f"Extract audio failed (ffmpeg exit {result.returncode})."
             return f"Audio extracted. Saved: {out.name}"
         except Exception as e:
             return f"Extract audio failed: {e}"
@@ -631,7 +633,9 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
             if end:
                 cmd += ["-to", str(end)]
             cmd += ["-c", "copy", str(out), "-y"]
-            subprocess.run(cmd, capture_output=True, timeout=600)
+            result = subprocess.run(cmd, capture_output=True, timeout=600)
+            if result.returncode != 0:
+                return f"Trim failed (ffmpeg exit {result.returncode})."
             return f"Trimmed video saved: {out.name}"
         except Exception as e:
             return f"Trim failed: {e}"
@@ -642,11 +646,13 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
             return "ffmpeg not found."
         out = _output_path(path, f"frame_{timestamp.replace(':', '')}", ".jpg")
         try:
-            subprocess.run(
+            result = subprocess.run(
                 ["ffmpeg", "-i", str(path), "-ss", timestamp,
                  "-vframes", "1", str(out), "-y"],
                 capture_output=True, timeout=30
             )
+            if result.returncode != 0:
+                return f"Extract frame failed (ffmpeg exit {result.returncode})."
             return f"Frame extracted at {timestamp}. Saved: {out.name}"
         except Exception as e:
             return f"Extract frame failed: {e}"
@@ -657,13 +663,15 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
             return "ffmpeg not found."
         out = _output_path(path, f"compressed_crf{crf}", ".mp4")
         try:
-            subprocess.run(
+            result = subprocess.run(
                 ["ffmpeg", "-i", str(path),
                  "-c:v", "libx264", "-crf", str(crf),
                  "-preset", "medium", "-c:a", "copy",
                  str(out), "-y"],
                 capture_output=True, timeout=1800
             )
+            if result.returncode != 0:
+                return f"Compress failed (ffmpeg exit {result.returncode})."
             before = _file_size_str(path)
             after  = _file_size_str(out)
             return f"Compressed: {before} → {after}. Saved: {out.name}"
@@ -677,11 +685,13 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
         os.close(tmp_fd)
         tmp_audio = Path(tmp_name)
         try:
-            subprocess.run(
+            result = subprocess.run(
                 ["ffmpeg", "-i", str(path), "-q:a", "0", "-map", "a",
                  str(tmp_audio), "-y"],
                 capture_output=True, timeout=300
             )
+            if result.returncode != 0:
+                return f"Video transcription failed (ffmpeg exit {result.returncode})."
             result = _process_audio(tmp_audio, "transcribe", params, speak)
             return result
         except Exception as e:
@@ -696,10 +706,12 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
             return "ffmpeg not found."
         out = _output_path(path, "converted", f".{fmt}")
         try:
-            subprocess.run(
+            result = subprocess.run(
                 ["ffmpeg", "-i", str(path), str(out), "-y"],
                 capture_output=True, timeout=1800
             )
+            if result.returncode != 0:
+                return f"Convert failed (ffmpeg exit {result.returncode})."
             return f"Converted to {fmt.upper()}. Saved: {out.name}"
         except Exception as e:
             return f"Convert failed: {e}"
@@ -732,6 +744,7 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
         total_size = 0
         planned: list[tuple[object, Path]] = []
         seen_files: set[Path] = set()
+        seen_dirs: set[Path] = set()
         for member in members:
             size = max(0, int(getattr(member, "file_size", getattr(member, "size", 0))))
             total_size += size
@@ -742,10 +755,18 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
             if target != dest and target.exists():
                 raise ValueError(f"Archive would overwrite an existing path: {target.name}")
             is_dir = member.is_dir() if isinstance(member, zipfile.ZipInfo) else member.isdir()
-            if not is_dir:
+            if is_dir:
                 if target in seen_files:
+                    raise ValueError(f"Archive contains file/directory path conflict: {target.name}")
+                seen_dirs.add(target)
+            else:
+                if target in seen_files or target in seen_dirs:
                     raise ValueError(f"Archive contains duplicate output path: {target.name}")
                 seen_files.add(target)
+            if any(parent in seen_files for parent in target.parents if parent != dest):
+                raise ValueError(f"Archive contains a file/directory path conflict under {target.name}.")
+            if any(child in seen_files for child in seen_files if child != target and target in child.parents):
+                raise ValueError(f"Archive contains a file/directory path conflict under {target.name}.")
 
             if isinstance(member, zipfile.ZipInfo):
                 mode = (member.external_attr >> 16) & 0o170000
