@@ -83,6 +83,7 @@ class LearningEngine:
 
     PATH = ROOT / "learning.json"
     MAX_EVENTS = 1000
+    MAX_CONTEXT_BYTES = 64_000
 
     @classmethod
     def record(
@@ -99,9 +100,18 @@ class LearningEngine:
         with _STATE_LOCK:
             payload = _json_load(cls.PATH, {"events": []})
             events = payload.get("events", []) if isinstance(payload, dict) else []
+            try:
+                context_value = dict(context or {})
+                context_bytes = json.dumps(
+                    context_value, sort_keys=True, ensure_ascii=False
+                ).encode("utf-8")
+            except (TypeError, ValueError) as exc:
+                return {"success": False, "error": f"Learning context is not serializable: {exc}"}
+            if len(context_bytes) > cls.MAX_CONTEXT_BYTES:
+                return {"success": False, "error": "Learning context exceeds the safe size limit."}
             fingerprint = hashlib.sha256(
                 json.dumps(
-                    {"signal": signal, "outcome": outcome, "context": context or {}},
+                    {"signal": signal, "outcome": outcome, "context": context_value},
                     sort_keys=True,
                     ensure_ascii=False,
                 ).encode("utf-8")
@@ -143,7 +153,9 @@ class AdvancedAnalyzer:
     @staticmethod
     def analyze(values: Iterable[float | int]) -> dict[str, Any]:
         data = []
-        for value in values:
+        for index, value in enumerate(values):
+            if index >= 10_000:
+                return {"success": False, "error": "Analysis input exceeds the 10,000-sample limit."}
             try:
                 number = float(value)
             except (TypeError, ValueError):
@@ -213,7 +225,12 @@ class SpatialAudioEngine:
     @classmethod
     def spatialize(cls, mono: Iterable[float], *, azimuth_deg: float, distance: float = 1.0) -> list[tuple[float, float]]:
         left, right = cls.gains(azimuth_deg, distance)
-        return [(float(sample) * left, float(sample) * right) for sample in mono]
+        result = []
+        for index, sample in enumerate(mono):
+            if index >= 200_000:
+                raise ValueError("Spatialization input exceeds the 200,000-sample limit.")
+            result.append((float(sample) * left, float(sample) * right))
+        return result
 
     @classmethod
     def play_tone(
@@ -319,6 +336,12 @@ class TimeMachine:
             "state": state,
         }
         path = cls.ROOT / f"{safe}-{snapshot['id']}.json"
+        try:
+            serialized = json.dumps(snapshot, ensure_ascii=False)
+        except (TypeError, ValueError) as exc:
+            return {"success": False, "error": f"Snapshot state is not serializable: {exc}"}
+        if len(serialized.encode("utf-8")) > 2_000_000:
+            return {"success": False, "error": "Snapshot exceeds the 2 MB state limit."}
         _json_save(path, snapshot)
         return {"success": True, "snapshot": snapshot, "path": str(path)}
 
