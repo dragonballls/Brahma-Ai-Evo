@@ -132,6 +132,15 @@ def _raise_for_failed_tool_result(result: Any) -> None:
             raise RuntimeError(str(parsed.get("error") or parsed.get("message") or "Tool reported failure."))
 
 
+def _result_text(value: Any) -> str:
+    if isinstance(value, (dict, list, tuple)):
+        try:
+            return json.dumps(value, ensure_ascii=False, default=str)
+        except Exception:
+            return str(value)
+    return str(value)
+
+
 def _inject_context(params: dict, tool: str, step_results: dict, goal: str = "") -> dict:
     if not step_results:
         return params
@@ -143,8 +152,8 @@ def _inject_context(params: dict, tool: str, step_results: dict, goal: str = "")
     if tool in ("pdf_document", "create_pdf", "pdf_tools", "word_document", "docx_tools"):
         content = params.get("content", "")
         all_results = [
-            v for v in step_results.values()
-            if v and len(v) > 80 and v not in ("Done.", "Completed.", "Task completed successfully.")
+            _result_text(v) for v in step_results.values()
+            if v and len(_result_text(v)) > 80 and _result_text(v) not in ("Done.", "Completed.", "Task completed successfully.")
         ]
         if all_results and (not content or len(content) < 500):
             combined = "\n\n---\n\n".join(all_results)
@@ -156,8 +165,8 @@ def _inject_context(params: dict, tool: str, step_results: dict, goal: str = "")
         content = params.get("content", "")
         if not content or len(content) < 50:
             all_results = [
-                v for v in step_results.values()
-                if v and len(v) > 100 and v not in ("Done.", "Completed.", "Task completed successfully.")
+                _result_text(v) for v in step_results.values()
+                if v and len(_result_text(v)) > 100 and _result_text(v) not in ("Done.", "Completed.", "Task completed successfully.")
             ]
             if all_results:
                 combined = "\n\n---\n\n".join(all_results)
