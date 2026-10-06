@@ -25,7 +25,14 @@ def _sanitize_filename(name: str, default: str) -> str:
     return safe or default
 
 
-def _resolve_output_path(output_path: str | None, title: str, ext: str, fallback_name: str) -> Path:
+def _resolve_output_path(
+    output_path: str | None,
+    title: str,
+    ext: str,
+    fallback_name: str,
+    *,
+    overwrite: bool = False,
+) -> Path:
     if output_path:
         path = Path(output_path).expanduser()
         if not path.is_absolute():
@@ -39,23 +46,47 @@ def _resolve_output_path(output_path: str | None, title: str, ext: str, fallback
                 path = Path.cwd() / path
         if path.suffix.lower() != ext:
             path = path.with_suffix(ext)
+        home = Path.home().resolve()
+        try:
+            resolved = path.resolve(strict=False)
+            resolved.relative_to(home)
+        except (OSError, ValueError) as exc:
+            raise ValueError("DOCX output path must remain inside the user's home directory.") from exc
+        current = Path(path.anchor) if path.anchor else Path(".")
+        parts = path.parts[1:] if path.anchor else path.parts
+        for part in parts:
+            current = current / part
+            if current.is_symlink():
+                raise ValueError("DOCX output path may not contain symlinked components.")
         path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and not overwrite:
+            raise FileExistsError(
+                f"Refusing to overwrite existing DOCX without overwrite=True: {path}"
+            )
         return path
 
     DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     return DEFAULT_OUTPUT_DIR / f"{_sanitize_filename(title, fallback_name)}{ext}"
 
 
-def _open_file(path: Path) -> None:
+def _open_file(path: Path) -> bool:
     try:
         if os.name == "nt":
-            subprocess.Popen(["cmd.exe", "/c", "start", "", str(path)], shell=True)
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", str(path)])
+            proc = subprocess.run(
+                ["explorer.exe", str(path)],
+                capture_output=True,
+                timeout=10,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                check=False,
+            )
+            return proc.returncode == 0
+        if sys.platform == "darwin":
+            proc = subprocess.run(["open", str(path)], capture_output=True, timeout=10, check=False)
         else:
-            subprocess.Popen(["xdg-open", str(path)])
-    except Exception:
-        pass
+            proc = subprocess.run(["xdg-open", str(path)], capture_output=True, timeout=10, check=False)
+        return proc.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def _get_api_key() -> str:
@@ -348,7 +379,7 @@ def _create_generic(doc, params):
 def _docx_result_path(source_path: Path | None, action: str, output_path: str | None, title: str) -> Path:
     if output_path:
         fallback = title or (source_path.stem if source_path else "Brahma_AI_Document")
-        return _resolve_output_path(output_path, title=fallback, ext=".docx", fallback_name=fallback)
+        return _resolve_output_path(output_path, title=fallback, ext=".docx", fallback_name=fallback, overwrite=overwrite)
     if source_path:
         return source_path.with_name(f"{source_path.stem}_{action}.docx")
     return _resolve_output_path(None, title=title, ext=".docx", fallback_name="Brahma_AI_Document")
@@ -364,6 +395,7 @@ def word_document(parameters: dict, player=None, speak=None) -> str:
     action = (params.get("action") or "create").lower().strip()
     file_path_str = (params.get("file_path") or "").strip()
     output_path_str = (params.get("output_path") or "").strip() or None
+    overwrite = bool(params.get("overwrite", False))
     title = (params.get("title") or params.get("subject") or "Brahma AI Document").strip()
     doc_type = (params.get("doc_type") or params.get("template") or "").lower().strip()
 
@@ -376,7 +408,8 @@ def word_document(parameters: dict, player=None, speak=None) -> str:
             return "Please provide file_path for the DOCX file to open."
         if not source_path.exists():
             return f"File not found: {source_path}"
-        _open_file(source_path)
+        if not _open_file(source_path):
+            return f"Failed to open {source_path.name}."
         return f"Opened {source_path.name} successfully."
 
     if source_path and not source_path.exists():
@@ -396,7 +429,7 @@ def word_document(parameters: dict, player=None, speak=None) -> str:
             text = _extract_doc_text(doc)
             if not text.strip():
                 return "The document appears to be empty."
-            out = _resolve_output_path(output_path_str, title=source_path.stem, ext=".txt", fallback_name=source_path.stem)
+            out = _resolve_output_path(output_path_str, title=source_path.stem, ext=".txt", fallback_name=source_path.stem, overwrite=overwrite)
             out = out.with_suffix(".txt")
             out.write_text(text, encoding="utf-8")
             return f"Text extracted. Saved: {out}"
@@ -418,7 +451,7 @@ def word_document(parameters: dict, player=None, speak=None) -> str:
             response = model.generate_content(prompt + text[:40000])
             result = response.text.strip()
             if len(result) > 600 and params.get("save", True):
-                out = _resolve_output_path(output_path_str, title=source_path.stem, ext=".txt", fallback_name=source_path.stem)
+                out = _resolve_output_path(output_path_str, title=source_path.stem, ext=".txt", fallback_name=source_path.stem, overwrite=overwrite)
                 out = out.with_suffix(".txt")
                 out.write_text(result, encoding="utf-8")
                 return f"{result[:400]}...\n\nFull result saved: {out}"
