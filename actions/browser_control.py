@@ -177,22 +177,42 @@ class _BrowserThread:
         self._exe_path   = None
         self._channel    = None
         self._is_opera   = False
+        self._startup_error = None
 
-    def start(self):
+    def start(self) -> bool:
         if self._thread and self._thread.is_alive():
-            return
+            return bool(self._playwright is not None and self._startup_error is None)
+        self._loop = None
+        self._playwright = None
+        self._startup_error = None
+        self._ready.clear()
         self._thread = threading.Thread(
             target=self._run_loop, daemon=True, name="BrowserThread"
         )
         self._thread.start()
         self._ready.wait(timeout=15)
+        return bool(self._playwright is not None and self._startup_error is None and self._thread.is_alive())
 
     def _run_loop(self):
-        self._loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self._loop)
-        self._loop.run_until_complete(self._init())
-        self._ready.set()
-        self._loop.run_forever()
+        try:
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+            self._loop.run_until_complete(self._init())
+        except Exception as exc:
+            self._startup_error = exc
+            _log(f"[Browser] startup failed: {exc}")
+        finally:
+            self._ready.set()
+        if self._startup_error is not None or self._loop is None:
+            return
+        try:
+            self._loop.run_forever()
+        finally:
+            try:
+                self._loop.run_until_complete(self._loop.shutdown_asyncgens())
+            except Exception:
+                pass
+            self._loop.close()
 
     async def _init(self):
         self._playwright = await async_playwright().start()
@@ -491,6 +511,12 @@ class _BrowserThread:
 
         return f"Could not find input: '{description}'"
 
+    async def _shutdown_resources(self) -> None:
+        await self._close_browser()
+        if self._playwright:
+            await self._playwright.stop()
+            self._playwright = None
+
     async def _close_browser(self) -> str:
         if self._browser:
             await self._browser.close()
@@ -498,10 +524,6 @@ class _BrowserThread:
             self._context = None
             self._page    = None
             self._pages   = []
-
-        if self._playwright:
-            await self._playwright.stop()
-            self._playwright = None
 
         return "Browser closed."
 
@@ -513,12 +535,43 @@ _bt_started = False
 _bt_lock    = threading.Lock()
 
 
+def shutdown_browser() -> None:
+    global _bt_started
+    with _bt_lock:
+        thread = _bt._thread
+        if _bt._loop and thread and thread.is_alive():
+            try:
+                future = asyncio.run_coroutine_threadsafe(_bt._shutdown_resources(), _bt._loop)
+                future.result(timeout=10)
+            except Exception as exc:
+                _log(f"[Browser] shutdown failed: {exc}")
+            try:
+                _bt._loop.call_soon_threadsafe(_bt._loop.stop)
+            except Exception:
+                pass
+        if thread and thread is not threading.current_thread():
+            thread.join(timeout=10)
+        _bt._thread = None
+        _bt._loop = None
+        _bt._playwright = None
+        _bt._browser = None
+        _bt._context = None
+        _bt._page = None
+        _bt._pages = []
+        _bt._startup_error = None
+        _bt_started = False
+
+
 def _ensure_started():
     global _bt_started
     with _bt_lock:
-        if not _bt_started:
-            _bt.start()
-            _bt_started = True
+        if _bt_started and _bt._thread and _bt._thread.is_alive() and _bt._playwright is not None:
+            return
+        if not _bt.start():
+            _bt_started = False
+            detail = f": {_bt._startup_error}" if _bt._startup_error else ""
+            raise RuntimeError(f"Browser backend could not start{detail}")
+        _bt_started = True
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -578,6 +631,10 @@ def browser_control(
             return result
         except Exception as jev_err:
             _log(f"[Browser/Jev] unavailable ({jev_err}) — using existing browser stack")
+
+    # Explicit opt-in for the two public actions that can execute arbitrary browser code.
+    if action in {"evaluate", "eval", "run_code", "execute"} and not bool(parameters.get("allow_unsafe_code", False)):
+        return "Unsafe browser code execution requires allow_unsafe_code=true."
 
     # Try Microsoft Playwright MCP first
     try:
