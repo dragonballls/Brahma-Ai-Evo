@@ -11351,8 +11351,8 @@ class OmniRouteFloatingWindow(QDialog):
         self.setWindowTitle("OmniRoute")
         self.setModal(False)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
-        self.setMinimumSize(640, 480)
-        self.resize(960, 700)
+        self.setMinimumSize(600, 420)
+        self.resize(760, 540)
         self.setWindowFlags(
             Qt.WindowType.Window
             | Qt.WindowType.WindowTitleHint
@@ -11409,8 +11409,8 @@ class OmniRouteFloatingWindow(QDialog):
         except Exception:
             settings = {}
         try:
-            w = max(640, int(settings.get("omniroute_window_width", self.width())))
-            h = max(480, int(settings.get("omniroute_window_height", self.height())))
+            w = max(600, int(settings.get("omniroute_window_width", self.width())))
+            h = max(420, int(settings.get("omniroute_window_height", self.height())))
             self.resize(w, h)
             x = settings.get("omniroute_window_x")
             y = settings.get("omniroute_window_y")
