@@ -27,7 +27,14 @@ class PairingManager:
                 self._code_index.pop(offer.pairing_code, None)
             self._claimed.discard(token)
 
-    def create_offer(self, host: str, port: int) -> PairingOffer:
+    def create_offer(
+        self,
+        host: str,
+        port: int,
+        *,
+        tls_enabled: bool = True,
+        tls_certificate_sha256: str = "",
+    ) -> PairingOffer:
         with self._lock:
             self._prune()
             token = generate_pairing_token()
@@ -46,6 +53,8 @@ class PairingManager:
                 pairing_token=token,
                 pairing_code=code,
                 expires_at=time.time() + self.ttl_seconds,
+                tls_enabled=bool(tls_enabled),
+                tls_certificate_sha256=str(tls_certificate_sha256 or "").lower(),
             )
             self._offers[token] = offer
             self._code_index[code] = token
