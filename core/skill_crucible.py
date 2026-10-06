@@ -221,14 +221,20 @@ class SkillCrucible:
                         if symbol_root == "pathlib.Path" and attr_name in {"unlink", "rmdir", "replace", "rename"}:
                             return False, f"Security Violation: prohibited dynamic access 'pathlib.Path.{attr_name}'."
                 if isinstance(func, ast.Attribute):
-                    owner = ""
-                    if isinstance(func.value, ast.Name):
-                        owner = module_aliases.get(func.value.id, func.value.id)
-                        owner = symbol_aliases.get(func.value.id, owner)
-                    elif isinstance(func.value, ast.Attribute) and isinstance(func.value.value, ast.Name):
-                        root_id = func.value.value.id
-                        root = module_aliases.get(root_id, root_id)
-                        owner = f"{root}.{func.value.attr}"
+                    def _expression_symbol(expr: ast.AST) -> str:
+                        if isinstance(expr, ast.Name):
+                            return symbol_aliases.get(
+                                expr.id,
+                                module_aliases.get(expr.id, expr.id),
+                            )
+                        if isinstance(expr, ast.Attribute):
+                            base = _expression_symbol(expr.value)
+                            return f"{base}.{expr.attr}" if base else expr.attr
+                        if isinstance(expr, ast.Call):
+                            return _expression_symbol(expr.func)
+                        return ""
+
+                    owner = _expression_symbol(func.value)
                     call_key = (owner, func.attr)
                     if call_key in BANNED_CALLS or (owner, "*") in BANNED_CALLS:
                         return False, f"Security Violation: prohibited call '{owner}.{func.attr}'."
