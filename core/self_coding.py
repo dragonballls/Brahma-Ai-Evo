@@ -178,8 +178,8 @@ class SelfCodingAgent:
         quarantine = path.with_name(f"{path.name}.corrupt-{uuid.uuid4().hex[:8]}")
         path.replace(quarantine)
 
-    def _validate_checkpoint(self, checkpoint: Checkpoint) -> None:
-        if checkpoint.checkpoint_id != checkpoint_id:
+    def _validate_checkpoint(self, checkpoint: Checkpoint, expected_checkpoint_id: str | None = None) -> None:
+        if expected_checkpoint_id is not None and checkpoint.checkpoint_id != expected_checkpoint_id:
             raise SelfCodingError("Checkpoint metadata id does not match the requested checkpoint.")
         if checkpoint.base_branch != "main":
             raise SelfCodingError("Only checkpoints created from main can be promoted or undone.")
@@ -223,7 +223,7 @@ class SelfCodingAgent:
                 promoted_sha=data.get("promoted_sha"),
                 undo_commits=tuple(str(x) for x in data.get("undo_commits", [])),
             )
-            self._validate_checkpoint(checkpoint)
+            self._validate_checkpoint(checkpoint, checkpoint_id)
             return checkpoint
         except SelfCodingError:
             raise
@@ -499,12 +499,28 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
             raise SelfCodingError(merged.stderr.strip() or "Unable to promote checkpoint.")
         promoted = self._git("rev-parse", "HEAD")
         if promoted.returncode != 0:
+            self._git("reset", "--hard", checkpoint.baseline)
             self._git("switch", previous)
             self._save(checkpoint)
             raise SelfCodingError("Unable to record the promoted checkpoint SHA.")
         promoted_sha = promoted.stdout.strip()
         promoting = replace(checkpoint, state="promoting", promoted_sha=promoted_sha)
-        self._save(promoting)
+        try:
+            self._save(promoting)
+        except Exception as save_exc:
+            reset = self._git("reset", "--hard", checkpoint.baseline)
+            switched_back = self._git("switch", previous)
+            try:
+                self._save(checkpoint)
+            except Exception:
+                pass
+            if reset.returncode != 0 or switched_back.returncode != 0:
+                raise SelfCodingError(
+                    "Promotion checkpoint persistence failed and local main could not be restored safely."
+                ) from save_exc
+            raise SelfCodingError(
+                "Promotion checkpoint persistence failed; local main was restored to the baseline."
+            ) from save_exc
         pushed = self._git("push", "origin", "main", timeout=300)
         if pushed.returncode != 0:
             current_head = self._git("rev-parse", "HEAD")
