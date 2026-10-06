@@ -66,7 +66,15 @@ def _resolve_output_path(
         return path
 
     DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    return DEFAULT_OUTPUT_DIR / f"{_sanitize_filename(title, fallback_name)}{ext}"
+    base = DEFAULT_OUTPUT_DIR / f"{_sanitize_filename(title, fallback_name)}{ext}"
+    if overwrite or not base.exists():
+        return base
+    counter = 1
+    while True:
+        candidate = DEFAULT_OUTPUT_DIR / f"{base.stem}_{counter}{base.suffix}"
+        if not candidate.exists():
+            return candidate
+        counter += 1
 
 
 def _open_file(path: Path) -> bool:
@@ -376,12 +384,20 @@ def _create_generic(doc, params):
         _append_numbered(doc, numbered)
 
 
-def _docx_result_path(source_path: Path | None, action: str, output_path: str | None, title: str) -> Path:
+def _docx_result_path(source_path: Path | None, action: str, output_path: str | None, title: str, *, overwrite: bool = False) -> Path:
     if output_path:
         fallback = title or (source_path.stem if source_path else "Brahma_AI_Document")
         return _resolve_output_path(output_path, title=fallback, ext=".docx", fallback_name=fallback, overwrite=overwrite)
     if source_path:
-        return source_path.with_name(f"{source_path.stem}_{action}.docx")
+        base = source_path.with_name(f"{source_path.stem}_{action}.docx")
+        if overwrite or not base.exists():
+            return base
+        counter = 1
+        while True:
+            candidate = source_path.with_name(f"{source_path.stem}_{action}_{counter}.docx")
+            if not candidate.exists():
+                return candidate
+            counter += 1
     return _resolve_output_path(None, title=title, ext=".docx", fallback_name="Brahma_AI_Document")
 
 
@@ -472,7 +488,7 @@ def word_document(parameters: dict, player=None, speak=None) -> str:
         _set_core_props(doc, title=title, author=params.get("author"), subject=params.get("subject"))
 
         created_new = not source_path or not source_path.exists()
-        target_path = _docx_result_path(source_path if not created_new else None, action, output_path_str, title)
+        target_path = _docx_result_path(source_path if not created_new else None, action, output_path_str, title, overwrite=overwrite)
 
         if action == "create_letter" or doc_type == "letter":
             _create_letter(doc, params)
