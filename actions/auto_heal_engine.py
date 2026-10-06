@@ -154,6 +154,20 @@ class SafetySandbox:
         return backup_path
 
     @staticmethod
+    def _restore_backup_atomically(backup: Path, target: Path) -> None:
+        temp = target.with_name(
+            f".{target.name}.restore-{os.getpid()}-{uuid.uuid4().hex}.tmp"
+        )
+        try:
+            shutil.copy2(backup, temp)
+            os.replace(temp, target)
+        finally:
+            try:
+                temp.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    @staticmethod
     def validate_code(code_str: str, file_name: str = "<staging>") -> Tuple[bool, Optional[str]]:
         """Validates that candidate code parses into a valid Python AST without syntax errors."""
         try:
@@ -186,7 +200,7 @@ class SafetySandbox:
                         return {"success": False, "message": f"Backup file '{backup}' missing."}
 
                     try:
-                        shutil.copy2(backup, target)
+                        SafetySandbox._restore_backup_atomically(backup, target)
                         entry["status"] = "rolled_back"
                         entry["rolled_back_at"] = time.time()
                         SafetySandbox._save_history(history)
@@ -367,7 +381,10 @@ class AutoHealEngine:
             py_compile.compile(str(target_path), doraise=True)
         except Exception as pyc_err:
             logger.error(f"[AutoHeal] py_compile failed after write, rolling back: {pyc_err}")
-            shutil.copy2(backup_path, target_path)
+            try:
+                SafetySandbox._restore_backup_atomically(backup_path, target_path)
+            except Exception as restore_err:
+                return {"success": False, "message": f"Post-write compilation failed and rollback failed: {restore_err}"}
             return {"success": False, "message": f"Post-write compilation failed, rolled back: {pyc_err}"}
 
         patch_id = str(uuid.uuid4())[:8]
