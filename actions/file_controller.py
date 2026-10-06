@@ -2,6 +2,7 @@ import os
 import shutil
 import platform
 from pathlib import Path
+import hashlib
 from datetime import datetime
 
 try:
@@ -20,29 +21,57 @@ _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 _UNDO_CONTENT_LIMIT = 1_000_000
 
 
+def _fingerprint(path: Path):
+    """Capture enough identity to ensure an undo only touches the object Brahma created."""
+    try:
+        path = Path(path)
+        if path.is_symlink():
+            return None
+        stat = path.stat()
+        kind = "dir" if path.is_dir() else "file"
+        digest = None
+        if kind == "file":
+            digestor = hashlib.sha256()
+            with path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digestor.update(chunk)
+            digest = digestor.hexdigest()
+        return (kind, stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, digest)
+    except (OSError, ValueError):
+        return None
+
+
 def _undo_move(src: Path, dst: Path):
-    """Reverse of a move: put it back where it came from."""
+    """Reverse a move only when the original source is still absent and the moved object is unchanged."""
+    expected = _fingerprint(dst)
     def _fn():
-        if not dst.exists():
-            return f"'{dst.name}' is no longer there — nothing moved back."
-        src.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(dst), str(src))
+        if src.exists():
+            return f"Cannot restore '{src.name}' because another file now occupies the original path."
+        if _fingerprint(dst) != expected:
+            return f"Cannot restore '{src.name}' because the moved item changed or disappeared after the original move."
+        try:
+            src.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(dst), str(src))
+        except Exception as exc:
+            raise RuntimeError(f"Unable to restore '{src.name}': {exc}") from exc
         return f"'{src.name}' is back in {src.parent.name}/."
     return _fn
 
 
 def _undo_create(target: Path):
-    """Reverse of a create: remove what we made — and only if we still made it.
-
-    Deliberately refuses to touch a directory that has since been filled: the
-    undo for 'create a folder' is not 'delete whatever ended up in it'."""
+    """Reverse a create only when the object still matches the post-create identity."""
+    expected = _fingerprint(target)
     def _fn():
+        if _fingerprint(target) != expected:
+            return f"'{target.name}' changed after creation — leaving it alone."
         if not target.exists():
             return f"'{target.name}' is already gone."
         if target.is_dir():
             if any(target.iterdir()):
-                return (f"'{target.name}' is not empty any more — "
-                        f"leaving it alone rather than deleting your files.")
+                return (
+                    f"'{target.name}' is not empty any more — "
+                    f"leaving it alone rather than deleting your files."
+                )
             target.rmdir()
         else:
             target.unlink()
@@ -50,44 +79,28 @@ def _undo_create(target: Path):
     return _fn
 
 
-def _undo_write(target: Path, previous: str | None):
-    """Reverse of a write: restore the old contents, or remove a file that did
-    not exist before the write created it."""
+def _undo_write(target: Path, previous: str | None, expected_after):
+    """Restore prior text only when the target still matches Brahma's own write."""
     def _fn():
+        if _fingerprint(target) != expected_after:
+            return f"'{target.name}' changed after the original write — leaving it alone."
         if previous is None:
             if target.exists():
                 target.unlink()
                 return f"Removed '{target.name}' — it did not exist before."
             return f"'{target.name}' is already gone."
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(previous, encoding="utf-8")
+        temp = target.with_name(f".{target.name}.undo-{os.getpid()}-{datetime.now().timestamp():.6f}.tmp")
+        try:
+            temp.write_text(previous, encoding="utf-8")
+            os.replace(temp, target)
+        finally:
+            try:
+                temp.unlink(missing_ok=True)
+            except OSError:
+                pass
         return f"Restored the previous contents of '{target.name}'."
     return _fn
-
-
-def _restore_from_trash(original: Path) -> str:
-    """Best-effort undelete.
-
-    delete_file uses send2trash, which is the right call: the file lands in the
-    Recycle Bin / Trash where the person can also find it themselves. Getting it
-    back out again is shell work and only reliable on Windows, where pywin32 is
-    already a dependency. Everywhere else this says where the file is instead of
-    pretending it failed — the file is not lost either way."""
-    if _OS == "Windows":
-        try:
-            import win32com.client
-            shell = win32com.client.Dispatch("Shell.Application")
-            bin_folder = shell.NameSpace(10)      # ssfBITBUCKET
-            for item in bin_folder.Items():
-                if str(bin_folder.GetDetailsOf(item, 1)).strip().lower() == \
-                        str(original.parent).strip().lower():
-                    if str(item.Name).strip().lower() == original.name.strip().lower():
-                        item.InvokeVerb("UNDELETE")
-                        return f"'{original.name}' restored from the Recycle Bin."
-        except Exception as e:
-            print(f"[file] Recycle Bin restore failed: {e}")
-    return (f"'{original.name}' is in the Recycle Bin — I could not pull it back "
-            f"automatically, but it is there and can be restored by hand.")
 
 
 _SAFE_ROOTS: list[Path] = [
@@ -254,12 +267,17 @@ def create_file(path: str, name: str = "", content: str = "") -> str:
         previous = None
         if existed:
             try:
-                previous = target.read_text(encoding="utf-8", errors="ignore")
-            except Exception:
-                previous = None
+                if target.is_symlink() or not target.is_file():
+                    return f"Could not create file: existing target '{target.name}' is not a regular file."
+                previous = target.read_text(encoding="utf-8")
+            except Exception as exc:
+                return f"Could not create file: existing target '{target.name}' could not be read safely: {exc}"
         target.write_text(content, encoding="utf-8")
+        expected_after = _fingerprint(target)
+        if expected_after is None:
+            return f"Could not create file: unable to verify the created file safely."
         push_undo(f"created {target.name}",
-                  _undo_write(target, previous) if existed else _undo_create(target))
+                  _undo_write(target, previous, expected_after) if existed else _undo_create(target))
         return f"File created: {target.name}"
     except Exception as e:
         return f"Could not create file: {e}"
@@ -456,12 +474,18 @@ def write_file(path: str, name: str = "", content: str = "",
                 undoable = False           # binary, locked, unreadable
 
         mode = "a" if append else "w"
+        if target.is_symlink():
+            return f"Could not write file: symlink targets are not permitted."
         with open(target, mode, encoding="utf-8") as f:
             f.write(content)
 
+        expected_after = _fingerprint(target) if undoable else None
+        if undoable and expected_after is None:
+            return f"Could not write file: unable to verify the resulting file safely."
+
         action = "Appended to" if append else "Written to"
         if undoable:
-            push_undo(f"wrote to {target.name}", _undo_write(target, previous))
+            push_undo(f"wrote to {target.name}", _undo_write(target, previous, expected_after))
             return f"{action}: {target.name}"
         return (f"{action}: {target.name}. "
                 f"(Too large to keep a copy of the old contents, so this one "
