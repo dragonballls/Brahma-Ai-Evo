@@ -45,13 +45,19 @@ class TaskQueue:
         self._worker_thread: threading.Thread | None = None
         self._max_concurrent = max_concurrent
         self._active_count   = 0
-        self._executor       = None  
+        self._executor       = None
+        self._executor_lock   = threading.Lock()
+        self._history_limit   = 1000
 
     def _get_executor(self):
-        if self._executor is None:
-            from agent.executor import AgentExecutor
-            self._executor = AgentExecutor()
-        return self._executor
+        executor = self._executor
+        if executor is not None:
+            return executor
+        with self._executor_lock:
+            if self._executor is None:
+                from agent.executor import AgentExecutor
+                self._executor = AgentExecutor()
+            return self._executor
 
     def start(self) -> None:
         with self._condition:
@@ -103,6 +109,17 @@ class TaskQueue:
         )
 
         with self._condition:
+            terminal_ids = [
+                task_id for task_id, existing in self._tasks.items()
+                if existing.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED)
+            ]
+            while len(self._tasks) >= self._history_limit and terminal_ids:
+                old_id = terminal_ids.pop(0)
+                self._tasks.pop(old_id, None)
+            self._queue[:] = [
+                queued for queued in self._queue
+                if queued.status == TaskStatus.PENDING and not queued.cancel_flag.is_set()
+            ]
             self._queue.append(task)
             self._queue.sort(key=lambda t: (t.priority, t.created_at))
             self._tasks[task_id] = task
@@ -121,6 +138,11 @@ class TaskQueue:
                 return False
 
             task.cancel_flag.set()
+            if task.status == TaskStatus.PENDING:
+                try:
+                    self._queue.remove(task)
+                except ValueError:
+                    pass
             task.status = TaskStatus.CANCELLED
             print(f"[TaskQueue] 🚫 Task cancelled: [{task_id}]")
             return True
@@ -214,10 +236,17 @@ class TaskQueue:
 
         except Exception as e:
             with self._lock:
-                task.status = TaskStatus.FAILED
-                task.error  = str(e)
+                if task.cancel_flag.is_set():
+                    task.status = TaskStatus.CANCELLED
+                    task.error = ""
+                else:
+                    task.status = TaskStatus.FAILED
+                    task.error  = str(e)
                 self._active_count -= 1
-            print(f"[TaskQueue] ❌ Failed: [{task.task_id}] {e}")
+            if task.cancel_flag.is_set():
+                print(f"[TaskQueue] 🚫 Cancelled: [{task.task_id}]")
+            else:
+                print(f"[TaskQueue] ❌ Failed: [{task.task_id}] {e}")
 
         with self._condition:
             self._condition.notify()
