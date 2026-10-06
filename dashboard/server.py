@@ -660,6 +660,22 @@ class DashboardServer:
             tok = req.headers.get("authorization", "").removeprefix("Bearer ").strip()
             return _valid_token(tok)
 
+        async def _read_json_limited(req: Request, max_bytes: int) -> dict:
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in req.stream():
+                total += len(chunk)
+                if total > max_bytes:
+                    raise ValueError("Request body is too large.")
+                chunks.append(chunk)
+            try:
+                body = json.loads(b"".join(chunks).decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ValueError("Invalid JSON request.") from exc
+            if not isinstance(body, dict):
+                raise ValueError("JSON request must be an object.")
+            return body
+
         # serve CryptoJS from local cache, fallback to CDN redirect
         @app.get("/static/crypto.js")
         async def serve_crypto():
@@ -688,7 +704,10 @@ class DashboardServer:
             # Prune attacker-controlled failure entries before every new login
             # attempt so rotating source IPs cannot grow this map indefinitely.
             self._prune_auth_state()
-            body = await req.json()
+            try:
+                body = await _read_json_limited(req, 32 * 1024)
+            except ValueError as exc:
+                return JSONResponse({"ok": False, "error": str(exc)}, status_code=413 if "large" in str(exc).lower() else 400)
             entered = str(body.get("pin", "")).strip().upper()
             now = time.time()
             client_ip = getattr(getattr(req, "client", None), "host", "unknown") or "unknown"
@@ -765,9 +784,9 @@ class DashboardServer:
         async def device_login_ep(req: Request):
             """Return a fresh auth token for a previously paired device token."""
             try:
-                body = await req.json()
-            except Exception:
-                return JSONResponse({"ok": False}, status_code=400)
+                body = await _read_json_limited(req, 32 * 1024)
+            except ValueError as exc:
+                return JSONResponse({"ok": False, "error": str(exc)}, status_code=413 if "large" in str(exc).lower() else 400)
             dev_tok = (body.get("device_token") or "").strip()
             if not dev_tok or dev_tok not in self._device_sessions:
                 return JSONResponse({"ok": False}, status_code=401)
@@ -797,7 +816,10 @@ class DashboardServer:
         async def command(req: Request):
             if not _auth(req):
                 return JSONResponse({"error": "Unauthorized"}, status_code=401)
-            body  = await req.json()
+            try:
+                body = await _read_json_limited(req, 1024 * 1024)
+            except ValueError as exc:
+                return JSONResponse({"error": str(exc)}, status_code=413 if "large" in str(exc).lower() else 400)
             token = req.headers.get("authorization", "").removeprefix("Bearer ").strip()
             enc = body.get("enc", "")
             if enc:
