@@ -1205,3 +1205,17 @@ def test_smart_home_provider_rejection_does_not_mutate_local_device_state():
     assert result["success"] is False
     assert result["error"] == "device refused"
     assert device["is_on"] is False
+
+
+def test_executor_treats_boolean_false_as_tool_failure():
+    from agent.executor import _raise_for_failed_tool_result
+
+    with pytest.raises(RuntimeError, match="Tool reported failure"):
+        _raise_for_failed_tool_result(False)
+    _raise_for_failed_tool_result(True)
+
+
+def test_executor_does_not_claim_forged_skill_executed_after_exception():
+    source = Path("agent/executor.py").read_text(encoding="utf-8")
+    assert "Execution failed:" in source
+    assert "Executed, but returned:" not in source

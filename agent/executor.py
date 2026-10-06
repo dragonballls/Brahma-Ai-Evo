@@ -97,7 +97,7 @@ def _run_skill_forge(
                 else:
                     execution_output = str(run_result).strip()
     except Exception as e_run:
-        execution_output = f"(Executed, but returned: {e_run})"
+        execution_output = f"(Execution failed: {e_run})"
 
     full_result = announcement
     if execution_output:
@@ -114,6 +114,10 @@ def _raise_for_failed_tool_result(result: Any) -> None:
     """Turn structured tool failures into executor errors so recovery can run."""
     if result is None:
         raise RuntimeError("Tool returned no result.")
+    if isinstance(result, bool):
+        if not result:
+            raise RuntimeError("Tool reported failure.")
+        return
     if isinstance(result, dict):
         if result.get("success") is False or result.get("error"):
             raise RuntimeError(str(result.get("error") or result.get("message") or "Tool reported failure."))
