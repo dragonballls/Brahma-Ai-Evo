@@ -44,9 +44,17 @@ def load_settings() -> Dict[str, Any]:
 
         try:
             data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-            normalized = dict(data) if isinstance(data, dict) else {}
-        except (OSError, json.JSONDecodeError):
-            normalized = {}
+        except OSError as exc:
+            raise RuntimeError("Settings file could not be read safely.") from exc
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                "Settings file is unreadable or corrupted; refusing to use empty defaults."
+            ) from exc
+        if not isinstance(data, dict):
+            raise RuntimeError(
+                "Settings file has an invalid root schema; refusing to use empty defaults."
+            )
+        normalized = dict(data)
         _SETTINGS_CACHE = (signature, normalized)
         return dict(normalized)
 
