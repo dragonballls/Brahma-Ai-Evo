@@ -167,13 +167,30 @@ def _norm(text: str) -> str:
     return " ".join((text or "").strip().lower().split())
 
 
+_PROC_NAME_CACHE: dict[int, tuple[float, str]] = {}
+_PROC_NAME_CACHE_TTL = 15.0
+
+
 def _proc_name(pid: int | None) -> str:
     if not pid or psutil is None:
         return ""
+    now = time.monotonic()
+    cached = _PROC_NAME_CACHE.get(int(pid))
+    if cached and (now - cached[0]) < _PROC_NAME_CACHE_TTL:
+        return cached[1]
     try:
-        return psutil.Process(pid).name().lower()
+        name = psutil.Process(int(pid)).name().lower()
     except Exception:
-        return ""
+        name = ""
+    # Short TTL bounds PID reuse while avoiding repeated process-handle/name lookups
+    # across the attention monitor's 5-second polling cycle.
+    _PROC_NAME_CACHE[int(pid)] = (now, name)
+    if len(_PROC_NAME_CACHE) > 512:
+        cutoff = now - _PROC_NAME_CACHE_TTL
+        for cached_pid, (stamp, _) in list(_PROC_NAME_CACHE.items()):
+            if stamp < cutoff:
+                _PROC_NAME_CACHE.pop(cached_pid, None)
+    return name
 
 
 def _match_app(text: str, proc_name: str) -> str | None:
