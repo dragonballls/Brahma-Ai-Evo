@@ -154,6 +154,10 @@ class RuntimeConsistencyTests(unittest.TestCase):
             source[source.index("def _poll_windows"):],
         )
 
+        self.assertIn("scan_succeeded = False", source)
+        self.assertIn("scan_succeeded = True", source)
+        self.assertIn("if scan_succeeded:", source)
+
     def test_attention_monitor_lifecycle_and_speech_sink_are_single_owner(self):
         source = self.read("actions/attention_monitor.py")
         tree = ast.parse(source, filename="actions/attention_monitor.py")
