@@ -18,12 +18,17 @@ class OmniRouteGateway:
 
     def __init__(self, base_url: str | None = None) -> None:
         import os
+        from core.local_endpoint import validate_local_endpoint
 
-        self.base_url = (
+        configured_base_url = (
             base_url
             or os.environ.get("BRAHMA_OMNIROUTE_BASE_URL", "")
             or OMNIROUTE_DEFAULT_BASE_URL
-        ).rstrip("/")
+        )
+        try:
+            self.base_url = validate_local_endpoint(configured_base_url)
+        except ValueError:
+            self.base_url = validate_local_endpoint(OMNIROUTE_DEFAULT_BASE_URL)
         self.provisioner = OmniRouteProvisioner(self.base_url)
         self._lock = threading.Lock()
         self._lifecycle_lock = threading.Lock()
