@@ -15,6 +15,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 import uuid
+from contextlib import contextmanager
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 logger = logging.getLogger("google_workspace_mcp")
@@ -31,26 +32,59 @@ EMAIL_CREDENTIALS_FILE = CONFIG_DIR / "email_credentials.json"
 GOOGLE_WORKSPACE_CRED_FILE = CONFIG_DIR / "google_workspace_credentials.json"
 GOOGLE_WORKSPACE_TOKEN_FILE = CONFIG_DIR / "google_workspace_token.json"
 _CREDENTIAL_LOCK = threading.RLock()
+_CREDENTIAL_PROCESS_LOCK = CONFIG_DIR / ".email_credentials.lock"
 
 
 # ── Credential Helpers ───────────────────────────────────────────────────────
+
+@contextmanager
+def _credential_process_lock():
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    with _CREDENTIAL_PROCESS_LOCK.open("a+b") as handle:
+        if os.name == "nt":
+            import msvcrt
+            handle.seek(0)
+            handle.write(b"\\0")
+            handle.flush()
+            handle.seek(0)
+            deadline = time.monotonic() + 15.0
+            while True:
+                try:
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("Timed out waiting for credential storage lock.")
+                    time.sleep(0.05)
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 
 def _get_fernet_cipher():
     try:
         from cryptography.fernet import Fernet
         with _CREDENTIAL_LOCK:
-            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            if not EMAIL_KEY_FILE.exists():
-                key = Fernet.generate_key()
-                temp = EMAIL_KEY_FILE.with_name(f".{EMAIL_KEY_FILE.name}.{uuid.uuid4().hex}.tmp")
-                temp.write_bytes(key)
-                try:
-                    temp.replace(EMAIL_KEY_FILE)
-                except FileExistsError:
-                    temp.unlink(missing_ok=True)
+            with _credential_process_lock():
+                CONFIG_DIR.mkdir(parents=True, exist_ok=True)
                 if not EMAIL_KEY_FILE.exists():
-                    raise RuntimeError("Unable to publish email encryption key.")
-            with EMAIL_KEY_FILE.open("rb") as f:
+                    key = Fernet.generate_key()
+                    temp = EMAIL_KEY_FILE.with_name(f".{EMAIL_KEY_FILE.name}.{uuid.uuid4().hex}.tmp")
+                    temp.write_bytes(key)
+                    temp.replace(EMAIL_KEY_FILE)
+                    if not EMAIL_KEY_FILE.exists():
+                        raise RuntimeError("Unable to publish email encryption key.")
+                with EMAIL_KEY_FILE.open("rb") as f:
                 key = f.read().strip()
         return Fernet(key)
     except Exception as e:
@@ -94,15 +128,16 @@ def save_stored_gmail_credentials(email_addr: str, app_password: str) -> bool:
             "updated_at": datetime.now().isoformat()
         }
         with _CREDENTIAL_LOCK:
-            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            temp = EMAIL_CREDENTIALS_FILE.with_name(
+            with _credential_process_lock():
+                CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+                temp = EMAIL_CREDENTIALS_FILE.with_name(
                 f".{EMAIL_CREDENTIALS_FILE.name}.{uuid.uuid4().hex}.tmp"
             )
-            temp.write_text(
-                json.dumps(payload, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
-            temp.replace(EMAIL_CREDENTIALS_FILE)
+                temp.write_text(
+                    json.dumps(payload, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                temp.replace(EMAIL_CREDENTIALS_FILE)
         return True
     except Exception as e:
         logger.error(f"[Workspace] Failed to save email credentials: {e}")
