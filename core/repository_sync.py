@@ -1,6 +1,7 @@
 """Optional publication of verified Brahma runtime repairs back to Git."""
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 from pathlib import Path
@@ -66,7 +67,7 @@ def ensure_remote(repo: Path) -> None:
         raise RepositorySyncError(added.stderr.strip() or "Unable to create origin remote.")
 
 
-def publish_verified_repair(target_file: str | Path, patch_id: str, explanation: str = "", repository_relative_path: str | None = None) -> dict:
+def publish_verified_repair(target_file: str | Path, patch_id: str, explanation: str = "", repository_relative_path: str | None = None, expected_preimage_sha256: str | None = None, expected_postimage_sha256: str | None = None) -> dict:
     """Commit/push one already-verified runtime repair when an actual Git checkout exists.
 
     This deliberately does not touch self-coding checkpoints. It only publishes the
@@ -104,6 +105,14 @@ def publish_verified_repair(target_file: str | Path, patch_id: str, explanation:
     if not target.is_file():
         return {"published": False, "reason": "target_missing"}
 
+    if expected_postimage_sha256:
+        try:
+            actual_postimage = hashlib.sha256(target.read_bytes()).hexdigest()
+        except OSError:
+            return {"published": False, "reason": "target_read_failed"}
+        if actual_postimage != expected_postimage_sha256:
+            return {"published": False, "reason": "target_changed_since_verification"}
+
     status = _run(root, ("status", "--porcelain"))
     if status.returncode != 0:
         return {"published": False, "reason": "git_status_failed"}
@@ -137,6 +146,17 @@ def publish_verified_repair(target_file: str | Path, patch_id: str, explanation:
     # Never overwrite remote work. The repair may only fast-forward an unchanged main.
     if local.stdout.strip() != remote.stdout.strip():
         return {"published": False, "reason": "remote_main_changed"}
+
+    if expected_preimage_sha256:
+        try:
+            head_file = _run(root, ("show", f"HEAD:{str(repo_target).replace(chr(92), '/') }"))
+            if head_file.returncode != 0:
+                return {"published": False, "reason": "target_preimage_unavailable"}
+            actual_preimage = hashlib.sha256(head_file.stdout.encode("utf-8")).hexdigest()
+        except (OSError, UnicodeError):
+            return {"published": False, "reason": "target_preimage_read_failed"}
+        if actual_preimage != expected_preimage_sha256:
+            return {"published": False, "reason": "target_preimage_changed"}
 
     add = _run(root, ("add", "--", str(repo_target)))
     if add.returncode != 0:
