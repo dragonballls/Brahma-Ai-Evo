@@ -248,8 +248,12 @@ jobs:
             throw "BrahmaEvo_Setup.exe exited during launch smoke test with code $exitCode."
           }
           Write-Host "BrahmaEvo_Setup.exe remained running for the launch smoke test."
-          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-          Wait-Process -Id $proc.Id -Timeout 10 -ErrorAction SilentlyContinue
+          Stop-Process -Id $proc.Id -Force -ErrorAction Stop
+          Wait-Process -Id $proc.Id -Timeout 10 -ErrorAction SilentlyContinue | Out-Null
+          $proc.Refresh()
+          if (-not $proc.HasExited) {
+            throw "BrahmaEvo_Setup.exe could not be terminated after the launch smoke test."
+          }
 
       - name: Prepare fast portable download
         shell: pwsh
