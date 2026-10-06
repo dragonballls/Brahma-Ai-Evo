@@ -75,6 +75,14 @@ class TaskQueue:
     def stop(self) -> None:
         with self._condition:
             self._running = False
+            for task in self._tasks.values():
+                if task.status == TaskStatus.PENDING:
+                    task.cancel_flag.set()
+                    task.status = TaskStatus.CANCELLED
+            self._queue.clear()
+            for task in self._tasks.values():
+                if task.status == TaskStatus.RUNNING:
+                    task.cancel_flag.set()
             self._condition.notify_all()
         thread = self._worker_thread
         if thread is not None and thread is not threading.current_thread():
