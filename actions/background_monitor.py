@@ -10,7 +10,11 @@ import time
 import requests
 import json
 import uuid
+import math
+import re
+import socket
 from datetime import datetime
+from urllib.parse import urlsplit
 from actions.system_manager import get_system_health
 
 _monitors = {}
@@ -19,6 +23,7 @@ _monitor_wakeup = threading.Event()
 _monitor_thread = None
 _monitor_running = False
 _speech_sink = None
+MAX_MONITORS = 100
 
 def set_monitor_speech_sink(sink_fn):
     global _speech_sink
@@ -66,6 +71,28 @@ def _ensure_monitor_thread() -> None:
         )
         _monitor_thread.start()
 
+
+def _validate_public_website_url(target: str) -> str:
+    parsed = urlsplit(str(target or '').strip())
+    if parsed.scheme.lower() not in {'http', 'https'} or not parsed.hostname:
+        raise ValueError('Website monitors require an absolute HTTP(S) URL.')
+    if parsed.username or parsed.password:
+        raise ValueError('Website monitor URLs may not contain embedded credentials.')
+    try:
+        addresses = {item[4][0] for item in socket.getaddrinfo(parsed.hostname, parsed.port, type=socket.SOCK_STREAM)}
+    except OSError as exc:
+        raise ValueError(f'Website monitor host could not be resolved: {exc}') from exc
+    if not addresses:
+        raise ValueError('Website monitor host could not be resolved.')
+    import ipaddress
+    for raw in addresses:
+        try:
+            address = ipaddress.ip_address(raw)
+        except ValueError as exc:
+            raise ValueError('Website monitor resolved to an invalid address.') from exc
+        if address.is_private or address.is_loopback or address.is_link_local or address.is_reserved or address.is_multicast:
+            raise ValueError('Website monitors may not target private or local network addresses.')
+    return parsed.geturl()
 def _run_check(m_id, m):
     try:
         alert_msg = None
@@ -91,7 +118,7 @@ def _run_check(m_id, m):
                     
         elif m['type'] == 'website':
             try:
-                resp = requests.get(m['target'], timeout=5)
+                resp = requests.get(m['target'], timeout=5, allow_redirects=False)
                 if resp.status_code >= 400:
                     alert_msg = f"Alert: Website {m['target']} is returning status code {resp.status_code}."
             except Exception:
@@ -121,11 +148,19 @@ def add_monitor(monitor_type: str, target: str, threshold: float, condition: str
         raise ValueError("Monitor target is required.")
     if condition not in {"above", "below"}:
         raise ValueError("Monitor condition must be 'above' or 'below'.")
-    interval_sec = max(1, int(interval_sec))
+    if not math.isfinite(float(threshold)):
+        raise ValueError("Monitor threshold must be finite.")
+    interval_sec = max(1, min(int(interval_sec), 86400))
+    if monitor_type == "crypto" and not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", target.lower()):
+        raise ValueError("Crypto monitor targets must be simple CoinGecko IDs.")
+    if monitor_type == "website":
+        target = _validate_public_website_url(target)
     # Never embed a user-controlled URL/target in the monitor identifier:
     # identifiers are used in diagnostics and logs.
     m_id = f"{monitor_type}_{time.time_ns()}_{uuid.uuid4().hex[:12]}"
     with _monitor_lock:
+        if len(_monitors) >= MAX_MONITORS:
+            raise RuntimeError(f"Background monitor limit reached ({MAX_MONITORS}).")
         _monitors[m_id] = {
             "type": monitor_type,
             "target": target.lower(),
