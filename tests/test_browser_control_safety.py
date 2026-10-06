@@ -77,3 +77,12 @@ def test_playwright_file_upload_accepts_target_arguments_used_by_browser_control
     assert "element: Optional[str] = None" in source
     assert "selector: Optional[str] = None" in source
     assert '"browser_file_upload", args' in source
+
+
+def test_browser_public_contract_does_not_advertise_blocked_arbitrary_code_actions():
+    source = Path("actions/browser_control.py").read_text(encoding="utf-8")
+    public_start = source.index("Complete browser automation")
+    public_block = source[public_start:source.index('    import time', public_start)]
+    assert "evaluate" not in public_block
+    assert "run_code" not in public_block
+    assert "expression" not in public_block

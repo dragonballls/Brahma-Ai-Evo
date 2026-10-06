@@ -627,8 +627,6 @@ def browser_control(
         amount      : scroll amount in pixels (default: 500)
         key         : key name for press (e.g. Enter, Escape, Tab, Backspace)
         fields      : {selector: value} dict or list of fields for fill_form
-        expression  : JavaScript expression for evaluate
-        code        : Playwright code snippet for run_code
         path        : output path for screenshot
         tab         : 1-based tab index for switch_tab
         time_ms     : milliseconds to wait
@@ -728,14 +726,6 @@ def browser_control(
             result = mcp.evaluate("document.body ? document.body.innerText.substring(0, 4000) : ''")
             if not result or result == "''":
                 result = mcp.snapshot()
-
-        elif action in {"evaluate", "eval"}:
-            expr = parameters.get("expression") or parameters.get("script") or "document.title"
-            result = mcp.evaluate(expr)
-
-        elif action in {"run_code", "execute"}:
-            code = parameters.get("code") or parameters.get("snippet") or ""
-            result = mcp.run_code_unsafe(code)
 
         elif action in {"screenshot", "take_screenshot"}:
             out_dir = Path.home() / "Desktop" / "BrahmaAI"
