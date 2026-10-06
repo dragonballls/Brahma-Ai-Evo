@@ -287,20 +287,26 @@ class GoogleDriveEngine:
 
     @classmethod
     def read_file(cls, filename: str) -> str:
-        desktop_ai = Path.home() / "Desktop" / "BrahmaAI"
-        target = desktop_ai / filename
+        root = (Path.home() / "Desktop" / "BrahmaAI").resolve()
+        try:
+            target = (root / str(filename or "")).resolve()
+            target.relative_to(root)
+        except (OSError, ValueError):
+            return "Requested file is outside the BrahmaAI workspace."
+
         if not target.exists():
-            for f in desktop_ai.glob("*.*"):
-                if filename.lower() in f.name.lower():
-                    target = f
+            query = str(filename or "").casefold()
+            for candidate in root.glob("*.*"):
+                if query and query in candidate.name.casefold():
+                    target = candidate
                     break
 
-        if not target or not target.exists():
+        if not target.exists() or not target.is_file():
             return f"File '{filename}' not found."
 
         try:
             if target.suffix.lower() in {".txt", ".md", ".json", ".csv", ".py", ".html"}:
-                with open(target, "r", encoding="utf-8", errors="replace") as f:
+                with target.open("r", encoding="utf-8", errors="replace") as f:
                     return f.read()[:3000]
             return f"File '{target.name}' exists ({round(target.stat().st_size / 1024, 1)} KB). Binary format preview not available as plain text."
         except Exception as e:
