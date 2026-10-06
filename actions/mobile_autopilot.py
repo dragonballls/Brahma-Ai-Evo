@@ -203,8 +203,8 @@ def mobile_autopilot(parameters: dict, response=None, player=None, session_memor
                 "steps_attempted": step + 1,
             })
 
-            try:
-                if action == "tap":
+        try:
+            if action == "tap":
                     command_parameters = {
                         "x": _validate_coordinate(decision.get("x"), "x"),
                         "y": _validate_coordinate(decision.get("y"), "y"),
