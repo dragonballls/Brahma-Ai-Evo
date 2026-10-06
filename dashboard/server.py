@@ -449,19 +449,40 @@ def _read(name: str) -> str:
 
 
 def _ensure_ssl_certs() -> bool:
-    """Create local self-signed certs when missing so phones can use HTTPS."""
+    """Create or repair local self-signed certs without accepting partial/corrupt files."""
     certs = get_user_data_dir() / "config" / "certs"
     key_path = certs / "brahma.key"
     cert_path = certs / "brahma.crt"
-    if key_path.exists() and cert_path.exists():
-        return True
     try:
-        import datetime
-        import ipaddress
         from cryptography import x509
         from cryptography.hazmat.primitives import hashes, serialization
         from cryptography.hazmat.primitives.asymmetric import rsa
         from cryptography.x509.oid import NameOID
+        import datetime
+        import ipaddress
+        import os
+
+        if key_path.is_file() and cert_path.is_file():
+            try:
+                key = serialization.load_pem_private_key(key_path.read_bytes(), password=None)
+                cert = x509.load_pem_x509_certificate(cert_path.read_bytes())
+                now = datetime.datetime.now(datetime.timezone.utc)
+                not_before = getattr(cert, "not_valid_before_utc", cert.not_valid_before)
+                not_after = getattr(cert, "not_valid_after_utc", cert.not_valid_after)
+                key_public = key.public_key().public_bytes(
+                    serialization.Encoding.DER,
+                    serialization.PublicFormat.SubjectPublicKeyInfo,
+                )
+                cert_public = cert.public_key().public_bytes(
+                    serialization.Encoding.DER,
+                    serialization.PublicFormat.SubjectPublicKeyInfo,
+                )
+                if not (not_before <= now <= not_after) or key_public != cert_public:
+                    raise ValueError("dashboard certificate/key pair is invalid or mismatched")
+                return True
+            except Exception:
+                # Regenerate invalid or incomplete local credentials below.
+                pass
 
         certs.mkdir(parents=True, exist_ok=True)
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -487,19 +508,28 @@ def _ensure_ssl_certs() -> bool:
             .add_extension(x509.SubjectAlternativeName(alt_names), critical=False)
             .sign(key, hashes.SHA256())
         )
-        key_path.write_bytes(
-            key.private_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.TraditionalOpenSSL,
-                encryption_algorithm=serialization.NoEncryption(),
-            )
+
+        key_bytes = key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.TraditionalOpenSSL,
+            encryption_algorithm=serialization.NoEncryption(),
         )
-        cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+        cert_bytes = cert.public_bytes(serialization.Encoding.PEM)
+        token = secrets.token_hex(8)
+        key_tmp = certs / f".brahma-{token}.key.tmp"
+        cert_tmp = certs / f".brahma-{token}.crt.tmp"
+        try:
+            key_tmp.write_bytes(key_bytes)
+            cert_tmp.write_bytes(cert_bytes)
+            os.replace(key_tmp, key_path)
+            os.replace(cert_tmp, cert_path)
+        finally:
+            key_tmp.unlink(missing_ok=True)
+            cert_tmp.unlink(missing_ok=True)
         return True
     except Exception as exc:
         print(f"[Dashboard] Could not create HTTPS certificate: {exc}")
         return False
-
 
 # ── DashboardServer ───────────────────────────────────────────────────────────
 
