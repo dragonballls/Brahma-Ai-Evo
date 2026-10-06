@@ -88,11 +88,11 @@ class OpenRouterClient:
     def __init__(self) -> None:
         self.api_key  = _load_api_key()
         self._headers = {
-            "Authorization": f"Bearer {self.api_key}",
             "Content-Type":  "application/json",
             "HTTP-Referer":  "https://github.com/brahma-ai",
             "X-Title":       "Brahma Evo",
         }
+        self._credential_lock = __import__("threading").Lock()
         self._omniroute = _omniroute_gateway()
 
     def _is_rate_limited(self, model: str) -> bool:
@@ -179,10 +179,17 @@ class OpenRouterClient:
             logger.warning(f"[OmniRoute] request failed; using direct provider fallback: {exc}")
             return None
 
-    def _refresh_credentials(self) -> None:
-        """Reload runtime credentials so UI changes take effect without a restart."""
-        self.api_key = _load_api_key()
-        self._headers["Authorization"] = f"Bearer {self.api_key}" if self.api_key else ""
+    def _request_headers(self) -> dict[str, str]:
+        """Return an immutable per-request header snapshot so parallel calls cannot race."""
+        with self._credential_lock:
+            key = _load_api_key()
+            self.api_key = key
+            headers = dict(self._headers)
+            if key:
+                headers["Authorization"] = f"Bearer {key}"
+            else:
+                headers.pop("Authorization", None)
+            return headers
 
     def _call(
         self,
@@ -204,8 +211,8 @@ class OpenRouterClient:
         if self._is_rate_limited(model) or self._is_temporarily_failed(model):
             return None
 
-        self._refresh_credentials()
-        if not self.api_key:
+        headers = self._request_headers()
+        if not headers.get("Authorization"):
             raise PermissionError(
                 f"[OpenRouter] API key is missing. Add a valid sk-or- key in {API_CONFIG_PATH}."
             )
@@ -214,7 +221,7 @@ class OpenRouterClient:
             try:
                 resp = requests.post(
                     API_URL,
-                    headers=self._headers,
+                    headers=headers,
                     json=payload,
                     timeout=REQUEST_TIMEOUT,
                 )
@@ -372,8 +379,8 @@ class OpenRouterClient:
         """Make one OpenRouter request that preserves structured tool calls."""
         if self._is_rate_limited(model) or self._is_temporarily_failed(model):
             return {}
-        self._refresh_credentials()
-        if not self.api_key:
+        headers = self._request_headers()
+        if not headers.get("Authorization"):
             raise PermissionError(
                 f"[OpenRouter] API key is missing. Add it in {API_CONFIG_PATH}."
             )
