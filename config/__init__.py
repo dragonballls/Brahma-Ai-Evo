@@ -6,6 +6,7 @@ as the live API-key store.
 """
 from __future__ import annotations
 
+import base64
 import json
 import platform
 import threading
@@ -14,6 +15,52 @@ from typing import Any
 from core.runtime_paths import API_CONFIG_PATH
 from core.provider_policy import GEMINI, OPENROUTER, LOCAL, normalize_provider
 
+_SECRET_SUFFIXES = ("_api_key",)
+_PROTECTED_PREFIX = "dpapi:"
+
+
+def _protect_secret(value: object) -> str:
+    text = str(value or "")
+    if not text or platform.system().lower() != "windows":
+        return text
+    try:
+        import win32crypt
+        protected = win32crypt.CryptProtectData(
+            text.encode("utf-8"),
+            "Brahma Evo runtime secret",
+            None, None, None, 0,
+        )[1]
+        return _PROTECTED_PREFIX + base64.b64encode(protected).decode("ascii")
+    except Exception as exc:
+        raise RuntimeError("Windows secret protection is unavailable; refusing to store API keys in plaintext.") from exc
+
+
+def _unprotect_secret(value: object) -> str:
+    raw = str(value or "")
+    if not raw.startswith(_PROTECTED_PREFIX):
+        return raw
+    try:
+        import win32crypt
+        blob = base64.b64decode(raw[len(_PROTECTED_PREFIX):], validate=True)
+        return win32crypt.CryptUnprotectData(blob, None)[1].decode("utf-8")
+    except Exception:
+        return ""
+
+
+def _encode_config_for_storage(config: dict[str, Any]) -> dict[str, Any]:
+    encoded = dict(config)
+    for key, value in list(encoded.items()):
+        if key.endswith(_SECRET_SUFFIXES) and value:
+            encoded[key] = _protect_secret(value)
+    return encoded
+
+
+def _decode_config_from_storage(config: dict[str, Any]) -> dict[str, Any]:
+    decoded = dict(config)
+    for key, value in list(decoded.items()):
+        if key.endswith(_SECRET_SUFFIXES) and value:
+            decoded[key] = _unprotect_secret(value)
+    return decoded
 
 _CONFIG_LOCK = threading.RLock()
 
@@ -26,7 +73,7 @@ def get_config() -> dict[str, Any]:
             if API_CONFIG_PATH.is_file():
                 data = json.loads(API_CONFIG_PATH.read_text(encoding="utf-8"))
                 if isinstance(data, dict):
-                    defaults.update(data)
+                    defaults.update(_decode_config_from_storage(data))
         except (OSError, json.JSONDecodeError):
             pass
         return defaults
@@ -54,7 +101,7 @@ def save_config(updates: dict[str, Any]) -> None:
         temp = API_CONFIG_PATH.with_suffix(".json.tmp")
         try:
             temp.write_text(
-                json.dumps(current, indent=4, ensure_ascii=False),
+                json.dumps(_encode_config_for_storage(current), indent=4, ensure_ascii=False),
                 encoding="utf-8",
             )
             temp.replace(API_CONFIG_PATH)
