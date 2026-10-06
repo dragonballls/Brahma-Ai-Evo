@@ -739,7 +739,9 @@ class RuntimeConsistencyTests(unittest.TestCase):
 
     def test_task_queue_can_restart_after_stop(self):
         source = self.read("agent/task_queue.py")
-        self.assertIn("thread.join(timeout=2.0)", source)
+        self.assertIn("deadline = time.monotonic() + self._stop_timeout", source)
+        self.assertIn("thread.join(timeout=max(0.0, deadline - time.monotonic()))", source)
+        self.assertIn("task_thread.join(timeout=remaining)", source)
         self.assertIn("self._worker_thread = None", source)
         self.assertIn("def is_running(self) -> bool:", source)
         self.assertIn("with self._condition:", source)
