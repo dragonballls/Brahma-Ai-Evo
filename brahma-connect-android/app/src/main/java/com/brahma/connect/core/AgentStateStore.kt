@@ -80,5 +80,8 @@ object BrahmaConnectCapabilities {
         "apps",
         "open_url",
         "wifi_state",
+        "files",
+        "ui_control",
+        "unlock_phone",
     )
 }
