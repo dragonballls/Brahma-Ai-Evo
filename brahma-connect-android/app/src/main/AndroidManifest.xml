@@ -22,7 +22,7 @@
         android:icon="@drawable/ic_brahma_launcher"
         android:label="@string/app_name"
         android:roundIcon="@drawable/ic_brahma_launcher"
-        android:usesCleartextTraffic="true"
+        android:usesCleartextTraffic="false"
         android:supportsRtl="true"
         android:theme="@style/Theme.BrahmaConnect">
         <activity
