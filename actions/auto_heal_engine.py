@@ -166,7 +166,14 @@ class SafetySandbox:
                     continue
                 target = Path(entry.get("target_file", ""))
                 backup = Path(entry.get("backup_path", ""))
-                if not backup.exists() or not target.exists():
+                try:
+                    target = target.resolve()
+                    backup = backup.resolve()
+                    target.relative_to(BASE_DIR.resolve())
+                    backup.relative_to(BACKUPS_DIR.resolve())
+                except (OSError, ValueError):
+                    return {"success": False, "message": "Rollback paths are outside the protected auto-heal roots."}
+                if not backup.is_file() or not target.is_file():
                     return {"success": False, "message": f"Backup file '{backup}' missing."}
 
                 try:
