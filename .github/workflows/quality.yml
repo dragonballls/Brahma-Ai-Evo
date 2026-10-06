@@ -24,7 +24,7 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
       - name: Install lightweight test dependency
-        run: python -m pip install --prefer-binary requests psutil pywin32 bleak pytest
+        run: python -m pip install --prefer-binary requests psutil pywin32 bleak pytest fastapi uvicorn
       - name: Compile all Python sources
         run: python -m compileall -q .
       - name: Run whole-repository integrity scanner
@@ -39,6 +39,8 @@ jobs:
         run: python -m pytest -q tests/test_ui_performance.py
       - name: Run capability usability regressions
         run: python -m unittest tests.test_capability_usability -v
+      - name: Run follow-up audit regressions
+        run: python -m unittest tests.test_followup_audits -v
 
   parallel-regressions:
     runs-on: windows-latest
@@ -98,11 +100,3 @@ jobs:
       - name: Install lightweight test dependency
         run: python -m pip install requests psutil pywin32 bleak pytest
       - name: Run ${{ matrix.group }} regressions
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $commands = @'
-          ${{ matrix.commands }}
-          '@
-          & ([scriptblock]::Create($commands))
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
