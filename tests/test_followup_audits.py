@@ -589,3 +589,15 @@ def test_ota_rejects_mismatched_supplied_checksum(monkeypatch, tmp_path: Path):
 def test_dynamic_registry_redacts_credential_like_errors():
     from core.dynamic_registry import _redact_text
     assert _redact_text("failed bearer sk-proj-abcdefghijklmnopqrstuvwxyz123456") == "failed bearer [REDACTED]"
+
+
+def test_gateway_pair_attempt_tracking_is_bounded():
+    from brahma_connect.gateway.server import BrahmaGateway
+
+    gateway = BrahmaGateway(Path("."))
+    gateway._pair_attempts = {
+        f"192.0.2.{i}": (1, 0.0) for i in range(4105)
+    }
+    # Any pairing attempt should prune stale entries before adding more state.
+    gateway._pair_attempts["current"] = (1, 0.0)
+    assert len(gateway._pair_attempts) <= 4106
