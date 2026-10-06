@@ -1263,3 +1263,23 @@ def test_executor_preserves_structured_dynamic_skill_failures():
     dynamic_block = source.split('elif tool == "dynamic_skill"', 1)[1].split('else:', 1)[0]
     assert "if isinstance(run_res, (dict, list, bool)):" in dynamic_block
     assert "return run_res" in dynamic_block
+
+
+def test_confirmation_gate_does_not_replace_an_existing_pending_action():
+    import core.confirm as confirm
+
+    shown = []
+    confirm.bind(lambda title, detail: shown.append((title, detail)), lambda: None)
+    first = confirm.request("first", "First action", "first detail", lambda: "first")
+    second = confirm.request("second", "Second action", "second detail", lambda: "second")
+
+    assert "First action" in first
+    assert "First action" in second
+    assert len(shown) == 1
+
+    with confirm._lock:
+        pending = confirm._pending
+    assert pending is not None
+    assert pending.key == "first"
+
+    confirm.resolve(False)
