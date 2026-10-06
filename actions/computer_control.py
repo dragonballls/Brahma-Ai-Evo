@@ -248,11 +248,16 @@ def _focus_window(title: str) -> str:
     if os_name == "windows":
         try:
             powershell_title = title.replace("'", "''")
-            script = f"(New-Object -ComObject WScript.Shell).AppActivate('{powershell_title}')"
-            subprocess.run(
+            script = (
+                f"$ok = (New-Object -ComObject WScript.Shell).AppActivate('{powershell_title}'); "
+                f"if (-not $ok) {{ exit 1 }}"
+            )
+            result = subprocess.run(
                 ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
                 capture_output=True, timeout=5,
             )
+            if result.returncode != 0:
+                return f"focus_window (Windows) failed: window not found: {title}"
             time.sleep(0.3)
             return f"Focused window: {title}"
         except Exception as e:
@@ -270,10 +275,12 @@ def _focus_window(title: str) -> str:
             f'set frontmost of (first process whose name contains "{applescript_title}") to true'
         )
         try:
-            subprocess.run(
+            result = subprocess.run(
                 ["osascript", "-e", script],
                 capture_output=True, timeout=5,
             )
+            if result.returncode != 0:
+                return f"focus_window (macOS) failed: window not found: {title}"
             time.sleep(0.3)
             return f"Focused window: {title}"
         except Exception as e:
@@ -295,6 +302,8 @@ def _focus_window(title: str) -> str:
                 ["xdotool", "search", "--name", title, "windowactivate"],
                 capture_output=True, timeout=5,
             )
+            if result.returncode != 0:
+                return f"focus_window (Linux) failed: window not found: {title}"
             time.sleep(0.3)
             return f"Focused window: {title}"
         except FileNotFoundError:

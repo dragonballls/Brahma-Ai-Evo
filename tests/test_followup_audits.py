@@ -919,3 +919,27 @@ def test_conversation_export_preserves_existing_file_if_atomic_promotion_fails(t
 
     assert destination.read_text(encoding="utf-8") == "old export"
     assert not list(tmp_path.glob(".conversation.json.export-*"))
+
+
+
+def test_focus_window_never_reports_success_when_backend_returns_failure(monkeypatch):
+    import actions.computer_control as computer
+
+    class FailedProcess:
+        returncode = 1
+
+    monkeypatch.setattr(computer.subprocess, "run", lambda *_args, **_kwargs: FailedProcess())
+    monkeypatch.setattr(computer, "_get_os", lambda: "windows")
+    assert "failed" in computer._focus_window("Missing Window").lower()
+
+    monkeypatch.setattr(computer, "_get_os", lambda: "mac")
+    assert "failed" in computer._focus_window("Missing Window").lower()
+
+    monkeypatch.setattr(computer, "_get_os", lambda: "linux")
+    assert "failed" in computer._focus_window("Missing Window").lower()
+
+
+def test_windows_focus_script_treats_false_appactivate_as_failure():
+    source = Path("actions/computer_control.py").read_text(encoding="utf-8")
+    assert 'if (-not $ok) { exit 1 }' in source
+    assert "if result.returncode != 0:" in source
