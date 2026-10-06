@@ -33,7 +33,14 @@ def _sanitize_filename(name: str, default: str) -> str:
     return safe or default
 
 
-def _resolve_output_path(output_path: str | None, title: str, ext: str, fallback_name: str) -> Path:
+def _resolve_output_path(
+    output_path: str | None,
+    title: str,
+    ext: str,
+    fallback_name: str,
+    *,
+    overwrite: bool = False,
+) -> Path:
     if output_path:
         path = Path(output_path).expanduser()
         if not path.is_absolute():
@@ -47,7 +54,23 @@ def _resolve_output_path(output_path: str | None, title: str, ext: str, fallback
                 path = Path.cwd() / path
         if path.suffix.lower() != ext:
             path = path.with_suffix(ext)
+        home = Path.home().resolve()
+        try:
+            resolved = path.resolve(strict=False)
+            resolved.relative_to(home)
+        except (OSError, ValueError) as exc:
+            raise ValueError("PDF output path must remain inside the user's home directory.") from exc
+        current = Path(path.anchor) if path.anchor else Path(".")
+        parts = path.parts[1:] if path.anchor else path.parts
+        for part in parts:
+            current = current / part
+            if current.is_symlink():
+                raise ValueError("PDF output path may not contain symlinked components.")
         path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and not overwrite:
+            raise FileExistsError(
+                f"Refusing to overwrite existing PDF without overwrite=True: {path}"
+            )
         return path
 
     DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -599,7 +622,13 @@ def create_pdf(parameters: dict, player=None) -> str:
     pdf = _import_pdf()
     title = (parameters.get("title") or parameters.get("name") or "Document").strip()
     subtitle = (parameters.get("subtitle") or "").strip()
-    output_path = _resolve_output_path(parameters.get("output_path"), title, ".pdf", "brahma_ai_output")
+    output_path = _resolve_output_path(
+        parameters.get("output_path"),
+        title,
+        ".pdf",
+        "brahma_ai_output",
+        overwrite=bool(parameters.get("overwrite", False)),
+    )
     auto_open = parameters.get("auto_open", True)
     action = (parameters.get("action") or "create").lower().strip()
     source_path_str = (parameters.get("file_path") or "").strip()
