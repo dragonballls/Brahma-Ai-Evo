@@ -261,7 +261,18 @@ def connect_execute(parameters: dict[str, Any] | None = None, player=None, speak
     if not action:
         return _fail("An action name is required.", "MISSING_PARAMETERS", device=target, action="connect_execute")
 
-    command_parameters = dict(params.get("parameters") or {})
+    raw_command_parameters = params.get("parameters")
+    if raw_command_parameters is None:
+        command_parameters = {}
+    elif not isinstance(raw_command_parameters, dict):
+        return _fail(
+            "Command parameters must be an object.",
+            "MALFORMED_PARAMETERS",
+            device=target,
+            action=action,
+        )
+    else:
+        command_parameters = dict(raw_command_parameters)
     for key, value in params.items():
         if key not in {"device", "target", "device_id", "name", "query", "action", "command", "parameters"}:
             command_parameters.setdefault(key, value)
