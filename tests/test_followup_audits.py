@@ -228,6 +228,35 @@ def test_updater_refuses_to_update_non_main_branch():
     assert fake_calls == [("branch", "--show-current")]
 
 
+def test_crucible_rejects_common_hardcoded_credentials():
+    from core.skill_crucible import SkillCrucible, _sandbox_environment
+
+    ok, message = SkillCrucible.validate_ast(
+        "def execute(**kwargs):\n    return {'key': 'sk-abcdefghijklmnopqrstuvwxyz123456'}"
+    )
+    assert ok is False
+    assert "credential" in message.lower()
+
+    env = _sandbox_environment(Path("/tmp/brahma-crucible-test"))
+    assert env["LOCALAPPDATA"].endswith("brahma-crucible-test")
+    assert env["HOME"].endswith("brahma-crucible-test")
+    assert all(
+        not any(marker in key.upper() for marker in ("API_KEY", "TOKEN", "SECRET", "PASSWORD", "PRIVATE"))
+        for key in env
+    )
+
+
+def test_skill_and_runtime_promotions_are_atomic():
+    skill_source = Path("core/skill_forge.py").read_text(encoding="utf-8")
+    assert "staging_dir.replace(target_dir)" in skill_source
+    assert "target_dir.mkdir" not in skill_source
+    assert "committed and target_dir.exists()" in skill_source
+    runtime_source = Path("scripts/prepare_omniroute_runtime.py").read_text(encoding="utf-8")
+    assert "destination.replace(backup)" in runtime_source
+    assert "promotion.replace(destination)" in runtime_source
+    assert "shutil.rmtree(destination)" not in runtime_source
+
+
 def test_checkpoint_state_transitions_support_slotted_dataclass():
     from core.self_coding import Checkpoint
 
