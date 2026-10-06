@@ -679,11 +679,12 @@ class DashboardServer:
         # serve CryptoJS from local cache, fallback to CDN redirect
         @app.get("/static/crypto.js")
         async def serve_crypto():
-            if _CRYPTOJS_FILE.exists():
-                return FileResponse(str(_CRYPTOJS_FILE),
-                                    media_type="application/javascript")
-            from fastapi.responses import RedirectResponse
-            return RedirectResponse(_CRYPTOJS_CDN)
+            if _CRYPTOJS_FILE.is_file():
+                return FileResponse(str(_CRYPTOJS_FILE), media_type="application/javascript")
+            return JSONResponse(
+                {"error": "Local CryptoJS bundle is unavailable; external CDN access is disabled."},
+                status_code=503,
+            )
 
         @app.get("/login", response_class=HTMLResponse)
         async def login_page():
