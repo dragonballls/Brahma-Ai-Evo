@@ -194,7 +194,7 @@ class RepositoryIntegrityTests(unittest.TestCase):
         self.assertIn("private fun send(json: JSONObject): Boolean", source)
         self.assertIn("val accepted = send(payload)", source)
         self.assertIn('if (accepted) "Sent" else "Failed — not connected"', source)
-        self.assertNotIn("send(payload)\n        val sent = pending.copy(status = "Sent")", source)
+        self.assertNotIn('send(payload)\n        val sent = pending.copy(status = "Sent")', source)
 
     def test_pyinstaller_datas_use_two_part_entries(self):
         source = (ROOT / "installer" / "BrahmaEvo.spec").read_text(encoding="utf-8")
