@@ -10,10 +10,16 @@ import base64
 import json
 import platform
 import threading
+import os
+import secrets
+import stat
 from typing import Any
 
 from core.runtime_paths import API_CONFIG_PATH
 from core.provider_policy import GEMINI, OPENROUTER, LOCAL, normalize_provider
+
+_PORTABLE_PREFIX = "portable:v1:"
+_PORTABLE_KEY_FILE = API_CONFIG_PATH.with_name(".brahma-secret.key")
 
 _SECRET_SUFFIXES = ("_api_key",)
 _PROTECTED_PREFIX = "dpapi:"
@@ -108,10 +114,38 @@ def _dpapi_unprotect(blob: bytes) -> str:
         kernel32.LocalFree(out_blob.pbData)
 
 
+def _portable_secret_key() -> bytes:
+    _PORTABLE_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if _PORTABLE_KEY_FILE.is_file():
+        key = _PORTABLE_KEY_FILE.read_bytes()
+        if len(key) != 32:
+            raise RuntimeError("Portable secret key is invalid.")
+        return key
+    key = secrets.token_bytes(32)
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    fd = os.open(_PORTABLE_KEY_FILE, flags, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(key)
+        if os.name != "nt":
+            os.chmod(_PORTABLE_KEY_FILE, stat.S_IRUSR | stat.S_IWUSR)
+    except Exception:
+        try:
+            _PORTABLE_KEY_FILE.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    return key
+
+
 def _protect_secret(value: object) -> str:
     text = str(value or "")
-    if not text or platform.system().lower() != "windows":
-        return text
+    if not text:
+        return ""
+    if platform.system().lower() != "windows":
+        from cryptography.fernet import Fernet
+        key = base64.urlsafe_b64encode(_portable_secret_key())
+        return _PORTABLE_PREFIX + Fernet(key).encrypt(text.encode("utf-8")).decode("ascii")
     try:
         import win32crypt
         result = win32crypt.CryptProtectData(
@@ -133,6 +167,13 @@ def _protect_secret(value: object) -> str:
 
 def _unprotect_secret(value: object) -> str:
     raw = str(value or "")
+    if raw.startswith(_PORTABLE_PREFIX):
+        try:
+            from cryptography.fernet import Fernet
+            key = base64.urlsafe_b64encode(_portable_secret_key())
+            return Fernet(key).decrypt(raw[len(_PORTABLE_PREFIX):].encode("ascii")).decode("utf-8")
+        except Exception as exc:
+            raise RuntimeError("Stored portable API-key protection could not be decrypted.") from exc
     if not raw.startswith(_PROTECTED_PREFIX):
         return raw
     try:
