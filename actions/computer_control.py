@@ -241,10 +241,14 @@ def _clear_field() -> str:
 
 def _focus_window(title: str) -> str:
     os_name = _get_os()
+    title = str(title or "")
+    if not title:
+        return "A window title is required."
 
     if os_name == "windows":
         try:
-            script = f'(New-Object -ComObject WScript.Shell).AppActivate("{title}")'
+            powershell_title = title.replace("'", "''")
+            script = f"(New-Object -ComObject WScript.Shell).AppActivate('{powershell_title}')"
             subprocess.run(
                 ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
                 capture_output=True, timeout=5,
@@ -255,9 +259,15 @@ def _focus_window(title: str) -> str:
             return f"focus_window (Windows) failed: {e}"
 
     if os_name == "mac":
+        applescript_title = (
+            title.replace("\\", "\\\\")
+            .replace('"', '\\"')
+            .replace("\r", "\\r")
+            .replace("\n", "\\n")
+        )
         script = (
             f'tell application "System Events" to '
-            f'set frontmost of (first process whose name contains "{title}") to true'
+            f'set frontmost of (first process whose name contains "{applescript_title}") to true'
         )
         try:
             subprocess.run(
