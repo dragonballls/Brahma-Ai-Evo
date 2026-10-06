@@ -1,5 +1,6 @@
 from core.provider_policy import GEMINI, normalize_provider, is_local
 from core.local_brain import DEFAULT_ENDPOINT as LOCAL_DEFAULT_ENDPOINT, DEFAULT_MODEL as LOCAL_DEFAULT_MODEL
+from core.local_endpoint import validate_local_endpoint
 import json
 import logging
 import requests
@@ -35,10 +36,15 @@ class UnifiedAIClient:
                 data.get("default_ai_provider", GEMINI),
                 GEMINI,
             )
-            self._local_url = str(
+            configured_local_url = str(
                 data.get("local_ai_url", LOCAL_DEFAULT_ENDPOINT)
                 or LOCAL_DEFAULT_ENDPOINT
             ).rstrip("/")
+            try:
+                self._local_url = validate_local_endpoint(configured_local_url)
+            except ValueError as exc:
+                logger.warning("[LLM Client] Invalid Local AI endpoint; using safe local default: %s", exc)
+                self._local_url = LOCAL_DEFAULT_ENDPOINT
             self._local_model = str(
                 data.get("local_ai_model", LOCAL_DEFAULT_MODEL)
                 or LOCAL_DEFAULT_MODEL
@@ -55,7 +61,11 @@ class UnifiedAIClient:
         if response_format:
             payload["response_format"] = response_format
 
-        endpoint = f"{self._local_url}/chat/completions"
+        try:
+            endpoint = f"{validate_local_endpoint(self._local_url)}/chat/completions"
+        except ValueError as exc:
+            logger.error("[LLM Client] Refusing unsafe Local AI endpoint: %s", exc)
+            return None
         try:
             resp = requests.post(
                 endpoint,
