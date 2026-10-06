@@ -25,3 +25,11 @@ def test_playwright_mcp_launcher_does_not_request_shell_execution():
     source = (ROOT / "actions" / "playwright_mcp_client.py").read_text(encoding="utf-8")
     assert "resolved_npx = shutil.which(npx_cmd)" in source
     assert "shell=False" in source
+
+
+def test_browser_evaluation_is_not_exposed_as_a_planner_action():
+    planner = (ROOT / "agent" / "planner.py").read_text(encoding="utf-8")
+    browser = (ROOT / "actions" / "browser_control.py").read_text(encoding="utf-8")
+    assert '\"evaluate\"' not in planner
+    assert "def browser_evaluate_internal" in browser
+    assert 'allow_unsafe_code=true' not in browser
