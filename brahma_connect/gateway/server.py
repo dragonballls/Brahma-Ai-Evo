@@ -22,6 +22,31 @@ from .protocol import ProtocolTypes, build_message, validate_message, now_iso, n
 from .websocket import ConnectionHub
 
 
+def _safe_int(value: object, default: int, *, minimum: int | None = None, maximum: int | None = None) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    if minimum is not None and parsed < minimum:
+        return default
+    if maximum is not None and parsed > maximum:
+        return default
+    return parsed
+
+
+def _safe_bool(value: object, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    raw = str(value or "").strip().casefold()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 def _default_config_path(base_dir: Path) -> Path:
     return Path(base_dir) / "config" / "brahma_connect.json"
 
@@ -63,13 +88,13 @@ class BrahmaGatewayConfig:
         if override:
             data.update({k: v for k, v in override.items() if v is not None})
         return cls(
-            host=str(data.get("host", "0.0.0.0")),
-            port=int(data.get("port", 8765)),
-            enabled=bool(data.get("enabled", True)),
-            advertise=bool(data.get("advertise", True)),
-            service_name=str(data.get("service_name", "_BRAHMA._tcp.local.")),
-            pairing_ttl_seconds=int(data.get("pairing_ttl_seconds", 300)),
-            request_timeout_seconds=int(data.get("request_timeout_seconds", 30)),
+            host=str(data.get("host", "0.0.0.0")).strip() or "0.0.0.0",
+            port=_safe_int(data.get("port", 8765), 8765, minimum=1, maximum=65535),
+            enabled=_safe_bool(data.get("enabled", True), True),
+            advertise=_safe_bool(data.get("advertise", True), True),
+            service_name=str(data.get("service_name", "_BRAHMA._tcp.local.")).strip() or "_BRAHMA._tcp.local.",
+            pairing_ttl_seconds=_safe_int(data.get("pairing_ttl_seconds", 300), 300, minimum=60),
+            request_timeout_seconds=_safe_int(data.get("request_timeout_seconds", 30), 30, minimum=1),
             config_path=config_path,
             registry_path=_default_registry_path(base_dir),
         )
@@ -107,7 +132,9 @@ class BrahmaGateway:
         self._server: uvicorn.Server | None = None
         self._log: list[dict[str, Any]] = []
         self._pending_requests: dict[str, dict[str, Any]] = {}
+        self._pending_lock = threading.RLock()
         self._pair_attempts: dict[str, tuple[int, float]] = {}
+        self._serve_lock = threading.Lock()
         self.on_chat_message = None
         self.app = self._build_app()
 
@@ -248,6 +275,8 @@ class BrahmaGateway:
         return offer.to_dict()
 
     def list_pending_requests(self) -> list[dict[str, Any]]:
+        with self._pending_lock:
+            items = list(self._pending_requests.items())
         return [
             {
                 "pending_id": pending_id,
@@ -260,7 +289,7 @@ class BrahmaGateway:
                 "permissions": list(item.get("permissions") or []),
                 "ip": item.get("ip", ""),
             }
-            for pending_id, item in self._pending_requests.items()
+            for pending_id, item in items
         ]
 
     async def approve_pending_request(self, pending_id: str) -> dict[str, Any]:
