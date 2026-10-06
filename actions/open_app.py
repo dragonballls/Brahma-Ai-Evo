@@ -175,7 +175,7 @@ def _launch_macos(app_name: str) -> bool:
         time.sleep(0.8)
         pyautogui.press("enter")
         time.sleep(1.5)
-        return True
+        return False
     except Exception as e:
         print(f"[open_app] ⚠️ macOS Spotlight failed: {e}")
         return False
@@ -197,8 +197,8 @@ def _launch_linux(app_name: str) -> bool:
             pass
 
     try:
-        subprocess.run(["xdg-open", app_name], capture_output=True, timeout=5)
-        return True
+        result = subprocess.run(["xdg-open", app_name], capture_output=True, timeout=5)
+        return result.returncode == 0
     except Exception:
         pass
 
