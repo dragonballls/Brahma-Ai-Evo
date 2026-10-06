@@ -39,11 +39,18 @@ class ConnectionHub:
         return state
 
     async def unregister(self, websocket: WebSocket) -> str:
+        pending: list[asyncio.Future] = []
         async with self._lock:
             device_id = self._socket_index.pop(id(websocket), "")
             if device_id:
-                self._connections.pop(device_id, None)
-            return device_id
+                state = self._connections.pop(device_id, None)
+                if state is not None:
+                    pending = list(state.pending.values())
+                    state.pending.clear()
+        for future in pending:
+            if not future.done():
+                future.set_exception(RuntimeError("Device connection closed."))
+        return device_id
 
     async def get(self, device_id: str) -> ConnectionState | None:
         async with self._lock:
