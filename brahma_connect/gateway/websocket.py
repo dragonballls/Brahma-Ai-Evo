@@ -147,10 +147,20 @@ class ConnectionHub:
             future.set_exception(RuntimeError(error))
 
     async def close_device(self, device_id: str, code: int = 1000, reason: str = "") -> bool:
+        pending: list[asyncio.Future] = []
         async with self._lock:
-            state = self._connections.get(str(device_id))
-        if state is None:
-            return False
+            state = self._connections.pop(str(device_id), None)
+            if state is None:
+                return False
+            state.authenticated = False
+            self._socket_index.pop(id(state.websocket), None)
+            pending = list(state.pending.values())
+            state.pending.clear()
+
+        for future in pending:
+            if not future.done():
+                future.set_exception(RuntimeError(reason or "Device connection closed."))
+
         try:
             await state.websocket.close(code=code, reason=reason)
         except Exception:
