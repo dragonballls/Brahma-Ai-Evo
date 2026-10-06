@@ -619,7 +619,9 @@
         );
         const ivHex = iv.toString(CryptoJS.enc.Hex);
         const ctHex = enc.ciphertext.toString(CryptoJS.enc.Hex);
-        const hex   = ivHex + ctHex;
+        const bodyHex = ivHex + ctHex;
+        const tagHex = CryptoJS.HmacSHA256(bodyHex, _aesKey).toString(CryptoJS.enc.Hex);
+        const hex = bodyHex + tagHex;
         const bytes = new Uint8Array(hex.length / 2);
         for (let i = 0; i < bytes.length; i++)
           bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
@@ -637,8 +639,8 @@
     const wake  = document.getElementById('wake');
 
     const _wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const _wsUrl   = `${_wsProto}://${location.host}/ws?token=${encodeURIComponent(_authToken)}`;
-    const ws       = new WebSocket(_wsUrl);
+    const _wsUrl   = `${_wsProto}://${location.host}/ws`;
+    const ws       = new WebSocket(_wsUrl, [`brahma-auth.${_authToken}`]);
 
     ws.onopen    = () => { sys('Remote session active.'); toast('Connected to Brahma Evo'); };
     ws.onclose   = () => sys('Connection lost — refresh to reconnect.');
@@ -747,12 +749,15 @@
         if (xhr.status === 200) {
           let savedName = file.name;
           try { savedName = JSON.parse(xhr.responseText).name || file.name; } catch {}
-          const dlUrl = `/uploads/${encodeURIComponent(savedName)}?token=${encodeURIComponent(_authToken)}`;
+          const downloadName = savedName;
+          const dlButton = document.createElement('button');
+          dlButton.className = 'fc-dl';
+          dlButton.textContent = '⬇ Download back';
+          dlButton.onclick = () => _downloadFile(downloadName);
           if (bar)  { bar.style.width = '100%'; bar.style.background = 'var(--green)'; }
           if (st)   { st.textContent = '✓'; st.className = 'fc-status done'; }
           if (lbl)  lbl.textContent = 'Sent';
-          if (meta) meta.insertAdjacentHTML('beforeend',
-            `<a class="fc-dl" href="${dlUrl}" download="${esc(savedName)}">⬇ Download back</a>`);
+          if (meta) meta.appendChild(dlButton);
           toast('File sent!');
         } else {
           let errMsg = 'Upload failed';
@@ -776,8 +781,26 @@
     }
 
     // File received by another WebSocket client (e.g., second open tab)
+    async function _downloadFile(name) {
+      try {
+        const response = await _authFetch(`/api/download/${encodeURIComponent(name)}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = name;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } catch (error) {
+        toast('Download failed');
+        sys('Download error: ' + error.message);
+      }
+    }
+
     function _onFileReceived(m) {
-      const dlUrl = `/uploads/${encodeURIComponent(m.name)}?token=${encodeURIComponent(_authToken)}`;
       const card  = document.createElement('div');
       card.className = 'msg-file';
       card.innerHTML = `
@@ -786,7 +809,7 @@
           <div class="fc-lbl">Received</div>
           <div class="fc-name">${esc(m.name)}</div>
           <div class="fc-size">${_fmtSize(m.size)}</div>
-          <a class="fc-dl" href="${dlUrl}" download="${esc(m.name)}">⬇ Download</a>
+          <button class="fc-dl" onclick="_downloadFile(${JSON.stringify(m.name)})">⬇ Download</button>
         </div>
         <div class="fc-status done">✓</div>
       `;
@@ -919,7 +942,8 @@
 
       const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
       const ws = new WebSocket(
-        `${wsProto}://${location.host}/ws/phone-audio?token=${encodeURIComponent(_authToken)}`
+        `${wsProto}://${location.host}/ws/phone-audio`,
+        [`brahma-auth.${_authToken}`]
       );
       ws.binaryType = 'arraybuffer';
 
