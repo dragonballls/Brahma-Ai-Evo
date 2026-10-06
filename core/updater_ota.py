@@ -14,11 +14,15 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 import subprocess
+import threading
+import uuid
 
 from core.runtime_paths import GITHUB_OWNER, GITHUB_REPOSITORY
 
 GITHUB_REPO = f"{GITHUB_OWNER}/{GITHUB_REPOSITORY}"
 GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPO}"
+_MAX_INSTALLER_BYTES = 1024 * 1024 * 1024
+_OTA_APPLY_LOCK = threading.Lock()
 
 
 def get_current_version() -> str:
@@ -154,6 +158,8 @@ def download_and_apply_update(
     """Download, verify, then launch a release installer."""
     try:
         supplied_digest = str(expected_sha256 or "").strip().lower()
+        if expected_size and int(expected_size) > _MAX_INSTALLER_BYTES:
+            raise RuntimeError("OTA installer exceeds the 1 GiB safety limit.")
         release = _get_release()
         asset = _release_asset(release or {}, url)
         if asset is None:
@@ -168,13 +174,21 @@ def download_and_apply_update(
         update_dir = __import__("core.user_paths", fromlist=["get_user_data_dir"]).get_user_data_dir() / "updates"
         update_dir.mkdir(parents=True, exist_ok=True)
         setup_path = update_dir / "BrahmaEvo_Setup_Update.exe"
-        temp_path = setup_path.with_suffix(".exe.download")
-
-        req = urllib.request.Request(url, headers={"User-Agent": "BrahmaEvo-OTA"})
-        with urllib.request.urlopen(req, timeout=30) as response, temp_path.open("wb") as output:
-            total_size = int(response.info().get("Content-Length", 0))
-            downloaded = 0
-            max_download = max(int(expected_size or 0), 2 * 1024 * 1024 * 1024)
+        with _OTA_APPLY_LOCK:
+            fd, temp_name = __import__("tempfile").mkstemp(
+                prefix=f"{setup_path.stem}.{uuid.uuid4().hex}.",
+                suffix=".exe.download",
+                dir=str(update_dir),
+            )
+            os.close(fd)
+            temp_path = Path(temp_name)
+            req = urllib.request.Request(url, headers={"User-Agent": "BrahmaEvo-OTA"})
+            with urllib.request.urlopen(req, timeout=30) as response, temp_path.open("wb") as output:
+                total_size = int(response.info().get("Content-Length", 0) or 0)
+                if total_size > _MAX_INSTALLER_BYTES:
+                    raise RuntimeError("OTA installer exceeds the 1 GiB safety limit.")
+                downloaded = 0
+                max_download = _MAX_INSTALLER_BYTES
             while True:
                 chunk = response.read(1024 * 1024)
                 if not chunk:
@@ -182,17 +196,17 @@ def download_and_apply_update(
                 downloaded += len(chunk)
                 if downloaded > max_download:
                     raise RuntimeError("OTA installer is unexpectedly large.")
-                output.write(chunk)
-                if ui_callback and total_size > 0:
-                    ui_callback(int(downloaded / total_size * 100))
+                    output.write(chunk)
+                    if ui_callback and total_size > 0:
+                        ui_callback(int(downloaded / total_size * 100))
 
-        if expected_size and temp_path.stat().st_size != int(expected_size):
+            if expected_size and temp_path.stat().st_size != int(expected_size):
             raise RuntimeError("OTA installer size does not match the release asset.")
-        actual = _sha256(temp_path)
-        if actual != digest:
-            raise RuntimeError("OTA installer SHA-256 verification failed; download was not executed.")
+            actual = _sha256(temp_path)
+            if actual != digest:
+                raise RuntimeError("OTA installer SHA-256 verification failed; download was not executed.")
 
-        temp_path.replace(setup_path)
+            temp_path.replace(setup_path)
         DETACHED_PROCESS = int(getattr(subprocess, "DETACHED_PROCESS", 0x00000008))
         CREATE_NO_WINDOW = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
         subprocess.Popen(
