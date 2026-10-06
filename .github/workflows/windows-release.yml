@@ -45,6 +45,12 @@ jobs:
           python -m pip install pyinstaller==6.22.3
           python -m pip check
 
+      - name: Run fast repository regression gate
+        shell: pwsh
+        run: |
+          python -m compileall -q actions agent core features memory plugins smart_home main.py llm_client.py or_client.py ui.py
+          python -m unittest -q tests.test_repository_integrity tests.test_runtime_consistency tests.test_conversation_delivery
+
       - name: Restore cached OmniRoute runtime
         id: omni-cache
         uses: actions/cache/restore@v4
