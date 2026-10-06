@@ -57,12 +57,36 @@ def _verify_completion(ui_tree, verification):
     return all(claim.casefold() in visible for claim in claims)
 
 def _build_prompt(instruction: str, ui_tree: dict) -> str:
+    if not isinstance(instruction, str) or not instruction.strip():
+        raise ValueError("Mobile autopilot instruction must be a non-empty string.")
+    if len(instruction) > 4_000:
+        raise ValueError("Mobile autopilot instruction exceeds the safe size limit.")
     if not isinstance(ui_tree, dict):
         raise ValueError("Mobile UI dump data must be an object.")
     nodes = ui_tree.get("nodes", [])
     if not isinstance(nodes, list):
         raise ValueError("Mobile UI dump nodes must be a list.")
+
+    screen_width = ui_tree.get("screen_width")
+    screen_height = ui_tree.get("screen_height")
+    if (
+        isinstance(screen_width, bool) or not isinstance(screen_width, (int, float))
+        or isinstance(screen_height, bool) or not isinstance(screen_height, (int, float))
+        or not math.isfinite(float(screen_width))
+        or not math.isfinite(float(screen_height))
+        or not float(screen_width).is_integer()
+        or not float(screen_height).is_integer()
+        or int(screen_width) <= 0
+        or int(screen_height) <= 0
+    ):
+        raise ValueError("Mobile UI dump is missing valid device screen dimensions.")
+    screen_width = int(screen_width)
+    screen_height = int(screen_height)
+    if screen_width > MAX_MOBILE_COORDINATE + 1 or screen_height > MAX_MOBILE_COORDINATE + 1:
+        raise ValueError("Mobile device screen dimensions exceed the safe coordinate range.")
+
     simplified_ui = []
+    total_chars = 0
     for i, node in enumerate(nodes[:500]):
         if not isinstance(node, dict):
             continue
@@ -74,19 +98,30 @@ def _build_prompt(instruction: str, ui_tree: dict) -> str:
         ):
             continue
         try:
-            cx = _validate_coordinate((float(bounds[0]) + float(bounds[2])) / 2, "ui_center_x")
-            cy = _validate_coordinate((float(bounds[1]) + float(bounds[3])) / 2, "ui_center_y")
+            left, top, right, bottom = (float(value) for value in bounds)
+            if not all(math.isfinite(value) and value.is_integer() for value in (left, top, right, bottom)):
+                continue
+            left, top, right, bottom = map(int, (left, top, right, bottom))
+            if left < 0 or top < 0 or right > screen_width or bottom > screen_height or right <= left or bottom <= top:
+                continue
+            cx = _validate_coordinate((left + right) / 2, "ui_center_x")
+            cy = _validate_coordinate((top + bottom) / 2, "ui_center_y")
         except ValueError:
             continue
-        desc = node.get("content_description") or node.get("text") or node.get("class") or "Unnamed element"
-        simplified_ui.append(f"[{i}] {desc} (clickable: {bool(node.get('is_clickable'))}) -> x:{cx}, y:{cy}")
-    
-    ui_text = "\n".join(simplified_ui)
-    
-    prompt = f"""You are a mobile UI automation agent.
-Your goal is: {instruction}
+        desc = str(node.get("content_description") or node.get("text") or node.get("class") or "Unnamed element")
+        desc = desc[:512]
+        row = f"[{i}] {desc} (clickable: {bool(node.get('is_clickable'))}) -> x:{cx}, y:{cy}"
+        if total_chars + len(row) > 60_000:
+            break
+        simplified_ui.append(row)
+        total_chars += len(row)
 
-Current UI elements on screen (with their center coordinates):
+    ui_text = "\n".join(simplified_ui)
+
+    prompt = f"""You are a mobile UI automation agent.
+Your goal is: {instruction[:4_000]}
+
+Current UI elements on screen ({screen_width}x{screen_height} pixels):
 {ui_text}
 
 Decide the next action to take to accomplish the goal.
@@ -168,6 +203,8 @@ def mobile_autopilot(parameters: dict, response=None, player=None, session_memor
         reason = decision.get("reason", "Executing next step")
         if not isinstance(reason, str):
             return json.dumps({"success": False, "error": "Mobile autopilot received an invalid reason.", "steps_attempted": step})
+        if len(reason) > 1_000:
+            return json.dumps({"success": False, "error": "Mobile autopilot received an oversized reason.", "steps_attempted": step})
         
         if player and hasattr(player, 'write_log'):
             player.write_log(f"Step {step+1}: {reason}")
@@ -205,64 +242,70 @@ def mobile_autopilot(parameters: dict, response=None, player=None, session_memor
 
         try:
             if action == "tap":
-                    command_parameters = {
-                        "x": _validate_coordinate(decision.get("x"), "x"),
-                        "y": _validate_coordinate(decision.get("y"), "y"),
-                    }
-                    remote_action = "ui_tap"
-                    delay = 2.0
-                elif action == "swipe":
-                    command_parameters = {
-                        "x1": _validate_coordinate(decision.get("x1"), "x1"),
-                        "y1": _validate_coordinate(decision.get("y1"), "y1"),
-                        "x2": _validate_coordinate(decision.get("x2"), "x2"),
-                        "y2": _validate_coordinate(decision.get("y2"), "y2"),
-                    }
-                    remote_action = "ui_swipe"
-                    delay = 2.0
-                else:
-                    text_value = decision.get("text")
-                    if not isinstance(text_value, str) or not text_value.strip():
-                        raise ValueError("Mobile type action requires non-empty text.")
-                    if len(text_value) > MAX_TYPED_TEXT:
-                        raise ValueError("Mobile type action text exceeds the safe size limit.")
-                    command_parameters = {"text": text_value}
-                    remote_action = "ui_type"
-                    delay = 1.0
-            except ValueError as exc:
-                return json.dumps({"success": False, "error": str(exc), "steps_attempted": step + 1})
+                raw_bounds = [
+                    decision.get("x"),
+                    decision.get("y"),
+                ]
+                command_parameters = {
+                    "x": _validate_coordinate(raw_bounds[0], "x"),
+                    "y": _validate_coordinate(raw_bounds[1], "y"),
+                }
+                if not (
+                    command_parameters["x"] < screen_width
+                    and command_parameters["y"] < screen_height
+                ):
+                    raise ValueError("Mobile tap coordinates are outside the actual device screen bounds.")
+                point_visible = False
+                for node in ui_tree.get("nodes", [])[:500]:
+                    if not isinstance(node, dict):
+                        continue
+                    bounds = node.get("bounds")
+                    if not isinstance(bounds, (list, tuple)) or len(bounds) != 4:
+                        continue
+                    try:
+                        left, top, right, bottom = [float(v) for v in bounds]
+                    except (TypeError, ValueError):
+                        continue
+                    if not all(math.isfinite(v) for v in (left, top, right, bottom)):
+                        continue
+                    if left <= command_parameters["x"] < right and top <= command_parameters["y"] < bottom:
+                        point_visible = True
+                        break
+                if not point_visible:
+                    raise ValueError("Mobile tap coordinates do not fall within a visible UI element.")
+                remote_action = "ui_tap"
+                delay = 2.0
+            elif action == "swipe":
+                command_parameters = {
+                    "x1": _validate_coordinate(decision.get("x1"), "x1"),
+                    "y1": _validate_coordinate(decision.get("y1"), "y1"),
+                    "x2": _validate_coordinate(decision.get("x2"), "x2"),
+                    "y2": _validate_coordinate(decision.get("y2"), "y2"),
+                }
+                if not all(
+                    point < limit
+                    for point, limit in (
+                        (command_parameters["x1"], screen_width),
+                        (command_parameters["x2"], screen_width),
+                        (command_parameters["y1"], screen_height),
+                        (command_parameters["y2"], screen_height),
+                    )
+                ):
+                    raise ValueError("Mobile swipe coordinates are outside the actual device screen bounds.")
+                remote_action = "ui_swipe"
+                delay = 2.0
+            else:
+                text_value = decision.get("text")
+                if not isinstance(text_value, str) or not text_value.strip():
+                    raise ValueError("Mobile type action requires non-empty text.")
+                if len(text_value.encode("utf-8")) > 4 * 1024:
+                    raise ValueError("Mobile type action text exceeds the safe size limit.")
+                command_parameters = {"text": text_value}
+                remote_action = "ui_type"
+                delay = 1.0
+        except ValueError as exc:
+            return json.dumps({"success": False, "error": str(exc), "steps_attempted": step + 1})
 
-            signature = json.dumps(
-                {"action": action, "parameters": command_parameters, "ui": ui_tree},
-                sort_keys=True,
-                ensure_ascii=False,
-                default=str,
-            )
-            count = seen_signatures.get(signature, 0) + 1
-            seen_signatures[signature] = count
-            if count > MAX_REPEAT_SIGNATURES:
-                return json.dumps({
-                    "success": False,
-                    "error": "Mobile autopilot detected a repeated action loop.",
-                    "steps_attempted": step + 1,
-                })
-
-            try:
-                _parse_remote_result(
-                    connect_execute({
-                        "target": target,
-                        "action": remote_action,
-                        "parameters": command_parameters,
-                    }),
-                    action,
-                )
-            except (RuntimeError, ValueError) as exc:
-                return json.dumps({"success": False, "error": str(exc), "steps_attempted": step + 1})
-
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return json.dumps({"success": False, "error": "Mobile autopilot timed out.", "steps_attempted": step + 1})
-            time.sleep(min(delay, remaining))
 
     return json.dumps({
         "success": False,
