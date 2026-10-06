@@ -1406,3 +1406,19 @@ def test_gateway_disconnect_does_not_mark_active_device_offline_when_close_fails
     assert result["success"] is False
     assert result["error_code"] == "DISCONNECT_FAILED"
     assert manager.offline_called is False
+
+def test_connection_hub_close_failure_keeps_current_connection_tracked():
+    class FailingSocket:
+        async def close(self, **_kwargs):
+            raise RuntimeError("close failed")
+
+    async def scenario():
+        hub = ConnectionHub()
+        socket = FailingSocket()
+        await hub.register(socket, "device-1")
+        assert await hub.close_device("device-1", reason="test") is False
+        state = await hub.get("device-1")
+        assert state is not None
+        assert await hub.is_current(socket, "device-1") is True
+
+    asyncio.run(scenario())
