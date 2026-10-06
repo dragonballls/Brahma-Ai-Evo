@@ -84,14 +84,21 @@ def catalog() -> list[dict[str, Any]]:
     ]
 
 
+def _contains_term(text: str, term: str) -> bool:
+    normalized = " ".join(str(term or "").lower().strip().replace("_", " ").split())
+    if not normalized:
+        return False
+    return re.search(rf"(?<!\w){re.escape(normalized)}(?!\w)", text) is not None
+
+
 def _lookup(text: str) -> str | None:
-    clean = text.lower().strip().replace("_", " ")
+    clean = " ".join(text.lower().strip().replace("_", " ").split())
     if clean in _SPEC_BY_KEY:
         return clean
     if clean in _ALIAS_TO_KEY:
         return _ALIAS_TO_KEY[clean]
     for alias, key in sorted(_ALIAS_TO_KEY.items(), key=lambda item: len(item[0]), reverse=True):
-        if alias in clean:
+        if _contains_term(clean, alias):
             return key
     return None
 
@@ -187,7 +194,7 @@ def deterministic_plan(request: str) -> list[dict[str, Any]]:
         patches.append({"key": "desktop_performance_profile", "value": "performance"})
 
     for spec in SETTING_SPECS:
-        if spec.key.replace("_", " ") in lower or any(alias in lower for alias in spec.aliases):
+        if _contains_term(lower, spec.key) or any(_contains_term(lower, alias) for alias in spec.aliases):
             value = _extract_value(request, spec.key)
             if value is not None:
                 patches.append({"key": spec.key, "value": value})
@@ -202,7 +209,7 @@ def deterministic_plan(request: str) -> list[dict[str, Any]]:
     }
     if re.search(r"\b(?:use|switch to|make|set)\b", lower):
         for phrase, provider in provider_map.items():
-            if phrase in lower:
+            if _contains_term(lower, phrase):
                 patches.append({"key": "default_ai_provider", "value": provider})
                 break
 
