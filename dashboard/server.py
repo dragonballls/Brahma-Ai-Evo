@@ -510,6 +510,8 @@ class DashboardServer:
         self._ip                          = _local_ip()
         self._tokens: set[str]            = set()
         self._token_keys: dict[str, str]  = {}   # auth_token → session_key
+        self._token_expiry: dict[str, float] = {}
+        self._login_failures: dict[str, tuple[int, float]] = {}
         self._aes_cache:  dict[str, bytes]= {}   # session_key → AES bytes
         self._clients: set[WebSocket]     = set()
         self._history: list[dict]         = []
@@ -592,9 +594,22 @@ class DashboardServer:
     def _build_app(self) -> "FastAPI":
         app = FastAPI(docs_url=None, redoc_url=None)
 
+        def _valid_token(tok: str) -> bool:
+            token = str(tok or "").strip()
+            if not token or token not in self._tokens:
+                return False
+            expiry = self._token_expiry.get(token, 0.0)
+            if expiry and expiry <= time.time():
+                self._tokens.discard(token)
+                self._token_keys.pop(token, None)
+                self._token_expiry.pop(token, None)
+                self._aes_cache.pop(token, None)
+                return False
+            return True
+
         def _auth(req: Request) -> bool:
             tok = req.headers.get("authorization", "").removeprefix("Bearer ").strip()
-            return bool(tok) and tok in self._tokens
+            return _valid_token(tok)
 
         # serve CryptoJS from local cache, fallback to CDN redirect
         @app.get("/static/crypto.js")
@@ -621,24 +636,30 @@ class DashboardServer:
 
         @app.post("/login")
         async def login(req: Request):
-            body    = await req.json()
+            body = await req.json()
             entered = str(body.get("pin", "")).strip().upper()
-            now     = time.time()
+            now = time.time()
+            client_ip = getattr(getattr(req, "client", None), "host", "unknown") or "unknown"
+            attempts, blocked_until = self._login_failures.get(client_ip, (0, 0.0))
+            if blocked_until > now:
+                return JSONResponse({"ok": False, "error": "Too many attempts; try again shortly."}, status_code=429)
             if entered in self._pending_keys and self._pending_keys[entered] > now:
-                del self._pending_keys[entered]          # one-time use
+                del self._pending_keys[entered]
+                self._login_failures.pop(client_ip, None)
                 tok = secrets.token_urlsafe(32)
                 self._tokens.add(tok)
                 self._token_keys[tok] = entered
-                self._aes_key(entered)                   # pre-derive & cache
+                self._token_expiry[tok] = now + 12 * 60 * 60
+                self._aes_key(entered)
                 if self._connect_callback:
                     self._connect_callback()
                 asyncio.create_task(self.broadcast(
                     {"type": "sys", "text": "Remote connection established."}
                 ))
-                # Bearer token in response body — no cookies needed (works on any browser/HTTP)
                 return JSONResponse({"ok": True, "token": tok})
-            return JSONResponse({"ok": False, "error": "Invalid or expired key"},
-                                status_code=401)
+            attempts += 1
+            self._login_failures[client_ip] = (attempts, now + 60.0) if attempts >= 8 else (attempts, 0.0)
+            return JSONResponse({"ok": False, "error": "Invalid or expired key"}, status_code=401)
 
         @app.get("/auto-login")
         async def auto_login(key: str = ""):
@@ -661,6 +682,7 @@ class DashboardServer:
             dev_tok = secrets.token_urlsafe(32)
             self._tokens.add(tok)
             self._token_keys[tok] = key
+            self._token_expiry[tok] = now + 12 * 60 * 60
             self._aes_key(key)
             self._device_sessions[dev_tok] = {"session_key": key}
 
@@ -701,6 +723,7 @@ class DashboardServer:
             tok = secrets.token_urlsafe(32)
             self._tokens.add(tok)
             self._token_keys[tok] = session_key
+            self._token_expiry[tok] = time.time() + 12 * 60 * 60
             self._aes_key(session_key)
             if self._connect_callback:
                 self._connect_callback()
@@ -752,7 +775,7 @@ class DashboardServer:
         async def phone_audio_ws(websocket: WebSocket):
             protocols = [p.strip() for p in websocket.headers.get("sec-websocket-protocol", "").split(",") if p.strip()]
             tok = next((p[len("brahma-auth."):].strip() for p in protocols if p.startswith("brahma-auth.")), "")
-            if not tok or tok not in self._tokens:
+            if not _valid_token(tok):
                 await websocket.close(code=4001)
                 return
             await websocket.accept(subprotocol=f"brahma-auth.{tok}")
