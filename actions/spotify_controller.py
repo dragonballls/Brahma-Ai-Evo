@@ -99,8 +99,7 @@ def _open_url_in_chrome(url: str) -> bool:
 
     try:
         import webbrowser
-        webbrowser.open(url)
-        return True
+        return bool(webbrowser.open(url))
     except Exception:
         return False
 
