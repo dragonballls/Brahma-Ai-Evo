@@ -761,8 +761,6 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
             else:
                 seen_types[target] = is_dir
 
-            if any(parent in seen_types and seen_types[parent] is False for parent in target.parents if parent != dest):
-                raise ValueError(f"Archive contains a file/directory path conflict under {target.name}.")
             planned.append((member, target, is_dir))
 
             if isinstance(member, zipfile.ZipInfo):
@@ -774,10 +772,8 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
                     raise ValueError("Archive link members are not allowed.")
                 if not member.isdir() and not member.isfile():
                     raise ValueError("Archive special-file members are not allowed.")
-        for _, target, is_dir in planned:
-            if is_dir:
-                continue
-            if any(parent in seen_types and seen_types[parent] is True for parent in target.parents if parent != dest):
+        for _, target, _ in planned:
+            if any(parent in seen_types and seen_types[parent] is False for parent in target.parents if parent != dest):
                 raise ValueError(f"Archive contains a file/directory path conflict under {target.name}.")
         return [(member, target) for member, target, _ in planned]
 
