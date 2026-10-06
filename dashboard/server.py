@@ -876,6 +876,22 @@ class DashboardServer:
             return JSONResponse({"files": files})
 
 
+        @app.get("/api/download/{filename:path}")
+        async def download_file(req: Request, filename: str):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+            safe = _safe_filename(filename)
+            root = self._uploads_dir.resolve()
+            try:
+                target = (root / safe).resolve()
+                target.relative_to(root)
+            except (OSError, ValueError):
+                return JSONResponse({"error": "Not found"}, status_code=404)
+            if not target.is_file():
+                return JSONResponse({"error": "Not found"}, status_code=404)
+            return FileResponse(str(target), filename=safe)
+
         @app.get("/web_background/{filename:path}")
         async def web_background_static(filename: str):
             bg_dir = BASE_DIR / "assets" / "web_background"
@@ -890,6 +906,9 @@ class DashboardServer:
             protocols = [p.strip() for p in websocket.headers.get("sec-websocket-protocol", "").split(",") if p.strip()]
             tok = next((p[len("brahma-auth."):].strip() for p in protocols if p.startswith("brahma-auth.")), "")
             if not tok or tok not in self._tokens:
+                await websocket.close(code=4001)
+                return
+            if not _valid_token(tok):
                 await websocket.close(code=4001)
                 return
             await websocket.accept(subprotocol=f"brahma-auth.{tok}")
