@@ -133,6 +133,7 @@ class CommandRouter:
                 "error_code": "ROUTER_ERROR",
             }
         if not sent:
+            self.device_manager.mark_offline(device.device_id)
             await self.hub.reject_pending(
                 device.device_id,
                 request_id,
