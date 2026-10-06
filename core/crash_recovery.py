@@ -62,20 +62,28 @@ def _log(message: str) -> None:
 
 
 def _load_json(path: Path, default: Any) -> Any:
+    if not path.exists():
+        return default
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except FileNotFoundError:
         return default
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Persistent recovery state is unreadable or corrupted: {path}") from exc
 
 
 def _load_state() -> dict[str, Any]:
     raw = _load_json(CRASH_RECOVERY_STATE_PATH, {})
-    return raw if isinstance(raw, dict) else {}
+    if not isinstance(raw, dict):
+        raise RuntimeError("Crash recovery state has an invalid schema.")
+    return raw
 
 
 def _load_history() -> list[dict[str, Any]]:
     raw = _load_json(PATCH_HISTORY_PATH, [])
-    return raw if isinstance(raw, list) else []
+    if not isinstance(raw, list):
+        raise RuntimeError("Crash recovery patch history has an invalid schema.")
+    return raw
 
 
 def _save_history(history: list[dict[str, Any]]) -> None:
