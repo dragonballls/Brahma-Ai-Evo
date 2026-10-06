@@ -11,6 +11,9 @@ def test_archive_extraction_rejects_traversal_links_and_size_abuse():
     assert "Archive symlink members are not allowed." in source
     assert "Archive link members are not allowed." in source
     assert "MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024" in source
+    assert "def preflight(members)" in source
+    assert 'target.open("xb")' in source
+    assert "Archive would overwrite an existing path" in source
 
 
 def test_video_transcription_uses_exclusive_temp_creation():
