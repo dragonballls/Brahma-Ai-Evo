@@ -10,6 +10,15 @@ from .websocket import ConnectionHub
 
 
 ACTION_CAPABILITIES: dict[str, tuple[str, ...]] = {
+    "get_device_info": ("device_info",),
+    "get_battery": ("battery",),
+    "flashlight_on": ("flashlight",),
+    "flashlight_off": ("flashlight",),
+    "launch_app": ("app_launch",),
+    "open_url": ("open_url",),
+    "volume_get": ("volume_control",),
+    "volume_set": ("volume_control",),
+    "unlock_phone": ("unlock_phone",),
     "file_list": ("files",),
     "file_read": ("files",),
     "file_write": ("files",),
@@ -18,7 +27,6 @@ ACTION_CAPABILITIES: dict[str, tuple[str, ...]] = {
     "ui_tap": ("ui_control",),
     "ui_swipe": ("ui_control",),
     "ui_type": ("ui_control",),
-    "unlock_phone": ("unlock_phone",),
 }
 
 
