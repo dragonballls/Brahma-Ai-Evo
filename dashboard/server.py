@@ -529,7 +529,46 @@ class DashboardServer:
 
     # ── one-time key management ───────────────────────────────────────────
 
+    def _prune_auth_state(self) -> None:
+        now = time.time()
+        expired_tokens = [
+            token for token, expiry in self._token_expiry.items()
+            if expiry <= now
+        ]
+        for token in expired_tokens:
+            self._token_expiry.pop(token, None)
+            self._tokens.discard(token)
+            session_key = self._token_keys.pop(token, None)
+            if session_key:
+                self._aes_cache.pop(session_key, None)
+
+        # Bound runtime-local bearer state so repeated reconnects cannot grow
+        # memory indefinitely. Shortest-lived tokens are discarded first.
+        if len(self._tokens) > 512:
+            ordered = sorted(self._token_expiry.items(), key=lambda item: item[1])
+            for token, _expiry in ordered[: len(self._tokens) - 512]:
+                self._token_expiry.pop(token, None)
+                self._tokens.discard(token)
+                session_key = self._token_keys.pop(token, None)
+                if session_key:
+                    self._aes_cache.pop(session_key, None)
+
+        if len(self._device_sessions) > 256:
+            for device_token in list(self._device_sessions)[: len(self._device_sessions) - 256]:
+                self._device_sessions.pop(device_token, None)
+
+        stale_failures = [
+            ip for ip, (_attempts, blocked_until) in self._login_failures.items()
+            if blocked_until <= now - 300
+        ]
+        for ip in stale_failures:
+            self._login_failures.pop(ip, None)
+        if len(self._login_failures) > 2048:
+            for ip, _value in list(self._login_failures.items())[: len(self._login_failures) - 2048]:
+                self._login_failures.pop(ip, None)
+
     def new_key(self, expiry_secs: int = 600) -> str:
+        self._prune_auth_state()
         now = time.time()
         self._pending_keys = {k: v for k, v in self._pending_keys.items() if v > now}
         key = ''.join(secrets.choice(_KEY_CHARS) for _ in range(6))
@@ -595,6 +634,7 @@ class DashboardServer:
         app = FastAPI(docs_url=None, redoc_url=None)
 
         def _valid_token(tok: str) -> bool:
+            self._prune_auth_state()
             token = str(tok or "").strip()
             if not token or token not in self._tokens:
                 return False
