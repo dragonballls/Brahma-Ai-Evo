@@ -135,3 +135,28 @@ class SelectedCapabilitiesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_selected_capability_state_quarantine_failure_is_not_silently_replaced():
+    source = (ROOT / "core" / "selected_capabilities.py").read_text(encoding="utf-8")
+    start = source.index("def _json_load")
+    end = source.index("def _json_save", start)
+    block = source[start:end]
+    assert "could not be quarantined" in block
+    assert "raise RuntimeError" in block
+    assert "return default" not in block
+
+
+def test_time_machine_rejects_snapshots_without_real_state():
+    source = (ROOT / "core" / "selected_capabilities.py").read_text(encoding="utf-8")
+    start = source.index("def restore(cls, selector")
+    end = source.index("class RemoteComputeManager", start)
+    block = source[start:end]
+    assert "snapshot_state = payload.get(\"state\")" in block
+    assert "Snapshot is malformed and cannot be restored." in block
+
+
+def test_life360_marks_malformed_home_assistant_state_as_failure():
+    source = (ROOT / "core" / "selected_capabilities.py").read_text(encoding="utf-8")
+    assert "Home Assistant returned malformed state data." in source
+    assert "self._last_error" in source
