@@ -6015,12 +6015,23 @@ class FileDropZone(QWidget):
         self._dash_offset = 0.0
         self._anim_tmr = QTimer(self)
         self._anim_tmr.timeout.connect(self._animate)
-        self._anim_tmr.start(40)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         self._canvas = _DropCanvas(self)
         layout.addWidget(self._canvas)
+        if self.isVisible():
+            self._anim_tmr.start(40)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._anim_tmr.isActive():
+            self._anim_tmr.start(40)
+
+    def hideEvent(self, event):
+        self._anim_tmr.stop()
+        super().hideEvent(event)
+
 
     def _animate(self):
         self._dash_offset = (self._dash_offset + 0.8) % 20
