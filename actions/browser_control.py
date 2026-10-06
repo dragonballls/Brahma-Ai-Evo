@@ -562,6 +562,23 @@ def shutdown_browser() -> None:
         _bt_started = False
 
 
+def browser_evaluate_internal(expression: str) -> str:
+    """Evaluate fixed, first-party browser logic outside the public action router."""
+    expr = str(expression or "").strip()
+    if not expr:
+        raise ValueError("Browser evaluation expression cannot be empty.")
+    try:
+        from actions.playwright_mcp_client import get_playwright_mcp_client
+        mcp = get_playwright_mcp_client()
+        result = mcp.evaluate(expr)
+        if result and not str(result).startswith("Tool '"):
+            return str(result)
+    except Exception as exc:
+        _log(f"[Browser/Internal] MCP evaluate unavailable ({exc}) — using native browser")
+    _ensure_started()
+    return _bt.run(_bt._evaluate(expr))
+
+
 def _ensure_started():
     global _bt_started
     with _bt_lock:
@@ -632,9 +649,11 @@ def browser_control(
         except Exception as jev_err:
             _log(f"[Browser/Jev] unavailable ({jev_err}) — using existing browser stack")
 
-    # Explicit opt-in for the two public actions that can execute arbitrary browser code.
-    if action in {"evaluate", "eval", "run_code", "execute"} and not bool(parameters.get("allow_unsafe_code", False)):
-        return "Unsafe browser code execution requires allow_unsafe_code=true."
+    # Arbitrary browser JavaScript/code is intentionally not exposed through the
+    # planner-facing action dispatcher. Trusted internal callers use
+    # browser_evaluate_internal() instead.
+    if action in {"evaluate", "eval", "run_code", "execute"}:
+        return "Unsupported browser action: arbitrary code execution is not exposed through the public browser-control contract."
 
     # Try Microsoft Playwright MCP first
     try:
