@@ -303,16 +303,17 @@ def kill_process(target: Union[str, int], force: bool = False) -> Dict[str, Any]
 
         for p in psutil.process_iter(["pid", "name"]):
             try:
-                p_name = (p.info.get("name") or "").lower()
-                if clean_target in p_name or clean_target_exe in p_name:
-                    if p_name in PROTECTED_SYSTEM_PROCESSES:
-                        continue
-                    if force:
-                        p.kill()
-                    else:
-                        p.terminate()
-                    killed_pids.append(p.info["pid"])
-                    target_name = p.info.get("name") or target_str
+                p_name = (p.info.get("name") or "").lower().strip()
+                if p_name not in {clean_target, clean_target_exe}:
+                    continue
+                if p_name in PROTECTED_SYSTEM_PROCESSES:
+                    continue
+                if force:
+                    p.kill()
+                else:
+                    p.terminate()
+                killed_pids.append(p.info["pid"])
+                target_name = p.info.get("name") or target_str
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
 
