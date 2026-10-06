@@ -4,6 +4,15 @@ from unittest.mock import patch
 from core.intelligence_orchestrator import IntelligenceOrchestrator
 
 class IntelligenceOrchestratorTests(unittest.TestCase):
+    def test_profile_matching_uses_word_boundaries(self):
+        from core.intelligence_orchestrator import profile_for
+
+        cfg = {"default_profile": "smart", "simple_profile": "fast", "simple_max_chars": 220, "simple_keywords": ("hello",)}
+        self.assertEqual(profile_for("What does capitalization mean?", None, cfg), "smart")
+        self.assertEqual(profile_for("Please debug this Python function.", None, cfg), "coding")
+        self.assertEqual(profile_for("Look at this image.", None, cfg), "vision")
+
+
     def test_simple_request_uses_fast_single_call(self):
         calls=[]
         def fake_chat(**kwargs):
