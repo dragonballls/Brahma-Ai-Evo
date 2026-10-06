@@ -210,8 +210,20 @@ class PlaywrightMCPClient:
                     logger.debug(f"[PlaywrightMCP] Read error: {e}")
                 break
 
-        self._running = False
-        self._is_ready.clear()
+        with self._lock:
+            self._running = False
+            self._is_ready.clear()
+            pending = list(self._pending_requests.items())
+            for req_id, event in pending:
+                self._responses.setdefault(
+                    req_id,
+                    {
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "error": {"message": "Playwright MCP server connection closed."},
+                    },
+                )
+                event.set()
 
     def _send_notification(self, method: str, params: Optional[dict] = None) -> None:
         if not self.is_alive() or not self._proc or not self._proc.stdin:
@@ -283,21 +295,38 @@ class PlaywrightMCPClient:
             return {"error": res["error"].get("message", str(res["error"]))}
 
         result_obj = res.get("result", {})
-        # Extract text or structured content from MCP content array
+        if not isinstance(result_obj, dict):
+            return {
+                "success": False,
+                "error": "Playwright MCP returned a malformed result payload.",
+                "raw": res,
+            }
         contents = result_obj.get("content", [])
+        if not isinstance(contents, list):
+            return {
+                "success": False,
+                "error": "Playwright MCP returned malformed result content.",
+                "raw": result_obj,
+            }
         text_outputs = []
-        for c in contents:
-            if isinstance(c, dict):
-                if c.get("type") == "text":
-                    text_outputs.append(c.get("text", ""))
-                elif c.get("type") == "image":
-                    text_outputs.append(f"[Image: {c.get('mimeType', 'image/png')}]")
+        for item in contents:
+            if isinstance(item, dict):
+                if item.get("type") == "text":
+                    text_outputs.append(str(item.get("text", "")))
+                elif item.get("type") == "image":
+                    text_outputs.append(f"[Image: {item.get('mimeType', 'image/png')}]")
             else:
-                text_outputs.append(str(c))
+                text_outputs.append(str(item))
 
         combined_text = "\n".join(text_outputs).strip()
+        if result_obj.get("isError", False):
+            return {
+                "success": False,
+                "error": combined_text or "Playwright MCP tool reported an error.",
+                "raw": result_obj,
+            }
         return {
-            "success": not result_obj.get("isError", False),
+            "success": True,
             "text": combined_text,
             "raw": result_obj,
         }
