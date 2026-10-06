@@ -41,9 +41,36 @@ class LearnedRulesEngine:
         try:
             with open(RULES_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return data if isinstance(data, list) else []
-        except Exception as e:
-            logger.warning(f"[LearnedRules] Failed to load rules: {e}")
+            if not isinstance(data, list):
+                raise ValueError("Learned-rules file has an invalid root schema.")
+            sanitized: List[Dict[str, Any]] = []
+            changed = False
+            for item in data:
+                if not isinstance(item, dict):
+                    changed = True
+                    continue
+                current = dict(item)
+                rule = str(current.get("rule") or "")
+                if _SECRET_RE.search(rule) or _TOKEN_RE.search(rule):
+                    current["rule"] = _SECRET_RE.sub("[REDACTED_SECRET]", rule)
+                    current["rule"] = _TOKEN_RE.sub("[REDACTED_SECRET]", current["rule"])
+                    changed = True
+                sanitized.append(current)
+            if changed:
+                LearnedRulesEngine._save_raw(sanitized)
+            return sanitized
+        except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+            quarantine = RULES_FILE.with_name(
+                f"{RULES_FILE.name}.corrupt-{int(time.time())}-{uuid.uuid4().hex[:8]}"
+            )
+            try:
+                RULES_FILE.replace(quarantine)
+                logger.warning("[LearnedRules] Quarantined corrupted rules file as %s", quarantine.name)
+            except OSError:
+                logger.warning("[LearnedRules] Failed to quarantine corrupted rules state: %s", exc)
+            return []
+        except OSError as exc:
+            logger.warning("[LearnedRules] Failed to read rules: %s", exc)
             return []
 
     @staticmethod
