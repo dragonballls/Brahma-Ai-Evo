@@ -246,7 +246,7 @@ def connect_disconnect_device(parameters: dict[str, Any] | None = None, player=N
     reason = str(params.get("reason") or "Disconnected by Brahma").strip()
     try:
         service = _service()
-        result = asyncio.run(service.disconnect_device(target, reason=reason))
+        result = service.disconnect_device_sync(target, reason=reason)
         return _dump(result)
     except Exception as exc:
         return _fail(str(exc), "GATEWAY_UNAVAILABLE", device=target, action="connect_disconnect_device")
