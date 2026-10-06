@@ -1256,3 +1256,10 @@ def test_universal_task_preserves_structured_failure_for_executor_validation():
     source = Path("agent/executor.py").read_text(encoding="utf-8")
     block = source.split('elif tool == "universal_task"', 1)[1].split('elif tool == "skill_forge"', 1)[0]
     assert "if isinstance(result, (dict, list, bool)):" in block
+
+
+def test_executor_preserves_structured_dynamic_skill_failures():
+    source = Path("agent/executor.py").read_text(encoding="utf-8")
+    dynamic_block = source.split('elif tool == "dynamic_skill"', 1)[1].split('else:', 1)[0]
+    assert "if isinstance(run_res, (dict, list, bool)):" in dynamic_block
+    assert "return run_res" in dynamic_block
