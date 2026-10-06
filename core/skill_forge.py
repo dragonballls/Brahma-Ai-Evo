@@ -13,7 +13,9 @@ import logging
 import os
 import re
 import sys
+import tempfile
 import time
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -195,16 +197,42 @@ class SkillForge:
                 "success": False,
                 "message": f"Skill '{actual_name}' already exists; refusing to overwrite an existing capability.",
             }
+        target_dir = (skills_dir / actual_name).resolve()
+        try:
+            target_dir.relative_to(skills_dir.resolve())
+        except ValueError:
+            return {"success": False, "message": "Generated skill path escaped the skill vault."}
+
+        # Reserve the final directory atomically, then populate it from a complete
+        # sibling staging directory. This prevents concurrent forge calls from
+        # overwriting one another and prevents partial skill packages from becoming
+        # the persistent source of truth after an interrupted write.
         try:
             target_dir.mkdir(parents=True, exist_ok=False)
-            with open(target_dir / "manifest.json", "w", encoding="utf-8") as f:
-                json.dump(manifest, f, indent=4, ensure_ascii=False)
-            with open(target_dir / "skill.py", "w", encoding="utf-8") as f:
-                f.write(feature_code)
-            with open(target_dir / "test_cases.json", "w", encoding="utf-8") as f:
-                json.dump(test_cases, f, indent=4, ensure_ascii=False)
+        except FileExistsError:
+            return {
+                "success": False,
+                "message": f"Skill '{actual_name}' already exists; refusing to overwrite an existing capability.",
+            }
+        except Exception as e:
+            return {"success": False, "message": f"Failed reserving skill directory: {e}"}
 
-            # 4. Hot-load into Dynamic Registry.
+        staging_dir = Path(tempfile.mkdtemp(prefix=f".{actual_name}-", dir=str(skills_dir)))
+        committed = False
+        try:
+            with open(staging_dir / "manifest.json", "w", encoding="utf-8") as handle:
+                json.dump(manifest, handle, indent=4, ensure_ascii=False)
+            with open(staging_dir / "skill.py", "w", encoding="utf-8") as handle:
+                handle.write(feature_code)
+            with open(staging_dir / "test_cases.json", "w", encoding="utf-8") as handle:
+                json.dump(test_cases, handle, indent=4, ensure_ascii=False)
+
+            for filename in ("manifest.json", "skill.py", "test_cases.json"):
+                (staging_dir / filename).replace(target_dir / filename)
+            staging_dir.rmdir()
+            committed = True
+
+            # 4. Hot-load into Dynamic Registry only after the whole package is committed.
             DynamicToolRegistry.initialize()
             if not DynamicToolRegistry.has_tool(actual_name):
                 raise RuntimeError(f"Generated feature '{actual_name}' was not registered.")
@@ -221,7 +249,18 @@ class SkillForge:
                 "manifest": manifest,
             }
         except Exception as e:
+            if not committed or target_dir.exists():
+                try:
+                    shutil.rmtree(target_dir)
+                except Exception:
+                    pass
             return {"success": False, "message": f"Failed saving synthesized skill: {e}"}
+        finally:
+            try:
+                if staging_dir.exists():
+                    shutil.rmtree(staging_dir)
+            except Exception:
+                pass
 
     @classmethod
     def _parse_json_response(cls, text: str) -> Dict[str, Any]:
@@ -398,7 +437,7 @@ Broken Code:
 Critical Repair Instructions:
 1. Ensure `def execute(**kwargs)` handles empty or missing kwargs with safe defaults.
 2. If using `matplotlib`, ensure `import matplotlib; matplotlib.use('Agg')` is placed before `pyplot`.
-3. If making HTTP requests, use `requests` with `timeout=8, verify=False` or `urllib` with `ssl._create_unverified_context()`. NEVER assume custom library exceptions or unset API keys (like GIPHY_API_KEY).
+3. If making HTTP requests, use `requests` with an explicit timeout and normal certificate verification (for example, `timeout=8` with the default `verify=True`). Never use `verify=False`, `ssl._create_unverified_context()`, or any TLS/certificate bypass. NEVER assume custom library exceptions or unset API keys (like GIPHY_API_KEY).
 4. If downloading an image or media fails or has SSL errors, NEVER just return an error dictionary. Generate the image natively using PIL (Pillow) or matplotlib and save to `BrahmaAI/deliverables/<name>.png`.
 5. Return a clean deliverable dictionary with `'image_path'`, `'title'`, `'summary'` if visual, or clean structured output.
 6. The test runner checks that the returned value does NOT contain an `'error'` key. Do not return `{{'error': '...'}}`. If an error occurs, provide a graceful fallback result.
