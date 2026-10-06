@@ -153,15 +153,17 @@ def download_and_apply_update(
 ):
     """Download, verify, then launch a release installer."""
     try:
-        digest = str(expected_sha256 or "").strip().lower()
+        supplied_digest = str(expected_sha256 or "").strip().lower()
         release = _get_release()
         asset = _release_asset(release or {}, url)
         if asset is None:
             raise RuntimeError("OTA update rejected: URL is not a current GitHub release asset.")
-        if not digest:
-            digest = _asset_digest(release or {}, asset) or ""
-        if not digest:
+        trusted_digest = _asset_digest(release or {}, asset) or ""
+        if not trusted_digest:
             raise RuntimeError("OTA update rejected: release installer has no verifiable SHA-256 digest.")
+        if supplied_digest and supplied_digest != trusted_digest:
+            raise RuntimeError("OTA update rejected: supplied checksum does not match the published release checksum.")
+        digest = trusted_digest
 
         update_dir = __import__("core.user_paths", fromlist=["get_user_data_dir"]).get_user_data_dir() / "updates"
         update_dir.mkdir(parents=True, exist_ok=True)
