@@ -702,6 +702,17 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("Test-Authenticode", bootstrap)
         self.assertIn("Node.js installer SHA256 verification failed", bootstrap)
 
+    def test_installer_stages_and_validates_before_replacing_live_install(self):
+        source = self.read("installer/install_wizard.py")
+        block = source.split("    def run(self):", 1)[1].split("\nclass InstallWizard", 1)[0]
+        self.assertIn("staging_dir = target.parent /", block)
+        self.assertIn("missing_required", block)
+        self.assertIn("target.replace(backup_dir)", block)
+        self.assertIn("staging_dir.replace(target)", block)
+        self.assertIn("Staged installation is missing BrahmaEvo.exe or BrahmaEvoSupervisor.exe.", block)
+        self.assertNotIn("shutil.rmtree(self.target_dir", block)
+        self.assertNotIn("os.remove(self.target_dir", block)
+
     def test_ensemble_and_balanced_profile_are_bounded(self):
         source = self.read("core/intelligence_orchestrator.py")
         config = self.read("config/intelligence.json")
