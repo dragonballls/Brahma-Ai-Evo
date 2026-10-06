@@ -9,6 +9,7 @@ import urllib.request
 import urllib.error
 import threading
 from typing import Dict, Any, List, Optional, Generator
+from core.local_endpoint import validate_local_endpoint
 
 DEFAULT_ENDPOINT = "http://localhost:11434/v1"
 DEFAULT_MODEL = "qwen2.5:3b"
@@ -55,8 +56,10 @@ class LocalBrain:
             settings = load_settings()
             endpoint = str(settings.get("local_ai_url") or DEFAULT_ENDPOINT).strip().rstrip("/")
             model = str(settings.get("local_ai_model") or DEFAULT_MODEL).strip()
-            if endpoint:
-                self.endpoint = endpoint
+            try:
+                self.endpoint = validate_local_endpoint(endpoint)
+            except ValueError:
+                self.endpoint = DEFAULT_ENDPOINT
             if model:
                 self.default_model = model
         except Exception:
@@ -196,8 +199,9 @@ class LocalBrain:
             payload["tools"] = self.format_tools_for_local(tools, focus_core=False)
 
         data = json.dumps(payload).encode("utf-8")
+        endpoint = validate_local_endpoint(self.endpoint)
         req = urllib.request.Request(
-            f"{self.endpoint}/chat/completions",
+            f"{endpoint}/chat/completions",
             data=data,
             headers={"Content-Type": "application/json"},
         )
@@ -236,8 +240,9 @@ class LocalBrain:
             payload["tools"] = self.format_tools_for_local(tools, focus_core=focus_core)
 
         data = json.dumps(payload).encode("utf-8")
+        endpoint = validate_local_endpoint(self.endpoint)
         req = urllib.request.Request(
-            f"{self.endpoint}/chat/completions",
+            f"{endpoint}/chat/completions",
             data=data,
             headers={"Content-Type": "application/json"},
         )
