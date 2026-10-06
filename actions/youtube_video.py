@@ -9,7 +9,7 @@ import subprocess
 import shutil
 from pathlib import Path
 from datetime import datetime
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 
 import pyautogui
 import numpy as np
@@ -29,7 +29,7 @@ except ImportError:
 from config import get_os, is_windows, is_mac, is_linux
 
 from actions.video_understanding import analyze_youtube, analyze_local_video
-from actions.browser_control import browser_control
+from actions.browser_control import browser_control, browser_evaluate_internal
 
 
 def _get_base_dir() -> Path:
@@ -103,7 +103,14 @@ def _extract_video_id(url: str) -> str | None:
 
 
 def _is_valid_youtube_url(url: str) -> bool:
-    return bool(re.search(r"(youtube\.com|youtu\.be)", url or ""))
+    try:
+        parsed = urlparse(str(url or "").strip())
+    except Exception:
+        return False
+    if parsed.scheme.lower() != "https" or not parsed.hostname:
+        return False
+    host = parsed.hostname.lower().rstrip(".")
+    return host == "youtube.com" or host.endswith(".youtube.com") or host == "youtu.be"
 
 
 def _ask_for_url(prompt_text: str = "YouTube video URL:") -> str | None:
@@ -303,7 +310,7 @@ def _parse_timecode(value) -> float | None:
 
 def _current_video_url() -> str:
     try:
-        raw = browser_control({"action": "evaluate", "expression": "window.location.href"}, None, None, None)
+        raw = browser_evaluate_internal("window.location.href")
         value = str(raw or "").strip().strip('"').strip("'")
         return value if re.match(r"^(?:https?|file)://", value, re.I) else ""
     except Exception:
@@ -362,7 +369,7 @@ def _control_video(parameters: dict) -> str:
             "volume, mute, unmute, fullscreen, and status, sir."
         )
 
-    result = browser_control({"action": "evaluate", "expression": js}, None, None, None)
+    result = browser_evaluate_internal(js)
     raw = str(result or "").strip()
     if raw.startswith("{") or raw.startswith('"'):
         try:
