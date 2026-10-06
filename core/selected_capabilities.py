@@ -37,11 +37,20 @@ def _now() -> str:
 
 
 def _json_load(path: Path, default: Any) -> Any:
+    if not path.is_file():
+        return default
     try:
-        if not path.is_file():
-            return default
         return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except (UnicodeError, json.JSONDecodeError):
+        quarantine = path.with_name(
+            f"{path.name}.corrupt-{int(time.time())}-{uuid4().hex[:8]}"
+        )
+        try:
+            path.replace(quarantine)
+        except OSError:
+            pass
+        return default
+    except OSError:
         return default
 
 
