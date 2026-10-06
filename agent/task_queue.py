@@ -48,6 +48,8 @@ class TaskQueue:
         self._executor       = None
         self._executor_lock   = threading.Lock()
         self._history_limit   = 1000
+        self._task_threads: dict[str, threading.Thread] = {}
+        self._stop_timeout = 5.0
 
     def _get_executor(self):
         executor = self._executor
@@ -73,6 +75,7 @@ class TaskQueue:
         print("[TaskQueue] ✅ Started")
 
     def stop(self) -> None:
+        deadline = time.monotonic() + self._stop_timeout
         with self._condition:
             self._running = False
             for task in self._tasks.values():
@@ -86,7 +89,16 @@ class TaskQueue:
             self._condition.notify_all()
         thread = self._worker_thread
         if thread is not None and thread is not threading.current_thread():
-            thread.join(timeout=2.0)
+            thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        with self._condition:
+            task_threads = list(self._task_threads.values())
+        for task_thread in task_threads:
+            if task_thread is threading.current_thread():
+                continue
+            remaining = max(0.0, deadline - time.monotonic())
+            if remaining <= 0:
+                break
+            task_thread.join(timeout=remaining)
         with self._condition:
             if self._worker_thread is thread and (thread is None or not thread.is_alive()):
                 self._worker_thread = None
@@ -105,6 +117,7 @@ class TaskQueue:
         player:      Any = None,
     ) -> str:
 
+        self.start()
         task_id = str(uuid.uuid4())[:8]
         task    = Task(
             priority    = priority.value,
@@ -200,12 +213,14 @@ class TaskQueue:
                         pass
 
             if task:
-                threading.Thread(
+                task_thread = threading.Thread(
                     target=self._run_task,
                     args=(task,),
                     daemon=True,
                     name=f"AgentTask-{task.task_id}"
-                ).start()
+                )
+                self._task_threads[task.task_id] = task_thread
+                task_thread.start()
 
     def _next_task(self) -> Task | None:
         if self._active_count >= self._max_concurrent:
@@ -257,6 +272,7 @@ class TaskQueue:
                 print(f"[TaskQueue] ❌ Failed: [{task.task_id}] {e}")
 
         with self._condition:
+            self._task_threads.pop(task.task_id, None)
             self._condition.notify()
 
 _queue = TaskQueue()
