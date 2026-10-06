@@ -18,6 +18,7 @@ import platform
 import socket
 import statistics
 import subprocess
+import threading
 import time
 from typing import Any, Iterable
 from urllib import error as urlerror
@@ -28,6 +29,7 @@ from core.user_paths import get_user_data_dir
 
 
 ROOT = get_user_data_dir() / "selected_capabilities"
+_STATE_LOCK = threading.RLock()
 
 
 def _now() -> str:
@@ -44,10 +46,17 @@ def _json_load(path: Path, default: Any) -> Any:
 
 
 def _json_save(path: Path, value: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(value, indent=2, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
+    with _STATE_LOCK:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f".{path.name}.{os.getpid()}-{uuid4().hex}.tmp")
+        try:
+            tmp.write_text(json.dumps(value, indent=2, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, path)
+        finally:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 class LearningEngine:
