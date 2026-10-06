@@ -2,8 +2,7 @@ from core.user_paths import get_user_data_dir
 """
 dashboard/server.py — Brahma Local HTTP Dashboard
 
-Plain HTTP on port 8000 (no SSL warnings, no firewall issues).
-Security at the application layer: AES-256-CBC with session-key-derived key.
+HTTPS on port 8000 with a locally generated certificate, plus application-layer AES-256-CBC/session authentication.
 CryptoJS is auto-downloaded once and served locally — no CDN needed after that.
 
 Install deps:  pip install fastapi "uvicorn[standard]" cryptography
@@ -483,8 +482,8 @@ def _ensure_ssl_certs() -> bool:
             .issuer_name(issuer)
             .public_key(key.public_key())
             .serial_number(x509.random_serial_number())
-            .not_valid_before(datetime.datetime.utcnow() - datetime.timedelta(days=1))
-            .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=3650))
+            .not_valid_before(datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1))
+            .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=3650))
             .add_extension(x509.SubjectAlternativeName(alt_names), critical=False)
             .sign(key, hashes.SHA256())
         )
@@ -992,33 +991,47 @@ class DashboardServer:
 
     # ── serve ─────────────────────────────────────────────────────────────
     async def _serve_alias(self) -> None:
-        """Legacy HTTPS alias server kept for compatibility, but not used for QR pairing."""
-        ssl_key  = get_user_data_dir() / "config" / "certs" / "brahma.key"
+        """Compatibility HTTPS alias on the next port."""
+        ssl_key = get_user_data_dir() / "config" / "certs" / "brahma.key"
         ssl_cert = get_user_data_dir() / "config" / "certs" / "brahma.crt"
+        if not _ensure_ssl_certs():
+            raise RuntimeError("Dashboard HTTPS certificate could not be created.")
         asyncio.get_event_loop().run_in_executor(None, _ensure_network_access, PORT + 1)
         cfg = uvicorn.Config(
             self.app, host="0.0.0.0", port=PORT + 1, log_level="warning",
             ssl_keyfile=str(ssl_key), ssl_certfile=str(ssl_cert),
             log_config=None, access_log=False,
         )
-        print(f"[Dashboard] Manual entry:  {self._ip}:{PORT + 1}  (legacy HTTPS alias)")
+        print(f"[Dashboard] Manual entry: https://{self._ip}:{PORT + 1}")
         await uvicorn.Server(cfg).serve()
+
     async def serve(self) -> None:
         if not _DEPS_OK:
             print("[Dashboard] fastapi/uvicorn not installed - dashboard disabled.")
-            print("[Dashboard] Run:  pip install fastapi 'uvicorn[standard]' cryptography")
+            print("[Dashboard] Run: pip install fastapi 'uvicorn[standard]' cryptography")
             return
+        if not _ensure_ssl_certs():
+            raise RuntimeError("Dashboard HTTPS certificate could not be created.")
 
-        # Firewall setup runs in a thread - uvicorn starts immediately,
-        # no waiting for UAC dialogs or subprocess timeouts.
+        ssl_key = get_user_data_dir() / "config" / "certs" / "brahma.key"
+        ssl_cert = get_user_data_dir() / "config" / "certs" / "brahma.crt"
+
+        # Firewall setup runs in a thread; uvicorn starts immediately after
+        # the certificate is confirmed.
         asyncio.get_event_loop().run_in_executor(None, _ensure_network_access, PORT)
 
         cfg = uvicorn.Config(
-            self.app, host="0.0.0.0", port=PORT, log_level="warning",
-            log_config=None, access_log=False,
+            self.app,
+            host="0.0.0.0",
+            port=PORT,
+            log_level="warning",
+            ssl_keyfile=str(ssl_key),
+            ssl_certfile=str(ssl_cert),
+            log_config=None,
+            access_log=False,
         )
 
-        print(f"[Dashboard] http://{self._ip}:{PORT}")
+        print(f"[Dashboard] https://{self._ip}:{PORT}")
         print("[Dashboard] Press 'Mobile Connect' in Brahma UI to get the QR code.")
         server = uvicorn.Server(cfg)
         self._server = server
