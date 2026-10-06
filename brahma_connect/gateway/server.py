@@ -387,7 +387,11 @@ class BrahmaGateway:
             if current is item:
                 self._pending_requests.pop(key, None)
         self._append_log("PAIR_APPROVED", device=record.device_id, name=record.name, platform=record.platform)
-        return {"success": True, "device": record.to_dict(), "device_secret": secret}
+        return {
+            "success": True,
+            "device": record.to_dict(),
+            "message": "Device approved and credentials delivered directly to the paired device.",
+        }
 
     def reject_pending_request(self, pending_id: str) -> bool:
         key = str(pending_id)
