@@ -8,8 +8,6 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from brahma_connect.gateway.models import DeviceRecord
 from brahma_connect.gateway.pairing import PairingManager
 from brahma_connect.gateway.protocol import ProtocolTypes, build_message, validate_message
@@ -102,8 +100,7 @@ def test_connection_hub_does_not_return_cancelled_future_when_unavailable():
     assert asyncio.run(scenario()) is None
 
 
-@pytest.mark.asyncio
-async def test_command_router_cancellation_cleans_pending_future():
+def test_command_router_cancellation_cleans_pending_future():
     from brahma_connect.gateway.command_router import CommandRouter
 
     class DummyDevice:
@@ -138,14 +135,23 @@ async def test_command_router_cancellation_cleans_pending_future():
             if not self.pending.done():
                 self.pending.cancel()
 
-    router = CommandRouter(DeviceManager(), Hub(), type(
-        "Caps", (), {"missing": staticmethod(lambda *_args: [])}
-    )())
-    task = asyncio.create_task(router.route("Phone", "ping", {}))
-    await asyncio.sleep(0)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    async def scenario():
+        hub = Hub()
+        router = CommandRouter(DeviceManager(), hub, type(
+            "Caps", (), {"missing": staticmethod(lambda *_args: [])}
+        )())
+        task = asyncio.create_task(router.route("Phone", "ping", {}))
+        await asyncio.sleep(0)
+        task.cancel()
+        with_value = False
+        try:
+            await task
+        except asyncio.CancelledError:
+            with_value = True
+        assert with_value is True
+        assert hub.rejected is True
+
+    asyncio.run(scenario())
 
 
 def test_service_gateway_timeout_cancels_submitted_future():
@@ -240,3 +246,23 @@ def test_checkpoint_state_transitions_support_slotted_dataclass():
 
     source = Path("core/self_coding.py").read_text(encoding="utf-8")
     assert "checkpoint.__dict__" not in source
+
+
+def test_gateway_logs_redact_credential_fields():
+    from brahma_connect.gateway.server import BrahmaGateway, BrahmaGatewayConfig
+
+    gateway = BrahmaGateway(
+        Path("/tmp/brahma-audit-log-test"),
+        BrahmaGatewayConfig(enabled=False, registry_path=Path("/tmp/brahma-audit-log-test/devices.json")),
+    )
+    gateway._append_log(
+        "EVENT",
+        pairing_code="123456",
+        device_secret="device-secret",
+        payload={"api_key": "sk-test", "nested": {"pin": "9876"}},
+    )
+    entry = gateway.log()[-1]
+    assert entry["pairing_code"] == "[REDACTED]"
+    assert entry["device_secret"] == "[REDACTED]"
+    assert entry["payload"]["api_key"] == "[REDACTED]"
+    assert entry["payload"]["nested"]["pin"] == "[REDACTED]"
