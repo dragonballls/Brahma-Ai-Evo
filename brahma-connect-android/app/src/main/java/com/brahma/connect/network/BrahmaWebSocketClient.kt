@@ -91,8 +91,9 @@ class BrahmaWebSocketClient(
         }.start()
     }
 
-    private fun send(json: JSONObject) {
-        socket?.send(json.toString())
+    private fun send(json: JSONObject): Boolean {
+        val activeSocket = socket ?: return false
+        return activeSocket.send(json.toString())
     }
 
     private fun batterySnapshot(): Pair<Int, Boolean> {
@@ -273,8 +274,8 @@ class BrahmaWebSocketClient(
         val timestamp = System.currentTimeMillis()
         val pending = ChatMessage(msgId, "user", text, timestamp, "Sending...")
         AgentStateStore.addChatMessage(pending)
-        send(payload)
-        val sent = pending.copy(status = "Sent")
-        AgentStateStore.addChatMessage(sent)
+        val accepted = send(payload)
+        val finalStatus = if (accepted) "Sent" else "Failed — not connected"
+        AgentStateStore.addChatMessage(pending.copy(status = finalStatus))
     }
 }
