@@ -41,20 +41,53 @@ def get_system_health() -> dict:
         "top_processes_by_cpu": top_cpu
     }
 
+PROTECTED_PROCESSES = {
+    "system", "systemd", "init", "smss.exe", "csrss.exe", "wininit.exe",
+    "winlogon.exe", "services.exe", "lsass.exe", "svchost.exe", "explorer.exe",
+    "dwm.exe", "registry", "kernel_task", "launchd",
+}
+
+
 def kill_process(pid: int = None, name: str = None) -> str:
+    import getpass
     import psutil
+
+    if pid is None and not name:
+        return "A process PID or exact process name is required."
+
+    target_pid = int(pid) if pid is not None else None
+    target_name = str(name or "").strip().casefold()
+
+    if target_pid is not None and target_pid <= 1:
+        return "Refusing to terminate a protected system PID."
+
     killed = []
-    for p in psutil.process_iter(['pid', 'name']):
+    current_user = getpass.getuser()
+    for p in psutil.process_iter(["pid", "name", "username"]):
         try:
-            if (pid and p.info['pid'] == pid) or (name and p.info['name'] and name.lower() in p.info['name'].lower()):
-                p.kill()
-                killed.append(f"{p.info['name']} (PID: {p.info['pid']})")
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
+            process_pid = int(p.info["pid"])
+            process_name = str(p.info["name"] or "").strip()
+            normalized_name = process_name.casefold()
+            if normalized_name in PROTECTED_PROCESSES:
+                continue
+            if target_pid is not None and process_pid != target_pid:
+                continue
+            if target_name and normalized_name != target_name:
+                continue
+
+            owner = str(p.info.get("username") or "")
+            owner_short = owner.casefold().rsplit("\\", 1)[-1]
+            if owner and current_user and owner_short != current_user.casefold():
+                continue
+
+            p.kill()
+            killed.append(f"{process_name} (PID: {process_pid})")
+        except (psutil.NoSuchProcess, psutil.AccessDenied, ValueError):
+            continue
+
     if killed:
         return f"Successfully closed: {', '.join(killed)}"
-    return f"No matching processes found for '{name or pid}' or access was denied."
-
+    return f"No matching user-owned process found for '{name or pid}' or access was denied."
 def run(parameters: dict, player=None, session_memory=None) -> str:
     try:
         import psutil
