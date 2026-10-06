@@ -268,7 +268,11 @@ class DeviceCommandHandler(private val context: Context) {
 
     private fun fileList(parameters: Map<String, Any?>): CommandResult {
         val path = parameters["path"]?.toString()
-        val dir = resolveFileTarget(path)
+        val dir = try {
+            resolveFileTarget(path)
+        } catch (e: IllegalArgumentException) {
+            return CommandResult(false, errorCode = "INVALID_PATH", error = e.message ?: "Invalid file path.")
+        }
         if (!dir.exists() || !dir.isDirectory) {
             return CommandResult(false, errorCode = "NOT_FOUND", error = "Directory not found: ${dir.absolutePath}")
         }
