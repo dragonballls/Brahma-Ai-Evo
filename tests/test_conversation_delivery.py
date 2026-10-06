@@ -70,12 +70,20 @@ class ConversationDeliveryTests(unittest.TestCase):
         self.assertIn('"intelligence_orchestration_enabled"', Path("core/intelligence_orchestrator.py").read_text(encoding="utf-8"))
 
     def test_action_requests_are_kept_on_tool_capable_path(self):
-        from pathlib import Path
+        from core.request_routing import _looks_like_action_request
 
-        main = Path("main.py").read_text(encoding="utf-8")
-        helper = main.split("def _looks_like_action_request", 1)[1].split("def _build_task_plan", 1)[0]
-        for phrase in ("open ", "run ", "send ", "delete ", "control ", "fix "):
-            self.assertIn(phrase, helper)
+        for phrase in (
+            "open calculator",
+            "run the updater",
+            "send a message",
+            "delete this file",
+            "control the lights",
+            "fix the startup issue",
+        ):
+            self.assertTrue(
+                _looks_like_action_request(phrase),
+                f"Expected actionable request to route to the tool-capable path: {phrase!r}",
+            )
 
     def test_main_cloud_tool_route_uses_unified_omniroute_client(self):
         from pathlib import Path
