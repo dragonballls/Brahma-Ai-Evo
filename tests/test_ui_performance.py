@@ -48,3 +48,13 @@ def test_scanning_overlay_timer_only_runs_while_visible():
     assert "self._tmr.stop()" in source
     assert "def hideEvent(self, event):" in source
 
+
+def test_file_drop_animation_timer_pauses_when_hidden():
+    source = (ROOT / "ui.py").read_text(encoding="utf-8")
+    assert "class FileDropZone(QWidget):" in source
+    assert "self._anim_tmr.timeout.connect(self._animate)" in source
+    assert "def showEvent(self, event):" in source
+    assert "def hideEvent(self, event):" in source
+    assert "self._anim_tmr.stop()" in source
+    assert "self._anim_tmr.start(40)" in source
+
