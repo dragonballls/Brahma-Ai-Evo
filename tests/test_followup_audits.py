@@ -226,7 +226,7 @@ def test_service_gateway_timeout_cancels_submitted_future():
     fake = FakeFuture()
     with patch("brahma_connect.service.asyncio.run_coroutine_threadsafe", return_value=fake):
         with pytest.raises(TimeoutError):
-            service._run_on_gateway_loop(asyncio.sleep(0))
+            service._run_on_gateway_loop(object())
     assert fake.cancelled is True
 
 
@@ -680,6 +680,29 @@ def test_windows_api_keys_are_protected_at_rest_or_plaintext_on_non_windows(tmp_
     loaded = config_module.get_api_key("OpenRouter")
     assert loaded == "example-test-key"
 
+
+def test_windows_api_key_protection_falls_back_on_non_bytes_pywin32(monkeypatch, tmp_path: Path):
+    import sys
+    import types
+    import config as config_module
+
+    monkeypatch.setattr(config_module.platform, "system", lambda: "Windows")
+    monkeypatch.setitem(
+        sys.modules,
+        "win32crypt",
+        types.SimpleNamespace(
+            CryptProtectData=lambda *_args, **_kwargs: ("description", 0),
+            CryptUnprotectData=lambda *_args, **_kwargs: ("description", 0),
+        ),
+    )
+    monkeypatch.setattr(config_module, "_dpapi_protect", lambda _text: b"native-ciphertext")
+    monkeypatch.setattr(config_module, "_dpapi_unprotect", lambda _blob: "example-test-key")
+    monkeypatch.setattr(config_module, "API_CONFIG_PATH", tmp_path / "api_keys.json")
+
+    config_module.save_config({"openrouter_api_key": "example-test-key"})
+    raw = (tmp_path / "api_keys.json").read_text(encoding="utf-8")
+    assert "example-test-key" not in raw
+    assert config_module.get_api_key("OpenRouter") == "example-test-key"
 
 def test_android_stored_credentials_carry_tls_pin():
     source = Path("brahma-connect-android/app/src/main/java/com/brahma/connect/pairing/PairingStorage.kt").read_text(encoding="utf-8")
