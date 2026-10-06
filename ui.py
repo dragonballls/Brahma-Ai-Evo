@@ -11809,8 +11809,8 @@ class SystemConnectivityPage(QWidget):
         if not key:
             return "Not set"
         if len(key) <= 8:
-            return "ΓÇóΓÇóΓÇóΓÇóΓÇóΓÇóΓÇóΓÇó"
-        return f"{key[:4]}ΓÇóΓÇóΓÇóΓÇóΓÇóΓÇóΓÇóΓÇó{key[-4:]}"
+            return "••••••••"
+        return f"{key[:4]}••••••••{key[-4:]}"
 
     def _provider_row(self, name: str, key: str, model: str, setting_key: str):
         row = QFrame()
@@ -14708,7 +14708,7 @@ class _ConnectDeviceCard(QFrame):
 
         platform = str(device.get("platform", "UNKNOWN")).upper()
         status = "ONLINE" if bool(device.get("online")) else "OFFLINE"
-        self._status_label = QLabel(f"{platform} ΓÇó {status}")
+        self._status_label = QLabel(f"{platform} • {status}")
         self._status_label.setFont(QFont("Segoe UI", 8))
         self._status_label.setStyleSheet("color: rgba(255,255,255,0.55);")
         layout.addWidget(self._status_label)
