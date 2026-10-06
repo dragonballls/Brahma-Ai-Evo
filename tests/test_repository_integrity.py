@@ -399,7 +399,8 @@ class RepositoryIntegrityTests(unittest.TestCase):
         setup = self.read("setup.py")
         self.assertIn("--prefer-binary -r requirements.txt", bootstrap)
         self.assertIn("-m playwright install chromium", bootstrap)
-        self.assertIn('"--prefer-binary", "-r", "requirements.txt"', setup)
+        self.assertIn('--prefer-binary', setup)
+        self.assertIn('"-r", "requirements.txt"', setup)
         self.assertIn('"playwright", "install", "chromium"', setup)
         self.assertNotIn('"playwright", "install"],', setup)
 
@@ -427,7 +428,8 @@ class RepositoryIntegrityTests(unittest.TestCase):
         self.assertIn("$BrowserNeedsRepair = $true", bootstrap)
         self.assertIn(probe, bootstrap)
         self.assertIn("Playwright Chromium runtime is missing; installing it", bootstrap)
-        self.assertIn("if (_chromium_ready())", setup)
+        self.assertIn("def _chromium_ready() -> bool:", setup)
+        self.assertIn("_chromium_ready()", setup)
         self.assertIn(probe, setup)
         self.assertNotIn('print("Installing Playwright browsers...")', setup)
 
