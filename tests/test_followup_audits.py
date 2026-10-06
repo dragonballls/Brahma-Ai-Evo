@@ -156,7 +156,7 @@ def test_command_router_cancellation_cleans_pending_future():
         router = CommandRouter(DeviceManager(), hub, type(
             "Caps", (), {"missing": staticmethod(lambda *_args: [])}
         )())
-        task = asyncio.create_task(router.route("Phone", "ping", {}))
+        task = asyncio.create_task(router.route("Phone", "get_battery", {}))
         await asyncio.sleep(0)
         task.cancel()
         with_value = False
