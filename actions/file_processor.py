@@ -741,9 +741,11 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
             target = _safe_archive_target(dest, name)
             if target != dest and target.exists():
                 raise ValueError(f"Archive would overwrite an existing path: {target.name}")
-            if target in seen_files:
-                raise ValueError(f"Archive contains duplicate output path: {target.name}")
-            seen_files.add(target)
+            is_dir = member.is_dir() if isinstance(member, zipfile.ZipInfo) else member.isdir()
+            if not is_dir:
+                if target in seen_files:
+                    raise ValueError(f"Archive contains duplicate output path: {target.name}")
+                seen_files.add(target)
 
             if isinstance(member, zipfile.ZipInfo):
                 mode = (member.external_attr >> 16) & 0o170000
