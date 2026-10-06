@@ -1289,3 +1289,20 @@ def test_openrouter_and_omniroute_authenticated_posts_disable_redirects():
     source = Path("or_client.py").read_text(encoding="utf-8")
     assert source.count("allow_redirects=False") >= 3
     assert "Authenticated request was redirected; refusing credential forwarding." in source
+
+
+def test_geospatial_live_failures_do_not_fabricate_data(monkeypatch):
+    import actions.geospatial_globe as globe
+
+    monkeypatch.setattr(globe.urllib.request, "urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("network down")))
+
+    with pytest.raises(RuntimeError, match="Device location|Live weather|Live flight data|Live ISS|Live earthquake|Nearby-place data"):
+        globe.geocode_location("definitely-not-a-real-place-9e7f")
+    with pytest.raises(RuntimeError, match="Live weather"):
+        globe.fetch_location_weather(34.05, -118.25)
+    with pytest.raises(RuntimeError, match="Live flight"):
+        globe.fetch_live_flights_in_bounds(33.0, 35.0, -119.0, -117.0)
+    with pytest.raises(RuntimeError, match="Live ISS"):
+        globe.fetch_live_iss()
+    with pytest.raises(RuntimeError, match="Live earthquake"):
+        globe.fetch_live_earthquakes()

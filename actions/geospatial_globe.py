@@ -117,8 +117,8 @@ def geocode_location(location_name: str) -> Tuple[float, float, str]:
             lon = float(loc.get("longitude") or 73.13)
             city = loc.get("city") or "Current Location"
             return lat, lon, f"{city} (Device Location)"
-        except Exception:
-            return 19.2403, 73.1305, "Kalyan (Local Area)"
+        except Exception as exc:
+            raise RuntimeError("Device location is unavailable.") from exc
 
     # 1. Exact match in curated database
     if norm in KNOWN_LOCATIONS:
@@ -149,9 +149,7 @@ def geocode_location(location_name: str) -> Tuple[float, float, str]:
     except Exception:
         pass
 
-    # 4. Fallback: if user asked about a specific name, use title
-    clean_title = location_name.title()
-    return 20.5937, 78.9629, clean_title
+    raise ValueError(f"Unable to resolve location: {location_name}")
 
 
 def calculate_great_circle_route(lat1: float, lon1: float, lat2: float, lon2: float) -> Dict[str, Any]:
@@ -261,10 +259,8 @@ def fetch_live_flights_in_bounds(min_lat: float, max_lat: float, min_lon: float,
                         "heading": round(float(heading), 1),
                         "on_ground": bool(on_ground),
                     })
-    except Exception as e:
-        print(f"[HoloGlobe] Live flights fetch notice: {e}")
-
-    return flights
+    except Exception as exc:
+        raise RuntimeError("Live flight data is unavailable.") from exc
 
 
 def reverse_geocode_area(lat: float, lon: float) -> str:
@@ -392,8 +388,8 @@ def fetch_live_iss() -> Dict[str, Any]:
                     "visibility": "orbit",
                     "timestamp": data2.get("timestamp"),
                 }
-        except Exception as e:
-            return {"error": str(e), "lat": 0.0, "lon": 0.0}
+        except Exception as exc:
+            raise RuntimeError("Live ISS data is unavailable.") from exc
 
 
 def fetch_live_earthquakes(min_magnitude: float = 2.5) -> List[Dict[str, Any]]:
@@ -429,9 +425,8 @@ def fetch_live_earthquakes(min_magnitude: float = 2.5) -> List[Dict[str, Any]]:
             # Sort descending by magnitude
             results.sort(key=lambda x: x["magnitude"], reverse=True)
             return results[:60]
-    except Exception as e:
-        print(f"[HoloGlobe] USGS earthquakes fetch notice: {e}")
-        return []
+    except Exception as exc:
+        raise RuntimeError("Live earthquake data is unavailable.") from exc
 
 
 def fetch_nearby_places(query_or_category: str, center_lat: Optional[float] = None, center_lon: Optional[float] = None, location_name: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -549,9 +544,8 @@ def fetch_nearby_places(query_or_category: str, center_lat: Optional[float] = No
                 })
             places.sort(key=lambda p: p["distance_km"])
             return places
-    except Exception as e:
-        print(f"[HoloGlobe] Nearby places notice: {e}")
-        return []
+    except Exception as exc:
+        raise RuntimeError("Nearby-place data is unavailable.") from exc
 
 
 def fetch_location_weather(lat: float, lon: float) -> Dict[str, Any]:
@@ -593,15 +587,8 @@ def fetch_location_weather(lat: float, lon: float) -> Dict[str, Any]:
                 "condition": cond_desc,
                 "icon": icon,
             }
-    except Exception as e:
-        return {
-            "temperature_c": 28.0,
-            "temperature_f": 82.4,
-            "humidity": 60,
-            "wind_kmh": 12.0,
-            "condition": "Fair",
-            "icon": "🌤️",
-        }
+    except Exception as exc:
+        raise RuntimeError("Live weather data is unavailable.") from exc
 
 
 def fetch_radar_timestamp() -> Optional[int]:
