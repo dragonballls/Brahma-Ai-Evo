@@ -991,10 +991,24 @@ class DashboardServer:
                     break
             try:
                 while True:
-                    data = await websocket.receive_json()
+                    raw_message = await websocket.receive_text()
+                    if len(raw_message.encode("utf-8")) > 2 * 1024 * 1024:
+                        await websocket.close(code=1009, reason="Message too large")
+                        break
+                    try:
+                        data = json.loads(raw_message)
+                    except json.JSONDecodeError:
+                        await websocket.send_json({"type": "error", "error": "Invalid JSON message."})
+                        continue
                     if data.get("type") == "command":
                         enc = data.get("enc", "")
-                        t   = self._decrypt(tok, enc) if enc else (data.get("text") or "").strip()
+                        if enc and len(str(enc).encode("utf-8")) > 512 * 1024:
+                            await websocket.send_json({"type": "error", "error": "Encrypted command payload is too large."})
+                            continue
+                        t = self._decrypt(tok, str(enc)) if enc else (data.get("text") or "").strip()
+                        if len(str(t).encode("utf-8")) > 256 * 1024:
+                            await websocket.send_json({"type": "error", "error": "Command payload is too large."})
+                            continue
                         if t:
                             if not self._enqueue_command(t):
                                 await websocket.send_json({"type": "error", "error": "Command queue is busy; retry shortly."})
