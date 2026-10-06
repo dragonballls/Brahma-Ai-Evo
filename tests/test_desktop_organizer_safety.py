@@ -32,3 +32,18 @@ def test_desktop_organizer_archive_collision_uses_incrementing_names():
     assert "while dest_file.exists():" in block
     assert "counter += 1" in block
     assert "int(datetime.now().timestamp())" not in block
+
+def test_organizer_rejects_out_of_home_custom_targets():
+    source = (ROOT / "actions" / "desktop_organizer_mcp.py").read_text(encoding="utf-8")
+    start = source.index("def _resolve_target_dir")
+    end = source.index("def _format_bytes", start)
+    block = source[start:end]
+    assert "Organizer target must remain inside the user's home directory." in block
+    assert "Fallback to Downloads" not in block
+
+
+def test_organizer_history_failure_rolls_back_changes():
+    source = (ROOT / "actions" / "desktop_organizer_mcp.py").read_text(encoding="utf-8")
+    assert "def _rollback_moves" in source
+    assert "Organization was rolled back because its undo history could not be persisted." in source
+    assert "Unable to read persistent organizer history." in source
