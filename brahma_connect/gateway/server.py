@@ -328,13 +328,15 @@ class BrahmaGateway:
         return {"success": True, "device": record.to_dict(), "device_secret": secret}
 
     def reject_pending_request(self, pending_id: str) -> bool:
-        item = self._pending_requests.pop(str(pending_id), None)
+        key = str(pending_id)
+        with self._pending_lock:
+            item = self._pending_requests.pop(key, None)
         if item is None:
             return False
         websocket = item.get("websocket")
         if websocket is not None:
             try:
-                asyncio.create_task(
+                task = asyncio.create_task(
                     websocket.send_json(
                         build_message(
                             ProtocolTypes.ERROR,
@@ -343,9 +345,14 @@ class BrahmaGateway:
                         )
                     )
                 )
-            except Exception:
+                task.add_done_callback(
+                    lambda done: done.exception()
+                    if not done.cancelled()
+                    else None
+                )
+            except RuntimeError:
                 pass
-        self._append_log("PAIR_REJECTED", pending_id=pending_id)
+        self._append_log("PAIR_REJECTED", pending_id=key)
         return True
 
     async def route_command(self, target: str, action: str, parameters: dict[str, Any] | None = None) -> dict[str, Any]:
