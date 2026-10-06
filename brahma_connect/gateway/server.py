@@ -284,14 +284,51 @@ class BrahmaGateway:
         if record is None:
             return {"success": False, "error": "Device not found.", "error_code": "DEVICE_NOT_FOUND"}
 
+        was_online = bool(record.online)
         disconnected = False
         try:
             disconnected = await self.hub.close_device(record.device_id, reason=reason)
         except Exception:
             disconnected = False
         self.device_manager.mark_offline(record.device_id)
-        self._append_log("DEVICE_DISCONNECTED", device_id=record.device_id, name=record.name, forced=disconnected)
-        return {"success": True, "device": record.to_dict(), "disconnected": disconnected}
+
+        if not was_online:
+            self._append_log(
+                "DEVICE_DISCONNECTED",
+                device_id=record.device_id,
+                name=record.name,
+                forced=False,
+                already_disconnected=True,
+            )
+            return {
+                "success": True,
+                "device": record.to_dict(),
+                "disconnected": False,
+                "already_disconnected": True,
+            }
+
+        if not disconnected:
+            self._append_log(
+                "DEVICE_DISCONNECT_FAILED",
+                device_id=record.device_id,
+                name=record.name,
+                forced=False,
+            )
+            return {
+                "success": False,
+                "device": record.to_dict(),
+                "disconnected": False,
+                "error": f"Unable to close the active connection for {record.name}.",
+                "error_code": "DISCONNECT_FAILED",
+            }
+
+        self._append_log(
+            "DEVICE_DISCONNECTED",
+            device_id=record.device_id,
+            name=record.name,
+            forced=True,
+        )
+        return {"success": True, "device": record.to_dict(), "disconnected": True}
 
     async def reconnect_device(self, device_or_target: str) -> dict[str, Any]:
         query = str(device_or_target or "").strip()

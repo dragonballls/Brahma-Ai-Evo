@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+from collections import Counter
 from pathlib import Path, PurePosixPath
 import stat
 import tempfile
@@ -36,7 +37,7 @@ def _validate_source(source: Path) -> list[Path]:
 def _validate_archive_entries(archive: zipfile.ZipFile) -> None:
     infos = archive.infolist()
     names = [str(info.filename or "") for info in infos]
-    duplicates = sorted({name for name in names if names.count(name) > 1})
+    duplicates = sorted(name for name, count in Counter(names).items() if count > 1)
     if duplicates:
         raise RuntimeError(f"Payload archive contains duplicate entries: {duplicates[:5]}")
 

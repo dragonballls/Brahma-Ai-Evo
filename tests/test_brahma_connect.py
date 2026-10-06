@@ -450,6 +450,94 @@ def test_command_router_reports_offline_device(tmp_path: Path):
     assert result["success"] is False
     assert "offline" in result["error"].lower()
 
+def test_gateway_disconnect_does_not_report_success_when_socket_close_fails(tmp_path: Path):
+    from brahma_connect.gateway.server import BrahmaGateway
+
+    gateway = object.__new__(BrahmaGateway)
+    gateway._pending_lock = threading.RLock()
+    gateway._log_lock = threading.RLock()
+
+    class DeviceManagerStub:
+        def __init__(self):
+            self.record = DeviceRecord(
+                device_id="android_disconnect_failure",
+                name="Phone",
+                platform="android",
+                online=True,
+                capabilities=[],
+            )
+            self.offline = False
+
+        def resolve(self, _query):
+            return [self.record]
+
+        def get(self, device_id):
+            return self.record if device_id == self.record.device_id else None
+
+        def mark_offline(self, _device_id):
+            self.offline = True
+            self.record.online = False
+
+    class FailingHub:
+        async def close_device(self, _device_id, *, reason=""):
+            return False
+
+    manager = DeviceManagerStub()
+    gateway.device_manager = manager
+    gateway.hub = FailingHub()
+    events = []
+    gateway._append_log = lambda *args, **kwargs: events.append((args, kwargs))
+
+    result = asyncio.run(gateway.disconnect_device("Phone"))
+
+    assert result["success"] is False
+    assert result["error_code"] == "DISCONNECT_FAILED"
+    assert result["disconnected"] is False
+    assert manager.offline is True
+    assert events[-1][0] == ("DEVICE_DISCONNECT_FAILED",)
+
+
+def test_gateway_disconnect_reports_already_disconnected_without_false_success():
+    from brahma_connect.gateway.server import BrahmaGateway
+
+    gateway = object.__new__(BrahmaGateway)
+    gateway._pending_lock = threading.RLock()
+    gateway._log_lock = threading.RLock()
+
+    class DeviceManagerStub:
+        def __init__(self):
+            self.record = DeviceRecord(
+                device_id="android_already_offline",
+                name="Phone",
+                platform="android",
+                online=False,
+                capabilities=[],
+            )
+
+        def resolve(self, _query):
+            return [self.record]
+
+        def get(self, device_id):
+            return self.record if device_id == self.record.device_id else None
+
+        def mark_offline(self, _device_id):
+            self.record.online = False
+
+    class Hub:
+        async def close_device(self, _device_id, *, reason=""):
+            raise AssertionError("Offline devices must not attempt socket closure.")
+
+    gateway.device_manager = DeviceManagerStub()
+    gateway.hub = Hub()
+    gateway._append_log = lambda *_args, **_kwargs: None
+
+    result = asyncio.run(gateway.disconnect_device("Phone"))
+
+    assert result["success"] is True
+    assert result["already_disconnected"] is True
+    assert result["disconnected"] is False
+
+
 def test_gateway_rejects_unauthenticated_event_and_chat_paths():
     source = Path(__file__).resolve().parents[1] / "brahma_connect" / "gateway" / "server.py"
     text_value = source.read_text(encoding="utf-8")
