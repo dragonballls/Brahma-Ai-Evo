@@ -560,3 +560,21 @@ def test_device_action_wrappers_do_not_nest_asyncio_run():
     source = Path("actions/brahma_connect.py").read_text(encoding="utf-8")
     assert "asyncio.run(service.disconnect_device" not in source
     assert "asyncio.run(service.approve_pending_request" not in source
+
+
+def test_ota_rejects_mismatched_supplied_checksum(monkeypatch, tmp_path: Path):
+    import core.updater_ota as ota
+
+    release = {"assets": [{"name": "BrahmaEvo_Setup.exe", "browser_download_url": "https://example.test/setup.exe"}]}
+    monkeypatch.setattr(ota, "_get_release", lambda: release)
+    monkeypatch.setattr(
+        ota,
+        "_release_asset",
+        lambda _release, _url: release["assets"][0],
+    )
+    monkeypatch.setattr(ota, "_asset_digest", lambda _release, _asset: "a" * 64)
+    with pytest.raises(RuntimeError, match="supplied checksum"):
+        ota.download_and_apply_update(
+            "https://example.test/setup.exe",
+            expected_sha256="b" * 64,
+        )
