@@ -57,6 +57,9 @@ def test_browser_navigation_rejects_local_and_script_url_schemes():
         "javascript:alert(1)",
         "data:text/html,<h1>secret</h1>",
         "vbscript:MsgBox(1)",
+        "blob:https://example.com/id",
+        "filesystem:https://example.com/temporary/file.txt",
+        "view-source:https://example.com",
         "about:srcdoc",
     ):
         with pytest.raises(ValueError):

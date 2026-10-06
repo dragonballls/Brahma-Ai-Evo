@@ -32,12 +32,27 @@ def validate_browser_url(url: str) -> str:
         raise ValueError("Browser URL contains control characters.")
 
     lowered = raw.lower()
+    explicit_scheme = lowered.split(":", 1)[0] if ":" in lowered else ""
     if lowered in _ALLOWED_BROWSER_ABOUT_URLS:
         return "about:blank"
-    if lowered.startswith("about:"):
+    if explicit_scheme == "about":
         raise ValueError("Only about:blank is allowed for browser navigation.")
+    if explicit_scheme in {
+        "file",
+        "data",
+        "javascript",
+        "vbscript",
+        "blob",
+        "filesystem",
+        "view-source",
+        "chrome",
+        "chrome-extension",
+        "edge",
+        "ms-browser-extension",
+    }:
+        raise ValueError(f"Browser navigation to '{explicit_scheme}:' URLs is blocked.")
 
-    candidate = raw if "://" in raw else f"https://{raw}"
+    candidate = raw if explicit_scheme in _ALLOWED_BROWSER_URL_SCHEMES else f"https://{raw}"
     parsed = urlsplit(candidate)
     scheme = parsed.scheme.lower()
     if scheme not in _ALLOWED_BROWSER_URL_SCHEMES:
