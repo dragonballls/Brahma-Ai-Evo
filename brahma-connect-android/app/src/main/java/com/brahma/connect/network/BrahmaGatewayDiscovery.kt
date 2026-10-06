@@ -21,11 +21,17 @@ class BrahmaGatewayDiscovery(private val context: Context) {
             override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
                 val host = serviceInfo.host?.hostAddress.orEmpty()
                 val port = serviceInfo.port
+                val tls = serviceInfo.attributes["tls"]?.toString(Charsets.UTF_8) != "0"
+                val fingerprint = serviceInfo.attributes["tls_certificate_sha256"]
+                    ?.toString(Charsets.UTF_8)
+                    .orEmpty()
                 if (host.isNotBlank() && port > 0) {
                     val endpoint = GatewayEndpoint(
                         name = serviceInfo.serviceName ?: "Brahma PC",
                         host = host,
                         port = port,
+                        tls = tls,
+                        tlsCertificateSha256 = fingerprint,
                     )
                     AgentStateStore.setGateway(endpoint)
                     onFound(endpoint)
