@@ -68,12 +68,12 @@ class BrahmaWebSocketClient(
         return builder.build()
     }
 
-    private var socket: WebSocket? = null
-    private var currentEndpoint: GatewayEndpoint? = null
-    private var currentOffer: PairingOffer? = null
-    private var currentCredential: DeviceCredential? = null
-    private var manualDisconnect = false
-    private var reconnectAttempt = 0
+    @Volatile private var socket: WebSocket? = null
+    @Volatile private var currentEndpoint: GatewayEndpoint? = null
+    @Volatile private var currentOffer: PairingOffer? = null
+    @Volatile private var currentCredential: DeviceCredential? = null
+    @Volatile private var manualDisconnect = false
+    @Volatile private var reconnectAttempt = 0
     private var lastConnectUptime = 0L
 
     fun connect(endpoint: GatewayEndpoint, credential: DeviceCredential? = storage.loadCredential(), offer: PairingOffer? = null) {
@@ -103,7 +103,9 @@ class BrahmaWebSocketClient(
         AgentStateStore.setConnectionState(ConnectionState.CONNECTING)
         AgentStateStore.setStatus("Connecting to ${endpoint.name}")
 
-        socket?.close(1000, "Reconnecting")
+        val previousSocket = socket
+        socket = null
+        previousSocket?.close(1000, "Reconnecting")
         socket = buildClient(endpoint).newWebSocket(
             Request.Builder().url("wss://" + endpoint.host + ":" + endpoint.port + "/ws").build(),
             BrahmaSocketListener(),
