@@ -108,9 +108,16 @@ class BrahmaGatewayConfig:
         config_path = _default_config_path(base_dir)
         if config_path.exists():
             try:
-                data.update(json.loads(config_path.read_text(encoding="utf-8")))
-            except Exception:
-                pass
+                loaded = json.loads(config_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                raise RuntimeError(
+                    "Brahma Connect configuration is unreadable or corrupted."
+                ) from exc
+            if not isinstance(loaded, dict):
+                raise RuntimeError(
+                    "Brahma Connect configuration has an invalid root schema."
+                )
+            data.update(loaded)
         if override:
             data.update({k: v for k, v in override.items() if v is not None})
         return cls(
