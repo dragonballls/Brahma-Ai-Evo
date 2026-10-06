@@ -99,4 +99,11 @@ jobs:
           cache-dependency-path: requirements.txt
       - name: Install lightweight test dependency
         run: python -m pip install requests psutil pywin32 bleak pytest
-      - name: Run ${{ matrix.group }} regressions
+      - name: Run ${{ matrix.group }} regressions        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $commands = @'
+          ${{ matrix.commands }}
+          '@
+          & ([scriptblock]::Create($commands))
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
