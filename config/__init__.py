@@ -229,7 +229,24 @@ def get_config() -> dict[str, Any]:
             if API_CONFIG_PATH.is_file():
                 data = json.loads(API_CONFIG_PATH.read_text(encoding="utf-8"))
                 if isinstance(data, dict):
-                    defaults.update(_decode_config_from_storage(data))
+                    decoded = _decode_config_from_storage(data)
+                    defaults.update(decoded)
+                    if platform.system().lower() != "windows":
+                        legacy_secrets = {
+                            key: value
+                            for key, value in data.items()
+                            if key.endswith(_SECRET_SUFFIXES)
+                            and value
+                            and not (isinstance(value, str) and value.startswith(_PORTABLE_PREFIX))
+                            and not (isinstance(value, str) and value.startswith(_PROTECTED_PREFIX))
+                        }
+                        if legacy_secrets:
+                            try:
+                                save_config(legacy_secrets)
+                            except Exception:
+                                # Never expose or overwrite the user's live config merely
+                                # because an optional migration could not complete.
+                                pass
         except (OSError, json.JSONDecodeError):
             pass
         return defaults
