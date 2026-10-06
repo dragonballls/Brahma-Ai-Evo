@@ -623,7 +623,7 @@ class DashboardServer:
         dead: set[WebSocket] = set()
         for ws in list(self._clients):
             try:
-                await ws.send_json(msg)
+                await asyncio.wait_for(ws.send_json(msg), timeout=5.0)
             except Exception:
                 dead.add(ws)
         self._clients -= dead
