@@ -26,3 +26,17 @@ def test_brahma_dev_agent_rejects_out_of_workspace_command_paths():
     assert "command arguments may not access paths outside the configured developer workspace." in source
     assert "resolved.relative_to(root)" in source
     assert "Git repository/work-tree overrides are not permitted." in source
+
+
+def test_brahma_dev_agent_blocks_git_pack_command_execution_overrides(tmp_path):
+    from actions.brahma_dev_agent import NativeTools
+
+    tools = NativeTools(tmp_path)
+    blocked = [
+        'git clone --upload-pack="python -c \\"print(1)\\"" https://example.invalid/repo.git repo',
+        'git fetch --upload-pack="python -c \\"print(1)\\"" origin main',
+        'git push --receive-pack="python -c \\"print(1)\\"" origin HEAD',
+    ]
+    for command in blocked:
+        result = tools.bash(command)
+        assert result == "Error: Git upload/receive-pack execution overrides are not permitted."
