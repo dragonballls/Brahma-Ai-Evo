@@ -389,3 +389,20 @@ def test_command_router_reports_offline_device(tmp_path: Path):
 
     assert result["success"] is False
     assert "offline" in result["error"].lower()
+
+def test_gateway_rejects_unauthenticated_event_and_chat_paths():
+    source = Path(__file__).resolve().parents[1] / "brahma_connect" / "gateway" / "server.py"
+    text_value = source.read_text(encoding="utf-8")
+    event_block = text_value.split("if msg_type == ProtocolTypes.EVENT:", 1)[1].split(
+        'if msg_type == ProtocolTypes.CHAT_MESSAGE:', 1
+    )[0]
+    chat_block = text_value.split("if msg_type == ProtocolTypes.CHAT_MESSAGE:", 1)[1].split(
+        'if msg_type == ProtocolTypes.DEVICE_OFFLINE:', 1
+    )[0]
+    offline_block = text_value.split("if msg_type == ProtocolTypes.DEVICE_OFFLINE:", 1)[1]
+    assert "if not device_id:" in event_block
+    assert "if not device_id:" in chat_block
+    assert "if not device_id:" in offline_block
+    assert 'Authentication required for chat messages.' in chat_block
+    assert 'Authentication required for device events.' in event_block
+    assert 'Authentication required for device status changes.' in offline_block
