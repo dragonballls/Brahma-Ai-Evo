@@ -90,11 +90,18 @@ def _protect_secret(value: object) -> str:
         return text
     try:
         import win32crypt
-        protected = win32crypt.CryptProtectData(
+        result = win32crypt.CryptProtectData(
             text.encode("utf-8"),
             "Brahma Evo runtime secret",
             None, None, None, 0,
-        )[1]
+        )
+        protected = result[1] if isinstance(result, tuple) and len(result) > 1 else result
+        if isinstance(protected, memoryview):
+            protected = protected.tobytes()
+        elif isinstance(protected, bytearray):
+            protected = bytes(protected)
+        if not isinstance(protected, bytes):
+            raise TypeError("win32crypt returned non-bytes protected data")
     except Exception:
         protected = _dpapi_protect(text)
     return _PROTECTED_PREFIX + base64.b64encode(protected).decode("ascii")
@@ -108,7 +115,15 @@ def _unprotect_secret(value: object) -> str:
         blob = base64.b64decode(raw[len(_PROTECTED_PREFIX):], validate=True)
         try:
             import win32crypt
-            return win32crypt.CryptUnprotectData(blob, None)[1].decode("utf-8")
+            result = win32crypt.CryptUnprotectData(blob, None)
+            clear = result[1] if isinstance(result, tuple) and len(result) > 1 else result
+            if isinstance(clear, memoryview):
+                clear = clear.tobytes()
+            elif isinstance(clear, bytearray):
+                clear = bytes(clear)
+            if not isinstance(clear, bytes):
+                raise TypeError("win32crypt returned non-bytes clear data")
+            return clear.decode("utf-8")
         except Exception:
             return _dpapi_unprotect(blob)
     except Exception as exc:
