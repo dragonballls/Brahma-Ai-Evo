@@ -806,6 +806,19 @@ class DashboardServer:
             name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', name).strip(". ")
             return name or "upload"
 
+        def _open_unique_upload(root: Path, safe_name: str):
+            """Atomically reserve a unique destination to prevent concurrent upload overwrites."""
+            root.mkdir(parents=True, exist_ok=True)
+            path = root / safe_name
+            stem, suffix = path.stem, path.suffix
+            for counter in range(10000):
+                candidate = path if counter == 0 else root / f"{stem}_{counter}{suffix}"
+                try:
+                    return candidate, candidate.open("xb")
+                except FileExistsError:
+                    continue
+            raise RuntimeError("Unable to allocate a unique upload filename.")
+
         if _UPLOAD_OK:
             @app.post("/api/upload")
             async def upload_file(req: Request, file: UploadFile = FastAPIFile(...)):
@@ -813,17 +826,13 @@ class DashboardServer:
                     return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
                 safe = _safe_filename(file.filename or "upload")
-                dest = self._uploads_dir / safe
-                stem, suffix = Path(safe).stem, Path(safe).suffix
-                counter = 1
-                while dest.exists():
-                    dest = self._uploads_dir / f"{stem}_{counter}{suffix}"
-                    counter += 1
 
                 size = 0
                 max_bytes = MAX_UPLOAD_MB * 1024 * 1024
+                dest = None
                 try:
-                    with open(dest, "wb") as fout:
+                    dest, fout = _open_unique_upload(self._uploads_dir, safe)
+                    with fout:
                         while True:
                             chunk = await file.read(65536)
                             if not chunk:
