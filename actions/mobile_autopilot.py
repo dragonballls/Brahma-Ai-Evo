@@ -56,17 +56,9 @@ def _verify_completion(ui_tree, verification):
     visible = "\n".join(_verification_texts(ui_tree)).casefold()
     return all(claim.casefold() in visible for claim in claims)
 
-def _build_prompt(instruction: str, ui_tree: dict) -> str:
-    if not isinstance(instruction, str) or not instruction.strip():
-        raise ValueError("Mobile autopilot instruction must be a non-empty string.")
-    if len(instruction) > 4_000:
-        raise ValueError("Mobile autopilot instruction exceeds the safe size limit.")
+def _screen_dimensions(ui_tree: dict) -> tuple[int, int]:
     if not isinstance(ui_tree, dict):
         raise ValueError("Mobile UI dump data must be an object.")
-    nodes = ui_tree.get("nodes", [])
-    if not isinstance(nodes, list):
-        raise ValueError("Mobile UI dump nodes must be a list.")
-
     screen_width = ui_tree.get("screen_width")
     screen_height = ui_tree.get("screen_height")
     if (
@@ -84,7 +76,21 @@ def _build_prompt(instruction: str, ui_tree: dict) -> str:
     screen_height = int(screen_height)
     if screen_width > MAX_MOBILE_COORDINATE + 1 or screen_height > MAX_MOBILE_COORDINATE + 1:
         raise ValueError("Mobile device screen dimensions exceed the safe coordinate range.")
+    return screen_width, screen_height
 
+
+def _build_prompt(instruction: str, ui_tree: dict) -> str:
+    if not isinstance(instruction, str) or not instruction.strip():
+        raise ValueError("Mobile autopilot instruction must be a non-empty string.")
+    if len(instruction) > 4_000:
+        raise ValueError("Mobile autopilot instruction exceeds the safe size limit.")
+    if not isinstance(ui_tree, dict):
+        raise ValueError("Mobile UI dump data must be an object.")
+    nodes = ui_tree.get("nodes", [])
+    if not isinstance(nodes, list):
+        raise ValueError("Mobile UI dump nodes must be a list.")
+
+    screen_width, screen_height = _screen_dimensions(ui_tree)
     simplified_ui = []
     total_chars = 0
     for i, node in enumerate(nodes[:500]):
@@ -179,6 +185,7 @@ def mobile_autopilot(parameters: dict, response=None, player=None, session_memor
             return json.dumps({"success": False, "error": str(exc), "steps_attempted": step})
         ui_tree = dump_res.get("data", {})
         try:
+            screen_width, screen_height = _screen_dimensions(ui_tree)
             prompt = _build_prompt(instruction, ui_tree)
         except ValueError as exc:
             return json.dumps({"success": False, "error": str(exc), "steps_attempted": step})
