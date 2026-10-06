@@ -51,14 +51,21 @@ def _safe_screenshot_path(requested: str | None) -> Path:
     if not requested:
         return fallback
     try:
-        p = Path(requested).expanduser().resolve()
+        raw = Path(requested).expanduser()
+        p = raw.resolve()
         for root in _SAFE_SCREENSHOT_ROOTS:
             if p.is_relative_to(root.resolve()):
+                current = Path(raw.anchor) if raw.anchor else Path(".")
+                parts = raw.parts[1:] if raw.anchor else raw.parts
+                for part in parts:
+                    current = current / part
+                    if current.is_symlink():
+                        raise ValueError("Screenshot path may not contain symlinked components.")
                 p.parent.mkdir(parents=True, exist_ok=True)
                 return p
-    except Exception:
-        pass
-    return fallback
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"Invalid screenshot path: {exc}") from exc
+    raise ValueError("Screenshot path must remain inside the user's home directory.")
 
 def _require_pyautogui():
     if not _PYAUTOGUI:
