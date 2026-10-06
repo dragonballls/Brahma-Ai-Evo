@@ -7547,7 +7547,6 @@ class ScanningOverlay(QWidget):
         
         self._tmr = QTimer(self)
         self._tmr.timeout.connect(self._tick)
-        self._tmr.start(16)
 
         self._particles = []
         self._boxes = [] 
@@ -7579,6 +7578,7 @@ class ScanningOverlay(QWidget):
         else:
             self._generate_layout(None)
         
+        self._tmr.start(16)
         self.show()
         self.raise_()
         self.setFocus()
@@ -7591,7 +7591,12 @@ class ScanningOverlay(QWidget):
             self._result_text = "Workspace Recognized\\nVisual Studio Code · Browser · Terminal"
 
     def force_hide(self):
+        self._tmr.stop()
         self.hide()
+
+    def hideEvent(self, event):
+        self._tmr.stop()
+        super().hideEvent(event)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
