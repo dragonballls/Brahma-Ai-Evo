@@ -15,10 +15,11 @@ def test_legacy_browser_close_keeps_runtime_reusable_and_exposes_shutdown():
     assert "_bt_started = False" in source
 
 
-def test_public_browser_code_execution_requires_explicit_opt_in():
+def test_public_browser_code_execution_is_not_exposed():
     source = (ROOT / "actions" / "browser_control.py").read_text(encoding="utf-8")
-    assert "allow_unsafe_code=true" in source
     assert 'if action in {"evaluate", "eval", "run_code", "execute"}' in source
+    assert "arbitrary code execution is not exposed" in source
+    assert "allow_unsafe_code" not in source
 
 
 def test_playwright_mcp_launcher_does_not_request_shell_execution():
