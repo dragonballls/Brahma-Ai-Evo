@@ -82,13 +82,17 @@ class CredentialVault:
 
     def decrypt_json(self, payload: str | None) -> dict[str, Any]:
         if not payload:
-            return {}
+            raise RuntimeError("Encrypted smart-home credential payload is missing.")
         try:
             data = self._fernet.decrypt(payload.encode("utf-8"))
             obj = json.loads(data.decode("utf-8"))
-            return obj if isinstance(obj, dict) else {}
-        except Exception:
-            return {}
+        except Exception as exc:
+            raise RuntimeError(
+                "Encrypted smart-home credential payload is corrupt or cannot be decrypted."
+            ) from exc
+        if not isinstance(obj, dict):
+            raise RuntimeError("Encrypted smart-home credential payload has an invalid schema.")
+        return obj
 
 
 class SmartHomeStorage:
@@ -273,11 +277,16 @@ class SmartHomeStorage:
             rows = conn.execute(query, params).fetchall()
         result: list[dict[str, Any]] = []
         for row in rows:
-            traits = {}
             try:
                 traits = json.loads(row["traits_json"]) if row["traits_json"] else {}
-            except Exception:
-                traits = {}
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Smart-home device '{row['id']}' contains corrupt trait state."
+                ) from exc
+            if not isinstance(traits, dict):
+                raise RuntimeError(
+                    f"Smart-home device '{row['id']}' contains invalid trait state."
+                )
             result.append(
                 {
                     "id": row["id"],
