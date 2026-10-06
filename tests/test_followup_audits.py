@@ -641,3 +641,45 @@ def test_android_gateway_requires_tls_and_uses_wss_with_pinning():
     assert 'endpoint.tlsCertificateSha256.lowercase().trim()' in source
     assert "Gateway TLS certificate fingerprint does not match the pairing record." in source
     assert 'android:usesCleartextTraffic="false"' in manifest
+
+
+def test_dashboard_https_and_gateway_tls_helpers(tmp_path: Path):
+    from dashboard import server as dashboard_server
+    from core.local_tls import certificate_sha256
+    from brahma_connect.gateway.server import BrahmaGateway, BrahmaGatewayConfig
+
+    dashboard_source = Path("dashboard/server.py").read_text(encoding="utf-8")
+    assert 'return f"https://{self._ip}:{PORT}"' in dashboard_source
+
+    gateway = BrahmaGateway(tmp_path, BrahmaGatewayConfig(registry_path=tmp_path / "devices.json"))
+    gateway._ensure_tls()
+    assert gateway._tls_certfile is not None
+    assert gateway._tls_keyfile is not None
+    assert len(gateway._tls_fingerprint) == 64
+    assert gateway._tls_fingerprint == certificate_sha256(gateway._tls_certfile)
+
+
+def test_gateway_config_refuses_corrupt_json(tmp_path: Path):
+    path = tmp_path / "config" / "brahma_connect.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{broken", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="corrupted"):
+        BrahmaGatewayConfig.load(tmp_path)
+
+
+def test_windows_api_keys_are_protected_at_rest_or_plaintext_on_non_windows(tmp_path: Path, monkeypatch):
+    import config as config_module
+
+    monkeypatch.setattr(config_module, "API_CONFIG_PATH", tmp_path / "api_keys.json")
+    monkeypatch.setattr(config_module.platform, "system", lambda: "Windows")
+    config_module.save_config({"openrouter_api_key": "example-test-key"})
+    raw = (tmp_path / "api_keys.json").read_text(encoding="utf-8")
+    assert "example-test-key" not in raw
+    loaded = config_module.get_api_key("OpenRouter")
+    assert loaded == "example-test-key"
+
+
+def test_android_stored_credentials_carry_tls_pin():
+    source = Path("brahma-connect-android/app/src/main/java/com/brahma/connect/pairing/PairingStorage.kt").read_text(encoding="utf-8")
+    assert 'put("tls_certificate_sha256", credential.tlsCertificateSha256)' in source
+    assert 'tlsCertificateSha256 = json.optString("tls_certificate_sha256")' in source
