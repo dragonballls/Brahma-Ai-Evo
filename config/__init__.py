@@ -31,6 +31,18 @@ def _dpapi_protect(text: str) -> bytes:
 
     crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    crypt32.CryptProtectData.argtypes = [
+        ctypes.POINTER(DATA_BLOB),
+        wintypes.LPCWSTR,
+        ctypes.POINTER(DATA_BLOB),
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(DATA_BLOB),
+    ]
+    crypt32.CryptProtectData.restype = wintypes.BOOL
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel32.LocalFree.restype = ctypes.c_void_p
     payload = text.encode("utf-8")
     buf = ctypes.create_string_buffer(payload)
     in_blob = DATA_BLOB(len(payload), ctypes.cast(buf, ctypes.POINTER(ctypes.c_ubyte)))
@@ -64,6 +76,18 @@ def _dpapi_unprotect(blob: bytes) -> str:
 
     crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    crypt32.CryptUnprotectData.argtypes = [
+        ctypes.POINTER(DATA_BLOB),
+        ctypes.POINTER(wintypes.LPWSTR),
+        ctypes.POINTER(DATA_BLOB),
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(DATA_BLOB),
+    ]
+    crypt32.CryptUnprotectData.restype = wintypes.BOOL
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel32.LocalFree.restype = ctypes.c_void_p
     buf = ctypes.create_string_buffer(blob)
     in_blob = DATA_BLOB(len(blob), ctypes.cast(buf, ctypes.POINTER(ctypes.c_ubyte)))
     out_blob = DATA_BLOB()
