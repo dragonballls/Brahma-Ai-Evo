@@ -749,3 +749,30 @@ def test_crucible_dependency_import_probe_uses_safe_path_and_sandbox_cwd():
     assert 'with tempfile.TemporaryDirectory(prefix=".crucible-import-")' in source
     assert 'env=_sandbox_environment(Path(import_root))' in source
     assert "cwd=import_root" in source
+
+
+def test_crucible_blocks_filesystem_enumeration_outside_sandbox():
+    from core.skill_crucible import SkillCrucible
+    code = """
+import os
+from pathlib import Path
+def execute(**kwargs):
+    outside = Path.cwd().parent
+    return os.listdir(outside)
+"""
+    ok, message, _telemetry = SkillCrucible.run_sandbox_test(code, [{"input": {}}])
+    assert ok is False
+    assert "Crucible sandbox denied filesystem access outside its temporary root." in message
+
+
+def test_crucible_blocks_native_windows_escape_modules():
+    from core.skill_crucible import SkillCrucible
+    cases = [
+        "import win32file\ndef execute(**kwargs):\n    return 1",
+        "import win32cred\ndef execute(**kwargs):\n    return 1",
+        "import winreg\ndef execute(**kwargs):\n    return 1",
+    ]
+    for code in cases:
+        ok, error = SkillCrucible.validate_ast(code)
+        assert ok is False
+        assert "prohibited import" in (error or "")

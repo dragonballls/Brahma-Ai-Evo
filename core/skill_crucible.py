@@ -116,6 +116,21 @@ BANNED_IMPORT_MODULES = {
     "pty",
     "sqlite3",
     "mmap",
+    # Native Windows modules can open files/processes or query protected system state.
+    "winreg",
+    "_winreg",
+    "win32api",
+    "win32file",
+    "win32security",
+    "win32crypt",
+    "win32cred",
+    "win32process",
+    "win32service",
+    "win32event",
+    "win32com",
+    "pythoncom",
+    "pywintypes",
+    "msvcrt",
 }
 
 BANNED_CALLS = {
@@ -449,25 +464,53 @@ import os
 import builtins as _builtins
 import io as _io
 from pathlib import Path as _SandboxPath
+import shutil as _sandbox_shutil
 
 _SANDBOX_ROOT = _SandboxPath(os.environ["BRAHMA_CRUCIBLE_ROOT"]).resolve()
+_REAL_OS_REALPATH = os.path.realpath
 
 def _sandbox_path(value):
     if isinstance(value, (str, bytes, os.PathLike)):
         candidate = _SandboxPath(value)
         if not candidate.is_absolute():
             candidate = _SANDBOX_ROOT / candidate
-        resolved = candidate.resolve()
+        resolved = _SandboxPath(_REAL_OS_REALPATH(os.fspath(candidate)))
         try:
             resolved.relative_to(_SANDBOX_ROOT)
         except ValueError as exc:
             raise PermissionError("Crucible sandbox denied filesystem access outside its temporary root.") from exc
         return resolved
+    if isinstance(value, int):
+        raise PermissionError("Crucible sandbox denied direct file-descriptor access.")
     return value
+
+def _sandbox_dir_arg(value):
+    return _sandbox_path(value)
 
 _real_open = _builtins.open
 _real_io_open = _io.open
 _real_os_open = os.open
+_real_os_listdir = os.listdir
+_real_os_scandir = os.scandir
+_real_os_stat = os.stat
+_real_os_lstat = os.lstat
+_real_os_access = os.access
+_real_os_walk = os.walk
+_real_os_fwalk = os.fwalk
+_real_os_readlink = os.readlink
+_real_os_remove = os.remove
+_real_os_unlink = os.unlink
+_real_os_rmdir = os.rmdir
+_real_os_removedirs = os.removedirs
+_real_os_replace = os.replace
+_real_os_rename = os.rename
+_real_os_mkdir = os.mkdir
+_real_os_makedirs = os.makedirs
+_real_os_symlink = os.symlink
+_real_os_link = os.link
+_real_os_system = os.system
+_real_os_popen = os.popen
+_real_os_startfile = getattr(os, "startfile", None)
 
 def _sandbox_open(file, *args, **kwargs):
     return _real_open(_sandbox_path(file), *args, **kwargs)
@@ -480,9 +523,100 @@ def _sandbox_os_open(path, flags, mode=0o777, *, dir_fd=None):
         raise PermissionError("Crucible sandbox denied dir_fd filesystem access.")
     return _real_os_open(_sandbox_path(path), flags, mode)
 
+def _sandbox_listdir(path="."):
+    return _real_os_listdir(_sandbox_path(path))
+
+def _sandbox_scandir(path="."):
+    return _real_os_scandir(_sandbox_path(path))
+
+def _sandbox_stat(path, *args, **kwargs):
+    if kwargs.get("dir_fd") is not None or (len(args) >= 2 and args[1] is not None):
+        raise PermissionError("Crucible sandbox denied dir_fd filesystem access.")
+    return _real_os_stat(_sandbox_path(path))
+
+def _sandbox_lstat(path, *args, **kwargs):
+    if kwargs.get("dir_fd") is not None or (len(args) >= 2 and args[1] is not None):
+        raise PermissionError("Crucible sandbox denied dir_fd filesystem access.")
+    return _real_os_lstat(_sandbox_path(path))
+
+def _sandbox_access(path, *args, **kwargs):
+    if kwargs.get("dir_fd") is not None or (len(args) >= 2 and args[1] is not None):
+        raise PermissionError("Crucible sandbox denied dir_fd filesystem access.")
+    return _real_os_access(_sandbox_path(path), *args[:1], **{k: v for k, v in kwargs.items() if k != "dir_fd"})
+
+def _sandbox_walk(top, *args, **kwargs):
+    return _real_os_walk(_sandbox_path(top), *args, **kwargs)
+
+def _sandbox_fwalk(top=".", *args, **kwargs):
+    if kwargs.get("dir_fd") is not None:
+        raise PermissionError("Crucible sandbox denied dir_fd filesystem access.")
+    return _real_os_fwalk(_sandbox_path(top), *args, **kwargs)
+
+def _sandbox_readlink(path, *args, **kwargs):
+    if kwargs.get("dir_fd") is not None or (len(args) >= 1 and args[0] is not None):
+        raise PermissionError("Crucible sandbox denied dir_fd filesystem access.")
+    link_path = _sandbox_path(path)
+    target = _real_os_readlink(link_path)
+    resolved_target = _SandboxPath(_REAL_OS_REALPATH(os.path.join(os.path.dirname(os.fspath(link_path)), target)))
+    resolved_target.relative_to(_SANDBOX_ROOT)
+    return target
+
+def _sandbox_mutation(real_fn):
+    def guarded(*args, **kwargs):
+        if not args:
+            raise PermissionError("Crucible sandbox denied filesystem mutation without a path.")
+        safe_args = list(args)
+        path_indices = (0, 1) if real_fn in (_real_os_replace, _real_os_rename, _real_os_link, _real_os_symlink) else (0,)
+        for index in path_indices:
+            if index < len(safe_args):
+                safe_args[index] = _sandbox_path(safe_args[index])
+        for key in ("src_dir_fd", "dst_dir_fd", "dir_fd"):
+            if key in kwargs and kwargs[key] is not None:
+                raise PermissionError("Crucible sandbox denied dir_fd filesystem access.")
+        return real_fn(*safe_args, **kwargs)
+    return guarded
+
+def _sandbox_blocked(*_args, **_kwargs):
+    raise PermissionError("Crucible sandbox blocked a process-launch or shell escape.")
+
 _builtins.open = _sandbox_open
 _io.open = _sandbox_io_open
 os.open = _sandbox_os_open
+os.listdir = _sandbox_listdir
+os.scandir = _sandbox_scandir
+os.stat = _sandbox_stat
+os.lstat = _sandbox_lstat
+os.access = _sandbox_access
+os.walk = _sandbox_walk
+os.fwalk = _sandbox_fwalk
+os.readlink = _sandbox_readlink
+os.remove = _sandbox_mutation(_real_os_remove)
+os.unlink = _sandbox_mutation(_real_os_unlink)
+os.rmdir = _sandbox_mutation(_real_os_rmdir)
+os.removedirs = _sandbox_mutation(_real_os_removedirs)
+os.replace = _sandbox_mutation(_real_os_replace)
+os.rename = _sandbox_mutation(_real_os_rename)
+os.mkdir = _sandbox_mutation(_real_os_mkdir)
+os.makedirs = _sandbox_mutation(_real_os_makedirs)
+os.symlink = _sandbox_mutation(_real_os_symlink)
+os.link = _sandbox_mutation(_real_os_link)
+os.system = _sandbox_blocked
+os.popen = _sandbox_blocked
+if _real_os_startfile is not None:
+    os.startfile = _sandbox_blocked
+try:
+    _sandbox_shutil.rmtree
+    _sandbox_shutil.rmtree = _sandbox_blocked
+    _sandbox_shutil.copytree = _sandbox_blocked
+    _sandbox_shutil.make_archive = _sandbox_blocked
+except Exception:
+    pass
+
+# Keep path helpers from exposing or escaping the sandbox when they reach os.*
+_real_os_realpath_fn = os.path.realpath
+def _sandbox_realpath(path, *args, **kwargs):
+    return os.fspath(_sandbox_path(path))
+os.path.realpath = _sandbox_realpath
 
 {skill_code}
 
