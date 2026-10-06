@@ -81,10 +81,13 @@ def _title_from_message(message: str) -> str:
 
 
 def _serialize_attachments(attachments: list[dict[str, Any]] | None) -> str:
+    data = _redact_persisted(attachments or [])
+    if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
+        raise ValueError("Attachments must be a list of objects.")
     try:
-        return json.dumps(_redact_persisted(attachments or []), ensure_ascii=False)
-    except Exception:
-        return "[]"
+        return json.dumps(data, ensure_ascii=False)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Attachments could not be serialized safely.") from exc
 
 
 def _deserialize_attachments(raw: str | None) -> list[dict[str, Any]]:
@@ -92,9 +95,11 @@ def _deserialize_attachments(raw: str | None) -> list[dict[str, Any]]:
         return []
     try:
         data = json.loads(raw)
-        return data if isinstance(data, list) else []
-    except Exception:
-        return []
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("Conversation attachment metadata is corrupted.") from exc
+    if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
+        raise RuntimeError("Conversation attachment metadata has an invalid schema.")
+    return data
 
 
 class WorkspaceStore:
