@@ -547,49 +547,94 @@ def toggle_wifi():
         iface = _get_macos_wifi_interface()
         result = subprocess.run(
             ["networksetup", "-getairportpower", iface],
-            capture_output=True, text=True
+            capture_output=True, text=True, timeout=5
         )
+        if result.returncode != 0:
+            raise RuntimeError(f"Unable to read Wi-Fi state (exit {result.returncode}).")
         state = "off" if "On" in result.stdout else "on"
-        subprocess.run(["networksetup", "-setairportpower", iface, state],
-            capture_output=True)
-    elif _OS == "Windows":
-        try:
-            subprocess.run(
-                ["powershell", "-Command",
-                 "$adapter = Get-NetAdapter | Where-Object {$_.PhysicalMediaType -eq 'Native 802.11'};"
-                 "if ($adapter.Status -eq 'Up') { Disable-NetAdapter -Name $adapter.Name -Confirm:$false }"
-                 "else { Enable-NetAdapter -Name $adapter.Name -Confirm:$false }"],
-                capture_output=True, timeout=10, **_WIN_HIDE
+        changed = subprocess.run(
+            ["networksetup", "-setairportpower", iface, state],
+            capture_output=True, text=True, timeout=5
+        )
+        if changed.returncode != 0:
+            raise RuntimeError(
+                f"Unable to change Wi-Fi state (exit {changed.returncode}): "
+                f"{changed.stderr.strip()[:200]}"
             )
-        except Exception as e:
-            print(f"[Settings] toggle_wifi Windows failed: {e}")
-    else:
-        try:
-            result = subprocess.run(["nmcli", "radio", "wifi"], capture_output=True, text=True)
-            state  = "off" if "enabled" in result.stdout else "on"
-            subprocess.run(["nmcli", "radio", "wifi", state], capture_output=True)
-        except Exception as e:
-            print(f"[Settings] toggle_wifi Linux failed: {e}")
+        return True
+    if _OS == "Windows":
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+             "$adapter = Get-NetAdapter | Where-Object { $_.PhysicalMediaType -match '802.11' } | "
+             "Select-Object -First 1;"
+             "if ($null -eq $adapter) { exit 1 };"
+             "if ($adapter.Status -eq 'Up') { "
+             "Disable-NetAdapter -Name $adapter.Name -Confirm:$false "
+             "} else { "
+             "Enable-NetAdapter -Name $adapter.Name -Confirm:$false "
+             "}"],
+            capture_output=True, text=True, timeout=10, **_WIN_HIDE
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Unable to change Wi-Fi state (exit {result.returncode}): "
+                f"{result.stderr.strip()[:200]}"
+            )
+        return True
+    result = subprocess.run(
+        ["nmcli", "radio", "wifi"], capture_output=True, text=True, timeout=5
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Unable to read Wi-Fi state (exit {result.returncode}).")
+    state = "off" if "enabled" in result.stdout.lower() else "on"
+    changed = subprocess.run(
+        ["nmcli", "radio", "wifi", state],
+        capture_output=True, text=True, timeout=5
+    )
+    if changed.returncode != 0:
+        raise RuntimeError(
+            f"Unable to change Wi-Fi state (exit {changed.returncode}): "
+            f"{changed.stderr.strip()[:200]}"
+        )
+    return True
+
 
 def restart_computer():
     if _OS == "Windows":
-        subprocess.run(["shutdown", "/r", "/t", "10"], capture_output=True, **_WIN_HIDE)
+        result = subprocess.run(
+            ["shutdown", "/r", "/t", "10"], capture_output=True, text=True, **_WIN_HIDE
+        )
     elif _OS == "Darwin":
-        subprocess.run(["osascript", "-e",
-            'tell application "System Events" to restart'],
-            capture_output=True)
+        result = subprocess.run(
+            ["osascript", "-e", 'tell application "System Events" to restart'],
+            capture_output=True, text=True
+        )
     else:
-        subprocess.run(["systemctl", "reboot"], capture_output=True)
+        result = subprocess.run(["systemctl", "reboot"], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Restart command failed (exit {result.returncode}): {result.stderr.strip()[:200]}"
+        )
+    return True
+
 
 def shutdown_computer():
     if _OS == "Windows":
-        subprocess.run(["shutdown", "/s", "/t", "10"], capture_output=True)
+        result = subprocess.run(
+            ["shutdown", "/s", "/t", "10"], capture_output=True, text=True, **_WIN_HIDE
+        )
     elif _OS == "Darwin":
-        subprocess.run(["osascript", "-e",
-            'tell application "System Events" to shut down'],
-            capture_output=True)
+        result = subprocess.run(
+            ["osascript", "-e", 'tell application "System Events" to shut down'],
+            capture_output=True, text=True
+        )
     else:
-        subprocess.run(["systemctl", "poweroff"], capture_output=True)
+        result = subprocess.run(["systemctl", "poweroff"], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Shutdown command failed (exit {result.returncode}): {result.stderr.strip()[:200]}"
+        )
+    return True
 
 ACTION_MAP: dict[str, callable] = {
     "volume_up":           volume_up,
@@ -822,9 +867,14 @@ def computer_settings(
         if confirm.pending_title():
             return ("There is already a confirmation waiting on screen. "
                     "Ask the user to answer that one first.")
+        def _confirmed_action(f=func, a=action):
+            outcome = f()
+            if outcome is False:
+                raise RuntimeError(f"Confirmed action '{a}' reported failure.")
+            return f"{a} done."
         return confirm.request(
             key=action, title=title, detail=detail,
-            run=lambda f=func, a=action: (f(), f"{a} done.")[1],
+            run=_confirmed_action,
         )
 
     if action == "volume_set":
