@@ -103,6 +103,44 @@ def test_connection_hub_rejects_pending_commands_on_disconnect():
         raise AssertionError("Pending command future was not rejected")
 
 
+def test_connection_hub_old_socket_cannot_unregister_new_connection():
+    class Socket:
+        def __init__(self, name):
+            self.name = name
+            self.closed = False
+
+        async def send_json(self, message):
+            return None
+
+        async def close(self, code=1000, reason=""):
+            self.closed = True
+
+    async def scenario():
+        hub = ConnectionHub()
+        old_socket = Socket("old")
+        new_socket = Socket("new")
+        await hub.register(old_socket, "device-1")
+        old_future = await hub.set_pending("device-1", "old-req")
+        await hub.register(new_socket, "device-1")
+        await hub.unregister(old_socket)
+        current = await hub.get("device-1")
+        return old_future, old_socket, current
+
+    old_future, old_socket, current = asyncio.run(scenario())
+    assert current is not None
+    assert current.websocket.name == "new"
+    assert old_socket.closed is True
+    assert old_future.done()
+    try:
+        old_future.result()
+    except RuntimeError as exc:
+        assert "replaced" in str(exc).lower()
+    else:
+        raise AssertionError("Old pending future was not rejected")
+
+
+
+
 def test_command_router_cleans_pending_when_device_send_fails(tmp_path: Path):
     registry_path = tmp_path / "devices.json"
     manager = DeviceManager(registry_path)
