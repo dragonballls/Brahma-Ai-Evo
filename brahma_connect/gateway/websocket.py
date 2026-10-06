@@ -9,6 +9,7 @@ from fastapi import WebSocket
 from .models import DeviceRecord
 
 SOCKET_SEND_TIMEOUT_SECONDS = 10.0
+MAX_ACTIVE_CONNECTIONS = 128
 
 
 @dataclass(slots=True)
@@ -27,9 +28,11 @@ class ConnectionHub:
         self._socket_index: dict[int, str] = {}
         self._lock = asyncio.Lock()
 
-    async def attach(self, websocket: WebSocket, *, role: str = "agent") -> ConnectionState:
+    async def attach(self, websocket: WebSocket, *, role: str = "agent") -> ConnectionState | None:
         state = ConnectionState(websocket=websocket, role=role)
         async with self._lock:
+            if len(self._socket_index) >= MAX_ACTIVE_CONNECTIONS:
+                return None
             key = id(websocket)
             self._socket_index[key] = ""
         return state
