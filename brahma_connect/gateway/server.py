@@ -633,7 +633,23 @@ class BrahmaGateway:
             device_id = ""
             try:
                 while True:
-                    incoming = await websocket.receive_json()
+                    raw_message = await websocket.receive_text()
+                    if len(raw_message.encode("utf-8")) > 2 * 1024 * 1024:
+                        await websocket.send_json(
+                            build_message(
+                                ProtocolTypes.ERROR,
+                                {"error": "WebSocket message exceeds the 2 MiB limit."},
+                            )
+                        )
+                        await websocket.close(code=1009, reason="Message too large")
+                        break
+                    try:
+                        incoming = json.loads(raw_message)
+                    except json.JSONDecodeError:
+                        await websocket.send_json(
+                            build_message(ProtocolTypes.ERROR, {"error": "Invalid JSON message."})
+                        )
+                        continue
                     valid, error = validate_message(incoming)
                     if not valid:
                         await websocket.send_json(build_message(ProtocolTypes.ERROR, {"error": error}))
