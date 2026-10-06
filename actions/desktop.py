@@ -133,22 +133,28 @@ def set_wallpaper(image_path: str) -> str:
                 'tell application "System Events" to tell every desktop to '
                 f'set picture to POSIX file "{escaped_path}"'
             )
-            subprocess.run(["osascript", "-e", script], capture_output=True)
+            result = subprocess.run(["osascript", "-e", script], capture_output=True)
+            if result.returncode != 0:
+                return f"Could not set wallpaper: osascript exited with {result.returncode}."
             return f"Wallpaper set: {path.name}"
 
         else:
             desktop_env = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
-            uri = f"file://{path}"
+            uri = "file://" + urllib.parse.quote(str(path).replace("\\", "/"), safe="/:")
 
             if "gnome" in desktop_env or "unity" in desktop_env:
-                subprocess.run([
+                result = subprocess.run([
                     "gsettings", "set", "org.gnome.desktop.background",
                     "picture-uri", uri
                 ], capture_output=True)
-                subprocess.run([
+                if result.returncode != 0:
+                    return f"Could not set wallpaper: gsettings exited with {result.returncode}."
+                result = subprocess.run([
                     "gsettings", "set", "org.gnome.desktop.background",
                     "picture-uri-dark", uri
                 ], capture_output=True)
+                if result.returncode != 0:
+                    return f"Could not set wallpaper: gsettings dark-mode update exited with {result.returncode}."
 
             elif "kde" in desktop_env:
                 # KDE Plasma
@@ -161,18 +167,22 @@ for (var i = 0; i < allDesktops.length; i++) {{
     d.writeConfig("Image", "file://{path}");
 }}
 """
-                subprocess.run(
+                result = subprocess.run(
                     ["qdbus", "org.kde.plasmashell", "/PlasmaShell",
                      "org.kde.PlasmaShell.evaluateScript", script],
                     capture_output=True
                 )
+                if result.returncode != 0:
+                    return f"Could not set wallpaper: qdbus exited with {result.returncode}."
 
             elif "xfce" in desktop_env:
-                subprocess.run([
+                result = subprocess.run([
                     "xfconf-query", "-c", "xfce4-desktop",
                     "-p", "/backdrop/screen0/monitor0/workspace0/last-image",
                     "-s", str(path)
                 ], capture_output=True)
+                if result.returncode != 0:
+                    return f"Could not set wallpaper: xfconf-query exited with {result.returncode}."
 
             else:
                 result = subprocess.run(
