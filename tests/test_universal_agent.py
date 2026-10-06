@@ -53,6 +53,17 @@ class UniversalCapabilityAgentTests(unittest.TestCase):
         self.assertIn("seen: set[int] = set()", block)
         self.assertIn("id(skill) in seen", block)
 
+    def test_packaged_and_legacy_skills_register_manifest_aliases(self):
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[1] / "core" / "dynamic_registry.py").read_text(encoding="utf-8")
+        packaged = source.split("elif item.is_dir():", 1)[1].split("    # 2. Check legacy", 1)[0]
+        legacy = source.split("# 2. Check legacy AppData skills vault", 1)[1]
+        for block in (packaged, legacy):
+            self.assertIn("for alias in skill.aliases:", block)
+            self.assertIn('cls._skills[str(alias)] = skill', block)
+            self.assertIn('if alias not in cls._skills:', block)
+
     def test_prompt_routes_unmatched_capabilities_to_universal_task(self):
         from pathlib import Path
 
