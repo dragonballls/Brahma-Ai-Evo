@@ -40,3 +40,8 @@ def test_browser_backend_registers_process_exit_cleanup():
     source = (ROOT / "actions" / "browser_control.py").read_text(encoding="utf-8")
     assert "import atexit" in source
     assert "atexit.register(shutdown_browser)" in source
+
+
+def test_browser_shutdown_cleanup_is_registered_after_definition():
+    source = (ROOT / "actions" / "browser_control.py").read_text(encoding="utf-8")
+    assert source.index("def shutdown_browser") < source.index("atexit.register(shutdown_browser)")
