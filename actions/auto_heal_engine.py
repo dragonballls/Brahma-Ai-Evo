@@ -167,37 +167,38 @@ class SafetySandbox:
     @staticmethod
     def rollback_patch(patch_id: str) -> Dict[str, Any]:
         """Rolls back an applied patch by its ID."""
-        history = SafetySandbox._load_history()
-        for entry in reversed(history):
-            if entry.get("patch_id") == patch_id or patch_id == "latest":
-                if entry.get("status") != "applied":
-                    continue
-                target = Path(entry.get("target_file", ""))
-                backup = Path(entry.get("backup_path", ""))
-                try:
-                    target = target.resolve()
-                    backup = backup.resolve()
-                    target.relative_to(BASE_DIR.resolve())
-                    backup.relative_to(BACKUPS_DIR.resolve())
-                except (OSError, ValueError):
-                    return {"success": False, "message": "Rollback paths are outside the protected auto-heal roots."}
-                if not backup.is_file() or not target.is_file():
-                    return {"success": False, "message": f"Backup file '{backup}' missing."}
+        with SafetySandbox._history_lock:
+            history = SafetySandbox._load_history()
+            for entry in reversed(history):
+                if entry.get("patch_id") == patch_id or patch_id == "latest":
+                    if entry.get("status") != "applied":
+                        continue
+                    target = Path(entry.get("target_file", ""))
+                    backup = Path(entry.get("backup_path", ""))
+                    try:
+                        target = target.resolve()
+                        backup = backup.resolve()
+                        target.relative_to(BASE_DIR.resolve())
+                        backup.relative_to(BACKUPS_DIR.resolve())
+                    except (OSError, ValueError):
+                        return {"success": False, "message": "Rollback paths are outside the protected auto-heal roots."}
+                    if not backup.is_file() or not target.is_file():
+                        return {"success": False, "message": f"Backup file '{backup}' missing."}
 
-                try:
-                    shutil.copy2(backup, target)
-                    entry["status"] = "rolled_back"
-                    entry["rolled_back_at"] = time.time()
-                    SafetySandbox._save_history(history)
-                    return {
-                        "success": True,
-                        "message": f"Successfully rolled back patch {entry.get('patch_id')} on '{target.name}'.",
-                        "target_file": str(target),
-                    }
-                except Exception as e:
-                    return {"success": False, "message": f"Rollback failed: {e}"}
+                    try:
+                        shutil.copy2(backup, target)
+                        entry["status"] = "rolled_back"
+                        entry["rolled_back_at"] = time.time()
+                        SafetySandbox._save_history(history)
+                        return {
+                            "success": True,
+                            "message": f"Successfully rolled back patch {entry.get('patch_id')} on '{target.name}'.",
+                            "target_file": str(target),
+                        }
+                    except Exception as e:
+                        return {"success": False, "message": f"Rollback failed: {e}"}
 
-        return {"success": False, "message": f"No active patch matching '{patch_id}' found to rollback."}
+            return {"success": False, "message": f"No active patch matching '{patch_id}' found to rollback."}
 
     @staticmethod
     def _load_history() -> List[Dict[str, Any]]:
@@ -381,9 +382,10 @@ class AutoHealEngine:
             "status": "applied",
         }
 
-        history = SafetySandbox._load_history()
-        history.append(entry)
-        SafetySandbox._save_history(history)
+        with SafetySandbox._history_lock:
+            history = SafetySandbox._load_history()
+            history.append(entry)
+            SafetySandbox._save_history(history)
 
         # Publish only after all in-process verification and history persistence
         # succeed. Self-coding checkpoints remain separate and approval-gated.
