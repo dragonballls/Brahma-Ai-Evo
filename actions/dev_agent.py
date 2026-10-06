@@ -23,6 +23,7 @@ _SAFE_RUN_PROGRAMS = {
     "npm", "node", "npx", "cargo", "go", "dotnet", "java", "ruby", "php",
 }
 _BLOCKED_RUN_FLAGS = {"-c", "--command", "--eval", "-e", "--execute", "--require", "--import"}
+_DEP_SPEC_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(?:\\[[A-Za-z0-9_,.-]+\\])?(?:\\s*(?:==|>=|<=|~=|>|<|!=)\\s*[A-Za-z0-9.*+!_-]+)?$")
 MODEL_PLANNER    = "gemini-flash-latest"
 MODEL_WRITER     = "gemini-flash-latest"
 
@@ -262,6 +263,9 @@ def _install_dependencies(dependencies: list[str], project_dir: Path) -> str:
 
     to_install = []
     for dep in dependencies:
+        dep = str(dep or "").strip()
+        if not _DEP_SPEC_RE.fullmatch(dep):
+            return f"Dependency install blocked: unsafe package specification '{dep}'."
         pkg_name = re.split(r"[>=<!]", dep)[0].strip()
         result = subprocess.run(
             [sys.executable, "-m", "pip", "show", pkg_name],
@@ -319,6 +323,8 @@ def _run_project(run_command: str, project_dir: Path, timeout: int = 30) -> str:
         parts = shlex.split(str(run_command or ""))
         if not parts:
             return "Run error: empty command."
+        if "/" in parts[0] or "\\" in parts[0] or Path(parts[0]).is_absolute():
+            return "Run blocked: executable paths must use the approved bare development-command names."
 
         program = Path(parts[0]).name.casefold()
         if program.endswith(".exe"):
@@ -356,7 +362,7 @@ def _run_project(run_command: str, project_dir: Path, timeout: int = 30) -> str:
     except Exception as e:
         return f"Run error: {e}"
 
-def _try_auto_install(error_output: str, project_dir: Path) -> bool:
+def _try_auto_install(error_output: str, project_dir: Path, allowed_dependencies: list[str] | None = None) -> bool:
     """ModuleNotFoundError varsa eksik paketi otomatik kurmaya çalışır."""
     pattern = re.compile(
         r"No module named ['\"]([a-zA-Z0-9_\-\.]+)['\"]", re.IGNORECASE
@@ -366,6 +372,13 @@ def _try_auto_install(error_output: str, project_dir: Path) -> bool:
         return False
 
     pkg = match.group(1).replace("_", "-").split(".")[0]
+    allowed = {
+        re.split(r"[>=<!]", str(dep or "").strip())[0].strip().casefold()
+        for dep in (allowed_dependencies or [])
+        if _DEP_SPEC_RE.fullmatch(str(dep or "").strip())
+    }
+    if pkg.casefold() not in allowed:
+        return False
     print(f"[DevAgent] 🔧 Auto-installing missing package: {pkg}")
     try:
         result = subprocess.run(
@@ -574,7 +587,7 @@ def _build_project(
 
         error_type = _classify_error(last_output)
         if error_type == "dependency_error" and auto_installs < 3:
-            installed = _try_auto_install(last_output, project_dir)
+            installed = _try_auto_install(last_output, project_dir, dependencies)
             if installed:
                 auto_installs += 1
                 log("Missing dependency installed, retrying...")
