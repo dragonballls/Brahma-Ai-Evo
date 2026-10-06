@@ -59,6 +59,13 @@ jobs:
           tests.test_background_monitor_guards
           tests.test_dynamic_registry_matching
           tests.test_omniroute_lifecycle
+          tests.test_command_router_contract
+          tests.test_gateway_protocol_limits
+          tests.test_gateway_connection_limits
+          tests.test_auto_heal_history_atomicity
+          tests.test_dynamic_registry_security
+          tests.test_local_endpoint_security
+          tests.test_device_manager_resolution
 
       - name: Run module-level follow-up regression suite
         run: python -m pytest -q tests/test_followup_audits.py
