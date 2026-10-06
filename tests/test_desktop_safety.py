@@ -68,7 +68,7 @@ def test_reminder_embeds_message_as_data_and_never_shell_executes():
     assert "<Description>MARK Reminder: {xml_message}</Description>" in source
     assert 'subprocess.run(\n            ["schtasks", "/Create"' in source
     assert "shell=True" not in source
-    assert "subprocess.run(["msg", "*", "/TIME:30", {message_literal}], shell=False)" in source
+    assert 'subprocess.run(["msg", "*", "/TIME:30", {message_literal}], shell=False)' in source
 
 def test_remote_wallpaper_download_rejects_private_resolved_hosts():
     source = (ROOT / "actions" / "desktop.py").read_text(encoding="utf-8")
