@@ -41,6 +41,36 @@ BANNED_AST_PATTERNS = [
     "build_exe",
 ]
 
+BANNED_IMPORT_MODULES = {
+    "subprocess",
+    "ctypes",
+    "multiprocessing",
+    "importlib",
+    "runpy",
+    "pty",
+}
+
+BANNED_CALLS = {
+    ("os", "system"),
+    ("os", "popen"),
+    ("os", "remove"),
+    ("os", "unlink"),
+    ("os", "rmdir"),
+    ("os", "removedirs"),
+    ("os", "replace"),
+    ("os", "rename"),
+    ("os", "startfile"),
+    ("shutil", "rmtree"),
+    ("shutil", "copytree"),
+    ("shutil", "make_archive"),
+    ("subprocess", "*"),
+    ("pathlib.Path", "unlink"),
+    ("pathlib.Path", "rmdir"),
+    ("pathlib.Path", "replace"),
+    ("pathlib.Path", "rename"),
+    ("ssl", "_create_unverified_context"),
+}
+
 STANDARD_LIB_MODULES = {
     "abc", "argparse", "array", "ast", "asyncio", "base64", "binascii", "bisect",
     "calendar", "cmath", "collections", "colorsys", "concurrent", "configparser",
@@ -120,6 +150,47 @@ class SkillCrucible:
         if not has_execute:
             return False, "Skill code must define an 'execute(**kwargs)' or 'async def execute(**kwargs)' function."
 
+        # Block powerful runtime primitives that would let a generated skill
+        # escape the Crucible's intended safety boundary. Skills can still use
+        # ordinary Python, network clients, and deterministic local processing.
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    root = alias.name.split(".")[0]
+                    if root in BANNED_IMPORT_MODULES:
+                        return False, f"Security Violation: prohibited import '{root}'."
+            elif isinstance(node, ast.ImportFrom):
+                root = (node.module or "").split(".")[0]
+                if root in BANNED_IMPORT_MODULES:
+                    return False, f"Security Violation: prohibited import '{root}'."
+            elif isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Name) and func.id in {"eval", "exec", "__import__"}:
+                    return False, f"Security Violation: prohibited dynamic execution '{func.id}'."
+                if isinstance(func, ast.Attribute):
+                    owner = ""
+                    if isinstance(func.value, ast.Name):
+                        owner = func.value.id
+                    elif (
+                        isinstance(func.value, ast.Attribute)
+                        and isinstance(func.value.value, ast.Name)
+                        and func.value.value.id == "pathlib"
+                    ):
+                        owner = "pathlib." + func.value.value.id + "." + func.attr
+                    call_key = (owner, func.attr)
+                    if call_key in BANNED_CALLS or (owner, "*") in BANNED_CALLS:
+                        return False, f"Security Violation: prohibited call '{owner}.{func.attr}'."
+                    if isinstance(func.value, ast.Attribute):
+                        if (
+                            isinstance(func.value.value, ast.Name)
+                            and func.value.value.id == "Path"
+                            and func.attr in {"unlink", "rmdir", "replace", "rename"}
+                        ):
+                            return False, f"Security Violation: prohibited Path.{func.attr} call."
+                for keyword in node.keywords:
+                    if keyword.arg == "verify" and isinstance(keyword.value, ast.Constant):
+                        if keyword.value.value is False:
+                            return False, "Security Violation: TLS certificate verification cannot be disabled."
         # Safety scans for banned keywords in string literals or function calls
         for node in ast.walk(tree):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
