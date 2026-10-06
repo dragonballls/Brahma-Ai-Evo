@@ -71,6 +71,83 @@ def test_forged_skill_persistence_is_outside_repository(tmp_path):
         DynamicToolRegistry._initialized = original_initialized
 
 
+def test_skill_forge_rejects_unsafe_manifest_names(tmp_path):
+    original_skills = DynamicToolRegistry._skills.copy()
+    original_initialized = DynamicToolRegistry._initialized
+    payload = {
+        "success": True,
+        "manifest": {
+            "name": "../escape",
+            "description": "Unsafe name",
+            "parameters": {"type": "OBJECT", "properties": {}},
+            "active": True,
+        },
+        "code": 'def execute(**kwargs):\n    return "should never persist"\n',
+        "test_cases": [{"input": {}}],
+    }
+    try:
+        with (
+            patch("core.dynamic_registry.FEATURES_DIR", tmp_path / "features"),
+            patch("core.dynamic_registry.APPDATA_SKILLS_DIR", tmp_path / "vault"),
+            patch.object(SkillForge, "_call_llm_synthesizer", return_value=payload),
+        ):
+            result = SkillForge.forge_skill("unsafe skill", "safe_hint")
+            assert result["success"] is False
+            assert "unsafe skill name" in result["message"].lower()
+            assert not (tmp_path / "escape").exists()
+    finally:
+        DynamicToolRegistry._skills = original_skills
+        DynamicToolRegistry._initialized = original_initialized
+
+
+def test_skill_forge_refuses_to_overwrite_existing_skill(tmp_path):
+    original_skills = DynamicToolRegistry._skills.copy()
+    original_initialized = DynamicToolRegistry._initialized
+    payload = {
+        "success": True,
+        "manifest": {
+            "name": "existing_skill",
+            "description": "Existing",
+            "parameters": {"type": "OBJECT", "properties": {}},
+            "active": True,
+        },
+        "code": 'def execute(**kwargs):\n    return "new"\n',
+        "test_cases": [{"input": {}}],
+    }
+    vault = tmp_path / "vault"
+    existing = vault / "existing_skill"
+    existing.mkdir(parents=True)
+    (existing / "skill.py").write_text('def execute(**kwargs):\n    return "old"\n', encoding="utf-8")
+    try:
+        with (
+            patch("core.dynamic_registry.FEATURES_DIR", tmp_path / "features"),
+            patch("core.dynamic_registry.APPDATA_SKILLS_DIR", vault),
+            patch.object(SkillForge, "_call_llm_synthesizer", return_value=payload),
+        ):
+            result = SkillForge.forge_skill("overwrite check", "existing_skill")
+            assert result["success"] is False
+            assert "already exists" in result["message"]
+            assert (existing / "skill.py").read_text(encoding="utf-8").strip().endswith('return "old"')
+    finally:
+        DynamicToolRegistry._skills = original_skills
+        DynamicToolRegistry._initialized = original_initialized
+
+
+def test_crucible_rejects_dangerous_generated_primitives():
+    cases = {
+        'import subprocess\ndef execute(**kwargs):\n    return subprocess.run(["whoami"])': "prohibited import 'subprocess'",
+        'from os import system as run_cmd\ndef execute(**kwargs):\n    return run_cmd("echo test")': "prohibited imported call 'run_cmd'",
+        'from pathlib import Path\ndef execute(**kwargs):\n    return Path("demo.txt").unlink()': "prohibited Path.unlink",
+        'import ssl\ndef execute(**kwargs):\n    return ssl._create_unverified_context()': "prohibited call 'ssl._create_unverified_context'",
+        'import requests\ndef execute(**kwargs):\n    return requests.get("https://example.com", verify=False)': "TLS certificate verification cannot be disabled.",
+        'def execute(**kwargs):\n    return eval("1+1")': "prohibited dynamic execution 'eval'",
+    }
+    for code, expected in cases.items():
+        ok, error = SkillCrucible.validate_ast(code)
+        assert ok is False
+        assert expected in (error or "")
+
+
 def test_crucible_detects_error_dictionary_in_sandbox():
     broken_code = 'def execute(**kwargs):\n    return {"error": "SSL handshake failed"}\n'
     ok, msg, telemetry = SkillCrucible.run_sandbox_test(broken_code, [{"input": {}}])
