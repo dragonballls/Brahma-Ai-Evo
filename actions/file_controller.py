@@ -478,12 +478,15 @@ def write_file(path: str, name: str = "", content: str = "",
                 return "Could not write file: existing target is not a regular file."
             try:
                 size = target.stat().st_size
-                if not append and size > _UNDO_CONTENT_LIMIT:
-                    return (
-                        "Could not write file: existing target is too large to "
-                        "overwrite safely without a verified rollback copy."
-                    )
-                previous = target.read_text(encoding="utf-8")
+                if size > _UNDO_CONTENT_LIMIT:
+                    if not append:
+                        return (
+                            "Could not write file: existing target is too large to "
+                            "overwrite safely without a verified rollback copy."
+                        )
+                    undoable = False
+                else:
+                    previous = target.read_text(encoding="utf-8")
             except Exception as exc:
                 return (
                     "Could not write file: existing target could not be read safely; "
