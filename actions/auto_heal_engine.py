@@ -82,29 +82,35 @@ class TracebackAnalyzer:
         matches = file_pattern.findall(tb_text)
 
         # Iterate in reverse (innermost / latest frame first) to find first-party codebase file
+        repo_root = BASE_DIR.resolve()
         for raw_path, line_str, func_name in reversed(matches):
             p = Path(raw_path)
-            # Skip third-party packages or virtualenvs
+            # Skip third-party packages or virtualenvs.
             if "site-packages" in raw_path.lower() or ".venv" in raw_path.lower() or "lib\\python" in raw_path.lower():
                 continue
 
-            # Check if file exists in our codebase
+            # Traceback paths are untrusted input. Never allow an absolute path or
+            # symlink to escape the first-party repository root.
             resolved = None
-            if (BASE_DIR / p).exists():
-                resolved = (BASE_DIR / p).resolve()
-            elif p.is_absolute() and p.exists():
-                resolved = p
+            candidates = []
+            if p.is_absolute():
+                candidates.append(p)
             else:
-                candidate = BASE_DIR / p.name
-                if candidate.exists():
-                    resolved = candidate
-                else:
-                    # Search inside subdirectories
-                    for sub in ("actions", "core", "agent", "services"):
-                        c2 = BASE_DIR / sub / p.name
-                        if c2.exists():
-                            resolved = c2
-                            break
+                candidates.append(repo_root / p)
+                candidates.append(repo_root / p.name)
+
+            for sub in ("actions", "core", "agent", "services"):
+                candidates.append(repo_root / sub / p.name)
+
+            for candidate in candidates:
+                try:
+                    candidate_resolved = candidate.resolve()
+                    candidate_resolved.relative_to(repo_root)
+                except (OSError, ValueError):
+                    continue
+                if candidate_resolved.is_file() and candidate_resolved.suffix.lower() == ".py":
+                    resolved = candidate_resolved
+                    break
 
             if resolved and resolved.exists():
                 # Check immunity
