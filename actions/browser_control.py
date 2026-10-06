@@ -614,7 +614,7 @@ def browser_control(
         action      : go_to | navigate | search | click | type | scroll | fill_form |
                       smart_click | smart_type | get_text | press | back | forward |
                       refresh | open_tab | new_tab | switch_tab | list_tabs | close |
-                      snapshot | find | hover | evaluate | run_code | screenshot |
+                      snapshot | find | hover | screenshot |
                       wait_for | select_option | dialog | upload | console | network
         url         : URL for go_to / navigate
         query       : search query
