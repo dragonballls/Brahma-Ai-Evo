@@ -542,15 +542,33 @@ class BrahmaGateway:
                         continue
 
                     if msg_type == ProtocolTypes.RESULT:
-                        await self.hub.resolve_pending(device_id or str(payload.get("device_id") or ""), request_id, payload)
+                        if not device_id or not await self.hub.is_current(websocket, device_id):
+                            await websocket.send_json(
+                                build_message(
+                                    ProtocolTypes.ERROR,
+                                    {"error": "Authentication required for command results."},
+                                    request_id=request_id,
+                                )
+                            )
+                            continue
+                        await self.hub.resolve_pending(device_id, request_id, payload)
                         continue
 
                     if msg_type == ProtocolTypes.ERROR:
-                        await self.hub.reject_pending(device_id or str(payload.get("device_id") or ""), request_id, str(payload.get("error") or "Unknown error"))
+                        if not device_id or not await self.hub.is_current(websocket, device_id):
+                            await websocket.send_json(
+                                build_message(
+                                    ProtocolTypes.ERROR,
+                                    {"error": "Authentication required for command errors."},
+                                    request_id=request_id,
+                                )
+                            )
+                            continue
+                        await self.hub.reject_pending(device_id, request_id, str(payload.get("error") or "Unknown error"))
                         continue
 
                     if msg_type == ProtocolTypes.EVENT:
-                        if not device_id:
+                        if not device_id or not await self.hub.is_current(websocket, device_id):
                             await websocket.send_json(
                                 build_message(
                                     ProtocolTypes.ERROR,
@@ -563,7 +581,7 @@ class BrahmaGateway:
                         continue
 
                     if msg_type == ProtocolTypes.CHAT_MESSAGE:
-                        if not device_id:
+                        if not device_id or not await self.hub.is_current(websocket, device_id):
                             await websocket.send_json(
                                 build_message(
                                     ProtocolTypes.ERROR,
@@ -577,7 +595,7 @@ class BrahmaGateway:
                         continue
 
                     if msg_type == ProtocolTypes.DEVICE_OFFLINE:
-                        if not device_id:
+                        if not device_id or not await self.hub.is_current(websocket, device_id):
                             await websocket.send_json(
                                 build_message(
                                     ProtocolTypes.ERROR,
