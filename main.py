@@ -6203,9 +6203,12 @@ class BrahmaLive:
                     if not DynamicToolRegistry.has_tool(skill_name):
                         result = f"No active skill named '{skill_name}'."
                     else:
-                        run_res = await loop.run_in_executor(
-                            None,
-                            lambda: DynamicToolRegistry.execute_sync(skill_name, args.get("arguments") or args or {})
+                        run_res = _require_runtime_result(
+                            await loop.run_in_executor(
+                                None,
+                                lambda: DynamicToolRegistry.execute_sync(skill_name, args.get("arguments") or args or {})
+                            ),
+                            "dynamic_skill",
                         )
                         if isinstance(run_res, dict):
                             out_text = str(run_res.get("summary") or run_res.get("output") or run_res.get("text") or run_res).strip()
@@ -6218,9 +6221,12 @@ class BrahmaLive:
             elif name and name not in {tool.get("name") for tool in TOOL_DECLARATIONS}:
                 from core.dynamic_registry import DynamicToolRegistry
                 if DynamicToolRegistry.has_tool(name):
-                    run_res = await loop.run_in_executor(
-                        None,
-                        lambda: DynamicToolRegistry.execute_sync(name, args or {})
+                    run_res = _require_runtime_result(
+                        await loop.run_in_executor(
+                            None,
+                            lambda: DynamicToolRegistry.execute_sync(name, args or {})
+                        ),
+                        name,
                     )
                     if isinstance(run_res, dict):
                         out_text = str(run_res.get("summary") or run_res.get("output") or run_res.get("text") or run_res).strip()
