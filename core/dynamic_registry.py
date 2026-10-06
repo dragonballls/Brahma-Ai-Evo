@@ -17,6 +17,7 @@ import logging
 import os
 import re
 import shutil
+import threading
 import sys
 import time
 from pathlib import Path
@@ -39,6 +40,7 @@ class DynamicSkill:
         self.skill_dir = skill_path if skill_path.is_dir() else skill_path.parent
         self.manifest = manifest
         self.module = module
+        self._state_lock = threading.RLock()
         self.name: str = str(manifest.get("name") or skill_path.stem).strip()
         self.description: str = str(manifest.get("description") or "")
         raw_parameters = manifest.get("parameters")
@@ -63,17 +65,18 @@ class DynamicSkill:
         self.last_error: Optional[str] = manifest.get("last_error", None)
 
     def _load_module(self) -> Any:
-        if self.module is None:
-            code_path = self.skill_path / "skill.py" if self.skill_path.is_dir() else self.skill_path
-            module_name = f"brahma_skill_{self.name}_{abs(hash(str(code_path.resolve())))}"
-            spec = importlib.util.spec_from_file_location(module_name, str(code_path))
-            if not spec or not spec.loader:
-                raise ImportError(f"Unable to load skill module: {code_path}")
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[spec.name] = module
-            spec.loader.exec_module(module)
-            self.module = module
-        return self.module
+        with self._state_lock:
+            if self.module is None:
+                code_path = self.skill_path / "skill.py" if self.skill_path.is_dir() else self.skill_path
+                module_name = f"brahma_skill_{self.name}_{abs(hash(str(code_path.resolve())))}"
+                spec = importlib.util.spec_from_file_location(module_name, str(code_path))
+                if not spec or not spec.loader:
+                    raise ImportError(f"Unable to load skill module: {code_path}")
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[spec.name] = module
+                spec.loader.exec_module(module)
+                self.module = module
+            return self.module
 
     def to_tool_declaration(self) -> Dict[str, Any]:
         """Returns Gemini function declaration dict."""
@@ -89,7 +92,8 @@ class DynamicSkill:
         if not hasattr(module, "execute"):
             raise AttributeError(f"Feature '{self.name}' has no 'execute' function.")
         func = getattr(module, "execute")
-        self.invocations += 1
+        with self._state_lock:
+            self.invocations += 1
         if inspect.iscoroutinefunction(func):
             return asyncio.run(func(**kwargs))
         return func(**kwargs)
@@ -101,7 +105,8 @@ class DynamicSkill:
             raise AttributeError(f"Feature '{self.name}' has no 'execute' function.")
 
         func = getattr(module, "execute")
-        self.invocations += 1
+        with self._state_lock:
+            self.invocations += 1
 
         if inspect.iscoroutinefunction(func):
             return await func(**kwargs)
@@ -114,6 +119,7 @@ class DynamicToolRegistry:
 
     _skills: Dict[str, DynamicSkill] = {}
     _initialized: bool = False
+    _registry_lock = threading.RLock()
 
     @classmethod
     def get_skills_directory(cls) -> Path:
@@ -122,6 +128,11 @@ class DynamicToolRegistry:
 
     @classmethod
     def initialize(cls) -> int:
+        with cls._registry_lock:
+            return cls._initialize_locked()
+
+    @classmethod
+    def _initialize_locked(cls) -> int:
         """Loads all valid features and skills from the codebase features/ directory and AppData vault."""
         cls._skills.clear()
         FEATURES_DIR.mkdir(parents=True, exist_ok=True)
