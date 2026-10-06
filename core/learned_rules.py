@@ -165,7 +165,10 @@ class LearnedRulesEngine:
     def delete_rule(cls, rule_id: str) -> Dict[str, Any]:
         """Deletes a rule permanently."""
         with cls._lock:
-            rules = cls._load_raw()
+            try:
+                rules = cls._load_raw()
+            except RuntimeError as exc:
+                return {"success": False, "message": str(exc)}
             initial_len = len(rules)
             rules = [r for r in rules if r.get("id") != rule_id]
             if len(rules) < initial_len:
