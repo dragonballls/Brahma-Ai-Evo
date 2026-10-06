@@ -197,7 +197,10 @@ class BrahmaWebSocketClient(
 
     private inner class BrahmaSocketListener : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
-            socket = webSocket
+            if (socket !== webSocket) {
+                webSocket.close(1000, "Superseded connection")
+                return
+            }
             reconnectAttempt = 0
             AgentStateStore.setConnectionState(ConnectionState.CONNECTING)
             if (currentCredential != null || storage.loadCredential() != null) {
@@ -252,6 +255,7 @@ class BrahmaWebSocketClient(
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            if (socket !== webSocket) return
             socket = null
             AgentStateStore.addLog("Socket closed: $code $reason")
             AgentStateStore.setConnectionState(ConnectionState.DISCONNECTED)
@@ -260,6 +264,7 @@ class BrahmaWebSocketClient(
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: okhttp3.Response?) {
+            if (socket !== webSocket) return
             socket = null
             AgentStateStore.addLog("Socket failure: ${t.message}")
             AgentStateStore.setConnectionState(ConnectionState.DISCONNECTED)
