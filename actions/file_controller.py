@@ -94,9 +94,26 @@ _SAFE_ROOTS: list[Path] = [
     Path.home(),
 ]
 
-def _is_safe_path(target: Path) -> bool:
-    """Is the given path inside _SAFE_ROOTS? If not, reject the operation."""
+def _has_symlink_component(target: Path) -> bool:
+    """Return True when any existing path component is a symlink."""
     try:
+        path = target.expanduser()
+        current = Path(path.anchor) if path.anchor else Path(".")
+        parts = path.parts[1:] if path.anchor else path.parts
+        for part in parts:
+            current = current / part
+            if current.is_symlink():
+                return True
+    except OSError:
+        return True
+    return False
+
+
+def _is_safe_path(target: Path) -> bool:
+    """Require an existing, non-symlink path tree inside an approved root."""
+    try:
+        if _has_symlink_component(target):
+            return False
         resolved = target.resolve()
         return any(
             resolved == root.resolve() or resolved.is_relative_to(root.resolve())
