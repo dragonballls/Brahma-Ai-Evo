@@ -55,6 +55,14 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
         self.assertTrue(hasattr(SelfCodingAgent, "undo"))
         self.assertTrue(hasattr(SelfCodingAgent, "list_checkpoints"))
 
+    def test_self_coding_verification_compiles_connect_and_top_level_runtime(self):
+        import inspect
+        source = inspect.getsource(SelfCodingAgent._verify)
+        self.assertIn('"brahma_connect"', source)
+        self.assertIn('"updater.py"', source)
+        self.assertIn('"or_client.py"', source)
+        self.assertIn('"llm_client.py"', source)
+
     def test_self_coding_git_guard_contract(self):
         import inspect
 
