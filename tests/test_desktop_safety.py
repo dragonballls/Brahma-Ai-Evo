@@ -69,3 +69,12 @@ def test_reminder_embeds_message_as_data_and_never_shell_executes():
     assert 'subprocess.run(\n            ["schtasks", "/Create"' in source
     assert "shell=True" not in source
     assert "subprocess.run(["msg", "*", "/TIME:30", {message_literal}], shell=False)" in source
+
+def test_remote_wallpaper_download_rejects_private_resolved_hosts():
+    source = (ROOT / "actions" / "desktop.py").read_text(encoding="utf-8")
+    start = source.index("def set_wallpaper_from_url")
+    block = source[start:source.index("def get_current_wallpaper", start)]
+    assert "def _validate_remote_http_target" in source
+    assert "socket.getaddrinfo" in block
+    assert "Remote wallpaper URLs may not target private or local network addresses." in block
+    assert "safe_url = _validate_remote_http_target(url)" in block
