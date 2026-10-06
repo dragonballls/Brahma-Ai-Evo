@@ -44,9 +44,17 @@
       "specialists": 2,
       "synthesis_model": "auto/smart",
       "ensemble": true
+    },
+    "balanced": {
+      "model": "auto/smart",
+      "temperature": 0.3,
+      "max_tokens": 3072,
+      "specialists": 1,
+      "synthesis_model": "auto/smart",
+      "ensemble": true
     }
   },
   "ensemble_enabled": true,
-  "ensemble_max_providers": 10,
+  "ensemble_max_providers": 3,
   "ensemble_model_cache_seconds": 300
 }
