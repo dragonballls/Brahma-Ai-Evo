@@ -56,3 +56,23 @@ def test_android_send_paths_check_websocket_send_result():
     assert 'if (!send(response))' in source
     assert 'if (!send(BrahmaProtocol.envelope(BrahmaProtocol.PONG' in source
     assert 'private fun reportSendFailure(message: String)' in source
+
+
+def test_android_reconnect_timers_are_daemon_and_generation_guarded():
+    source = (
+        ROOT
+        / "brahma-connect-android"
+        / "app"
+        / "src"
+        / "main"
+        / "java"
+        / "com"
+        / "brahma"
+        / "connect"
+        / "network"
+        / "BrahmaWebSocketClient.kt"
+    ).read_text(encoding="utf-8")
+    assert "@Volatile private var connectionGeneration = 0L" in source
+    assert "val generation = connectionGeneration" in source
+    assert "connectionGeneration == generation" in source
+    assert "isDaemon = true" in source
