@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -638,35 +639,42 @@ class AttentionMonitor:
         self._running = False
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
+        self._lifecycle_lock = threading.RLock()
         self._db = _db_path()
         self._last_id = 0
         self._seen_keys: set[str] = set()
+        self._seen_order: deque[str] = deque()
+        self._active_window_keys: set[str] = set()
         self._seen_max = 80
 
     def start(self) -> None:
-        thread = self._thread
-        if thread is not None and thread.is_alive():
-            return
+        with self._lifecycle_lock:
+            thread = self._thread
+            if thread is not None and thread.is_alive():
+                return
 
-        self._last_id = self._current_max_id()
-        self._stop_event.clear()
-        self._running = True
-        self._thread = threading.Thread(
-            target=self._loop,
-            daemon=True,
-            name="attention-monitor-thread",
-        )
-        self._thread.start()
+            self._last_id = self._current_max_id()
+            self._stop_event.clear()
+            self._running = True
+            self._thread = threading.Thread(
+                target=self._loop,
+                daemon=True,
+                name="attention-monitor-thread",
+            )
+            self._thread.start()
 
     def stop(self) -> None:
-        self._running = False
-        self._stop_event.set()
+        with self._lifecycle_lock:
+            self._running = False
+            self._stop_event.set()
+            thread = self._thread
 
-        thread = self._thread
         if thread is not None and thread.is_alive() and thread is not threading.current_thread():
             thread.join(timeout=1.0)
-        if self._thread is thread and (thread is None or not thread.is_alive()):
-            self._thread = None
+
+        with self._lifecycle_lock:
+            if self._thread is thread and (thread is None or not thread.is_alive()):
+                self._thread = None
 
     def _loop(self) -> None:
         try:
@@ -682,9 +690,10 @@ class AttentionMonitor:
                 if self._stop_event.wait(timeout=self._interval):
                     break
         finally:
-            self._running = False
-            if self._thread is threading.current_thread():
-                self._thread = None
+            with self._lifecycle_lock:
+                self._running = False
+                if self._thread is threading.current_thread():
+                    self._thread = None
 
     def _current_max_id(self) -> int:
         try:
@@ -697,9 +706,13 @@ class AttentionMonitor:
             return 0
 
     def _remember_seen(self, key: str) -> None:
+        if key in self._seen_keys:
+            return
         self._seen_keys.add(key)
-        if len(self._seen_keys) > self._seen_max:
-            self._seen_keys = set(list(self._seen_keys)[-self._seen_max :])
+        self._seen_order.append(key)
+        while len(self._seen_order) > self._seen_max:
+            oldest = self._seen_order.popleft()
+            self._seen_keys.discard(oldest)
 
     def _poll_once(self) -> None:
         now = time.time()
@@ -776,7 +789,10 @@ class AttentionMonitor:
             if self._on_event:
                 self._on_event(event)
 
+        self._active_window_keys.intersection_update(current_window_keys)
+
     def _poll_windows(self, now: float) -> None:
+        current_window_keys: set[str] = set()
         for win in _enum_visible_windows():
             title = win.get("title") or ""
             pid = int(win.get("pid") or 0)
@@ -797,9 +813,10 @@ class AttentionMonitor:
             dedupe = hashlib.sha1(
                 f"window|{app}|{title}|{pid}".encode("utf-8", "ignore")
             ).hexdigest()
-            if dedupe in self._seen_keys:
+            current_window_keys.add(dedupe)
+            if dedupe in self._active_window_keys:
                 continue
-            self._remember_seen(dedupe)
+            self._active_window_keys.add(dedupe)
 
             event = {
                 "kind": "call",
