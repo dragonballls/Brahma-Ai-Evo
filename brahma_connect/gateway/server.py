@@ -568,6 +568,9 @@ class BrahmaGateway:
             except WebSocketDisconnect:
                 pass
             finally:
+                for pending_id, item in list(self._pending_requests.items()):
+                    if item.get("websocket") is websocket:
+                        self._pending_requests.pop(pending_id, None)
                 detached = await self.hub.unregister(websocket)
                 if detached:
                     self.device_manager.mark_offline(detached)
