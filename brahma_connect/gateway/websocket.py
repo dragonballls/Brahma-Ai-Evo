@@ -89,6 +89,21 @@ class ConnectionHub:
                 and state.websocket is websocket
             )
 
+    async def _drop_if_current(self, device_id: str, websocket: WebSocket, error: str) -> None:
+        pending: list[asyncio.Future] = []
+        async with self._lock:
+            current = self._connections.get(str(device_id))
+            if current is None or current.websocket is not websocket:
+                return
+            self._connections.pop(str(device_id), None)
+            self._socket_index.pop(id(websocket), None)
+            current.authenticated = False
+            pending = list(current.pending.values())
+            current.pending.clear()
+        for future in pending:
+            if not future.done():
+                future.set_exception(RuntimeError(error))
+
     async def send_to_device(self, device_id: str, message: dict[str, Any]) -> bool:
         # Hold only the connection-state lock for lookup. Socket I/O is serialized
         # per connection so slow sends cannot block registration, disconnects, or
@@ -103,6 +118,11 @@ class ConnectionHub:
                     state.websocket.send_json(message), timeout=SOCKET_SEND_TIMEOUT_SECONDS
                 )
         except Exception:
+            await self._drop_if_current(
+                device_id,
+                state.websocket,
+                "Device connection failed during command delivery.",
+            )
             return False
         return True
 
