@@ -5442,6 +5442,20 @@ class BrahmaLive:
         args = dict(fc.args or {})
         result = ""
 
+        def _require_runtime_result(value, tool_name=name):
+            if value is None or value is False:
+                raise RuntimeError(f"Tool '{tool_name}' returned no result.")
+            if isinstance(value, str) and not value.strip():
+                raise RuntimeError(f"Tool '{tool_name}' returned an empty result.")
+            if isinstance(value, dict) and (
+                value.get("success") is False
+                or value.get("ok") is False
+            ):
+                raise RuntimeError(
+                    str(value.get("error") or value.get("message") or f"Tool '{tool_name}' reported failure.")
+                )
+            return value
+
         print(f"[BRAHMA EVO] 🔧 {name}  {self._redact_tool_args(args)}")
         if not getattr(fc, "silent_completion", False):
             self.speak(f"Working on {name.replace('_', ' ')}...")
@@ -5579,12 +5593,12 @@ class BrahmaLive:
             if name == "computer_settings":
                 from actions.computer_settings import computer_settings as cs_run
                 r = await loop.run_in_executor(None, lambda: cs_run(parameters=args, player=self.ui))
-                result = r or "Settings updated."
+                result = _require_runtime_result(r)
 
             elif name == "dev_agent":
                 from actions.dev_agent import dev_agent as da_run
                 r = await loop.run_in_executor(None, lambda: da_run(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
+                result = _require_runtime_result(r)
 
             elif name == "open_app":
                 target = str(args.get("app_name") or args.get("target") or "").strip()
@@ -5598,10 +5612,10 @@ class BrahmaLive:
                         None,
                         lambda: desktop_controller.open(target, embed=embed),
                     )
-                    result = json.dumps(r, ensure_ascii=False) if isinstance(r, dict) else (r or f"Opened {target}.")
+                    result = json.dumps(_require_runtime_result(r), ensure_ascii=False) if isinstance(r, dict) else str(_require_runtime_result(r))
                 else:
                     r = await loop.run_in_executor(None, lambda: open_app(parameters=args, response=None, player=self.ui))
-                    result = r or f"Opened {target or args.get('app_name')}."
+                    result = _require_runtime_result(r)
                 
             elif name == "check_instagram_messages":
                 self.ui.write_log("SYS: Checking Instagram messages...")
@@ -5628,7 +5642,12 @@ class BrahmaLive:
                 from actions.instagram_mcp import InstagramService
                 def _do_send():
                     return InstagramService.instance().send_dm(recipient, message, open_in_browser=open_browser)
-                res = await loop.run_in_executor(None, _do_send)
+                res = _require_runtime_result(
+                    await loop.run_in_executor(None, _do_send),
+                    "instagram_send_dm",
+                )
+                if not isinstance(res, dict) or str(res.get("status", "")).lower() != "success":
+                    raise RuntimeError("Instagram DM did not return a confirmed success status.")
                 if hasattr(self.ui, "show_hud_deliverable"):
                     self.ui.show_hud_deliverable("Instagram DM Sent", summary=f"Direct message sent to @{res.get('recipient')}", bullets=[f"Message: {message[:60]}...", "Opened in browser for verification"], kind="result")
                 result = f"Direct message sent to @{recipient}. Chat opened in browser: {res.get('browser_url')}"
@@ -5643,7 +5662,12 @@ class BrahmaLive:
                 from actions.instagram_mcp import InstagramService
                 def _do_post():
                     return InstagramService.instance().post_photo(image_path, caption=caption, open_in_browser=open_browser)
-                res = await loop.run_in_executor(None, _do_post)
+                res = _require_runtime_result(
+                    await loop.run_in_executor(None, _do_post),
+                    "instagram_post_photo",
+                )
+                if not isinstance(res, dict) or str(res.get("status", "")).lower() != "success":
+                    raise RuntimeError("Instagram photo publish did not return a confirmed success status.")
                 if hasattr(self.ui, "show_hud_deliverable"):
                     self.ui.show_hud_deliverable("Instagram Post Published", summary="Photo published live to Instagram!", bullets=[f"URL: {res.get('post_url')}", f"Caption: {caption[:60]}..."], kind="deliverable")
                 result = f"Successfully published photo to Instagram! Post URL: {res.get('post_url')}"
@@ -5659,7 +5683,12 @@ class BrahmaLive:
                 from actions.instagram_mcp import InstagramService
                 def _do_reel():
                     return InstagramService.instance().post_reel(video_path, caption=caption, thumbnail_path=thumb, open_in_browser=open_browser)
-                res = await loop.run_in_executor(None, _do_reel)
+                res = _require_runtime_result(
+                    await loop.run_in_executor(None, _do_reel),
+                    "instagram_post_reel",
+                )
+                if not isinstance(res, dict) or str(res.get("status", "")).lower() != "success":
+                    raise RuntimeError("Instagram Reel publish did not return a confirmed success status.")
                 if hasattr(self.ui, "show_hud_deliverable"):
                     self.ui.show_hud_deliverable("Instagram Reel Published", summary="Reel published live to Instagram!", bullets=[f"URL: {res.get('reel_url')}", f"Caption: {caption[:60]}..."], kind="deliverable")
                 result = f"Successfully published Reel to Instagram! Reel URL: {res.get('reel_url')}"
@@ -5730,37 +5759,37 @@ class BrahmaLive:
             elif name == "system_manager":
                 from actions.system_manager import run as sm_run
                 r = await loop.run_in_executor(None, lambda: sm_run(parameters=args, player=self.ui))
-                result = r or "System status retrieved."
+                result = _require_runtime_result(r)
 
             elif name == "background_monitor":
                 from actions.background_monitor import run as bm_run
                 r = await loop.run_in_executor(None, lambda: bm_run(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = _require_runtime_result(r)
 
             elif name == "clipboard_processor":
                 from actions.clipboard_processor import process_clipboard
                 r = await loop.run_in_executor(None, lambda: process_clipboard(parameters=args, player=self.ui))
-                result = r or "Clipboard read."
+                result = _require_runtime_result(r)
 
             elif name == "weather_report":
                 r = await loop.run_in_executor(None, lambda: weather_action(parameters=args, player=self.ui))
-                result = r or "Weather delivered."
+                result = _require_runtime_result(r)
 
             elif name == "browser_control":
                 r = await loop.run_in_executor(None, lambda: browser_control(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = _require_runtime_result(r)
 
             elif name == "file_controller":
                 r = await loop.run_in_executor(None, lambda: file_controller(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = _require_runtime_result(r)
 
             elif name == "send_message":
                 r = await loop.run_in_executor(None, lambda: send_message(parameters=args, response=None, player=self.ui, session_memory=None))
-                result = r or f"Message sent to {args.get('receiver')}."
+                result = _require_runtime_result(r)
 
             elif name == "reminder":
                 r = await loop.run_in_executor(None, lambda: reminder(parameters=args, response=None, player=self.ui))
-                result = r or "Reminder set."
+                result = _require_runtime_result(r)
 
             elif name == "settings_control":
                 from core.settings_agent import apply as apply_settings, status as settings_status, catalog as settings_catalog
@@ -5792,18 +5821,18 @@ class BrahmaLive:
                     None,
                     lambda: creator_control(parameters=args, player=self.ui, speak=self.speak)
                 )
-                result = r or "Creator task completed."
+                result = _require_runtime_result(r)
 
             elif name == "obs_control":
                 r = await loop.run_in_executor(
                     None,
                     lambda: obs_control(parameters=args, player=self.ui, speak=self.speak)
                 )
-                result = r or "OBS command completed."
+                result = _require_runtime_result(r)
 
             elif name == "youtube_video":
                 r = await loop.run_in_executor(None, lambda: youtube_video(parameters=args, response=None, player=self.ui, speak=self.speak))
-                result = r or "Done."
+                result = _require_runtime_result(r)
             elif name == "file_processor":
                 if not args.get("file_path") and self.ui.current_file:
                     args["file_path"] = self.ui.current_file
@@ -5811,7 +5840,7 @@ class BrahmaLive:
                     None,
                     lambda: file_processor(parameters=args, player=self.ui, speak=self.speak)
                 )
-                result = r or "Done."
+                result = _require_runtime_result(r)
 
             elif name == "presentation_builder":
                 if not args.get("slides") and not args.get("outline"):
@@ -5826,7 +5855,7 @@ class BrahmaLive:
                         None,
                         lambda: create_presentation(parameters=args, player=self.ui)
                     )
-                result = r or "Presentation created."
+                result = _require_runtime_result(r)
 
             elif name == "spreadsheet_builder":
                 if not args.get("worksheets") and not args.get("sheets"):
@@ -5841,7 +5870,7 @@ class BrahmaLive:
                         None,
                         lambda: create_spreadsheet(parameters=args, player=self.ui)
                     )
-                result = r or "Spreadsheet created."
+                result = _require_runtime_result(r)
 
 
             elif name == "word_document":
@@ -5853,14 +5882,14 @@ class BrahmaLive:
                     None,
                     lambda: word_document(parameters=args, player=self.ui, speak=self.speak)
                 )
-                result = r or "Word document handled."
+                result = _require_runtime_result(r)
 
             elif name == "pdf_document":
                 r = await loop.run_in_executor(
                     None,
                     lambda: create_pdf(parameters=args, player=self.ui)
                 )
-                result = r or "PDF created."
+                result = _require_runtime_result(r)
 
             elif name == "screen_process":
                 if hasattr(self, "set_scanning"):
@@ -5879,21 +5908,22 @@ class BrahmaLive:
 
             elif name == "computer_settings":
                 r = await loop.run_in_executor(None, lambda: computer_settings(parameters=args, response=None, player=self.ui))
-                result = r or "Done."
+                result = _require_runtime_result(r)
 
             elif name == "smart_home_control":
                 command_text = str(args.get("command") or "").strip()
                 r = await loop.run_in_executor(None, lambda: self._smart_home.execute_command(command_text))
-                result = str((r or {}).get("detail") or "Smart-home command completed.")
+                safe_r = _require_runtime_result(r)
+                result = str(safe_r.get("detail") or safe_r.get("message") or "Smart-home command completed.")
 
             elif name in ("smart_organizer", "desktop_organizer"):
                 from actions.desktop_organizer_mcp import smart_organizer
                 r = await loop.run_in_executor(None, lambda: smart_organizer(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
+                result = _require_runtime_result(r)
 
             elif name == "desktop_control":
                 r = await loop.run_in_executor(None, lambda: desktop_control(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = _require_runtime_result(r)
 
             elif name == "agent_task":
                 from agent.task_queue import get_queue, TaskPriority
@@ -5909,19 +5939,19 @@ class BrahmaLive:
 
             elif name == "web_search":
                 r = await loop.run_in_executor(None, lambda: web_search_action(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = _require_runtime_result(r)
 
             elif name == "computer_control":
                 r = await loop.run_in_executor(None, lambda: computer_control(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = _require_runtime_result(r)
 
             elif name == "game_updater":
                 r = await loop.run_in_executor(None, lambda: game_updater(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
+                result = _require_runtime_result(r)
 
             elif name == "flight_finder":
                 r = await loop.run_in_executor(None, lambda: flight_finder(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = _require_runtime_result(r)
             elif name == "circuit_assembler":
                 from actions.circuit_assembler import circuit_assembler
                 r = await loop.run_in_executor(
@@ -6188,30 +6218,30 @@ class BrahmaLive:
                     result = f"Unknown tool: {name}"
             elif name == "connect_list_devices":
                 r = await loop.run_in_executor(None, lambda: connect_list_devices(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = _require_runtime_result(r)
             elif name == "connect_get_device":
                 r = await loop.run_in_executor(None, lambda: connect_get_device(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = _require_runtime_result(r)
             elif name == "connect_get_capabilities":
                 r = await loop.run_in_executor(None, lambda: connect_get_capabilities(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = _require_runtime_result(r)
             elif name == "connect_execute":
                 r = await loop.run_in_executor(None, lambda: connect_execute(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = _require_runtime_result(r)
             elif name == "connect_pair_device":
                 r = await loop.run_in_executor(None, lambda: connect_pair_device(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = _require_runtime_result(r)
             elif name == "connect_disconnect_device":
                 r = await loop.run_in_executor(None, lambda: connect_disconnect_device(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = _require_runtime_result(r)
             elif name in ("spotify_controller", "spotify", "music"):
                 from actions.spotify_controller import spotify_controller
                 r = await loop.run_in_executor(None, lambda: spotify_controller(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
+                result = _require_runtime_result(r)
             elif name in ("calendar_scheduler", "calendar", "schedule"):
                 from actions.calendar_scheduler import calendar_scheduler
                 r = await loop.run_in_executor(None, lambda: calendar_scheduler(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
+                result = _require_runtime_result(r)
             elif name in ("google_workspace", "gmail", "google_calendar", "google_drive", "workspace") or name.startswith("workspace_"):
                 from actions.google_workspace_mcp import google_workspace
                 p = dict(args or {})
@@ -6222,7 +6252,7 @@ class BrahmaLive:
                     if len(parts) > 2:
                         p.setdefault("action", parts[2])
                 r = await loop.run_in_executor(None, lambda: google_workspace(parameters=p, player=self.ui, speak=self.speak))
-                result = r or "Google Workspace task completed."
+                result = _require_runtime_result(r)
             elif name == "smart_organizer":
                 from actions.desktop_organizer_mcp import smart_organizer
                 r = await loop.run_in_executor(
@@ -6233,7 +6263,7 @@ class BrahmaLive:
                         speak=self.speak,
                     ),
                 )
-                result = r or "Desktop organization completed."
+                result = _require_runtime_result(r)
 
             elif name == "desktop_environment":
                 controller = self._desktop_controller or getattr(self.ui, "_desktop_controller", None)
@@ -6445,34 +6475,34 @@ class BrahmaLive:
                 elif name == "brightness_control":
                     p.setdefault("action", "brightness")
                 r = await loop.run_in_executor(None, lambda: system_diagnostics(parameters=p, player=self.ui, speak=self.speak))
-                result = r or "Diagnostics completed."
+                result = _require_runtime_result(r)
             elif name in ("daily_briefing", "briefing"):
                 from actions.daily_briefing import daily_briefing
                 r = await loop.run_in_executor(None, lambda: daily_briefing(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Delivered daily briefing."
+                result = _require_runtime_result(r)
             elif name == "unlock_device":
                 from actions.unlock_device import unlock_device
                 r = await loop.run_in_executor(None, lambda: unlock_device(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = _require_runtime_result(r)
             elif name in ("auto_heal", "self_patch", "rollback"):
                 from actions.auto_heal_engine import auto_heal
                 p = dict(args or {})
                 if name == "rollback":
                     p.setdefault("action", "rollback")
                 r = await loop.run_in_executor(None, lambda: auto_heal(parameters=p, player=self.ui, speak=self.speak))
-                result = r or "Auto-heal completed."
+                result = _require_runtime_result(r)
             elif name in ("calorie_counter", "nutrition_scan", "food_analysis"):
                 from actions.calorie_counter import calorie_counter
                 r = await loop.run_in_executor(None, lambda: calorie_counter(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Nutrition analysis complete."
+                result = _require_runtime_result(r)
             elif name in ("pushup_counter", "workout_tracker", "rep_counter"):
                 from actions.pushup_counter import pushup_counter
                 r = await loop.run_in_executor(None, lambda: pushup_counter(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Workout session complete."
+                result = _require_runtime_result(r)
             elif name in ("upload_video", "video_publisher", "publish_video"):
                 from actions.upload_video import upload_video
                 r = await loop.run_in_executor(None, lambda: upload_video(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Video publishing ready."
+                result = _require_runtime_result(r)
             elif name == "shutdown_brahma":
                 self.ui.write_log("SYS: Shutdown requested.")
                 self.speak("Goodbye, sir.")
