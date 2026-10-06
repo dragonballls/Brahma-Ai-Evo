@@ -574,8 +574,13 @@ def test_ota_rejects_mismatched_supplied_checksum(monkeypatch, tmp_path: Path):
         lambda _release, _url: release["assets"][0],
     )
     monkeypatch.setattr(ota, "_asset_digest", lambda _release, _asset: "a" * 64)
-    with pytest.raises(RuntimeError, match="supplied checksum"):
-        ota.download_and_apply_update(
-            "https://example.test/setup.exe",
-            expected_sha256="b" * 64,
-        )
+
+    def unexpected_download(*_args, **_kwargs):
+        raise AssertionError("network download must not start after checksum mismatch")
+
+    monkeypatch.setattr(ota.urllib.request, "urlopen", unexpected_download)
+    result = ota.download_and_apply_update(
+        "https://example.test/setup.exe",
+        expected_sha256="b" * 64,
+    )
+    assert result is False
