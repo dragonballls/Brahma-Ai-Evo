@@ -156,7 +156,9 @@ def download_and_apply_update(
         digest = str(expected_sha256 or "").strip().lower()
         release = _get_release()
         asset = _release_asset(release or {}, url)
-        if not digest and asset is not None:
+        if asset is None:
+            raise RuntimeError("OTA update rejected: URL is not a current GitHub release asset.")
+        if not digest:
             digest = _asset_digest(release or {}, asset) or ""
         if not digest:
             raise RuntimeError("OTA update rejected: release installer has no verifiable SHA-256 digest.")
