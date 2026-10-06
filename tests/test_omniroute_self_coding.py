@@ -392,3 +392,27 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_omniroute_probe_rejects_http_error_false_positives(self):
+        from core.omniroute_setup import OmniRouteProvisioner
+        import urllib.error
+
+        provisioner = OmniRouteProvisioner("http://127.0.0.1:20128/v1")
+        for status in (401, 403, 405):
+            def raise_http_error(status=status):
+                raise urllib.error.HTTPError(
+                    provisioner.base_url + "/models", status, "not OmniRoute", None, None
+                )
+            with patch("core.omniroute_setup.urllib.request.urlopen", side_effect=raise_http_error):
+                self.assertFalse(provisioner.probe_only())
+
+    def test_android_websocket_callbacks_ignore_stale_sockets(self):
+        source = (ROOT / "brahma-connect-android" / "app" / "src" / "main" / "java" / "com" / "brahma" / "connect" / "network" / "BrahmaWebSocketClient.kt").read_text(encoding="utf-8")
+        self.assertGreaterEqual(source.count("if (socket !== webSocket)"), 3)
+        self.assertIn('webSocket.close(1000, "Superseded connection")', source)
+
+    def test_self_coding_rollback_never_git_cleans_untracked_files(self):
+        source = (ROOT / "core" / "self_coding.py").read_text(encoding="utf-8")
+        rollback = source.split("def _rollback(", 1)[1].split("def preview(", 1)[0]
+        self.assertNotIn('"clean", "-fd"', rollback)
+        self.assertIn("preserved untracked or working-tree changes", rollback)
