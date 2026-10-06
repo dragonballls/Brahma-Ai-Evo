@@ -37,7 +37,25 @@ class CommandRouter:
         self.capability_manager = capability_manager
 
     async def route(self, target: str, action: str, parameters: dict[str, Any] | None = None, *, timeout: float = 30.0) -> dict[str, Any]:
-        parameters = dict(parameters or {})
+        if parameters is None:
+            parameters = {}
+        elif not isinstance(parameters, dict):
+            return {
+                "success": False,
+                "device": str(target),
+                "action": action,
+                "error": "Command parameters must be an object.",
+                "error_code": "MALFORMED_PARAMETERS",
+            }
+        if not isinstance(action, str) or not action.strip():
+            return {
+                "success": False,
+                "device": str(target),
+                "action": action,
+                "error": "Command action must be a non-empty string.",
+                "error_code": "MALFORMED_PARAMETERS",
+            }
+        parameters = dict(parameters)
         matches = self.device_manager.resolve(target)
         if not matches:
             return {
@@ -75,7 +93,15 @@ class CommandRouter:
             }
 
         requested_capabilities = parameters.pop("required_capabilities", [])
-        normalized_action = str(action or "").strip().lower()
+        if requested_capabilities is not None and not isinstance(requested_capabilities, (str, list, tuple, set)):
+            return {
+                "success": False,
+                "device": device.device_id,
+                "action": action,
+                "error": "required_capabilities must be a string or list of strings.",
+                "error_code": "MALFORMED_PARAMETERS",
+            }
+        normalized_action = action.strip().lower()
         canonical_capabilities = ACTION_CAPABILITIES.get(normalized_action)
         if canonical_capabilities is None:
             return {
@@ -90,6 +116,15 @@ class CommandRouter:
         if isinstance(requested_capabilities, str):
             requested_capabilities = [requested_capabilities]
         for capability in list(requested_capabilities or []):
+            if not isinstance(capability, str) or not capability.strip():
+                return {
+                    "success": False,
+                    "device": device.device_id,
+                    "action": action,
+                    "error": "required_capabilities must contain only non-empty strings.",
+                    "error_code": "MALFORMED_PARAMETERS",
+                }
+            capability = capability.strip()
             if capability not in required:
                 required.append(capability)
         missing = self.capability_manager.missing(device.capabilities, required)
