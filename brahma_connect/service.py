@@ -185,6 +185,11 @@ class BrahmaConnectService:
             self.gateway.disconnect_device(target, reason=reason)
         )
 
+    def disconnect_device_sync(self, target: str, *, reason: str = "Disconnected by Brahma") -> dict[str, Any]:
+        return self._run_on_gateway_loop(
+            self.gateway.disconnect_device(target, reason=reason)
+        )
+
     async def reconnect_device(self, target: str) -> dict[str, Any]:
         return await self._await_on_gateway_loop(
             self.gateway.reconnect_device(target)
@@ -198,6 +203,11 @@ class BrahmaConnectService:
 
     async def approve_pending_request(self, pending_id: str) -> dict[str, Any]:
         return await self._await_on_gateway_loop(
+            self.gateway.approve_pending_request(pending_id)
+        )
+
+    def approve_pending_request_sync(self, pending_id: str) -> dict[str, Any]:
+        return self._run_on_gateway_loop(
             self.gateway.approve_pending_request(pending_id)
         )
 
