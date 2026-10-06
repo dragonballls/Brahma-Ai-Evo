@@ -275,11 +275,21 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
                 )
 
     def _rollback(self, baseline: str, branch: str, base_branch: str) -> None:
-        self._git("reset", "--hard", baseline)
+        reset = self._git("reset", "--hard", baseline)
+        if reset.returncode != 0:
+            raise SelfCodingError(reset.stderr.strip() or "Unable to restore the checkpoint baseline.")
         current = self._branch()
         if current == branch:
-            self._git("switch", base_branch)
-        self._git("branch", "-D", branch)
+            switched = self._git("switch", base_branch)
+            if switched.returncode != 0:
+                raise SelfCodingError(
+                    switched.stderr.strip() or "Unable to return to the original branch during rollback."
+                )
+        deleted = self._git("branch", "-D", branch)
+        if deleted.returncode != 0:
+            raise SelfCodingError(
+                deleted.stderr.strip() or "Unable to remove the failed checkpoint branch."
+            )
         status = self._git("status", "--porcelain")
         if status.stdout.strip():
             # Never run git clean here: untracked files may have been created by
@@ -439,8 +449,16 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
         if checkpoint.state == "pending":
             current = self._branch()
             if current == checkpoint.branch:
-                self._git("switch", checkpoint.base_branch)
-            self._git("branch", "-D", checkpoint.branch)
+                switched = self._git("switch", checkpoint.base_branch)
+                if switched.returncode != 0:
+                    raise SelfCodingError(
+                        switched.stderr.strip() or "Unable to leave the checkpoint branch during undo."
+                    )
+            deleted = self._git("branch", "-D", checkpoint.branch)
+            if deleted.returncode != 0:
+                raise SelfCodingError(
+                    deleted.stderr.strip() or "Unable to remove the pending checkpoint branch."
+                )
             undone = replace(checkpoint, state="undone")
             self._save(undone)
             return "undone"
@@ -456,7 +474,9 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
         if remote.stdout.strip() != checkpoint.promoted_sha or local.stdout.strip() != checkpoint.promoted_sha:
             raise SelfCodingError("main changed after approval; refusing to undo unrelated work.")
         current = self._branch()
-        self._git("switch", "main")
+        switched = self._git("switch", "main")
+        if switched.returncode != 0:
+            raise SelfCodingError(switched.stderr.strip() or "Unable to switch to main for undo.")
         undo_commits: list[str] = []
         try:
             for commit in reversed(checkpoint.commits):
