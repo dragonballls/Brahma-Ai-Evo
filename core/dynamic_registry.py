@@ -231,9 +231,11 @@ class DynamicToolRegistry:
         """Returns one Gemini-compatible declaration per active skill, not per alias."""
         if not cls._initialized:
             cls.initialize()
+        with cls._registry_lock:
+            skill_values = list(cls._skills.values())
         declarations: list[Dict[str, Any]] = []
         seen: set[int] = set()
-        for skill in cls._skills.values():
+        for skill in skill_values:
             if not skill.active or id(skill) in seen:
                 continue
             seen.add(id(skill))
@@ -244,20 +246,24 @@ class DynamicToolRegistry:
     def has_tool(cls, name: str) -> bool:
         if not cls._initialized:
             cls.initialize()
-        return name in cls._skills and cls._skills[name].active
+        with cls._registry_lock:
+            skill = cls._skills.get(name)
+            return bool(skill and skill.active)
 
     @classmethod
     def get_skill(cls, name: str) -> Optional[DynamicSkill]:
         if not cls._initialized:
             cls.initialize()
-        return cls._skills.get(name)
+        with cls._registry_lock:
+            return cls._skills.get(name)
 
     @classmethod
     def get_latest_skill(cls) -> Optional[DynamicSkill]:
         """Returns the most recently created active synthetic skill."""
         if not cls._initialized:
             cls.initialize()
-        active = [s for s in cls._skills.values() if s.active]
+        with cls._registry_lock:
+            active = [s for s in cls._skills.values() if s.active]
         if not active:
             return None
         active.sort(key=lambda s: getattr(s, "created_at", 0), reverse=True)
@@ -327,7 +333,9 @@ class DynamicToolRegistry:
         best_skill = None
         best_score = 0
 
-        for skill in cls._skills.values():
+        with cls._registry_lock:
+            skills = list(cls._skills.values())
+        for skill in skills:
             if not skill.active:
                 continue
 
@@ -431,7 +439,9 @@ class DynamicToolRegistry:
             cls.initialize()
         results = []
         seen = set()
-        for s in cls._skills.values():
+        with cls._registry_lock:
+            skills = list(cls._skills.values())
+        for s in skills:
             if id(s) in seen:
                 continue
             seen.add(id(s))
@@ -454,8 +464,9 @@ class DynamicToolRegistry:
         if not skill:
             return False
 
-        new_status = not skill.active if active is None else bool(active)
-        skill.active = new_status
+        with cls._registry_lock:
+            new_status = not skill.active if active is None else bool(active)
+            skill.active = new_status
 
         manifest_path = skill.skill_dir / "manifest.json"
         try:
@@ -477,8 +488,9 @@ class DynamicToolRegistry:
         try:
             if skill.skill_dir.exists():
                 shutil.rmtree(skill.skill_dir)
-            if name in cls._skills:
-                del cls._skills[name]
+            with cls._registry_lock:
+                if name in cls._skills:
+                    del cls._skills[name]
             return True
         except Exception as e:
             logger.error(f"[Registry] Failed to delete skill '{name}': {e}")
