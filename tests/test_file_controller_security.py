@@ -36,3 +36,54 @@ def test_create_file_refuses_unreadable_existing_targets_instead_of_registering_
     assert "existing target" in block
     assert "could not be read safely" in block
     assert "previous = target.read_text(encoding=\"utf-8\")" in block
+
+
+def test_write_file_refuses_unreadable_existing_targets(monkeypatch, tmp_path):
+    from actions import file_controller
+
+    target = tmp_path / "existing.txt"
+    target.write_text("original", encoding="utf-8")
+    monkeypatch.setattr(file_controller, "_SAFE_ROOTS", [tmp_path])
+
+    original_read_text = Path.read_text
+
+    def fail_target_read(self, *args, **kwargs):
+        if self == target:
+            raise OSError("simulated unreadable target")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", fail_target_read)
+    result = file_controller.write_file(str(tmp_path), "existing.txt", "replacement")
+    assert "refusing to overwrite it" in result
+    assert target.read_text(encoding="utf-8") == "original"
+
+
+def test_write_file_refuses_oversized_existing_targets_for_replacement(tmp_path, monkeypatch):
+    from actions import file_controller
+
+    target = tmp_path / "large.txt"
+    target.write_bytes(b"x" * (file_controller._UNDO_CONTENT_LIMIT + 1))
+    monkeypatch.setattr(file_controller, "_SAFE_ROOTS", [tmp_path])
+
+    result = file_controller.write_file(str(tmp_path), "large.txt", "replacement")
+    assert "too large to overwrite safely" in result
+    assert target.read_bytes().startswith(b"x")
+
+
+def test_move_and_copy_refuse_existing_destinations(tmp_path, monkeypatch):
+    from actions import file_controller
+
+    source = tmp_path / "source.txt"
+    destination = tmp_path / "destination.txt"
+    source.write_text("source", encoding="utf-8")
+    destination.write_text("keep", encoding="utf-8")
+    monkeypatch.setattr(file_controller, "_SAFE_ROOTS", [tmp_path])
+
+    move_result = file_controller.move_file(str(tmp_path), "source.txt", str(destination))
+    assert "Refusing to overwrite it" in move_result
+    assert source.exists()
+    assert destination.read_text(encoding="utf-8") == "keep"
+
+    copy_result = file_controller.copy_file(str(tmp_path), "source.txt", str(destination))
+    assert "Refusing to overwrite it" in copy_result
+    assert source.exists()
