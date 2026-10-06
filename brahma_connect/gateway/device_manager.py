@@ -26,9 +26,15 @@ class DeviceManager:
                 return
             try:
                 raw = json.loads(self.registry_path.read_text(encoding="utf-8"))
-            except Exception:
-                raw = {}
-            devices = raw.get("devices", raw) if isinstance(raw, dict) else {}
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                raise RuntimeError(
+                    "Device registry is unreadable or corrupted; refusing to overwrite it."
+                ) from exc
+            if not isinstance(raw, dict):
+                raise RuntimeError("Device registry has an invalid root schema; refusing to overwrite it.")
+            devices = raw.get("devices", raw)
+            if not isinstance(devices, dict):
+                raise RuntimeError("Device registry has an invalid devices schema; refusing to overwrite it.")
             loaded: dict[str, DeviceRecord] = {}
             for device_id, item in (devices or {}).items():
                 if not isinstance(item, dict):
