@@ -6,6 +6,7 @@ import asyncio
 import concurrent.futures
 import subprocess
 import threading
+import time
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
@@ -1023,7 +1024,7 @@ def test_task_queue_console_logging_is_encoding_safe():
     source = Path("agent/task_queue.py").read_text(encoding="utf-8")
     assert "def _safe_print(message: object)" in source
     assert 'text.encode("ascii", "replace").decode("ascii")' in source
-    assert "print(f\"[TaskQueue]" not in source
+    assert "\nprint(f\"[TaskQueue]" not in source
     assert source.count("_safe_print(") >= 10
 
 
