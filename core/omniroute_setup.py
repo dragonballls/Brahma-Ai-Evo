@@ -302,9 +302,11 @@ class OmniRouteProvisioner:
                     return False
                 payload = json.loads(response.read().decode("utf-8"))
                 return isinstance(payload, dict) and isinstance(payload.get("data"), list)
-        except urllib.error.HTTPError as exc:
-            # A real gateway may protect /models while still proving the expected endpoint exists.
-            return exc.code in {401, 403, 405}
+        except urllib.error.HTTPError:
+            # Only a successful OpenAI-compatible /models response proves that the
+            # loopback service is the OmniRoute gateway. Authentication or method
+            # errors can be produced by an unrelated process occupying the port.
+            return False
         except (urllib.error.URLError, TimeoutError, OSError, ValueError, UnicodeDecodeError):
             return False
 
