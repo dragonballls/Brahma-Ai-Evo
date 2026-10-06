@@ -63,14 +63,17 @@ def _open_target(task: str) -> str | None:
         if not target.exists():
             target = _resolve_user_path(remainder)
         if target.exists() and os.name == "nt":
-            subprocess.Popen(
-                ["notepad.exe", str(target)],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            return f"Opened {target} with Notepad."
+            try:
+                proc = subprocess.Popen(
+                    ["notepad.exe", str(target)],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                return f"Opened {target} with Notepad." if proc.poll() is None else f"Could not open {target} with Notepad."
+            except OSError as exc:
+                return f"Could not open {target} with Notepad: {exc}"
 
     # Try the literal target first, then common user folders.
     candidates = [_resolve_user_path(remainder)]
@@ -96,12 +99,17 @@ def _open_target(task: str) -> str | None:
     if os.name == "nt":
         os.startfile(str(resolved_target))
     else:
-        subprocess.Popen(
-            ["xdg-open", str(target)],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        try:
+            proc = subprocess.Popen(
+                ["xdg-open", str(target)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if proc.poll() is not None:
+                return f"Could not open {target}."
+        except OSError as exc:
+            return f"Could not open {target}: {exc}"
     return f"Opened {target}."
 
 
@@ -129,6 +137,8 @@ def cmd_control(
     if not argv:
         return "A command or open task is required."
 
+    if "/" in argv[0] or "\\" in argv[0] or Path(argv[0]).is_absolute():
+        return "Explicit executable paths are not permitted through the legacy command adapter."
     command_name = Path(argv[0]).name.casefold()
     if command_name.endswith(".exe"):
         command_name = command_name[:-4]
