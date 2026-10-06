@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -106,7 +106,14 @@ class DeviceManager:
         metadata: dict[str, Any] | None = None,
     ) -> tuple[DeviceRecord, str]:
         with self._lock:
-            device_id = generate_device_id(platform, name)
+            device_id = ""
+            for _ in range(20):
+                candidate = generate_device_id(platform, name)
+                if candidate not in self._devices:
+                    device_id = candidate
+                    break
+            if not device_id:
+                raise RuntimeError("Unable to allocate a unique device id; try again.")
             secret = generate_device_secret()
             record = DeviceRecord(
                 device_id=device_id,
@@ -178,17 +185,22 @@ class DeviceManager:
             return record
 
     def resolve(self, query: str) -> list[DeviceRecord]:
-        normalized = (query or "").strip().lower()
+        normalized = " ".join(str(query or "").strip().lower().split())
         if not normalized:
             return []
         with self._lock:
             matches = []
             for record in self._devices.values():
-                name = record.name.lower()
-                device_id = record.device_id.lower()
-                platform = record.platform.lower()
-                aliases = {name, device_id, platform}
-                if any(token in normalized for token in aliases):
+                name = " ".join(str(record.name or "").lower().split())
+                device_id = str(record.device_id or "").lower().strip()
+                platform = str(record.platform or "").lower().strip()
+                aliases = {alias for alias in (name, device_id, platform) if alias}
+                exact_or_word_match = any(
+                    normalized == alias
+                    or bool(re.search(rf"(?<!\\w){re.escape(alias)}(?!\\w)", normalized))
+                    for alias in aliases
+                )
+                if exact_or_word_match:
                     matches.append(record)
                     continue
                 if "phone" in normalized and platform in {"android", "ios"}:
