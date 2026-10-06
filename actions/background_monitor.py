@@ -122,7 +122,9 @@ def add_monitor(monitor_type: str, target: str, threshold: float, condition: str
     if condition not in {"above", "below"}:
         raise ValueError("Monitor condition must be 'above' or 'below'.")
     interval_sec = max(1, int(interval_sec))
-    m_id = f"{monitor_type}_{target}_{time.time_ns()}_{uuid.uuid4().hex[:6]}"
+    # Never embed a user-controlled URL/target in the monitor identifier:
+    # identifiers are used in diagnostics and logs.
+    m_id = f"{monitor_type}_{time.time_ns()}_{uuid.uuid4().hex[:12]}"
     with _monitor_lock:
         _monitors[m_id] = {
             "type": monitor_type,
