@@ -252,7 +252,7 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
     
     def _verify(self) -> None:
         commands = (
-            (sys.executable, "-m", "compileall", "-q", "actions", "core", "features", "memory", "plugins", "smart_home", "main.py", "ui.py"),
+            (sys.executable, "-m", "compileall", "-q", "actions", "core", "features", "memory", "plugins", "smart_home", "brahma_connect", "main.py", "ui.py", "updater.py", "or_client.py", "llm_client.py"),
             (sys.executable, "tests/test_repository_integrity.py"),
             (sys.executable, "tests/test_low_power_guards.py"),
             (sys.executable, "tests/test_runtime_consistency.py"),
