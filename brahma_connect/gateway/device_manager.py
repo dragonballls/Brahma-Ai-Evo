@@ -77,7 +77,7 @@ class DeviceManager:
                 except Exception:
                     continue
                 key = str(record.device_id or device_id).strip()
-                if not key:
+                if not key or not str(record.secret_hash or "").strip():
                     continue
                 record.device_id = key
                 # A persisted online flag cannot represent a live socket after restart.
@@ -91,7 +91,7 @@ class DeviceManager:
         with self._lock:
             payload = {"devices": {device_id: record.to_storage_dict() for device_id, record in self._devices.items()}}
             temp_path = self.registry_path.with_name(
-                f"{self.registry_path.name}.tmp"
+                f".{self.registry_path.name}.{uuid.uuid4().hex}.tmp"
             )
             temp_path.write_text(
                 json.dumps(payload, indent=2, ensure_ascii=False),
@@ -181,6 +181,8 @@ class DeviceManager:
             return record, secret
 
     def authenticate(self, device_id: str, secret: str, *, ip: str = "", connection_id: str = "") -> DeviceRecord | None:
+        if not str(secret or "").strip():
+            return None
         with self._lock:
             record = self._devices.get(str(device_id))
             if record is None or record.revoked:
