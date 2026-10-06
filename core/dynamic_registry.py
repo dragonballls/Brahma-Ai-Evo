@@ -161,6 +161,11 @@ class DynamicToolRegistry:
         for item in sorted(FEATURES_DIR.iterdir(), key=lambda p: p.stat().st_mtime if p.exists() else 0):
             if item.name.startswith((".", "_")):
                 continue
+            # The repository feature tree is trusted code. Do not follow a
+            # symlink placed there to execute code from an unrelated location.
+            if item.is_symlink():
+                logger.warning("[Registry] Refusing symlinked feature entry '%s'.", item.name)
+                continue
 
             # Case A: Single Python module file (e.g. features/internet_speed_test.py).
             # When a matching packaged skill directory also exists, the package
