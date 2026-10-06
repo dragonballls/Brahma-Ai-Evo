@@ -490,17 +490,30 @@ if __name__ == '__main__':
             if test_results is None:
                 test_results = [{"success": True, "output": output_str[:300]}]
 
-            all_passed = all(t.get("success", False) for t in test_results)
+            safe_results = []
+            for item in test_results:
+                if isinstance(item, dict):
+                    safe_results.append({
+                        key: (_redact_text(value) if isinstance(value, str) else value)
+                        for key, value in item.items()
+                    })
+                else:
+                    safe_results.append(_redact_text(item))
+            all_passed = all(t.get("success", False) for t in safe_results if isinstance(t, dict))
             if not all_passed:
-                first_err = _redact_text(next((t.get("error", "Unknown test failure") for t in test_results if not t.get("success")), "Test failed"))
-                return False, f"Test Verification Failed: {first_err}", {"results": test_results, "elapsed_s": elapsed}
+                first_err = _redact_text(next(
+                    (t.get("error", "Unknown test failure") for t in safe_results
+                     if isinstance(t, dict) and not t.get("success")),
+                    "Test failed",
+                ))
+                return False, f"Test Verification Failed: {first_err}", {"results": safe_results, "elapsed_s": elapsed}
 
-            return True, f"Passed {len(test_results)}/{len(test_results)} tests in {elapsed:.2f}s", {
-                "results": test_results,
+            return True, f"Passed {len(safe_results)}/{len(safe_results)} tests in {elapsed:.2f}s", {
+                "results": safe_results,
                 "elapsed_s": elapsed
             }
 
         except subprocess.TimeoutExpired:
             return False, f"Sandbox execution timed out after {timeout} seconds.", {"elapsed_s": timeout}
         except Exception as e:
-            return False, f"Sandbox execution error: {e}", {"elapsed_s": 0}
+            return False, f"Sandbox execution error: {_redact_text(e)}", {"elapsed_s": 0}
