@@ -19,6 +19,14 @@ class CapabilityManager:
         target = self.normalize(capability)
         return target in self.normalize_many(capabilities)
 
-    def missing(self, capabilities: Iterable[str] | None, required: Iterable[str]) -> list[str]:
+    def missing(self, capabilities: Iterable[str] | None, required: Iterable[str] | str | None) -> list[str]:
         current = set(self.normalize_many(capabilities))
-        return [self.normalize(item) for item in required if self.normalize(item) not in current]
+        if isinstance(required, str):
+            required_items = [required]
+        else:
+            required_items = list(required or [])
+        return [
+            self.normalize(item)
+            for item in required_items
+            if self.normalize(item) and self.normalize(item) not in current
+        ]
