@@ -25,6 +25,8 @@ class PairingStorage(context: Context) {
                 .put("device_name", credential.deviceName)
                 .put("gateway_host", credential.gatewayHost)
                 .put("gateway_port", credential.gatewayPort)
+                .put("tls", credential.tls)
+                .put("tls_certificate_sha256", credential.tlsCertificateSha256)
                 .put("paired_at", credential.pairedAt)
                 .toString())
             .apply()
@@ -40,6 +42,8 @@ class PairingStorage(context: Context) {
                 deviceName = json.optString("device_name", Build.MODEL),
                 gatewayHost = json.optString("gateway_host"),
                 gatewayPort = json.optInt("gateway_port", 8765),
+                tls = json.optBoolean("tls", true),
+                tlsCertificateSha256 = json.optString("tls_certificate_sha256"),
                 pairedAt = json.optString("paired_at"),
             )
         } catch (_: Exception) {
