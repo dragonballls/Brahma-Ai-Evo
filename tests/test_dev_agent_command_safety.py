@@ -50,3 +50,13 @@ def test_dev_agent_blocks_out_of_tree_run_command_arguments():
     end = source.index("def _try_auto_install", start)
     block = source[start:end]
     assert "command arguments may not access paths outside the generated project" in block
+
+
+def test_dev_agent_confines_path_like_run_arguments_to_project_root():
+    source = (ROOT / "actions" / "dev_agent.py").read_text(encoding="utf-8")
+    start = source.index("def _validate_run_arguments")
+    end = source.index("def _run_project", start)
+    block = source[start:end]
+    assert "command arguments may not access paths outside the generated project" in block
+    assert "Path(value).is_absolute()" in block
+    assert '".." in Path(normalized).parts' in block
