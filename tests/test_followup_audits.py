@@ -1,3 +1,4 @@
+import pytest
 from __future__ import annotations
 
 import asyncio
@@ -295,3 +296,109 @@ def test_gateway_logs_redact_credential_fields():
     assert entry["device_secret"] == "[REDACTED]"
     assert entry["payload"]["api_key"] == "[REDACTED]"
     assert entry["payload"]["nested"]["pin"] == "[REDACTED]"
+
+
+def test_service_falls_back_until_gateway_loop_is_running():
+    from brahma_connect.service import BrahmaConnectService
+
+    service = object.__new__(BrahmaConnectService)
+    service._lock = threading.RLock()
+    service._loop = asyncio.new_event_loop()
+    try:
+        assert service._run_on_gateway_loop(asyncio.sleep(0)) is None
+    finally:
+        service._loop.close()
+
+
+def test_gateway_shutdown_wins_over_startup_race(tmp_path: Path):
+    from brahma_connect.gateway.server import BrahmaGateway
+
+    gateway = BrahmaGateway(tmp_path)
+    gateway.prepare_start()
+    gateway.request_shutdown()
+    asyncio.run(gateway.serve())
+    assert gateway.is_running() is False
+
+
+def test_connection_hub_close_invalidates_socket_and_pending_work():
+    class Socket:
+        async def close(self, **_kwargs):
+            return None
+
+    async def scenario():
+        hub = ConnectionHub()
+        socket = Socket()
+        await hub.register(socket, "device-1")
+        future = await hub.set_pending("device-1", "request-1")
+        assert future is not None
+        assert await hub.close_device("device-1", reason="revoked") is True
+        return await hub.get("device-1"), future
+
+    current, future = asyncio.run(scenario())
+    assert current is None
+    assert future.done()
+    with pytest.raises(RuntimeError, match="revoked"):
+        future.result()
+
+
+def test_pending_pairing_cannot_be_rejected_during_approval(tmp_path: Path):
+    from brahma_connect.gateway.server import BrahmaGateway
+
+    gateway = BrahmaGateway(tmp_path)
+    gateway._pending_requests["pending-1"] = {
+        "_approving": True,
+        "websocket": None,
+    }
+    assert gateway.reject_pending_request("pending-1") is False
+    assert "pending-1" in gateway._pending_requests
+
+
+def test_protocol_rejects_non_string_required_fields():
+    message = build_message(ProtocolTypes.PING)
+    message["type"] = {"bad": "type"}
+    valid, error = validate_message(message)
+    assert valid is False
+    assert "string" in error.lower()
+
+    with pytest.raises(TypeError):
+        build_message(ProtocolTypes.PING, request_id=123)
+
+
+def test_task_queue_stop_cancels_queued_work():
+    queue = TaskQueue()
+    task = Task(
+        priority=2,
+        created_at=0.0,
+        task_id="queued-stop",
+        goal="test",
+        status=TaskStatus.PENDING,
+    )
+    queue._tasks[task.task_id] = task
+    queue._queue.append(task)
+    queue.stop()
+    assert task.status is TaskStatus.CANCELLED
+    assert queue._queue == []
+
+
+def test_corrupt_gateway_device_registry_fails_closed(tmp_path: Path):
+    from brahma_connect.gateway.device_manager import DeviceManager
+
+    path = tmp_path / "devices.json"
+    path.write_text("{not-json", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="corrupted"):
+        DeviceManager(path)
+
+
+def test_self_coding_undo_checks_branch_switch_result():
+    source = Path("core/self_coding.py").read_text(encoding="utf-8")
+    undo = source.split("def _undo_unlocked", 1)[1]
+    assert 'switched = self._git("switch", "main")' in undo
+    assert "Unable to switch to main for undo." in undo
+
+
+def test_followup_audit_workflows_execute_module_tests_with_pytest():
+    windows = Path(".github/workflows/windows-release.yml").read_text(encoding="utf-8")
+    targeted = Path(".github/workflows/brahma-regression.yml").read_text(encoding="utf-8")
+    assert "python -m pytest -q tests/test_followup_audits.py" in windows
+    assert "python -m pytest -q tests/test_followup_audits.py" in targeted
+    assert "tests.test_followup_audits" not in windows
