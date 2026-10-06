@@ -611,6 +611,10 @@ def test_dashboard_is_https_first():
     assert 'ssl_keyfile=str(ssl_key)' in source
     assert 'ssl_certfile=str(ssl_cert)' in source
     assert "Dashboard HTTPS certificate could not be created." in source
+    assert "serialization.load_pem_private_key" in source
+    assert "x509.load_pem_x509_certificate" in source
+    assert "os.replace(key_tmp, key_path)" in source
+    assert "os.replace(cert_tmp, cert_path)" in source
 
 
 def test_gateway_tls_is_enabled_and_pinned_in_pairing_offers():
