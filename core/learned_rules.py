@@ -73,35 +73,36 @@ class LearnedRulesEngine:
     @classmethod
     def add_rule(cls, rule_text: str, category: str = "general", origin: str = "user_correction") -> Dict[str, Any]:
         """Adds a new learned rule to the database."""
-        clean_text = rule_text.strip()
+        clean_text = str(rule_text or "").strip()
         if not clean_text:
             return {"success": False, "message": "Rule text cannot be empty."}
-
         if _SECRET_RE.search(clean_text) or _TOKEN_RE.search(clean_text):
             return {"success": False, "message": "Credential-like values cannot be stored as learned rules."}
 
         with cls._lock:
             rules = cls._load_raw()
 
-                # Deduplicate
-                for r in rules:
-                if r.get("rule", "").lower() == clean_text.lower():
+            for r in rules:
+                if str(r.get("rule", "")).lower() == clean_text.lower():
                     r["active"] = True
                     r["updated_at"] = time.time()
-                    cls._save_raw(rules)
+                    if not cls._save_raw(rules):
+                        return {"success": False, "message": "Unable to persist learned rule state."}
                     return {"success": True, "rule": r, "message": "Rule already exists and is active."}
 
-        new_rule = {
-            "id": str(uuid.uuid4())[:8],
-            "rule": clean_text,
-            "category": category,
-            "origin": origin,
-            "active": True,
-            "created_at": time.time(),
-            "updated_at": time.time(),
-        }
+            now = time.time()
+            new_rule = {
+                "id": str(uuid.uuid4())[:8],
+                "rule": clean_text,
+                "category": str(category or "general").strip() or "general",
+                "origin": str(origin or "user_correction").strip() or "user_correction",
+                "active": True,
+                "created_at": now,
+                "updated_at": now,
+            }
             rules.append(new_rule)
-            cls._save_raw(rules)
+            if not cls._save_raw(rules):
+                return {"success": False, "message": "Unable to persist learned rule."}
             return {"success": True, "rule": new_rule, "message": f"Learned new rule: '{clean_text}'"}
 
     @classmethod
