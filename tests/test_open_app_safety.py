@@ -35,3 +35,12 @@ def test_start_menu_fallback_is_not_reported_as_confirmed_without_process_check(
     end = source.index("def _launch_macos", start)
     block = source[start:end]
     assert "return bool(_PSUTIL and _is_running(app_name))" in block
+
+def test_open_app_fallbacks_do_not_assume_launch_success():
+    source = (ROOT / "actions" / "open_app.py").read_text(encoding="utf-8")
+    mac_start = source.index("def _launch_macos")
+    linux_start = source.index("def _launch_linux")
+    mac = source[mac_start:linux_start]
+    linux = source[linux_start:source.index("_OS_LAUNCHERS", linux_start)]
+    assert "return False" in mac[mac.rfind("pyautogui.hotkey"):mac.rfind("except Exception")]
+    assert "return result.returncode == 0" in linux
