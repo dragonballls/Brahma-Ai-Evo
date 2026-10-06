@@ -5424,6 +5424,7 @@ class BrahmaLive:
     async def _execute_tool(self, fc) -> types.FunctionResponse:
         name = fc.name
         args = dict(fc.args or {})
+        result = ""
 
         print(f"[BRAHMA EVO] 🔧 {name}  {self._redact_tool_args(args)}")
         if not getattr(fc, "silent_completion", False):
@@ -6459,6 +6460,7 @@ class BrahmaLive:
             elif name == "shutdown_brahma":
                 self.ui.write_log("SYS: Shutdown requested.")
                 self.speak("Goodbye, sir.")
+                result = "Shutdown initiated."
 
                 def _shutdown():
                     import time, sys, os
@@ -6487,6 +6489,15 @@ class BrahmaLive:
             )
             self.speak_error(name, e)
 
+        result_declared_failed = False
+        if isinstance(result, dict):
+            result_declared_failed = result.get("success") is False or result.get("ok") is False
+        elif isinstance(result, str):
+            normalized_result = result.strip().casefold()
+            result_declared_failed = normalized_result.startswith(
+                ("error:", "failed:", "failure:", "unable to ", "could not ")
+            )
+        execution_failed = execution_failed or result_declared_failed
         try:
             if execution_failed:
                 if not getattr(fc, "silent_completion", False):
