@@ -38,6 +38,8 @@ class CredentialVault:
         self._fernet = Fernet(self._load_or_create_key())
 
     def _load_or_create_key(self) -> bytes:
+        if self._key_file.is_symlink():
+            raise RuntimeError("Smart-home credential key may not be a symlink.")
         if self._key_file.is_file():
             key = self._key_file.read_bytes().strip()
             if len(key) != 44:
