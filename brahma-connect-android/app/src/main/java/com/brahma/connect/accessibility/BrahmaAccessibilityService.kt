@@ -50,7 +50,11 @@ class BrahmaAccessibilityService : AccessibilityService() {
             AgentStateStore.addLog("UI dump failed: UI tree exceeded safety limits.")
             return mapOf("error" to "UI tree exceeds safety limits")
         }
-        return mapOf("nodes" to nodes)
+        return mapOf(
+            "screen_width" to resources.displayMetrics.widthPixels,
+            "screen_height" to resources.displayMetrics.heightPixels,
+            "nodes" to nodes,
+        )
     }
 
     private fun traverseNode(
