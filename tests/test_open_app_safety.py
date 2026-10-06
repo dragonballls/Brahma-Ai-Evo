@@ -44,3 +44,10 @@ def test_open_app_fallbacks_do_not_assume_launch_success():
     linux = source[linux_start:source.index("_OS_LAUNCHERS", linux_start)]
     assert "return False" in mac[mac.rfind("pyautogui.hotkey"):mac.rfind("except Exception")]
     assert "return result.returncode == 0" in linux
+
+
+def test_spotify_browser_fallback_propagates_launcher_failure():
+    source = (ROOT / "actions" / "open_app.py").read_text(encoding="utf-8")
+    assert 'if not _open_url_in_chrome("https://open.spotify.com"):' in source
+    spotify = (ROOT / "actions" / "spotify_controller.py").read_text(encoding="utf-8")
+    assert "return bool(webbrowser.open(url))" in spotify
