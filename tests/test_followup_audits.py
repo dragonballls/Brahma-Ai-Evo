@@ -1060,3 +1060,11 @@ def test_installer_zip_payload_rejects_duplicate_entries_before_staging():
     assert 'Installer payload contains duplicate ZIP entries.' in source
     assert 'destinations: set[Path] = set()' in source
     assert 'Installer payload contains colliding entries:' in source
+
+
+def test_life360_credential_transport_disables_redirects():
+    source = Path("core/selected_capabilities.py").read_text(encoding="utf-8")
+    assert "class _NoRedirectHandler(urllib.request.HTTPRedirectHandler)" in source
+    assert "Redirects are disabled for credential-bearing Home Assistant requests." in source
+    assert "opener = urlrequest.build_opener(_NoRedirectHandler())" in source
+    assert "with opener.open(req, timeout=self.timeout)" in source

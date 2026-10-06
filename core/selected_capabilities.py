@@ -531,6 +531,11 @@ class PhoneLinkBridge:
         return asyncio_run(cls._service().route_command(phones[0]["device_id"], action, parameters or {}))
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urlerror.URLError("Redirects are disabled for credential-bearing Home Assistant requests.")
+
+
 class Life360Provider:
     """Read authorized Life360 device_trackers exposed by Home Assistant.
 
@@ -600,8 +605,12 @@ class Life360Provider:
         if not self._host_allowed(parsed.hostname):
             raise ValueError("Life360 Home Assistant transport must resolve to a local/private host.")
         url = self.base_url + "/" + path.lstrip("/")
-        req = urlrequest.Request(url, headers={"Authorization": f"Bearer {self.token}", "Accept": "application/json"})
-        with urlrequest.urlopen(req, timeout=self.timeout) as response:
+        req = urlrequest.Request(
+            url,
+            headers={"Authorization": f"Bearer {self.token}", "Accept": "application/json"},
+        )
+        opener = urlrequest.build_opener(_NoRedirectHandler())
+        with opener.open(req, timeout=self.timeout) as response:
             return json.loads(response.read().decode("utf-8"))
 
     @staticmethod
