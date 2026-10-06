@@ -197,7 +197,7 @@ class DeviceManager:
                 aliases = {alias for alias in (name, device_id, platform) if alias}
                 exact_or_word_match = any(
                     normalized == alias
-                    or bool(re.search(rf"(?<!\\w){re.escape(alias)}(?!\\w)", normalized))
+                    or bool(re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", normalized))
                     for alias in aliases
                 )
                 if exact_or_word_match:
