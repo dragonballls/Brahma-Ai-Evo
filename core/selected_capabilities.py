@@ -23,6 +23,7 @@ import time
 from typing import Any, Iterable
 from urllib import error as urlerror
 from urllib import request as urlrequest
+import urllib.request
 from uuid import uuid4
 
 from core.user_paths import get_user_data_dir
