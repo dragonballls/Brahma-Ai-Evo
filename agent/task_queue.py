@@ -78,6 +78,10 @@ class TaskQueue:
                 self._worker_thread = None
         print("[TaskQueue] 🔴 Stopped")
 
+    def is_running(self) -> bool:
+        with self._condition:
+            return bool(self._running and self._worker_thread is not None and self._worker_thread.is_alive())
+
     def submit(
         self,
         goal:        str,
@@ -218,15 +222,11 @@ class TaskQueue:
         with self._condition:
             self._condition.notify()
 
-_queue        = TaskQueue()
-_queue_started = False
-_queue_lock    = threading.Lock()
+_queue = TaskQueue()
+_queue_lock = threading.Lock()
 
 
 def get_queue() -> TaskQueue:
-    global _queue_started
     with _queue_lock:
-        if not _queue_started:
-            _queue.start()
-            _queue_started = True
+        _queue.start()
     return _queue
