@@ -107,6 +107,7 @@ class BrahmaGateway:
         self._server: uvicorn.Server | None = None
         self._log: list[dict[str, Any]] = []
         self._pending_requests: dict[str, dict[str, Any]] = {}
+        self._pair_attempts: dict[str, tuple[int, float]] = {}
         self.on_chat_message = None
         self.app = self._build_app()
 
@@ -318,9 +319,29 @@ class BrahmaGateway:
     async def _pair_device(self, payload: dict[str, Any], websocket: WebSocket) -> dict[str, Any]:
         offer_token = str(payload.get("pairing_token") or "").strip()
         offer_code = str(payload.get("pairing_code") or "").strip()
-        offer = self.pairing_manager.get_offer(offer_token) if offer_token else self.pairing_manager.get_offer_by_code(offer_code)
+        client_ip = str(getattr(getattr(websocket, "client", None), "host", "") or "").strip()
+        now = asyncio.get_running_loop().time()
+        attempts, blocked_until = self._pair_attempts.get(client_ip, (0, 0.0))
+        if blocked_until > now:
+            return {"success": False, "error": "Too many pairing attempts; try again shortly."}
+        offer = (
+            self.pairing_manager.get_offer(offer_token)
+            if offer_token
+            else self.pairing_manager.get_offer_by_code(offer_code)
+        )
         if offer is None:
+            attempts += 1
+            self._pair_attempts[client_ip] = (
+                (attempts, now + 60.0) if attempts >= 10 else (attempts, 0.0)
+            )
             return {"success": False, "error": "Invalid or expired pairing token."}
+
+        # Consume the single-use offer before creating credentials. This prevents
+        # replaying the same code/token to silently pair additional devices.
+        approved_offer = self.pairing_manager.approve(offer.pairing_token)
+        if approved_offer is None:
+            return {"success": False, "error": "Invalid or expired pairing token."}
+        self._pair_attempts.pop(client_ip, None)
 
         device_name = str(payload.get("device_name") or "Unknown Device").strip()
         platform = str(payload.get("platform") or "unknown").strip()
@@ -330,13 +351,12 @@ class BrahmaGateway:
         capabilities = list(payload.get("capabilities") or [])
         permissions = list(payload.get("permissions") or [])
         metadata = dict(payload.get("metadata") or {})
-        ip = websocket.client.host if websocket.client else ""
         record, secret = self.device_manager.create_from_pairing(
             name=device_name,
             platform=platform,
             os_version=os_version,
             agent_version=agent_version,
-            ip=ip,
+            ip=client_ip,
             battery=int(battery) if isinstance(battery, (int, float, str)) and str(battery).isdigit() else None,
             capabilities=capabilities,
             permissions=permissions,
@@ -347,7 +367,7 @@ class BrahmaGateway:
             "success": True,
             "device": record.to_dict(),
             "device_secret": secret,
-            "pairing_token": offer.pairing_token,
+            "pairing_token": approved_offer.pairing_token,
         }
 
     def _build_app(self) -> FastAPI:
@@ -453,6 +473,22 @@ class BrahmaGateway:
                         continue
 
                     if msg_type == ProtocolTypes.HELLO:
+                        # Replace any older pending request from this socket and
+                        # bound the total pending set so unauthenticated HELLO spam
+                        # cannot grow memory without limit.
+                        stale_ids = [
+                            pending_id
+                            for pending_id, item in self._pending_requests.items()
+                            if item.get("websocket") is websocket
+                        ]
+                        for stale_id in stale_ids:
+                            self._pending_requests.pop(stale_id, None)
+                        while len(self._pending_requests) >= 64:
+                            oldest_id = min(
+                                self._pending_requests,
+                                key=lambda pending_id: self._pending_requests[pending_id].get("timestamp", ""),
+                            )
+                            self._pending_requests.pop(oldest_id, None)
                         pending_id = new_request_id()
                         self._pending_requests[pending_id] = {
                             "request_id": pending_id,
