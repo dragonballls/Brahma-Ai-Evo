@@ -109,7 +109,7 @@ class LearnedRulesEngine:
         with cls._lock:
             try:
                 rules = cls._load_raw()
-            except RuntimeError as exc:
+            except (RuntimeError, OSError) as exc:
                 return {"success": False, "message": str(exc)}
 
             for r in rules:
