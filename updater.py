@@ -30,6 +30,10 @@ def update_from_github(base_dir: Path) -> bool:
     if not (base_dir / ".git").exists():
         return False
 
+    branch = _run_git(base_dir, "branch", "--show-current")
+    if branch.returncode != 0 or branch.stdout.strip() != BRANCH:
+        return False
+
     status = _run_git(base_dir, "status", "--porcelain")
     if status.returncode != 0 or status.stdout.strip():
         return False
