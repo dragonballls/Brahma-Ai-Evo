@@ -18,3 +18,6 @@ def test_google_workspace_credential_initialization_is_serialized_and_atomic():
     assert "temp.replace(EMAIL_KEY_FILE)" in source
     assert "temp.replace(EMAIL_CREDENTIALS_FILE)" in source
     assert "uuid.uuid4().hex" in source
+    assert "def _credential_process_lock" in source
+    assert "msvcrt.LK_NBLCK" in source
+    assert "fcntl.flock" in source
