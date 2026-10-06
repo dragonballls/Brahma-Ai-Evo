@@ -496,16 +496,11 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
             self._save(checkpoint)
             raise SelfCodingError(merged.stderr.strip() or "Unable to promote checkpoint.")
         promoted = self._git("rev-parse", "HEAD")
-        promoted_sha = promoted.stdout.strip()
-        pushed = self._git("push", "origin", "main", timeout=300)
-        if pushed.returncode != 0:
-            current_head = self._git("rev-parse", "HEAD")
-            status = self._git("status", "--porcelain")
-            if current_head.returncode == 0 and current_head.stdout.strip() == promoted_sha and not status.stdout.strip():
-                self._git("reset", "--hard", checkpoint.baseline)
+        if promoted.returncode != 0:
             self._git("switch", previous)
             self._save(checkpoint)
-            raise SelfCodingError(pushed.stderr.strip() or "Approval publish failed safely.")
+            raise SelfCodingError("Unable to record the promoted checkpoint SHA.")
+        promoted_sha = promoted.stdout.strip()
         promoting = replace(checkpoint, state="promoting", promoted_sha=promoted_sha)
         self._save(promoting)
         pushed = self._git("push", "origin", "main", timeout=300)
