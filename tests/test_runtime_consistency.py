@@ -766,7 +766,7 @@ class RuntimeConsistencyTests(unittest.TestCase):
     def test_startup_health_marker_waits_for_stable_event_loop(self):
         source = self.read("main.py")
         self.assertIn("QTimer.singleShot(15000, _mark_startup_healthy)", source)
-        self.assertNotIn("mark_startup_healthy()\n        _startup_log("startup health marker cleared")", source)
+        self.assertNotIn('        mark_startup_healthy()\n        _startup_log("startup health marker cleared")', source)
 
 
 if __name__ == "__main__":
