@@ -477,3 +477,42 @@ def test_android_remote_url_handler_rejects_non_web_schemes():
     assert 'scheme !in setOf("http", "https")' in source
     assert 'UNSUPPORTED_URL_SCHEME' in source
     assert "Only http and https URLs can be opened remotely." in source
+
+def test_pairing_offer_survives_transient_registry_failure(tmp_path: Path):
+    from brahma_connect.gateway.server import BrahmaGateway, BrahmaGatewayConfig
+
+    class Socket:
+        class Client:
+            host = "192.168.1.51"
+        client = Client()
+
+    gateway = BrahmaGateway(
+        tmp_path,
+        BrahmaGatewayConfig(
+            config_path=tmp_path / "config.json",
+            registry_path=tmp_path / "devices.json",
+        ),
+    )
+    offer = gateway.pairing_manager.create_offer("192.168.1.2", 8765)
+
+    original = gateway.device_manager.create_from_pairing
+    def fail_once(**kwargs):
+        gateway.device_manager.create_from_pairing = original
+        raise OSError("temporary registry failure")
+    gateway.device_manager.create_from_pairing = fail_once
+
+    async def scenario():
+        try:
+            await gateway._pair_device(
+                {
+                    "pairing_token": offer.pairing_token,
+                    "device_name": "Phone",
+                    "platform": "android",
+                },
+                Socket(),
+            )
+        except OSError:
+            pass
+        return gateway.pairing_manager.get_offer(offer.pairing_token) is not None
+
+    assert asyncio.run(scenario()) is True
