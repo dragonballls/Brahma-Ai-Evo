@@ -152,6 +152,7 @@ class BrahmaGateway:
         self._shutdown = threading.Event()
         self._server: uvicorn.Server | None = None
         self._log: list[dict[str, Any]] = []
+        self._log_lock = threading.RLock()
         self._pending_requests: dict[str, dict[str, Any]] = {}
         self._pending_lock = threading.RLock()
         self._pair_attempts: dict[str, tuple[int, float]] = {}
@@ -160,7 +161,14 @@ class BrahmaGateway:
         self.app = self._build_app()
 
     def is_running(self) -> bool:
-        return self._running and not self._shutdown.is_set()
+        with self._serve_lock:
+            return bool(self._running and not self._shutdown.is_set())
+
+    def prepare_start(self) -> None:
+        """Arm a gateway start without clearing a concurrent shutdown request."""
+        with self._serve_lock:
+            if not self._running:
+                self._shutdown.clear()
 
     def request_shutdown(self) -> None:
         self._shutdown.set()
@@ -170,11 +178,13 @@ class BrahmaGateway:
     def _append_log(self, event_type: str, **payload: Any) -> None:
         safe_payload = {str(key): _redact_log_value(value, str(key)) for key, value in payload.items()}
         entry = {"type": event_type, "timestamp": now_iso(), **safe_payload}
-        self._log.append(entry)
-        self._log = self._log[-200:]
+        with self._log_lock:
+            self._log.append(entry)
+            self._log = self._log[-200:]
 
     def log(self) -> list[dict[str, Any]]:
-        return list(self._log)
+        with self._log_lock:
+            return list(self._log)
 
     def list_devices(self) -> list[dict[str, Any]]:
         return self.device_manager.list_devices()
@@ -381,9 +391,10 @@ class BrahmaGateway:
     def reject_pending_request(self, pending_id: str) -> bool:
         key = str(pending_id)
         with self._pending_lock:
-            item = self._pending_requests.pop(key, None)
-        if item is None:
-            return False
+            item = self._pending_requests.get(key)
+            if item is None or item.get("_approving"):
+                return False
+            self._pending_requests.pop(key, None)
         websocket = item.get("websocket")
         if websocket is not None:
             try:
@@ -510,6 +521,7 @@ class BrahmaGateway:
                 return JSONResponse({"ok": False, "error": "Local management endpoint."}, status_code=403)
             if not self.device_manager.revoke(device_id):
                 return JSONResponse({"ok": False, "error": "Device not found."}, status_code=404)
+            await self.hub.close_device(device_id, reason="Device revoked")
             self._append_log("DEVICE_REVOKED", device_id=device_id)
             return {"ok": True}
 
@@ -519,6 +531,7 @@ class BrahmaGateway:
                 return JSONResponse({"ok": False, "error": "Local management endpoint."}, status_code=403)
             if not self.device_manager.remove(device_id):
                 return JSONResponse({"ok": False, "error": "Device not found."}, status_code=404)
+            await self.hub.close_device(device_id, reason="Device forgotten")
             self._append_log("DEVICE_FORGOTTEN", device_id=device_id)
             return {"ok": True}
 
@@ -590,28 +603,31 @@ class BrahmaGateway:
                                 )
                                 self._pending_requests.pop(oldest_id, None)
                             pending_id = new_request_id()
-                            self._pending_requests[pending_id] = {
-                            "request_id": pending_id,
-                            "websocket": websocket,
-                            "timestamp": now_iso(),
-                            "device_name": str(payload.get("device_name") or "Unknown Device"),
-                            "platform": str(payload.get("platform") or "unknown"),
-                            "os_version": str(payload.get("os_version") or ""),
-                            "agent_version": str(payload.get("agent_version") or ""),
-                            "capabilities": list(payload.get("capabilities") or []),
-                            "permissions": list(payload.get("permissions") or []),
-                            "battery": payload.get("battery"),
-                            "metadata": dict(payload.get("metadata") or {}),
-                            "ip": websocket.client.host if websocket.client else "",
-                        }
+                            pending_item = {
+                                "request_id": pending_id,
+                                "websocket": websocket,
+                                "timestamp": now_iso(),
+                                "device_name": str(payload.get("device_name") or "Unknown Device"),
+                                "platform": str(payload.get("platform") or "unknown"),
+                                "os_version": str(payload.get("os_version") or ""),
+                                "agent_version": str(payload.get("agent_version") or ""),
+                                "capabilities": list(payload.get("capabilities") or []),
+                                "permissions": list(payload.get("permissions") or []),
+                                "battery": payload.get("battery"),
+                                "metadata": dict(payload.get("metadata") or {}),
+                                "ip": websocket.client.host if websocket.client else "",
+                            }
+                            self._pending_requests[pending_id] = pending_item
+                            pending_device_name = pending_item["device_name"]
+                            pending_platform = pending_item["platform"]
                         await websocket.send_json(
                             build_message(
                                 ProtocolTypes.PAIR_REQUEST,
                                 {
                                     "pending_id": pending_id,
                                     "message": "Pairing request received. Awaiting user approval in Brahma.",
-                                    "device_name": self._pending_requests[pending_id]["device_name"],
-                                    "platform": self._pending_requests[pending_id]["platform"],
+                                    "device_name": pending_device_name,
+                                    "platform": pending_platform,
                                 },
                                 request_id=request_id,
                             )
@@ -730,7 +746,8 @@ class BrahmaGateway:
         with self._serve_lock:
             if self._running:
                 return
-            self._shutdown.clear()
+            if self._shutdown.is_set():
+                return
             self._running = True
         try:
             advertised = False
