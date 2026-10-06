@@ -1367,3 +1367,42 @@ def test_device_mutations_roll_back_when_persistence_fails(tmp_path, monkeypatch
     assert current is not None
     assert current.online is False
     assert current.connection_id == ""
+
+def test_gateway_disconnect_does_not_mark_active_device_offline_when_close_fails():
+    from brahma_connect.gateway.server import BrahmaGateway
+
+    gateway = object.__new__(BrahmaGateway)
+    record = type(
+        "Record",
+        (),
+        {
+            "device_id": "d1",
+            "name": "Phone",
+            "online": True,
+            "to_dict": lambda self: {"device_id": self.device_id, "online": self.online},
+        },
+    )()
+
+    class Manager:
+        def __init__(self):
+            self.offline_called = False
+        def resolve(self, _query):
+            return [record]
+        def get(self, _query):
+            return None
+        def mark_offline(self, _device_id):
+            self.offline_called = True
+
+    manager = Manager()
+    gateway.device_manager = manager
+    gateway._append_log = lambda *args, **kwargs: None
+
+    class Hub:
+        async def close_device(self, *_args, **_kwargs):
+            return False
+
+    gateway.hub = Hub()
+    result = asyncio.run(gateway.disconnect_device("Phone"))
+    assert result["success"] is False
+    assert result["error_code"] == "DISCONNECT_FAILED"
+    assert manager.offline_called is False
