@@ -179,17 +179,21 @@ class OpenRouterClient:
             logger.warning(f"[OmniRoute] request failed; using direct provider fallback: {exc}")
             return None
 
+    def _refresh_credentials(self) -> str:
+        """Refresh the current credential without mutating shared request headers."""
+        with self._credential_lock:
+            self.api_key = _load_api_key()
+            return self.api_key
+
     def _request_headers(self) -> dict[str, str]:
         """Return an immutable per-request header snapshot so parallel calls cannot race."""
-        with self._credential_lock:
-            key = _load_api_key()
-            self.api_key = key
-            headers = dict(self._headers)
-            if key:
-                headers["Authorization"] = f"Bearer {key}"
-            else:
-                headers.pop("Authorization", None)
-            return headers
+        key = self._refresh_credentials()
+        headers = dict(self._headers)
+        if key:
+            headers["Authorization"] = f"Bearer {key}"
+        else:
+            headers.pop("Authorization", None)
+        return headers
 
     def _call(
         self,
