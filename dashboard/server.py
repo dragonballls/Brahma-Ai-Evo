@@ -764,7 +764,8 @@ class DashboardServer:
                 {"type": "sys", "text": "Remote connection established via QR code."}
             ))
 
-            return HTMLResponse(f"""<!DOCTYPE html>
+            return HTMLResponse(
+                f"""<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width">
 <style>
   body{{background:#07090f;color:#dde3ed;font-family:sans-serif;
@@ -779,7 +780,13 @@ class DashboardServer:
   setTimeout(function(){{location.replace('/')}},400);
 </script>
 <p>Connecting to Brahma…</p>
-</body></html>""")
+</body></html>""",
+                headers={
+                    "Cache-Control": "no-store, no-cache, must-revalidate",
+                    "Pragma": "no-cache",
+                    "Referrer-Policy": "no-referrer",
+                },
+            )
 
         @app.post("/api/device-login")
         async def device_login_ep(req: Request):
