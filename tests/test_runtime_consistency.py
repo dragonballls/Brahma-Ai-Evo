@@ -383,8 +383,8 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("id: omni-cache", workflow)
         self.assertIn("steps.omni-cache.outputs.cache-hit", workflow)
         self.assertIn("if: ${{ steps.omni-cache.outputs.cache-hit != 'true' }}", workflow)
-        self.assertIn("actions/cache/save@v4", workflow)
-        self.assertIn("actions/cache/restore@v4", workflow)
+        self.assertIn("actions/cache/save@v6", workflow)
+        self.assertIn("actions/cache/restore@v6", workflow)
 
     def test_windows_payload_is_reused_by_content_hash(self):
         workflow = self.read(".github/workflows/windows-release.yml")
@@ -697,7 +697,7 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("def _sha256", ota)
         self.assertIn("actual = _sha256(temp_path)", ota)
         self.assertIn("OTA installer SHA-256 verification failed", ota)
-        self.assertIn("def Get-Sha256", bootstrap)
+        self.assertIn("function Get-Sha256", bootstrap)
         self.assertIn("Get-NodeChecksum", bootstrap)
         self.assertIn("Test-Authenticode", bootstrap)
         self.assertIn("Node.js installer SHA256 verification failed", bootstrap)
