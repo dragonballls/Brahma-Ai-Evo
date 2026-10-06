@@ -56,7 +56,19 @@ def save_settings(data: Dict[str, Any]) -> None:
         raise TypeError("settings update must be a dictionary")
     with _SETTINGS_LOCK:
         _ensure_config()
-        current = load_settings()
+        current: Dict[str, Any] = {}
+        if SETTINGS_FILE.is_file():
+            try:
+                loaded = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                raise RuntimeError(
+                    "Settings file is unreadable or corrupted; refusing to overwrite it."
+                ) from exc
+            if not isinstance(loaded, dict):
+                raise RuntimeError(
+                    "Settings file has an invalid root schema; refusing to overwrite it."
+                )
+            current.update(loaded)
         current.update(data)
         temp_path = SETTINGS_FILE.with_suffix(".json.tmp")
         try:
