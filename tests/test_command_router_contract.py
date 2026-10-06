@@ -30,3 +30,38 @@ def test_unknown_remote_action_is_rejected_before_network_dispatch():
     result = asyncio.run(router.route("test", "not_a_real_action"))
     assert result["success"] is False
     assert result["error_code"] == "ACTION_UNSUPPORTED"
+
+class ResultHub:
+    def __init__(self, result):
+        self.result = result
+        self.future = None
+
+    async def set_pending(self, _device_id, _request_id):
+        self.future = asyncio.get_running_loop().create_future()
+        return self.future
+
+    async def send_to_device(self, _device_id, _message):
+        self.future.set_result(self.result)
+        return True
+
+    async def reject_pending(self, _device_id, _request_id, _error):
+        if self.future and not self.future.done():
+            self.future.cancel()
+
+
+def test_remote_command_requires_explicit_success_boolean():
+    router = CommandRouter(FakeDevices(), ResultHub({"message": "finished"}), CapabilityManager())
+    result = asyncio.run(router.route("test", "get_device_info"))
+    assert result["success"] is False
+    assert result["error_code"] == "MALFORMED_RESULT"
+
+
+def test_remote_command_preserves_explicit_failure():
+    router = CommandRouter(
+        FakeDevices(),
+        ResultHub({"success": False, "error": "Permission denied"}),
+        CapabilityManager(),
+    )
+    result = asyncio.run(router.route("test", "get_device_info"))
+    assert result["success"] is False
+    assert result["error"] == "Permission denied"
