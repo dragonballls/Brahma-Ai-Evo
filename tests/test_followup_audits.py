@@ -1340,3 +1340,30 @@ def test_smart_home_credential_key_rejects_symlink(tmp_path):
     vault._key_file = link
     with pytest.raises(RuntimeError, match="may not be a symlink"):
         vault._load_or_create_key()
+
+def test_device_mutations_roll_back_when_persistence_fails(tmp_path, monkeypatch):
+    from brahma_connect.gateway.device_manager import DeviceManager
+
+    manager = DeviceManager(tmp_path / "devices.json")
+    record, secret = manager.create_from_pairing(name="Phone", platform="android")
+    original_name = record.name
+    original_revoked = record.revoked
+
+    monkeypatch.setattr(manager, "save", lambda: (_ for _ in ()).throw(OSError("disk full")))
+    assert manager.remove(record.device_id) is False
+    assert manager.get(record.device_id) is not None
+
+    with pytest.raises(OSError, match="disk full"):
+        manager.rename(record.device_id, "Renamed")
+    assert manager.get(record.device_id).name == original_name
+
+    assert manager.revoke(record.device_id) is False
+    current = manager.get(record.device_id)
+    assert current is not None
+    assert current.revoked is original_revoked
+
+    assert manager.authenticate(record.device_id, secret, ip="127.0.0.1", connection_id="c1") is None
+    current = manager.get(record.device_id)
+    assert current is not None
+    assert current.online is False
+    assert current.connection_id == ""
