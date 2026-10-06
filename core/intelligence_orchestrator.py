@@ -96,6 +96,14 @@ def _runtime_intelligence_mode() -> str:
     return str(data.get("intelligence_mode", "smart") or "smart").strip().lower()
 
 
+def _contains_intent_term(text: str, terms: tuple[str, ...]) -> bool:
+    normalized = str(text or "").casefold()
+    return any(
+        re.search(rf"(?<!\\w){re.escape(str(term).casefold())}(?!\\w)", normalized)
+        for term in terms
+        if str(term).strip()
+    )
+
 def profile_for(prompt:str,requested:Optional[str],cfg:dict)->str:
     if requested:
         return str(requested).lower().strip()
@@ -103,11 +111,13 @@ def profile_for(prompt:str,requested:Optional[str],cfg:dict)->str:
     mode = _runtime_intelligence_mode()
     if mode == "fast":
         return "fast"
-    if any(x in t for x in CODING):
+    if _contains_intent_term(t, CODING):
         return "coding"
-    if any(x in t for x in MAINT):
+    if _contains_intent_term(t, MAINT):
         return "maintenance"
     # Vision remains an explicit profile until the request carries actual image data.
+    if _contains_intent_term(t, VISION):
+        return "vision"
     sw=tuple(str(x).casefold() for x in cfg.get("simple_keywords",()))
     if len(t.strip())<=int(cfg.get("simple_max_chars",220)) and any(t.strip().startswith(x) for x in sw):
         return str(cfg.get("simple_profile","fast"))
