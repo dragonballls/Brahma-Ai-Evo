@@ -27,6 +27,11 @@ from datetime import datetime
 
 from core.gemini_runtime import create_model, get_api_key
 
+MAX_INPUT_BYTES = 128 * 1024 * 1024
+MAX_DOCUMENT_PAGES = 500
+MAX_PRESENTATION_SLIDES = 500
+MAX_IMAGE_DIMENSION = 12000
+
 
 def _get_api_key() -> str:
     return get_api_key()
@@ -122,6 +127,8 @@ def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
         try:
             img = Image.open(path)
             w, h = img.size
+            if w > MAX_IMAGE_DIMENSION or h > MAX_IMAGE_DIMENSION:
+                return f"Image dimensions exceed the {MAX_IMAGE_DIMENSION}px safety limit."
             if scale:
                 new_size = (int(w * scale), int(h * scale))
             elif width and height:
@@ -181,6 +188,8 @@ def _process_pdf(path: Path, action: str, params: dict, speak=None) -> str:
         try:
             import pdfplumber
             with pdfplumber.open(path) as pdf:
+                if len(pdf.pages) > MAX_DOCUMENT_PAGES:
+                    raise ValueError(f"PDF exceeds the {MAX_DOCUMENT_PAGES}-page processing limit.")
                 for page in pdf.pages:
                     text += (page.extract_text() or "") + "\n"
         except ImportError:
@@ -188,6 +197,8 @@ def _process_pdf(path: Path, action: str, params: dict, speak=None) -> str:
                 import PyPDF2
                 with open(path, "rb") as f:
                     reader = PyPDF2.PdfReader(f)
+                    if len(reader.pages) > MAX_DOCUMENT_PAGES:
+                        raise ValueError(f"PDF exceeds the {MAX_DOCUMENT_PAGES}-page processing limit.")
                     for page in reader.pages:
                         text += page.extract_text() + "\n"
             except ImportError:
@@ -871,6 +882,8 @@ def _process_pptx(path: Path, action: str, params: dict, speak=None) -> str:
         try:
             from pptx import Presentation
             prs  = Presentation(path)
+            if len(prs.slides) > MAX_PRESENTATION_SLIDES:
+                raise ValueError(f"Presentation exceeds the {MAX_PRESENTATION_SLIDES}-slide processing limit.")
             text = []
             for i, slide in enumerate(prs.slides, 1):
                 slide_text = f"\n--- Slide {i} ---\n"
@@ -917,6 +930,12 @@ def _resolve_input_path(value: str) -> Path:
         raise FileNotFoundError(f"File not found: {value}")
     if not resolved.is_file():
         raise ValueError(f"Path is not a file: {value}")
+    try:
+        size = resolved.stat().st_size
+    except OSError as exc:
+        raise RuntimeError(f"Unable to inspect input file safely: {value}") from exc
+    if size > MAX_INPUT_BYTES:
+        raise ValueError(f"Input file exceeds the {MAX_INPUT_BYTES // (1024 * 1024)} MiB processing limit.")
     return resolved
 
 
