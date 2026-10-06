@@ -1325,3 +1325,18 @@ def test_iss_tracker_does_not_fallback_to_plain_http():
     source = Path("actions/geospatial_globe.py").read_text(encoding="utf-8")
     assert "http://api.open-notify.org" not in source
     assert 'raise RuntimeError("Live ISS data is unavailable.") from exc' in source
+
+def test_smart_home_credential_key_rejects_symlink(tmp_path):
+    import smart_home.storage as storage
+
+    target = tmp_path / "real.key"
+    target.write_bytes(storage.Fernet.generate_key())
+    link = tmp_path / "smart_home.key"
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError):
+        return
+    vault = storage.CredentialVault.__new__(storage.CredentialVault)
+    vault._key_file = link
+    with pytest.raises(RuntimeError, match="may not be a symlink"):
+        vault._load_or_create_key()
