@@ -603,3 +603,41 @@ def test_gateway_pair_attempt_tracking_is_bounded():
     result = asyncio.run(gateway._pair_device({"pairing_token": "invalid"}, websocket))
     assert result["success"] is False
     assert len(gateway._pair_attempts) <= 4096
+
+
+def test_dashboard_is_https_first():
+    source = Path("dashboard/server.py").read_text(encoding="utf-8")
+    assert 'return f"https://{self._ip}:{PORT}"' in source
+    assert 'ssl_keyfile=str(ssl_key)' in source
+    assert 'ssl_certfile=str(ssl_cert)' in source
+    assert "Dashboard HTTPS certificate could not be created." in source
+
+
+def test_gateway_tls_is_enabled_and_pinned_in_pairing_offers():
+    from brahma_connect.gateway.models import PairingOffer
+    from brahma_connect.gateway.server import BrahmaGatewayConfig
+
+    config = BrahmaGatewayConfig()
+    assert config.tls_enabled is True
+    offer = PairingOffer(
+        service="_BRAHMA._tcp.local.",
+        host="192.168.1.20",
+        port=8765,
+        pairing_token="t",
+        pairing_code="123456",
+        expires_at=1.0,
+        tls_enabled=True,
+        tls_certificate_sha256="a" * 64,
+    )
+    data = offer.to_dict()
+    assert data["tls"] is True
+    assert data["tls_certificate_sha256"] == "a" * 64
+
+
+def test_android_gateway_requires_tls_and_uses_wss_with_pinning():
+    source = Path("brahma-connect-android/app/src/main/java/com/brahma/connect/network/BrahmaWebSocketClient.kt").read_text(encoding="utf-8")
+    manifest = Path("brahma-connect-android/app/src/main/AndroidManifest.xml").read_text(encoding="utf-8")
+    assert 'val scheme = if (endpoint.tls) "wss" else "ws"' in source
+    assert 'endpoint.tlsCertificateSha256.lowercase().trim()' in source
+    assert "Gateway TLS certificate fingerprint does not match the pairing record." in source
+    assert 'android:usesCleartextTraffic="false"' in manifest
