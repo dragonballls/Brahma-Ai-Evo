@@ -142,8 +142,15 @@ def resolve(accepted: bool) -> None:
 
     def _worker():
         try:
-            result = p.run() or "Done."
-            _log(f"SYS: Confirmed — {p.title}. {result}")
+            result = p.run()
+            if result is False:
+                raise RuntimeError("Confirmed action reported failure.")
+            if isinstance(result, dict) and (result.get("success") is False or result.get("error")):
+                raise RuntimeError(
+                    str(result.get("error") or result.get("message") or "Confirmed action reported failure.")
+                )
+            message = str(result).strip() if result is not None else "Completed."
+            _log(f"SYS: Confirmed — {p.title}. {message}")
         except Exception as e:
             _log(f"ERR: {p.title} failed — {e}")
 
