@@ -12,6 +12,7 @@ Install deps:  pip install fastapi "uvicorn[standard]" cryptography
 import asyncio
 import base64
 import hashlib
+import hmac
 import re
 import secrets
 import socket
@@ -100,13 +101,19 @@ def _derive_key(session_key: str) -> bytes:
 
 
 def _decrypt_cbc(aes_key: bytes, enc_b64: str) -> str:
-    """Decrypt base64(IV[16] ‖ ciphertext) with AES-256-CBC + PKCS7."""
+    """Decrypt base64(IV[16] ‖ ciphertext ‖ HMAC-SHA256) with AES-256-CBC + PKCS7."""
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
     from cryptography.hazmat.primitives import padding as sym_pad
-    raw      = base64.b64decode(enc_b64)
-    iv, ct   = raw[:16], raw[16:]
-    dec      = Cipher(algorithms.AES(aes_key), modes.CBC(iv)).decryptor()
-    padded   = dec.update(ct) + dec.finalize()
+    raw = base64.b64decode(enc_b64, validate=True)
+    if len(raw) < 16 + 16 + 32:
+        raise ValueError("Encrypted payload is incomplete")
+    body, tag = raw[:-32], raw[-32:]
+    expected = hmac.new(aes_key, body, hashlib.sha256).digest()
+    if not hmac.compare_digest(tag, expected):
+        raise ValueError("Encrypted payload authentication failed")
+    iv, ct = body[:16], body[16:]
+    dec = Cipher(algorithms.AES(aes_key), modes.CBC(iv)).decryptor()
+    padded = dec.update(ct) + dec.finalize()
     unpadder = sym_pad.PKCS7(128).unpadder()
     return (unpadder.update(padded) + unpadder.finalize()).decode('utf-8')
 
@@ -742,12 +749,13 @@ class DashboardServer:
         # ── Phone mic real-time audio → Gemini Live ──────────────────────────
 
         @app.websocket("/ws/phone-audio")
-        async def phone_audio_ws(websocket: WebSocket, token: str = ""):
-            tok = token.strip()
+        async def phone_audio_ws(websocket: WebSocket):
+            protocols = [p.strip() for p in websocket.headers.get("sec-websocket-protocol", "").split(",") if p.strip()]
+            tok = next((p[len("brahma-auth."):].strip() for p in protocols if p.startswith("brahma-auth.")), "")
             if not tok or tok not in self._tokens:
                 await websocket.close(code=4001)
                 return
-            await websocket.accept()
+            await websocket.accept(subprotocol=f"brahma-auth.{tok}")
             asyncio.create_task(self.broadcast(
                 {"type": "sys", "text": "Phone microphone live."}
             ))
@@ -843,17 +851,6 @@ class DashboardServer:
                 pass
             return JSONResponse({"files": files})
 
-        @app.get("/uploads/{filename}")
-        async def download_file(filename: str, token: str = ""):
-            # Auth via query param — browser <a download> can't send custom headers
-            tok = token.strip()
-            if not tok or tok not in self._tokens:
-                return JSONResponse({"error": "Unauthorized"}, status_code=401)
-            safe = re.sub(r'[/\\]', '', filename)
-            path = self._uploads_dir / safe
-            if not path.exists() or not path.is_file():
-                return JSONResponse({"error": "Not found"}, status_code=404)
-            return FileResponse(str(path), filename=safe)
 
         @app.get("/web_background/{filename:path}")
         async def web_background_static(filename: str):
@@ -865,12 +862,13 @@ class DashboardServer:
             return JSONResponse({"error": "Not found"}, status_code=404)
 
         @app.websocket("/ws")
-        async def ws_ep(websocket: WebSocket, token: str = ""):
-            tok = token.strip()
+        async def ws_ep(websocket: WebSocket):
+            protocols = [p.strip() for p in websocket.headers.get("sec-websocket-protocol", "").split(",") if p.strip()]
+            tok = next((p[len("brahma-auth."):].strip() for p in protocols if p.startswith("brahma-auth.")), "")
             if not tok or tok not in self._tokens:
                 await websocket.close(code=4001)
                 return
-            await websocket.accept()
+            await websocket.accept(subprotocol=f"brahma-auth.{tok}")
             self._clients.add(websocket)
             for entry in self._history[-50:]:
                 try:
