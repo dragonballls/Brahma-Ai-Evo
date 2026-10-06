@@ -75,8 +75,21 @@ class BrahmaConnectForegroundService : Service() {
 
     private fun connectIfPossible() {
         val endpoint = AgentStateStore.gateway.value ?: return
-        val credential = storage.loadCredential()
-        val offer = AgentStateStore.pairingOffer.value ?: storage.loadGatewayHint()
+        val credential = try {
+            storage.loadCredential()
+        } catch (exc: IllegalStateException) {
+            AgentStateStore.setCredential(null)
+            AgentStateStore.setError(exc.message)
+            AgentStateStore.setStatus("Stored credentials require repair")
+            return
+        }
+        val offer = try {
+            AgentStateStore.pairingOffer.value ?: storage.loadGatewayHint()
+        } catch (exc: IllegalStateException) {
+            AgentStateStore.setError(exc.message)
+            AgentStateStore.setStatus("Stored pairing hint requires repair")
+            return
+        }
         if (!started) {
             started = true
         }
