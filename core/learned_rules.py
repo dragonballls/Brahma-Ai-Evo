@@ -70,8 +70,8 @@ class LearnedRulesEngine:
                 logger.warning("[LearnedRules] Failed to quarantine corrupted rules state: %s", exc)
             return []
         except OSError as exc:
-            logger.warning("[LearnedRules] Failed to read rules: %s", exc)
-            return []
+            logger.error("[LearnedRules] Refusing to mutate unreadable rules state: %s", exc)
+            raise RuntimeError("Unable to read persistent learned-rules state.") from exc
 
     @staticmethod
     def _save_raw(rules: List[Dict[str, Any]]) -> bool:
@@ -107,7 +107,10 @@ class LearnedRulesEngine:
             return {"success": False, "message": "Credential-like values cannot be stored as learned rules."}
 
         with cls._lock:
-            rules = cls._load_raw()
+            try:
+                rules = cls._load_raw()
+            except RuntimeError as exc:
+                return {"success": False, "message": str(exc)}
 
             for r in rules:
                 if str(r.get("rule", "")).lower() == clean_text.lower():
@@ -144,12 +147,16 @@ class LearnedRulesEngine:
     def toggle_rule(cls, rule_id: str) -> Dict[str, Any]:
         """Toggles a rule on or off."""
         with cls._lock:
-            rules = cls._load_raw()
+            try:
+                rules = cls._load_raw()
+            except RuntimeError as exc:
+                return {"success": False, "message": str(exc)}
             for r in rules:
                 if r.get("id") == rule_id:
                     r["active"] = not r.get("active", True)
                     r["updated_at"] = time.time()
-                    cls._save_raw(rules)
+                    if not cls._save_raw(rules):
+                        return {"success": False, "message": "Unable to persist learned rule state."}
                     status = "activated" if r["active"] else "deactivated"
                     return {"success": True, "message": f"Rule {rule_id} {status}."}
             return {"success": False, "message": f"Rule ID '{rule_id}' not found."}
@@ -162,7 +169,8 @@ class LearnedRulesEngine:
             initial_len = len(rules)
             rules = [r for r in rules if r.get("id") != rule_id]
             if len(rules) < initial_len:
-                cls._save_raw(rules)
+                if not cls._save_raw(rules):
+                    return {"success": False, "message": "Unable to persist learned rule state."}
                 return {"success": True, "message": f"Rule {rule_id} deleted."}
             return {"success": False, "message": f"Rule ID '{rule_id}' not found."}
 

@@ -1093,3 +1093,30 @@ def test_memory_load_fails_closed_on_io_error(tmp_path, monkeypatch):
 
     with pytest.raises(RuntimeError, match="Unable to read persistent memory"):
         memory.load_memory()
+
+
+def test_learned_rules_read_io_errors_fail_closed():
+    from core.learned_rules import LearnedRulesEngine
+
+    original = LearnedRulesEngine._load_raw
+    LearnedRulesEngine._load_raw = staticmethod(lambda: (_ for _ in ()).throw(OSError("disk read failure")))
+    try:
+        result = LearnedRulesEngine.add_rule("keep existing rules")
+    finally:
+        LearnedRulesEngine._load_raw = original
+
+    assert result["success"] is False
+    assert "read" in result["message"].lower()
+
+
+def test_learned_rules_mutations_do_not_report_success_when_save_fails(monkeypatch):
+    from core.learned_rules import LearnedRulesEngine
+
+    monkeypatch.setattr(LearnedRulesEngine, "_load_raw", staticmethod(lambda: [{"id": "r1", "rule": "old", "active": True}]))
+    monkeypatch.setattr(LearnedRulesEngine, "_save_raw", staticmethod(lambda _rules: False))
+
+    toggled = LearnedRulesEngine.toggle_rule("r1")
+    deleted = LearnedRulesEngine.delete_rule("r1")
+
+    assert toggled["success"] is False
+    assert deleted["success"] is False
