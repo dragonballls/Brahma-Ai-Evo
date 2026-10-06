@@ -9,8 +9,7 @@ def test_send_message_rejects_unsuccessful_instagram_dm_results():
     end = source.index("def _upload_instagram_media", start)
     block = source[start:end]
     assert "Instagram send failed:" in block
-    assert 'res.get("status") not in {"success", "ok"}' in block
-    assert 'res.get("success") is not True' in block
+    assert "if not _is_success_result(res):" in block
 
 
 def test_send_message_rejects_unsuccessful_instagram_media_results():
@@ -20,7 +19,7 @@ def test_send_message_rejects_unsuccessful_instagram_media_results():
     block = source[start:end]
     assert "Instagram Reel publish failed:" in block
     assert "Instagram Photo publish failed:" in block
-    assert 'res.get("status") not in {"success", "ok"}' in block
+    assert "if not _is_success_result(res):" in block
 
 
 def test_message_success_contract_rejects_explicit_false_even_with_success_status():
@@ -36,4 +35,4 @@ def test_email_compose_requires_browser_open_confirmation():
     source = (ROOT / "actions" / "send_message.py").read_text(encoding="utf-8")
     block = source[source.index("def _send_email_via_browser"):source.index("def _send_generic", source.index("def _send_email_via_browser"))]
     assert "if not webbrowser.open(url):" in block
-    assert "return f"Could not open {app_name} to compose email."" in block
+    assert 'return f"Could not open {app_name} to compose email."' in block
