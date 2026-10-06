@@ -825,19 +825,22 @@ class BrahmaGateway:
                     },
                 )
             self._append_log("GATEWAY_STARTING", host=self.config.host, port=self.config.port, advertised=advertised)
-            cfg = uvicorn.Config(
-                self.app,
-                host=self.config.host,
-                port=self.config.port,
-                log_level="warning",
-                log_config=None,
-                access_log=False,
-            )
+            cfg_kwargs = {
+                "app": self.app,
+                "host": self.config.host,
+                "port": self.config.port,
+                "log_level": "warning",
+                "log_config": None,
+                "access_log": False,
+            }
+            if self.config.tls_enabled:
+                cfg_kwargs.update({
+                    "ssl_keyfile": str(self._tls_keyfile),
+                    "ssl_certfile": str(self._tls_certfile),
+                })
+            cfg = uvicorn.Config(**cfg_kwargs)
             with self._serve_lock:
                 self._server = uvicorn.Server(cfg)
-                if self.config.tls_enabled:
-                    cfg.ssl_keyfile = str(self._tls_keyfile)
-                    cfg.ssl_certfile = str(self._tls_certfile)
                 self._server.install_signal_handlers = lambda: None
                 self._server.should_exit = self._shutdown.is_set()
             await self._server.serve()
