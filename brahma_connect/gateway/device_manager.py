@@ -41,12 +41,16 @@ class DeviceManager:
                 if not key:
                     continue
                 record.device_id = key
+                # A persisted online flag cannot represent a live socket after restart.
+                # Re-establish online state only after successful authentication.
+                record.online = False
+                record.connection_id = ""
                 loaded[key] = record
             self._devices = loaded
 
     def save(self) -> None:
         with self._lock:
-            payload = {"devices": {device_id: record.to_dict() for device_id, record in self._devices.items()}}
+            payload = {"devices": {device_id: record.to_storage_dict() for device_id, record in self._devices.items()}}
             temp_path = self.registry_path.with_name(
                 f"{self.registry_path.name}.tmp"
             )
