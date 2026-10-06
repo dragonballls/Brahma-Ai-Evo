@@ -109,7 +109,11 @@ class ConnectionHub:
         dead: list[tuple[str, int]] = []
         for device_id, state in states:
             try:
-                await state.websocket.send_json(message)
+                async with state.send_lock:
+                    await asyncio.wait_for(
+                        state.websocket.send_json(message),
+                        timeout=SOCKET_SEND_TIMEOUT_SECONDS,
+                    )
             except Exception:
                 dead.append((device_id, id(state.websocket)))
 
