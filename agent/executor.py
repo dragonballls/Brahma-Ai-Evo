@@ -468,13 +468,8 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None, player: Any 
         if not request:
             raise ValueError("universal_task requires a request")
         result = run_universal_task(request, context=str(p.get("context") or ""))
-        if isinstance(result, dict):
-            return str(
-                result.get("result")
-                or result.get("message")
-                or result.get("output")
-                or result
-            ).strip()
+        if isinstance(result, (dict, list, bool)):
+            return result
         return str(result or "Task completed.").strip()
 
     elif tool == "skill_forge":
