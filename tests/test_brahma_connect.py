@@ -685,3 +685,14 @@ def test_connect_execute_rejects_non_dict_gateway_result():
 
     assert result["success"] is False
     assert result["error_code"] == "MALFORMED_RESULT"
+
+
+def test_connect_execute_rejects_non_object_command_parameters():
+    from actions.brahma_connect import connect_execute
+    result = json.loads(connect_execute({
+        "target": "Phone 1",
+        "action": "get_device_info",
+        "parameters": ["malformed"],
+    }))
+    assert result["success"] is False
+    assert result["error_code"] == "MALFORMED_PARAMETERS"
