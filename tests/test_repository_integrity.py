@@ -444,6 +444,13 @@ class RepositoryIntegrityTests(unittest.TestCase):
         constructor = section[:section.index("    def showEvent(self, event):")]
         self.assertNotIn("self._poll_tmr.start(2500)", constructor)
 
+    def test_user_facing_provider_status_text_has_no_mojibake_bullet(self):
+        source = self.read("ui.py")
+        self.assertNotIn("ΓÇó", source)
+        self.assertIn('return "••••••••"', source)
+        self.assertIn('return f"{key[:4]}••••••••{key[-4:]}"', source)
+        self.assertIn('f"{platform} • {status}"', source)
+
     def test_source_launcher_routes_through_repair_bootstrap(self):
         source = self.read("start_brahma.vbs")
         bootstrap_pos = source.index("ElseIf fso.FileExists(bootstrap) And fso.FileExists(mainPy) Then")
