@@ -35,3 +35,18 @@ def test_dev_agent_dependency_install_rejects_unsafe_specifications():
     assert "_DEP_SPEC_RE" in source
     assert "unsafe package specification" in source
     assert "allowed_dependencies" in source
+
+
+def test_generated_project_paths_are_confined_to_project_root():
+    source = (ROOT / "actions" / "dev_agent.py").read_text(encoding="utf-8")
+    assert "def _safe_project_path" in source
+    assert "Project path escapes the project root" in source
+    assert "Planner entry point must be one of the generated project files" in source
+
+
+def test_dev_agent_blocks_out_of_tree_run_command_arguments():
+    source = (ROOT / "actions" / "dev_agent.py").read_text(encoding="utf-8")
+    start = source.index("def _run_project")
+    end = source.index("def _try_auto_install", start)
+    block = source[start:end]
+    assert "command arguments may not access paths outside the generated project" in block
