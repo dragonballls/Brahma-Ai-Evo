@@ -171,9 +171,10 @@ class BrahmaGateway:
                 self._shutdown.clear()
 
     def request_shutdown(self) -> None:
-        self._shutdown.set()
-        if self._server is not None:
-            self._server.should_exit = True
+        with self._serve_lock:
+            self._shutdown.set()
+            if self._server is not None:
+                self._server.should_exit = True
 
     def _append_log(self, event_type: str, **payload: Any) -> None:
         safe_payload = {str(key): _redact_log_value(value, str(key)) for key, value in payload.items()}
