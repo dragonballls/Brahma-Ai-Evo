@@ -84,7 +84,7 @@ def _get_fernet_cipher():
                     temp.replace(EMAIL_KEY_FILE)
                     if not EMAIL_KEY_FILE.exists():
                         raise RuntimeError("Unable to publish email encryption key.")
-                    with EMAIL_KEY_FILE.open("rb") as f:
+                with EMAIL_KEY_FILE.open("rb") as f:
                     key = f.read().strip()
         return Fernet(key)
     except Exception as e:
