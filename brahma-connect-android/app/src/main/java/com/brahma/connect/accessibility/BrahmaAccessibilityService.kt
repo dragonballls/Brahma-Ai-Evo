@@ -10,6 +10,14 @@ import android.view.accessibility.AccessibilityNodeInfo
 import com.brahma.connect.core.AgentStateStore
 
 class BrahmaAccessibilityService : AccessibilityService() {
+    companion object {
+        const val MAX_UI_NODES = 1000
+        const val MAX_UI_DEPTH = 100
+        const val MAX_UI_TEXT_CHARS = 512
+        const val MAX_GESTURE_DURATION_MS = 10_000L
+
+        var instance: BrahmaAccessibilityService? = null
+    }
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         // Intentionally left blank for now.
     }
@@ -25,9 +33,10 @@ class BrahmaAccessibilityService : AccessibilityService() {
     }
     
     fun unlockPhone(pin: String): Boolean {
-        // Implementation of unlocking using Accessibility NodeInfo or Gestures
-        AgentStateStore.addLog("Unlocking phone with PIN...")
-        return true
+        // Remote PIN entry is intentionally not implemented. Never report an
+        // unlock as successful when no device-side unlock operation occurred.
+        AgentStateStore.addLog("Remote phone unlock is not implemented.")
+        return false
     }
 
     fun dumpUiTree(): Map<String, Any> {
@@ -37,19 +46,28 @@ class BrahmaAccessibilityService : AccessibilityService() {
             return mapOf("error" to "No active window")
         }
         val nodes = mutableListOf<Map<String, Any>>()
-        traverseNode(root, nodes)
+        if (!traverseNode(root, nodes, 0)) {
+            AgentStateStore.addLog("UI dump failed: UI tree exceeded safety limits.")
+            return mapOf("error" to "UI tree exceeds safety limits")
+        }
         return mapOf("nodes" to nodes)
     }
 
-    private fun traverseNode(node: AccessibilityNodeInfo, nodes: MutableList<Map<String, Any>>) {
+    private fun traverseNode(
+        node: AccessibilityNodeInfo,
+        nodes: MutableList<Map<String, Any>>,
+        depth: Int,
+    ): Boolean {
+        if (depth > MAX_UI_DEPTH || nodes.size >= MAX_UI_NODES) return false
+
         if (node.isVisibleToUser) {
             val bounds = Rect()
             node.getBoundsInScreen(bounds)
             
             val nodeMap = mutableMapOf<String, Any>(
-                "class" to (node.className?.toString() ?: ""),
-                "text" to (node.text?.toString() ?: ""),
-                "content_description" to (node.contentDescription?.toString() ?: ""),
+                "class" to (node.className?.toString() ?: "").take(MAX_UI_TEXT_CHARS),
+                "text" to (node.text?.toString() ?: "").take(MAX_UI_TEXT_CHARS),
+                "content_description" to (node.contentDescription?.toString() ?: "").take(MAX_UI_TEXT_CHARS),
                 "bounds" to listOf(bounds.left, bounds.top, bounds.right, bounds.bottom),
                 "is_clickable" to node.isClickable,
                 "is_scrollable" to node.isScrollable,
@@ -59,15 +77,25 @@ class BrahmaAccessibilityService : AccessibilityService() {
         }
 
         for (i in 0 until node.childCount) {
-            val child = node.getChild(i)
-            if (child != null) {
-                traverseNode(child, nodes)
+            val child = node.getChild(i) ?: continue
+            val accepted = try {
+                traverseNode(child, nodes, depth + 1)
+            } finally {
                 child.recycle()
             }
+            if (!accepted) return false
         }
+        return true
+    }
+
+    private fun withinScreen(x: Int, y: Int): Boolean {
+        val width = resources.displayMetrics.widthPixels
+        val height = resources.displayMetrics.heightPixels
+        return x in 0 until width && y in 0 until height
     }
 
     fun tap(x: Int, y: Int): Boolean {
+        if (!withinScreen(x, y)) return false
         val path = Path()
         path.moveTo(x.toFloat(), y.toFloat())
         val gestureBuilder = GestureDescription.Builder()
@@ -76,6 +104,8 @@ class BrahmaAccessibilityService : AccessibilityService() {
     }
 
     fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, duration: Long): Boolean {
+        if (!withinScreen(x1, y1) || !withinScreen(x2, y2)) return false
+        if (duration !in 1L..MAX_GESTURE_DURATION_MS) return false
         val path = Path()
         path.moveTo(x1.toFloat(), y1.toFloat())
         path.lineTo(x2.toFloat(), y2.toFloat())
@@ -107,8 +137,5 @@ class BrahmaAccessibilityService : AccessibilityService() {
         }
         return null
     }
-    
-    companion object {
-        var instance: BrahmaAccessibilityService? = null
-    }
+
 }
