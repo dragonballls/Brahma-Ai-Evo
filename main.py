@@ -5407,7 +5407,8 @@ class BrahmaLive:
         sensitive = {
             "api_key", "apikey", "key", "token", "access_token", "refresh_token",
             "authorization", "password", "passwd", "secret", "credential",
-            "device_secret", "private_key", "client_secret",
+            "device_secret", "private_key", "client_secret", "pin", "pairing_code",
+            "pairing_token", "session_key",
         }
         if isinstance(value, dict):
             return {
