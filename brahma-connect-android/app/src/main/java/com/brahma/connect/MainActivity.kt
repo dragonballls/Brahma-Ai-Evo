@@ -38,18 +38,30 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         storage = PairingStorage(this)
-        AgentStateStore.setCredential(storage.loadCredential())
-        storage.loadGatewayHint()?.let {
-            AgentStateStore.setPairingOffer(it)
-            AgentStateStore.setGateway(
-                com.brahma.connect.core.GatewayEndpoint(
-                    name = "Brahma PC",
-                    host = it.host,
-                    port = it.port,
-                    tls = it.tlsEnabled,
-                    tlsCertificateSha256 = it.tlsCertificateSha256,
+        try {
+            AgentStateStore.setCredential(storage.loadCredential())
+        } catch (exc: IllegalStateException) {
+            AgentStateStore.setCredential(null)
+            AgentStateStore.setError(exc.message)
+            AgentStateStore.setStatus("Stored credentials require repair")
+        }
+        try {
+            storage.loadGatewayHint()?.let {
+                AgentStateStore.setPairingOffer(it)
+                AgentStateStore.setGateway(
+                    com.brahma.connect.core.GatewayEndpoint(
+                        name = "Brahma PC",
+                        host = it.host,
+                        port = it.port,
+                        tls = it.tlsEnabled,
+                        tlsCertificateSha256 = it.tlsCertificateSha256,
+                    )
                 )
-            )
+            }
+        } catch (exc: IllegalStateException) {
+            AgentStateStore.setPairingOffer(null)
+            AgentStateStore.setError(exc.message)
+            AgentStateStore.setStatus("Stored pairing hint requires repair")
         }
         maybeStartService()
         ensureCameraPermission()
