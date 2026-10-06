@@ -53,3 +53,18 @@ def test_task_queue_cleans_up_and_accounts_for_abnormal_task_thread_termination(
     assert "self._active_count = max(0, self._active_count - 1)" in block
     assert "finally:" in block
     assert "self._task_threads.pop(task.task_id, None)" in block
+
+
+def test_task_queue_rejects_nonpositive_concurrency():
+    source = (ROOT / "agent" / "task_queue.py").read_text(encoding="utf-8")
+    assert 'max_concurrent < 1' in source
+
+
+def test_task_queue_does_not_start_a_child_after_shutdown_begins():
+    source = (ROOT / "agent" / "task_queue.py").read_text(encoding="utf-8")
+    start = source.index("if task:\n                with self._condition:")
+    end = source.index("def _next_task", start)
+    block = source[start:end]
+    assert "if not self._running:" in block
+    assert "task.status = TaskStatus.CANCELLED" in block
+    assert "self._task_threads[task.task_id] = task_thread" in block
