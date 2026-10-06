@@ -8,6 +8,8 @@ from fastapi import WebSocket
 
 from .models import DeviceRecord
 
+SOCKET_SEND_TIMEOUT_SECONDS = 10.0
+
 
 @dataclass(slots=True)
 class ConnectionState:
@@ -90,7 +92,12 @@ class ConnectionHub:
             state = self._connections.get(str(device_id))
             if state is None or not state.authenticated:
                 return False
-            await state.websocket.send_json(message)
+            try:
+                await asyncio.wait_for(
+                    state.websocket.send_json(message), timeout=SOCKET_SEND_TIMEOUT_SECONDS
+                )
+            except (asyncio.TimeoutError, Exception):
+                return False
             return True
 
     async def broadcast_chat_message(self, message: dict[str, Any]) -> None:
