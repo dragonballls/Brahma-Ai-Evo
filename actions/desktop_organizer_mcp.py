@@ -422,7 +422,11 @@ class SmartOrganizerEngine:
             else:
                 failed += 1
 
-        self._save_history(history)
+        if not self._save_history(history):
+            return (
+                f"❌ Undo restored {restored} file(s), but the undo history could not be persisted; "
+                "the transaction remains available for recovery after storage is fixed."
+            )
 
         res = f"↩️ **Undo Complete**: Restored **{restored}** file(s) back to `{target_name}` root."
         if failed > 0:
@@ -576,7 +580,11 @@ class SmartOrganizerEngine:
         if archived_count == 0:
             return f"ℹ️ No files older than {days} days found in `{dir_path.name}`."
 
-        history = self._load_history()
+        try:
+            history = self._load_history()
+        except RuntimeError as exc:
+            self._rollback_moves(moves_recorded)
+            return f"❌ Archive was rolled back because history could not be read: {exc}"
         history.append({
             "id": datetime.now().strftime("%Y%m%d_%H%M%S"),
             "timestamp": datetime.now().isoformat(),
@@ -585,7 +593,9 @@ class SmartOrganizerEngine:
             "count": archived_count,
             "moves": moves_recorded
         })
-        self._save_history(history)
+        if not self._save_history(history):
+            self._rollback_moves(moves_recorded)
+            return "❌ Archive was rolled back because its undo history could not be persisted."
 
         try:
             from core.undo import push_undo
