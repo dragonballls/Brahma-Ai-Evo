@@ -96,31 +96,58 @@ def mobile_autopilot(parameters: dict, response=None, player=None, session_memor
                 player.speak_async("Task completed successfully.")
             return json.dumps({"success": True, "message": f"Finished: {reason}"})
             
-        elif action == "tap":
-            connect_execute({
-                "target": target,
-                "action": "ui_tap",
-                "parameters": {"x": decision.get("x"), "y": decision.get("y")}
-            })
-            time.sleep(2)
-            
-        elif action == "swipe":
-            connect_execute({
-                "target": target,
-                "action": "ui_swipe",
-                "parameters": {
-                    "x1": decision.get("x1"), "y1": decision.get("y1"),
-                    "x2": decision.get("x2"), "y2": decision.get("y2")
-                }
-            })
-            time.sleep(2)
-            
-        elif action == "type":
-            connect_execute({
-                "target": target,
-                "action": "ui_type",
-                "parameters": {"text": decision.get("text")}
-            })
-            time.sleep(1)
-            
-    return json.dumps({"success": True, "message": "Max steps reached or stopped."})
+        elif action in {"tap", "swipe", "type"}:
+            if action == "tap":
+                command_result = connect_execute({
+                    "target": target,
+                    "action": "ui_tap",
+                    "parameters": {"x": decision.get("x"), "y": decision.get("y")},
+                })
+                delay = 2
+            elif action == "swipe":
+                command_result = connect_execute({
+                    "target": target,
+                    "action": "ui_swipe",
+                    "parameters": {
+                        "x1": decision.get("x1"), "y1": decision.get("y1"),
+                        "x2": decision.get("x2"), "y2": decision.get("y2"),
+                    },
+                })
+                delay = 2
+            else:
+                command_result = connect_execute({
+                    "target": target,
+                    "action": "ui_type",
+                    "parameters": {"text": decision.get("text")},
+                })
+                delay = 1
+
+            try:
+                parsed_command = (
+                    json.loads(command_result)
+                    if isinstance(command_result, str)
+                    else command_result
+                )
+            except (TypeError, ValueError):
+                return json.dumps({
+                    "success": False,
+                    "error": f"Mobile action '{action}' returned an invalid result.",
+                })
+
+            if not isinstance(parsed_command, dict) or parsed_command.get("success") is not True:
+                return json.dumps({
+                    "success": False,
+                    "error": (
+                        parsed_command.get("error")
+                        if isinstance(parsed_command, dict)
+                        else f"Mobile action '{action}' failed."
+                    ),
+                })
+
+            time.sleep(delay)
+
+    return json.dumps({
+        "success": False,
+        "error": "Mobile autopilot stopped before the goal was confirmed complete.",
+        "steps_attempted": max_steps,
+    })
