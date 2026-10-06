@@ -775,14 +775,8 @@ class OpenRouterClient:
         try:
             return json.loads(clean)
         except json.JSONDecodeError as e:
-            logger.error(
-                f"[OpenRouter] JSON parse failed: {e}\n"
-                f"Raw response (first 300 chars): {raw[:300]}"
-            )
-            raise ValueError(
-                f"Model returned unparseable JSON: {e}\n"
-                f"Raw output: {raw[:200]}"
-            )
+            logger.error(f"[OpenRouter] JSON parse failed: {e}")
+            raise ValueError("Local model returned unparseable JSON.") from e
 
     def vision(
         self,
