@@ -663,8 +663,9 @@ class AgentExecutor:
                                         speak,
                                         player=player
                                     )
+                                    _raise_for_failed_tool_result(res)
                                     step_results[step_num] = res
-                                    completed_steps.append(step)
+                                    completed_steps.append(fixed_step)
                                     step_ok = True
                                     break
                                 except Exception as fix_err:
