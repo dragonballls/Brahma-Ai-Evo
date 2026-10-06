@@ -332,11 +332,7 @@ _current_audio_path = None
 _speech_sink: Callable[[str], None] | None = None
 
 
-def set_speech_sink(sink: Callable[[str], None] | None) -> None:
-    global _speech_sink
-    _speech_sink = sink
-
-_current_speech_proc: Optional[subprocess.Popen] = None
+_current_speech_proc: subprocess.Popen | None = None
 
 
 def _cleanup_current_audio() -> None:
@@ -511,10 +507,8 @@ def _speak_edge_native(
 
 
 
-_speech_sink = None
 
-
-def set_speech_sink(sink_fn) -> None:
+def set_speech_sink(sink_fn: Callable[[str], None] | None) -> None:
     global _speech_sink
     _speech_sink = sink_fn
 
@@ -650,29 +644,47 @@ class AttentionMonitor:
         self._seen_max = 80
 
     def start(self) -> None:
-        if self._running:
+        thread = self._thread
+        if thread is not None and thread.is_alive():
             return
+
         self._last_id = self._current_max_id()
         self._stop_event.clear()
         self._running = True
-        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread = threading.Thread(
+            target=self._loop,
+            daemon=True,
+            name="attention-monitor-thread",
+        )
         self._thread.start()
 
     def stop(self) -> None:
         self._running = False
         self._stop_event.set()
 
+        thread = self._thread
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=1.0)
+        if self._thread is thread and (thread is None or not thread.is_alive()):
+            self._thread = None
+
     def _loop(self) -> None:
-        if not self._db.exists():
-            print(f"[AttentionMonitor] notification DB not found: {self._db}")
-            return
-        while self._running:
-            try:
-                self._poll_once()
-            except Exception as exc:
-                print(f"[AttentionMonitor] poll failed: {exc}")
-            if self._stop_event.wait(timeout=self._interval):
-                break
+        try:
+            if not self._db.exists():
+                print(f"[AttentionMonitor] notification DB not found: {self._db}")
+                return
+
+            while self._running:
+                try:
+                    self._poll_once()
+                except Exception as exc:
+                    print(f"[AttentionMonitor] poll failed: {exc}")
+                if self._stop_event.wait(timeout=self._interval):
+                    break
+        finally:
+            self._running = False
+            if self._thread is threading.current_thread():
+                self._thread = None
 
     def _current_max_id(self) -> int:
         try:
