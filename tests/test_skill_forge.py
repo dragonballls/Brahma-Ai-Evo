@@ -199,7 +199,7 @@ def test_skill_forge_repair_prompt_never_requests_tls_bypass():
 
     source = inspect.getsource(SkillForge._repair_code)
     assert "verify=False" not in source
-    assert "_create_unverified_context" not in source
+    assert "Never use `ssl._create_unverified_context()`" in source
     assert "normal certificate verification" in source
 
 
