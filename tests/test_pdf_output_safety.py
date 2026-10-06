@@ -9,3 +9,9 @@ def test_pdf_explicit_output_paths_are_home_confined_and_non_overwriting_by_defa
     assert "PDF output path may not contain symlinked components." in source
     assert "Refusing to overwrite existing PDF without overwrite=True" in source
     assert "overwrite=bool(parameters.get("overwrite", False))" in source
+
+
+def test_pdf_implicit_output_collisions_get_unique_names():
+    source = (ROOT / "actions" / "pdf_tools.py").read_text(encoding="utf-8")
+    assert "if overwrite or not base.exists():" in source
+    assert "candidate = DEFAULT_OUTPUT_DIR / f\"{base.stem}_{counter}{base.suffix}\"" in source
