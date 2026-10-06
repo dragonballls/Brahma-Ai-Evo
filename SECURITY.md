@@ -55,8 +55,7 @@ Because the gateway binds to `0.0.0.0`, it is reachable from any interface on th
 #### Local network consideration
 
 - The gateway is designed as a local network transport.
-- There is no built-in TLS/SSL for the gateway websocket in the current code.
-- Gateway traffic is not encrypted end-to-end by default and relies on LAN trust.
+- The gateway websocket uses TLS by default (`wss://`) with a per-installation certificate. Android pairing carries the certificate SHA-256 fingerprint and pins that certificate.
 
 ### Pairing and authentication flow
 
@@ -114,9 +113,9 @@ Because the gateway binds to `0.0.0.0`, it is reachable from any interface on th
 
 ### Security limitations
 
-- No built-in gateway TLS/SSL for WebSocket `/ws`; websocket traffic is plaintext on the LAN.
+- Gateway TLS is enabled by default. Manual clients without the pairing fingerprint must use a certificate-trusted connection or pair again so the client can receive the pin.
 - Gateway admin REST endpoints are loopback-only rather than LAN-accessible; they do not provide a separate bearer-token authentication layer.
-- Local API key storage is plaintext.
+- On Windows, API-key values are protected at rest with Windows DPAPI. Non-Windows environments retain platform-specific file protection requirements.
 - The gateway host default of `0.0.0.0` exposes the service broadly unless OS firewall restrictions are applied.
 - There is no remote access firewall or gateway-level authentication beyond pairing and device credentials.
 
