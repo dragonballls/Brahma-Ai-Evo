@@ -87,6 +87,10 @@ class NativeTools:
             return "Error: command is required."
 
         executable = Path(parts[0]).name.casefold()
+        for suffix in (".exe", ".cmd", ".bat"):
+            if executable.endswith(suffix):
+                executable = executable[: -len(suffix)]
+                break
         if executable in _BLOCKED_COMMAND_INTERPRETERS:
             return f"Error: shell interpreters are not permitted: {executable}"
         if executable not in _SAFE_BASH_PROGRAMS:
