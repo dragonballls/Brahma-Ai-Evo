@@ -246,6 +246,53 @@ def test_connection_hub_broadcast_removes_dead_socket():
         raise AssertionError("Dead socket pending future was not rejected")
 
 
+def test_service_async_operations_use_gateway_loop(tmp_path: Path):
+    from brahma_connect.service import BrahmaConnectService
+
+    service = object.__new__(BrahmaConnectService)
+    service._lock = __import__("threading").RLock()
+    service._loop = asyncio.new_event_loop()
+    service.gateway = type(
+        "Gateway",
+        (),
+        {
+            "disconnect_device": lambda self, target, reason="": asyncio.sleep(
+                0, result={"success": True, "action": "disconnect", "device": target}
+            ),
+            "reconnect_device": lambda self, target: asyncio.sleep(
+                0, result={"success": True, "action": "reconnect", "device": target}
+            ),
+            "approve_pending_request": lambda self, pending_id: asyncio.sleep(
+                0, result={"success": True, "pending_id": pending_id}
+            ),
+        },
+    )()
+
+    def run_loop():
+        asyncio.set_event_loop(service._loop)
+        service._loop.run_forever()
+
+    thread = __import__("threading").Thread(target=run_loop, daemon=True)
+    thread.start()
+    try:
+        async def scenario():
+            disconnected = await service.disconnect_device("phone")
+            reconnected = await service.reconnect_device("phone")
+            approved = await service.approve_pending_request("req-1")
+            return disconnected, reconnected, approved
+
+        disconnected, reconnected, approved = asyncio.run(scenario())
+        assert disconnected["success"] is True
+        assert reconnected["action"] == "reconnect"
+        assert approved["pending_id"] == "req-1"
+    finally:
+        service._loop.call_soon_threadsafe(service._loop.stop)
+        thread.join(timeout=2)
+        service._loop.close()
+
+
+
+
 def test_service_route_command_uses_gateway_loop(tmp_path: Path):
     from brahma_connect.service import BrahmaConnectService
 
