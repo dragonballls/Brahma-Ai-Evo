@@ -37,3 +37,11 @@ def test_mobile_autopilot_has_timeout_cancellation_and_loop_guards():
     assert '"Mobile autopilot timed out."' in source
     assert "MAX_REPEAT_SIGNATURES = 2" in source
     assert "repeated action loop" in source
+
+
+def test_mobile_autopilot_rejects_malformed_ui_tree_and_bounds_node_count():
+    source = (ROOT / "actions" / "mobile_autopilot.py").read_text(encoding="utf-8")
+    assert "Mobile UI dump data must be an object." in source
+    assert "Mobile UI dump nodes must be a list." in source
+    assert "nodes[:500]" in source
+    assert "import json" in source.splitlines()[:3]
