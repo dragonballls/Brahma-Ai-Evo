@@ -5,7 +5,9 @@ import hashlib
 import json
 import os
 import re
+import ipaddress
 import shutil
+import socket
 import tempfile
 import zipfile
 from pathlib import Path
@@ -38,6 +40,65 @@ HEADERS = {
 }
 
 SUPPORTED_DOWNLOAD_EXTS = {".pptx", ".zip"}
+MAX_HTTP_RESPONSE_BYTES = 25 * 1024 * 1024
+
+
+def _validate_remote_fetch_url(url: str) -> str:
+    parsed = urlparse(str(url or "").strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Remote template URL must use http or https.")
+    if parsed.username or parsed.password:
+        raise ValueError("Remote template URLs may not include embedded credentials.")
+    hostname = parsed.hostname.rstrip(".").lower()
+    if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(".localhost") or hostname.endswith(".local"):
+        raise ValueError("Local hostnames are not permitted for remote template downloads.")
+    try:
+        literal = ipaddress.ip_address(hostname)
+        addresses = [literal]
+    except ValueError:
+        try:
+            addresses = [ipaddress.ip_address(info[4][0]) for info in socket.getaddrinfo(hostname, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)]
+        except OSError as exc:
+            raise ValueError("Remote template hostname could not be resolved safely.") from exc
+    for address in addresses:
+        if (
+            address.is_private
+            or address.is_loopback
+            or address.is_link_local
+            or address.is_reserved
+            or address.is_multicast
+            or address.is_unspecified
+        ):
+            raise ValueError("Remote template URL resolves to a non-public network address.")
+    return parsed.geturl()
+
+
+def _safe_get(url: str, **kwargs):
+    safe_url = _validate_remote_fetch_url(url)
+    kwargs["allow_redirects"] = False
+    kwargs["stream"] = True
+    response = requests.get(safe_url, **kwargs)
+    try:
+        content_length = response.headers.get("Content-Length")
+        if content_length and int(content_length) > MAX_HTTP_RESPONSE_BYTES:
+            raise ValueError("Remote template response exceeds the 25 MiB safety limit.")
+        chunks = []
+        total = 0
+        for chunk in response.iter_content(chunk_size=1024 * 64):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > MAX_HTTP_RESPONSE_BYTES:
+                raise ValueError("Remote template response exceeds the 25 MiB safety limit.")
+            chunks.append(chunk)
+        response._content = b"".join(chunks)
+        response._content_consumed = True
+        return response
+    except Exception:
+        response.close()
+        raise
+
+
 TRUSTED_TEMPLATE_HINTS = (
     "slidesgo",
     "slidescarnival",
@@ -443,7 +504,7 @@ def _is_downloadable_template_url(url: str) -> bool:
 
 def _search_bing(query: str, max_results: int = 8) -> list[dict[str, str]]:
     try:
-        resp = requests.get(
+        resp = _safe_get(
             "https://www.bing.com/search",
             params={"q": query, "count": max_results, "setlang": "en-US", "cc": "us"},
             headers=HEADERS,
@@ -493,7 +554,7 @@ def _presentationgo_category_urls(profile: dict[str, Any]) -> list[str]:
 
 def _fetch_html(url: str) -> str | None:
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=25)
+        resp = _safe_get(url, headers=HEADERS, timeout=25)
         resp.raise_for_status()
         return resp.text
     except Exception:
@@ -607,7 +668,7 @@ def _candidate_score(candidate: dict[str, str], profile: dict[str, Any], query: 
 
 def _extract_page_download_links(page_url: str, profile: dict[str, Any]) -> list[str]:
     try:
-        resp = requests.get(page_url, headers=HEADERS, timeout=20)
+        resp = _safe_get(page_url, headers=HEADERS, timeout=20)
         resp.raise_for_status()
     except Exception:
         return []
@@ -678,7 +739,7 @@ def _materialize_template_file(downloaded_path: Path, dest_path: Path) -> Path |
 
 def _download_url(url: str, dest: Path) -> Path | None:
     try:
-        with requests.get(url, headers=HEADERS, timeout=40, stream=True, allow_redirects=True) as resp:
+        with _safe_get(url, headers=HEADERS, timeout=40, stream=True, allow_redirects=True) as resp:
             resp.raise_for_status()
             tmp = dest.with_suffix(".download")
             with open(tmp, "wb") as fh:
@@ -871,7 +932,7 @@ def _pick_layout(prs, has_image: bool, is_title: bool):
 
 def _load_related_images(profile: dict[str, Any], slides: list[dict[str, Any]], max_images: int = 6) -> list[Path]:
     try:
-        requests.get("https://commons.wikimedia.org", timeout=5, headers=HEADERS)
+        _safe_get("https://commons.wikimedia.org", timeout=5, headers=HEADERS)
     except Exception:
         return []
 
@@ -893,7 +954,7 @@ def _load_related_images(profile: dict[str, Any], slides: list[dict[str, Any]], 
         if len(results) >= max_images:
             break
         try:
-            resp = requests.get(
+            resp = _safe_get(
                 "https://commons.wikimedia.org/w/api.php",
                 params={
                     "action": "query",
@@ -932,7 +993,7 @@ def _load_related_images(profile: dict[str, Any], slides: list[dict[str, Any]], 
                 results.append(dest)
                 continue
             try:
-                with requests.get(image_url, headers=HEADERS, timeout=25, stream=True) as resp_img:
+                with _safe_get(image_url, headers=HEADERS, timeout=25, stream=True) as resp_img:
                     resp_img.raise_for_status()
                     with open(dest, "wb") as fh:
                         for chunk in resp_img.iter_content(chunk_size=1024 * 64):
