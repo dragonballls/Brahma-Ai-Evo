@@ -176,16 +176,27 @@ class CommandRouter:
                 "error": str(exc),
                 "error_code": "ROUTER_ERROR",
             }
-        if isinstance(result, dict):
-            result.setdefault("success", True)
-            result.setdefault("device", device.device_id)
-            result.setdefault("action", action)
-            result.setdefault("request_id", request_id)
-            return result
-        return {
-            "success": True,
-            "device": device.device_id,
-            "action": action,
-            "request_id": request_id,
-            "data": result,
-        }
+        if not isinstance(result, dict):
+            return {
+                "success": False,
+                "device": device.device_id,
+                "action": action,
+                "request_id": request_id,
+                "error": "Remote device returned a malformed command result.",
+                "error_code": "MALFORMED_RESULT",
+            }
+        success = result.get("success")
+        if not isinstance(success, bool):
+            return {
+                "success": False,
+                "device": device.device_id,
+                "action": action,
+                "request_id": request_id,
+                "error": "Remote device result did not include an explicit success boolean.",
+                "error_code": "MALFORMED_RESULT",
+                "device_result": result,
+            }
+        result.setdefault("device", device.device_id)
+        result.setdefault("action", action)
+        result.setdefault("request_id", request_id)
+        return result
