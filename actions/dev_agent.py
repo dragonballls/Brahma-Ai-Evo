@@ -4,6 +4,7 @@ import sys
 import json
 import re
 import time
+import shutil
 from pathlib import Path
 
 
@@ -292,9 +293,10 @@ def _open_vscode(project_dir: Path) -> bool:
     ]
     for cmd in vscode_candidates:
         try:
+            executable = shutil.which(cmd) or cmd
             subprocess.Popen(
-                [cmd, str(project_dir)],
-                shell=True,
+                [executable, str(project_dir)],
+                shell=False,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
