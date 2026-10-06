@@ -59,7 +59,17 @@ class AtombergCloudClient:
         if headers:
             request_headers.update(headers)
         url = f"{ATOMBERG_BASE_URL}{path}"
-        return requests.request(method, url, headers=request_headers, json=body, timeout=20)
+        response = requests.request(
+            method,
+            url,
+            headers=request_headers,
+            json=body,
+            timeout=20,
+            allow_redirects=False,
+        )
+        if 300 <= response.status_code < 400:
+            raise RuntimeError("Atomberg API redirected an authenticated request; refusing credential forwarding.")
+        return response
 
     def _ensure_access_token(self) -> str:
         if self._access_token:

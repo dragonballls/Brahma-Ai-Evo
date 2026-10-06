@@ -1068,3 +1068,9 @@ def test_life360_credential_transport_disables_redirects():
     assert "Redirects are disabled for credential-bearing Home Assistant requests." in source
     assert "opener = urlrequest.build_opener(_NoRedirectHandler())" in source
     assert "with opener.open(req, timeout=self.timeout)" in source
+
+
+def test_atomberg_authenticated_requests_reject_redirects():
+    source = Path("smart_home/providers/builtin.py").read_text(encoding="utf-8")
+    assert "allow_redirects=False" in source
+    assert "Atomberg API redirected an authenticated request" in source
