@@ -492,3 +492,31 @@ def test_pair_approval_tool_result_never_contains_device_secret():
     approval = source.split("async def approve_pending_request", 1)[1]
     assert '"device_secret": secret' not in approval
     assert "credentials delivered directly to the paired device" in approval
+
+
+def test_device_record_normalizes_string_booleans():
+    record = DeviceRecord.from_dict({
+        "device_id": "d",
+        "name": "Phone",
+        "platform": "android",
+        "online": "false",
+        "revoked": "off",
+    })
+    assert record.online is False
+    assert record.revoked is False
+
+    enabled = DeviceRecord.from_dict({
+        "device_id": "d2",
+        "name": "Phone",
+        "platform": "android",
+        "online": "true",
+        "revoked": "1",
+    })
+    assert enabled.online is True
+    assert enabled.revoked is True
+
+
+def test_device_action_wrappers_do_not_nest_asyncio_run():
+    source = Path("actions/brahma_connect.py").read_text(encoding="utf-8")
+    assert "asyncio.run(service.disconnect_device" not in source
+    assert "asyncio.run(service.approve_pending_request" not in source
