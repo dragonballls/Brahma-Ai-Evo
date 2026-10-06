@@ -65,3 +65,12 @@ def test_self_coding_checkpoint_validation_accepts_matching_expected_id():
         state="pending",
     )
     agent._validate_checkpoint(checkpoint, "checkpoint-1")
+
+
+def test_self_coding_undo_uses_recoverable_undoing_state():
+    source = (ROOT / "core" / "self_coding.py").read_text(encoding="utf-8")
+    assert '"undoing"' in source
+    assert "def _recover_undoing" in source
+    assert "main state is ambiguous" in source
+    assert "Undo checkpoint persistence failed" in source
+    assert "Checkpoint undo commits are not the expected linear chain." in source
