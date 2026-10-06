@@ -390,9 +390,6 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
         self.assertIn('normalized_route = re.sub(r"\\s+", " "', source)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
     def test_omniroute_probe_rejects_http_error_false_positives(self):
         from core.omniroute_setup import OmniRouteProvisioner
         import urllib.error
@@ -416,3 +413,7 @@ if __name__ == "__main__":
         rollback = source.split("def _rollback(", 1)[1].split("def preview(", 1)[0]
         self.assertNotIn('"clean", "-fd"', rollback)
         self.assertIn("preserved untracked or working-tree changes", rollback)
+
+
+if __name__ == "__main__":
+    unittest.main()
