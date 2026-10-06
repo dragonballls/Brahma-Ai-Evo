@@ -101,20 +101,27 @@ def weather_action(
 
     weather = get_live_weather(city)
     city_name = weather.get("city", "your area")
-    temp = weather.get("temp_c", 26)
-    cond = weather.get("condition", "Clear")
+    search_query = f"weather in {city_name} {time_param}"
 
-    msg = f"The weather in {city_name} is currently {temp} degrees Celsius with {cond}."
+    if weather.get("status") != "success":
+        msg = f"Live weather data for {city_name} is currently unavailable."
+    else:
+        temp = weather["temp_c"]
+        cond = weather["condition"]
+        msg = f"The weather in {city_name} is currently {temp} degrees Celsius with {cond}."
+
     _speak_and_log(msg, player)
 
-    # Optional browser fallback if user explicitly asks or city was specified
-    search_query = f"weather in {city_name} {time_param}"
+    # Opening the browser is optional, but an explicitly requested launch must
+    # not be reported as successful when the browser backend rejects it.
     if parameters and parameters.get("open_browser", False):
         try:
             encoded_query = quote_plus(search_query)
-            webbrowser.open(f"https://www.google.com/search?q={encoded_query}")
+            opened = webbrowser.open(f"https://www.google.com/search?q={encoded_query}")
+            if opened is not True:
+                return f"{msg} I also couldn't open the browser automatically."
         except Exception:
-            pass
+            return f"{msg} I also couldn't open the browser automatically."
 
     if session_memory:
         try:
