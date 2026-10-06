@@ -513,7 +513,7 @@ _real_os_open = os.open
 _real_os_listdir = os.listdir
 _real_os_scandir = os.scandir
 _real_os_walk = os.walk
-_real_os_fwalk = os.fwalk
+_real_os_fwalk = getattr(os, "fwalk", None)
 _real_os_readlink = os.readlink
 _real_os_remove = os.remove
 _real_os_unlink = os.unlink
@@ -548,6 +548,8 @@ def _sandbox_walk(top, *args, **kwargs):
     return _real_os_walk(_sandbox_path(top), *args, **kwargs)
 
 def _sandbox_fwalk(top=".", *args, **kwargs):
+    if _real_os_fwalk is None:
+        raise PermissionError("Crucible sandbox fwalk is unavailable on this platform.")
     if kwargs.get("dir_fd") is not None:
         raise PermissionError("Crucible sandbox denied dir_fd filesystem access.")
     return _real_os_fwalk(_sandbox_path(top), *args, **kwargs)
@@ -590,7 +592,8 @@ os.open = _sandbox_os_open
 os.listdir = _sandbox_listdir
 os.scandir = _sandbox_scandir
 os.walk = _sandbox_walk
-os.fwalk = _sandbox_fwalk
+if _real_os_fwalk is not None:
+    os.fwalk = _sandbox_fwalk
 os.readlink = _sandbox_readlink
 os.remove = _sandbox_mutation(_real_os_remove)
 os.unlink = _sandbox_mutation(_real_os_unlink)
