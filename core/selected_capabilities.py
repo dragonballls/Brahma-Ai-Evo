@@ -53,8 +53,8 @@ def _json_load(path: Path, default: Any) -> Any:
         except OSError:
             pass
         return default
-    except OSError:
-        return default
+    except OSError as exc:
+        raise RuntimeError(f"Unable to read selected capability state: {path}") from exc
 
 
 def _json_save(path: Path, value: Any) -> None:
@@ -89,28 +89,29 @@ class LearningEngine:
         signal = str(signal or "").strip()
         if not signal:
             return {"success": False, "error": "signal is required"}
-        payload = _json_load(cls.PATH, {"events": []})
-        events = payload.get("events", []) if isinstance(payload, dict) else []
-        fingerprint = hashlib.sha256(
-            json.dumps(
-                {"signal": signal, "outcome": outcome, "context": context or {}},
-                sort_keys=True,
-                ensure_ascii=False,
-            ).encode("utf-8")
-        ).hexdigest()[:16]
-        event = {
-            "id": uuid4().hex[:12],
-            "fingerprint": fingerprint,
-            "timestamp": _now(),
-            "signal": signal[:500],
-            "outcome": str(outcome or "")[:500],
-            "score": float(score) if score is not None else None,
-            "context": dict(context or {}),
-        }
-        events = [e for e in events if isinstance(e, dict) and e.get("fingerprint") != fingerprint]
-        events.append(event)
-        _json_save(cls.PATH, {"schema_version": 1, "events": events[-cls.MAX_EVENTS:]})
-        return {"success": True, "event": event}
+        with _STATE_LOCK:
+            payload = _json_load(cls.PATH, {"events": []})
+            events = payload.get("events", []) if isinstance(payload, dict) else []
+            fingerprint = hashlib.sha256(
+                json.dumps(
+                    {"signal": signal, "outcome": outcome, "context": context or {}},
+                    sort_keys=True,
+                    ensure_ascii=False,
+                ).encode("utf-8")
+            ).hexdigest()[:16]
+            event = {
+                "id": uuid4().hex[:12],
+                "fingerprint": fingerprint,
+                "timestamp": _now(),
+                "signal": signal[:500],
+                "outcome": str(outcome or "")[:500],
+                "score": float(score) if score is not None else None,
+                "context": dict(context or {}),
+            }
+            events = [e for e in events if isinstance(e, dict) and e.get("fingerprint") != fingerprint]
+            events.append(event)
+            _json_save(cls.PATH, {"schema_version": 1, "events": events[-cls.MAX_EVENTS:]})
+            return {"success": True, "event": event}
 
     @classmethod
     def recent(cls, limit: int = 25) -> list[dict[str, Any]]:
@@ -246,29 +247,30 @@ class OptimizationLearner:
 
     @classmethod
     def observe(cls, **telemetry: float | int | None) -> dict[str, Any]:
-        payload = _json_load(cls.PATH, {"samples": [], "last_sample": 0.0})
-        now = time.monotonic()
-        last = float(payload.get("last_sample", 0.0) or 0.0)
+        with _STATE_LOCK:
+            payload = _json_load(cls.PATH, {"samples": [], "last_sample": 0.0})
+            now = time.monotonic()
+            last = float(payload.get("last_sample", 0.0) or 0.0)
 
-        # Adaptive sampling: 30s normally, 10s when load is materially changing.
-        cpu = float(telemetry.get("cpu_percent") or 0.0)
-        memory = float(telemetry.get("memory_percent") or 0.0)
-        interval = 10.0 if cpu >= 75.0 or memory >= 85.0 else 30.0
-        if last and now - last < interval:
-            return {"success": True, "sampled": False, "next_sample_in_s": round(interval - (now - last), 2)}
+            # Adaptive sampling: 30s normally, 10s when load is materially changing.
+            cpu = float(telemetry.get("cpu_percent") or 0.0)
+            memory = float(telemetry.get("memory_percent") or 0.0)
+            interval = 10.0 if cpu >= 75.0 or memory >= 85.0 else 30.0
+            if last and now - last < interval:
+                return {"success": True, "sampled": False, "next_sample_in_s": round(interval - (now - last), 2)}
 
-        sample = {
-            "timestamp": _now(),
-            "cpu_percent": cpu,
-            "memory_percent": memory,
-            "battery_percent": telemetry.get("battery_percent"),
-            "gpu_percent": telemetry.get("gpu_percent"),
-        }
-        samples = payload.get("samples", [])
-        samples = [s for s in samples if isinstance(s, dict)]
-        samples.append(sample)
-        _json_save(cls.PATH, {"schema_version": 1, "samples": samples[-cls.MAX_SAMPLES:], "last_sample": now})
-        return {"success": True, "sampled": True, "sample": sample, "recommendations": cls.recommendations(samples)}
+            sample = {
+                "timestamp": _now(),
+                "cpu_percent": cpu,
+                "memory_percent": memory,
+                "battery_percent": telemetry.get("battery_percent"),
+                "gpu_percent": telemetry.get("gpu_percent"),
+            }
+            samples = payload.get("samples", [])
+            samples = [s for s in samples if isinstance(s, dict)]
+            samples.append(sample)
+            _json_save(cls.PATH, {"schema_version": 1, "samples": samples[-cls.MAX_SAMPLES:], "last_sample": now})
+            return {"success": True, "sampled": True, "sample": sample, "recommendations": cls.recommendations(samples)}
 
     @staticmethod
     def recommendations(samples: list[dict[str, Any]]) -> list[str]:

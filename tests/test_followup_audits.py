@@ -969,3 +969,42 @@ def test_selected_capability_async_bridge_works_from_running_event_loop():
         return asyncio_run(asyncio.sleep(0, result="bridge-ok"))
 
     assert asyncio.run(scenario()) == "bridge-ok"
+
+
+def test_selected_capability_state_io_errors_do_not_reset_or_overwrite(tmp_path, monkeypatch):
+    import core.selected_capabilities as capabilities
+
+    path = tmp_path / "learning.json"
+    path.write_text('{"schema_version":1,"events":[{"signal":"existing"}]}', encoding="utf-8")
+    monkeypatch.setattr(capabilities.LearningEngine, "PATH", path)
+
+    def fail_read(_path, _default):
+        raise RuntimeError("read failure")
+
+    monkeypatch.setattr(capabilities, "_json_load", fail_read)
+    with pytest.raises(RuntimeError, match="read failure"):
+        capabilities.LearningEngine.record("new")
+
+
+def test_learning_record_is_serialized_under_concurrency(tmp_path, monkeypatch):
+    import core.selected_capabilities as capabilities
+
+    path = tmp_path / "learning.json"
+    monkeypatch.setattr(capabilities.LearningEngine, "PATH", path)
+
+    barrier = threading.Barrier(8)
+    results = []
+
+    def record(index):
+        barrier.wait()
+        results.append(capabilities.LearningEngine.record(f"signal-{index}"))
+
+    threads = [threading.Thread(target=record, args=(i,)) for i in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(results) == 8
+    events = capabilities.LearningEngine.recent(20)
+    assert len(events) == 8
