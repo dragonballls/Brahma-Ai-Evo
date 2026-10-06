@@ -173,6 +173,9 @@ class DynamicToolRegistry:
                             manifest = json.load(f)
                         skill = DynamicSkill(item, manifest)
                         cls._skills[skill.name] = skill
+                        for alias in skill.aliases:
+                            if alias not in cls._skills:
+                                cls._skills[str(alias)] = skill
                         count += 1
                     except Exception as e:
                         logger.warning(f"[Registry] Failed to load feature package '{item.name}': {e}")
@@ -189,6 +192,9 @@ class DynamicToolRegistry:
                                 manifest = json.load(f)
                             skill = DynamicSkill(item, manifest)
                             cls._skills[skill.name] = skill
+                            for alias in skill.aliases:
+                                if alias not in cls._skills:
+                                    cls._skills[str(alias)] = skill
                             count += 1
                         except Exception:
                             pass
