@@ -166,6 +166,14 @@ class DeviceCommandHandler(private val context: Context) {
         if (url.isBlank()) {
             return CommandResult(false, errorCode = "INVALID_ARGUMENT", error = "URL is required.")
         }
+        val scheme = url.substringBefore(':', "").lowercase()
+        if (scheme !in setOf("http", "https")) {
+            return CommandResult(
+                false,
+                errorCode = "UNSUPPORTED_URL_SCHEME",
+                error = "Only http and https URLs can be opened remotely.",
+            )
+        }
         return try {
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(intent)
