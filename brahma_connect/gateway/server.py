@@ -430,6 +430,18 @@ class BrahmaGateway:
         offer_code = str(payload.get("pairing_code") or "").strip()
         client_ip = str(getattr(getattr(websocket, "client", None), "host", "") or "").strip()
         now = asyncio.get_running_loop().time()
+        if len(self._pair_attempts) > 4096:
+            stale_ips = [
+                ip for ip, (_attempts, blocked) in self._pair_attempts.items()
+                if blocked <= now
+            ]
+            for ip in stale_ips:
+                self._pair_attempts.pop(ip, None)
+            if len(self._pair_attempts) > 4096:
+                for ip, _value in sorted(
+                    self._pair_attempts.items(), key=lambda item: item[1][1]
+                )[: len(self._pair_attempts) - 4096]:
+                    self._pair_attempts.pop(ip, None)
         attempts, blocked_until = self._pair_attempts.get(client_ip, (0, 0.0))
         if blocked_until > now:
             return {"success": False, "error": "Too many pairing attempts; try again shortly."}
