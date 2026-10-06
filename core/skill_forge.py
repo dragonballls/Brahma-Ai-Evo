@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.user_paths import get_user_data_dir
 from core.runtime_paths import API_CONFIG_PATH
-from core.skill_crucible import SkillCrucible
+from core.skill_crucible import SkillCrucible, _redact_text
 from core.dynamic_registry import DynamicToolRegistry
 
 logger = logging.getLogger("SkillForge")
@@ -46,7 +46,9 @@ class SkillForge:
         Synthesizes a brand new skill from natural language, verifies it in the
         Crucible sandbox, auto-resolves pip packages, and hot-registers it.
         """
-        logger.info(f"[Forge] Initiating skill synthesis for goal: '{goal}'")
+        safe_goal = _redact_text(goal)
+        safe_context_hints = _redact_text(context_hints)
+        logger.info(f"[Forge] Initiating skill synthesis for goal: '{safe_goal}'")
 
         # Normalize skill name if provided
         name_hint = re.sub(r"[^a-zA-Z0-9_]", "_", (skill_name or "").lower()).strip("_")
@@ -65,24 +67,24 @@ class SkillForge:
             try:
                 from core.github_research import GitHubResearchClient
                 researcher = GitHubResearchClient()
-                research = researcher.research_goal(goal, repo_limit=6, code_limit=10)
-                github_dossier = researcher.format_dossier(research, max_chars=9000)
+                research = researcher.research_goal(safe_goal, repo_limit=6, code_limit=10)
+                github_dossier = _redact_text(researcher.format_dossier(research, max_chars=9000))
                 logger.info(
                     "[Forge] GitHub-first research completed: %d repositories, %d code matches",
                     len(research.get("repositories", [])),
                     len(research.get("code_matches", [])),
                 )
             except Exception as exc:
-                logger.warning("[Forge] GitHub-first research unavailable; continuing locally: %s", exc)
+                logger.warning("[Forge] GitHub-first research unavailable; continuing locally: %s", _redact_text(exc))
         else:
             logger.info("[Forge] Offline Mode enabled; skipping GitHub research.")
 
         combined_context = "\n\n".join(
-            item for item in (str(context_hints or "").strip(), github_dossier.strip()) if item
+            item for item in (safe_context_hints.strip(), github_dossier.strip()) if item
         )
 
         # 1. Synthesize initial specification
-        synthesis = cls._call_llm_synthesizer(goal, name_hint, combined_context)
+        synthesis = cls._call_llm_synthesizer(safe_goal, name_hint, combined_context)
         if not synthesis.get("success"):
             return {
                 "success": False,
@@ -146,13 +148,13 @@ class SkillForge:
 
         # Prepare triggers & aliases
         triggers = list(manifest.get("triggers", []))
-        if goal and goal.strip() not in triggers:
-            triggers.append(goal.strip())
+        if safe_goal and safe_goal.strip() not in triggers:
+            triggers.append(safe_goal.strip())
 
         clean_goal = re.sub(
             r"^(?:please\s+|can\s+you\s+|use\s+(?:the\s+)?(?:skill|feature)\s+to\s+|run\s+(?:the\s+)?(?:skill|feature)\s+to\s+|test\s+(?:the\s+)?(?:skill|feature)\s+to\s+)",
             "",
-            goal.lower().strip(),
+            safe_goal.lower().strip(),
         )
         if clean_goal and clean_goal not in triggers:
             triggers.append(clean_goal)
@@ -296,6 +298,8 @@ class SkillForge:
     @classmethod
     def _call_llm_synthesizer(cls, goal: str, name_hint: str, context_hints: str) -> Dict[str, Any]:
         """Prompts Gemini to generate the complete skill package JSON."""
+        goal = _redact_text(goal)
+        context_hints = _redact_text(context_hints)
         system_instructions = """You are the Brahma AI Autonomous Skill Architect ("Project Ultron").
 Your mission is to invent, architect, and write a complete, standalone, production-ready Python skill plugin.
 
@@ -357,9 +361,9 @@ Return ONLY this JSON object with no markdown fences around it.
 """
 
         prompt = f"""Synthesize a new skill for the following user request:
-Goal: {goal}
+Goal: {_redact_text(goal)}
 Preferred Name: {name_hint or 'auto_generate'}
-Additional Context: {context_hints}
+Additional Context: {_redact_text(context_hints)}
 """
 
         try:
@@ -389,7 +393,7 @@ Additional Context: {context_hints}
                     data["success"] = True
                     return data
             except Exception as exc:
-                logger.warning(f"[Forge] Offline local synthesis failed: {exc}")
+                logger.warning(f"[Forge] Offline local synthesis failed: {_redact_text(exc)}")
             return {"success": False, "error": "Offline local LLM synthesis is unavailable."}
 
         # Cloud synthesis is intentionally OmniRoute-only so model/provider
@@ -406,7 +410,7 @@ Additional Context: {context_hints}
                 data["success"] = True
                 return data
         except Exception as exc:
-            logger.warning(f"[Forge] OmniRoute synthesis failed; using existing fallback: {exc}")
+            logger.warning(f"[Forge] OmniRoute synthesis failed; using existing fallback: {_redact_text(exc)}")
 
         return {"success": False, "error": "LLM synthesis unavailable after OmniRoute routing."}
 
@@ -414,6 +418,9 @@ Additional Context: {context_hints}
     @classmethod
     def _repair_code(cls, broken_code: str, error_msg: str, goal: str) -> Dict[str, Any]:
         """Asks LLM to fix syntax or sandbox runtime errors."""
+        broken_code = _redact_text(broken_code)
+        error_msg = _redact_text(error_msg)
+        goal = _redact_text(goal)
         prompt = f"""You are repairing a Python skill generated for Brahma AI ("Project Ultron").
 The skill failed verification in the Crucible sandbox.
 User Goal: {goal}
@@ -470,7 +477,7 @@ Critical Repair Instructions:
                     data["success"] = True
                     return data
             except Exception as exc:
-                logger.warning(f"[Forge] Offline local repair failed: {exc}")
+                logger.warning(f"[Forge] Offline local repair failed: {_redact_text(exc)}")
             return {"success": False, "error": "Offline local LLM repair is unavailable."}
 
         # Cloud repair is intentionally OmniRoute-only so coding behavior
@@ -491,7 +498,7 @@ Critical Repair Instructions:
                 data["success"] = True
                 return data
         except Exception as exc:
-            logger.warning(f"[Forge] OmniRoute repair failed; using existing fallback: {exc}")
+            logger.warning(f"[Forge] OmniRoute repair failed; using existing fallback: {_redact_text(exc)}")
 
         return {"success": False, "error": "Repair unavailable after OmniRoute routing."}
 
