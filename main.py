@@ -7711,21 +7711,24 @@ def _main_impl():
         except Exception as exc:
             _startup_log(f"desktop shutdown hook wiring skipped: {exc}")
 
-    # The boot/recovery decision has already been made. Once the UI is fully
-    # initialized, clear any stale crash marker so future launches only react to
-    # a genuinely new crash.
-    try:
-        from core.boot_sentry import mark_startup_healthy
-        mark_startup_healthy()
-        _startup_log("startup health marker cleared")
-    except Exception as exc:
-        _startup_log(f"startup health marker skipped: {exc}")
-
-    # Desktop Mode owns the visible Brahma presentation when explicitly enabled.
-    # Do not resurrect the normal application window after its restoration hook.
+    # The boot/recovery decision has already been made. Do not clear the crash
+    # marker until the Qt event loop has remained alive long enough to prove that
+    # startup reached a stable interactive state.
     if desktop_controller is None or not desktop_controller.enabled:
         ui.show_main()
 
+    def _mark_startup_healthy():
+        try:
+            from core.boot_sentry import mark_startup_healthy
+            mark_startup_healthy()
+            _startup_log("startup health marker cleared after stable UI window")
+        except Exception as exc:
+            _startup_log(f"startup health marker skipped: {exc}")
+
+    QTimer.singleShot(15000, _mark_startup_healthy)
+
+    # Desktop Mode owns the visible Brahma presentation when explicitly enabled.
+    # Do not resurrect the normal application window after its restoration hook.
     # CI-only packaged smoke tests need a deterministic clean exit after the
     # application has initialized. This is never enabled during normal use.
     if BRAHMA_EVO_TEST_MODE:
