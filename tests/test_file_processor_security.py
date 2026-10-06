@@ -68,3 +68,11 @@ def test_file_processor_python_execution_requires_confirmation_and_checks_exit_c
     assert "Python execution failed (exit" in source
     assert "Python execution timed out after 30 seconds." in source
     assert 'return _run_python_with_confirmation(path)' in source
+
+
+def test_archive_extraction_destination_is_home_confined_and_symlink_free():
+    source = (ROOT / "actions" / "file_processor.py").read_text(encoding="utf-8")
+    assert "def _safe_archive_destination" in source
+    assert "Archive extraction is limited to destinations inside the user's home directory." in source
+    assert "Archive extraction destinations may not contain symlinked path components." in source
+    assert "_safe_archive_destination(" in source
