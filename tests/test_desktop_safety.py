@@ -61,3 +61,11 @@ def test_wallpaper_script_backends_check_exit_status_before_reporting_success():
     assert "gsettings exited with" in block
     assert "qdbus exited with" in block
     assert "xfconf-query exited with" in block
+
+def test_reminder_embeds_message_as_data_and_never_shell_executes():
+    source = (ROOT / "actions" / "reminder.py").read_text(encoding="utf-8")
+    assert "message_literal = json.dumps(safe_message" in source
+    assert "<Description>MARK Reminder: {xml_message}</Description>" in source
+    assert 'subprocess.run(\n            ["schtasks", "/Create"' in source
+    assert "shell=True" not in source
+    assert "subprocess.run(["msg", "*", "/TIME:30", {message_literal}], shell=False)" in source
