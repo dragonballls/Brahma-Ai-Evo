@@ -9,7 +9,7 @@ def test_tool_trace_redactor_has_common_secret_patterns():
     source = (ROOT / "main.py").read_text(encoding="utf-8")
     start = source.index("    def _redact_sensitive_text")
     block = source[start:source.index("    async def _execute_tool", start)]
-    assert "authorization\s*[:=]\s*bearer" in block
+    assert r"authorization\s*[:=]\s*bearer" in block
     assert "api[_-]?key" in block
     assert "sk-[A-Za-z0-9_-]{20,}" in block
 
