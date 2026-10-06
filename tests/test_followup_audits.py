@@ -1053,3 +1053,10 @@ def test_remote_compute_inventory_propagates_service_failures(monkeypatch):
 
     assert result["success"] is False
     assert result["error"] == "registry unavailable"
+
+
+def test_installer_zip_payload_rejects_duplicate_entries_before_staging():
+    source = Path("installer/install_wizard.py").read_text(encoding="utf-8")
+    assert 'Installer payload contains duplicate ZIP entries.' in source
+    assert 'destinations: set[Path] = set()' in source
+    assert 'Installer payload contains colliding entries:' in source

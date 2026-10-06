@@ -60,18 +60,26 @@ class InstallThread(QThread):
                     members = [m for m in archive.infolist() if not m.is_dir()]
                     required = {"BrahmaEvo.exe", "BrahmaEvoSupervisor.exe"}
                     names = {Path(m.filename).as_posix().lstrip("./") for m in members}
+                    if len({str(m.filename) for m in members}) != len(members):
+                        raise ValueError("Installer payload contains duplicate ZIP entries.")
                     missing_required = sorted(required - names)
                     if missing_required:
                         raise ValueError(
                             "Installer payload is incomplete; missing: " + ", ".join(missing_required)
                         )
 
+                    destinations: set[Path] = set()
                     for member in members:
                         destination = (root / member.filename).resolve()
                         if destination != root and root not in destination.parents:
                             raise ValueError(
                                 f"Unsafe installer payload entry: {member.filename}"
                             )
+                        if destination in destinations:
+                            raise ValueError(
+                                f"Installer payload contains colliding entries: {member.filename}"
+                            )
+                        destinations.add(destination)
 
                     total_files = len(members)
                     copied = 0
