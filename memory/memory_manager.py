@@ -119,8 +119,9 @@ def load_memory() -> dict:
                 print(f"[Memory] ⚠️ Load error; corrupt memory could not be quarantined: {e}")
             return _empty_memory()
         except OSError as e:
-            print(f"[Memory] ⚠️ Memory I/O error; refusing to overwrite: {e}")
-            return _empty_memory()
+            # Do not turn an unreadable existing store into a writable empty store;
+            # callers must handle the error rather than risk overwriting good data.
+            raise RuntimeError(f"Unable to read persistent memory: {MEMORY_PATH}") from e
 
 def _all_entries(memory: dict) -> list[tuple]:
     entries = []

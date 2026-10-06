@@ -1074,3 +1074,22 @@ def test_atomberg_authenticated_requests_reject_redirects():
     source = Path("smart_home/providers/builtin.py").read_text(encoding="utf-8")
     assert "allow_redirects=False" in source
     assert "Atomberg API redirected an authenticated request" in source
+
+
+def test_memory_load_fails_closed_on_io_error(tmp_path, monkeypatch):
+    import memory.memory_manager as memory
+
+    path = tmp_path / "long_term.json"
+    path.write_text('{"identity":{"name":{"value":"existing"}}}', encoding="utf-8")
+    monkeypatch.setattr(memory, "MEMORY_PATH", path)
+
+    original_read = Path.read_text
+    def fail_read(self, *args, **kwargs):
+        if self == path:
+            raise OSError("temporary read failure")
+        return original_read(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", fail_read)
+
+    with pytest.raises(RuntimeError, match="Unable to read persistent memory"):
+        memory.load_memory()
