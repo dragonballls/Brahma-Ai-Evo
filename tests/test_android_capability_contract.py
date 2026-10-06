@@ -34,3 +34,25 @@ def test_android_websocket_reconnect_state_has_visibility_and_stale_socket_guard
     reconnect_block = source[source.index("val previousSocket = socket"):source.index("BrahmaSocketListener()", source.index("val previousSocket = socket"))]
     assert "socket = null" in reconnect_block
     assert reconnect_block.index("socket = null") < reconnect_block.index('previousSocket?.close')
+
+
+def test_android_send_paths_check_websocket_send_result():
+    source = (
+        ROOT
+        / "brahma-connect-android"
+        / "app"
+        / "src"
+        / "main"
+        / "java"
+        / "com"
+        / "brahma"
+        / "connect"
+        / "network"
+        / "BrahmaWebSocketClient.kt"
+    ).read_text(encoding="utf-8")
+    assert 'if (send(BrahmaProtocol.hello(buildSnapshot())))' in source
+    assert 'if (send(BrahmaProtocol.envelope(BrahmaProtocol.PAIR_REQUEST, snapshot)))' in source
+    assert 'if (send(BrahmaProtocol.authenticate(credential)))' in source
+    assert 'if (!send(response))' in source
+    assert 'if (!send(BrahmaProtocol.envelope(BrahmaProtocol.PONG' in source
+    assert 'private fun reportSendFailure(message: String)' in source

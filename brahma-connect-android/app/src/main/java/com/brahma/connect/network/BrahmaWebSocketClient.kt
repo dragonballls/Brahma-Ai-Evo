@@ -167,8 +167,11 @@ class BrahmaWebSocketClient(
     }
 
     private fun sendHello() {
-        send(BrahmaProtocol.hello(buildSnapshot()))
-        AgentStateStore.setStatus("Awaiting approval")
+        if (send(BrahmaProtocol.hello(buildSnapshot()))) {
+            AgentStateStore.setStatus("Awaiting approval")
+        } else {
+            reportSendFailure("Hello message could not be sent.")
+        }
     }
 
     private fun sendPairRequest() {
@@ -179,8 +182,11 @@ class BrahmaWebSocketClient(
         val snapshot = buildSnapshot().toJson()
             .put("pairing_token", offer.pairingToken)
             .put("pairing_code", offer.pairingCode)
-        send(BrahmaProtocol.envelope(BrahmaProtocol.PAIR_REQUEST, snapshot))
-        AgentStateStore.setStatus("Pairing request sent")
+        if (send(BrahmaProtocol.envelope(BrahmaProtocol.PAIR_REQUEST, snapshot))) {
+            AgentStateStore.setStatus("Pairing request sent")
+        } else {
+            reportSendFailure("Pairing request could not be sent.")
+        }
     }
 
     private fun sendAuthenticate() {
@@ -190,8 +196,11 @@ class BrahmaWebSocketClient(
             return
         }
         currentCredential = credential
-        send(BrahmaProtocol.authenticate(credential))
-        AgentStateStore.setStatus("Authenticating")
+        if (send(BrahmaProtocol.authenticate(credential))) {
+            AgentStateStore.setStatus("Authenticating")
+        } else {
+            reportSendFailure("Authentication message could not be sent.")
+        }
     }
 
     private fun handleCommandMessage(root: JSONObject) {
@@ -210,7 +219,15 @@ class BrahmaWebSocketClient(
             result.toJson(),
             requestId = requestId,
         )
-        send(response)
+        if (!send(response)) {
+            reportSendFailure("Command result could not be sent.")
+        }
+    }
+
+    private fun reportSendFailure(message: String) {
+        AgentStateStore.setConnectionState(ConnectionState.DISCONNECTED)
+        AgentStateStore.setStatus("Disconnected")
+        AgentStateStore.setError(message)
     }
 
     private fun handlePairApproved(root: JSONObject) {
@@ -270,7 +287,9 @@ class BrahmaWebSocketClient(
                     }
                     BrahmaProtocol.EXECUTE -> handleCommandMessage(root)
                     BrahmaProtocol.PING -> {
-                        send(BrahmaProtocol.envelope(BrahmaProtocol.PONG, JSONObject().put("status", "ok"), requestId = root.optString("request_id")))
+                        if (!send(BrahmaProtocol.envelope(BrahmaProtocol.PONG, JSONObject().put("status", "ok"), requestId = root.optString("request_id")))) {
+                            reportSendFailure("Pong could not be sent.")
+                        }
                     }
                     BrahmaProtocol.ERROR -> {
                         AgentStateStore.setError(root.optJSONObject("payload")?.optString("error"))
