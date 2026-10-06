@@ -19,6 +19,12 @@ import okhttp3.WebSocketListener
 import okio.ByteString
 import org.json.JSONArray
 import org.json.JSONObject
+import java.security.MessageDigest
+import java.security.cert.X509Certificate
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 import java.util.concurrent.TimeUnit
 import kotlin.math.min
 
@@ -27,10 +33,39 @@ class BrahmaWebSocketClient(
     private val storage: PairingStorage,
     private val commandHandler: DeviceCommandHandler,
 ) {
-    private val client = OkHttpClient.Builder()
-        .retryOnConnectionFailure(true)
-        .pingInterval(30, TimeUnit.SECONDS)
-        .build()
+    private fun buildClient(endpoint: GatewayEndpoint): OkHttpClient {
+        val builder = OkHttpClient.Builder()
+            .retryOnConnectionFailure(true)
+            .pingInterval(30, TimeUnit.SECONDS)
+        if (!endpoint.tls) return builder.build()
+        val fingerprint = endpoint.tlsCertificateSha256.lowercase().trim()
+        if (fingerprint.isBlank()) return builder.build()
+        val trustManager = object : X509TrustManager {
+            override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+            override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) = Unit
+            override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
+                require(chain.isNotEmpty()) { "Empty TLS certificate chain." }
+                val leaf = chain[0]
+                try { leaf.checkValidity() } catch (exc: Exception) {
+                    throw SecurityException("Gateway TLS certificate is not currently valid.", exc)
+                }
+                val digest = MessageDigest.getInstance("SHA-256")
+                    .digest(leaf.encoded)
+                    .joinToString("") { "%02x".format(it) }
+                    .lowercase()
+                if (digest != fingerprint) {
+                    throw SecurityException("Gateway TLS certificate fingerprint does not match the pairing record.")
+                }
+            }
+        }
+        val sslContext = SSLContext.getInstance("TLS")
+        sslContext.init(null, arrayOf<TrustManager>(trustManager), null)
+        builder.sslSocketFactory(sslContext.socketFactory, trustManager)
+        builder.hostnameVerifier { hostname, session ->
+            HttpsURLConnection.getDefaultHostnameVerifier().verify(hostname, session)
+        }
+        return builder.build()
+    }
 
     private var socket: WebSocket? = null
     private var currentEndpoint: GatewayEndpoint? = null
@@ -58,8 +93,9 @@ class BrahmaWebSocketClient(
         AgentStateStore.setStatus("Connecting to ${endpoint.name}")
 
         socket?.close(1000, "Reconnecting")
-        socket = client.newWebSocket(
-            Request.Builder().url("ws://${endpoint.host}:${endpoint.port}/ws").build(),
+        val scheme = if (endpoint.tls) "wss" else "ws"
+        socket = buildClient(endpoint).newWebSocket(
+            Request.Builder().url(scheme + "://" + endpoint.host + ":" + endpoint.port + "/ws").build(),
             BrahmaSocketListener(),
         )
     }
@@ -187,6 +223,8 @@ class BrahmaWebSocketClient(
             deviceName = deviceName,
             gatewayHost = currentEndpoint?.host.orEmpty(),
             gatewayPort = currentEndpoint?.port ?: 8765,
+            tls = currentEndpoint?.tls ?: true,
+            tlsCertificateSha256 = currentEndpoint?.tlsCertificateSha256.orEmpty(),
         )
         storage.saveCredential(credential)
         currentCredential = credential
