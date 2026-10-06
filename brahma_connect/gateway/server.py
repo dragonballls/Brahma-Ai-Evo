@@ -517,21 +517,22 @@ class BrahmaGateway:
                         # Replace any older pending request from this socket and
                         # bound the total pending set so unauthenticated HELLO spam
                         # cannot grow memory without limit.
-                        stale_ids = [
-                            pending_id
-                            for pending_id, item in self._pending_requests.items()
-                            if item.get("websocket") is websocket
-                        ]
-                        for stale_id in stale_ids:
-                            self._pending_requests.pop(stale_id, None)
-                        while len(self._pending_requests) >= 64:
-                            oldest_id = min(
-                                self._pending_requests,
-                                key=lambda pending_id: self._pending_requests[pending_id].get("timestamp", ""),
-                            )
-                            self._pending_requests.pop(oldest_id, None)
-                        pending_id = new_request_id()
-                        self._pending_requests[pending_id] = {
+                        with self._pending_lock:
+                            stale_ids = [
+                                pending_id
+                                for pending_id, item in self._pending_requests.items()
+                                if item.get("websocket") is websocket
+                            ]
+                            for stale_id in stale_ids:
+                                self._pending_requests.pop(stale_id, None)
+                            while len(self._pending_requests) >= 64:
+                                oldest_id = min(
+                                    self._pending_requests,
+                                    key=lambda pending_id: self._pending_requests[pending_id].get("timestamp", ""),
+                                )
+                                self._pending_requests.pop(oldest_id, None)
+                            pending_id = new_request_id()
+                            self._pending_requests[pending_id] = {
                             "request_id": pending_id,
                             "websocket": websocket,
                             "timestamp": now_iso(),
@@ -653,9 +654,10 @@ class BrahmaGateway:
             except WebSocketDisconnect:
                 pass
             finally:
-                for pending_id, item in list(self._pending_requests.items()):
-                    if item.get("websocket") is websocket:
-                        self._pending_requests.pop(pending_id, None)
+                with self._pending_lock:
+                    for pending_id, item in list(self._pending_requests.items()):
+                        if item.get("websocket") is websocket:
+                            self._pending_requests.pop(pending_id, None)
                 detached = await self.hub.unregister(websocket)
                 if detached:
                     self.device_manager.mark_offline(detached)
@@ -667,8 +669,11 @@ class BrahmaGateway:
         if not self.config.enabled:
             return
         # A gateway instance may be restarted after a clean stop.
-        self._shutdown.clear()
-        self._running = True
+        with self._serve_lock:
+            if self._running:
+                return
+            self._shutdown.clear()
+            self._running = True
         advertised = False
         if self.config.advertise:
             advertised = self.discovery.start(host=self.config.host, port=self.config.port, properties={"service": "brahma", "version": "1"})
