@@ -288,27 +288,25 @@ class OmniRouteProvisioner:
         }
 
     def _probe(self) -> bool:
-        parsed = urllib.parse.urlparse(self.base_url)
-        origin = f"{parsed.scheme}://{parsed.netloc}"
-        urls = (
-            self.base_url + "/models",
-            origin + "/api/monitoring/health",
-            origin + "/healthz",
-        )
-        for url in urls:
-            try:
-                with urllib.request.urlopen(
-                    urllib.request.Request(url, headers={"Accept": "application/json"}),
-                    timeout=self.probe_timeout_seconds,
-                ) as response:
-                    if 200 <= int(response.status) < 300:
-                        return True
-            except urllib.error.HTTPError as exc:
-                if exc.code in {401, 403, 405}:
-                    return True
-            except (urllib.error.URLError, TimeoutError, OSError):
-                pass
-        return False
+        # Validate the OpenAI-compatible /models contract rather than trusting a
+        # generic health endpoint on the same loopback port.
+        try:
+            with urllib.request.urlopen(
+                urllib.request.Request(
+                    self.base_url + "/models",
+                    headers={"Accept": "application/json"},
+                ),
+                timeout=self.probe_timeout_seconds,
+            ) as response:
+                if not 200 <= int(response.status) < 300:
+                    return False
+                payload = json.loads(response.read().decode("utf-8"))
+                return isinstance(payload, dict) and isinstance(payload.get("data"), list)
+        except urllib.error.HTTPError as exc:
+            # A real gateway may protect /models while still proving the expected endpoint exists.
+            return exc.code in {401, 403, 405}
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError, UnicodeDecodeError):
+            return False
 
     def probe_only(self) -> bool:
         return self._probe()
@@ -316,28 +314,42 @@ class OmniRouteProvisioner:
     def ensure_running(self, *, wait_seconds: float = 15.0) -> bool:
         if self._probe():
             return True
-        self._select_loopback_port()
+        total_wait = max(0.5, float(wait_seconds))
         self._resolved = None
         self._source = "unavailable"
         command = self.command_argv(for_start=True)
-        if self._process is None or self._process.poll() is not None:
-            self._process = subprocess.Popen(
-                command + ["--port", str(self.port)],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                env=self.environment(),
-                creationflags=_hidden_creationflags(),
-                close_fds=True,
-            )
-        deadline = time.monotonic() + max(0.5, float(wait_seconds))
-        while time.monotonic() < deadline:
-            if self._probe():
-                return True
-            if self._process.poll() is not None:
-                break
-            time.sleep(0.25)
-        self.stop()
+
+        # Bind a candidate immediately before launch, then retry with a fresh
+        # ephemeral loopback port if another process wins the race.
+        for attempt in range(3):
+            self._select_loopback_port()
+            if self._process is not None and self._process.poll() is None:
+                self.stop()
+            try:
+                self._process = subprocess.Popen(
+                    command + ["--port", str(self.port)],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    env=self.environment(),
+                    creationflags=_hidden_creationflags(),
+                    close_fds=True,
+                )
+            except OSError:
+                self.stop()
+                if attempt == 2:
+                    return False
+                continue
+
+            deadline = time.monotonic() + total_wait
+            while time.monotonic() < deadline:
+                if self._probe():
+                    return True
+                if self._process.poll() is not None:
+                    break
+                time.sleep(0.25)
+            self.stop()
+
         return False
 
     def stop(self) -> None:
