@@ -18,7 +18,7 @@ class PairingStorage(context: Context) {
     )
 
     fun saveCredential(credential: DeviceCredential) {
-        prefs.edit()
+        val committed = prefs.edit()
             .putString("device_credential", JSONObject()
                 .put("device_id", credential.deviceId)
                 .put("device_secret", credential.deviceSecret)
@@ -29,7 +29,8 @@ class PairingStorage(context: Context) {
                 .put("tls_certificate_sha256", credential.tlsCertificateSha256)
                 .put("paired_at", credential.pairedAt)
                 .toString())
-            .apply()
+            .commit()
+        check(committed) { "Failed to persist device credentials safely." }
     }
 
     fun loadCredential(): DeviceCredential? {
@@ -59,13 +60,17 @@ class PairingStorage(context: Context) {
     }
 
     fun clearCredential() {
-        prefs.edit().remove("device_credential").apply()
+        check(prefs.edit().remove("device_credential").commit()) {
+            "Failed to clear stored device credentials."
+        }
     }
 
     fun saveGatewayHint(offer: PairingOffer) {
-        prefs.edit()
-            .putString("last_pairing_offer", offer.toJson().toString())
-            .apply()
+        check(
+            prefs.edit()
+                .putString("last_pairing_offer", offer.toJson().toString())
+                .commit()
+        ) { "Failed to persist gateway pairing hint safely." }
     }
 
     fun loadGatewayHint(): PairingOffer? {
