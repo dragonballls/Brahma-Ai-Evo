@@ -121,7 +121,8 @@ def _launch_windows(app_name: str) -> bool:
 
         # If Spotify desktop is not installed, open Spotify in Google Chrome
         from actions.spotify_controller import _open_url_in_chrome
-        _open_url_in_chrome("https://open.spotify.com")
+        if not _open_url_in_chrome("https://open.spotify.com"):
+            return False
         time.sleep(1.0)
         return True
 
