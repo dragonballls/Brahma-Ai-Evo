@@ -122,10 +122,16 @@ class SmartHomeService:
         runtime_device = dict(device)
         runtime_device["provider_credentials"] = (account or {}).get("credentials", {})
         result = provider.execute(runtime_device, action, payload)
+        if not isinstance(result, dict):
+            raise RuntimeError("Smart-home provider returned an invalid action result.")
+        if result.get("success") is False:
+            detail = str(result.get("error") or result.get("detail") or "Smart-home provider rejected the action.")
+            self._storage.log_activity(device["name"], f"Action failed: {detail}")
+            return {"success": False, "device": device, "detail": detail, "error": detail}
         self._storage.update_device(device_id, is_on=result.get("is_on"), traits=result.get("traits"))
         self._storage.log_activity(device["name"], str(result.get("detail", "Device updated.")))
         updated = self._storage.get_device(device_id)
-        return {"device": updated, "detail": result.get("detail", "Device updated.")}
+        return {"success": True, "device": updated, "detail": result.get("detail", "Device updated.")}
 
     def rename_device(self, device_id: str, new_name: str) -> None:
         device = self._storage.get_device(device_id)

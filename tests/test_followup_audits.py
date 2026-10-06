@@ -1176,3 +1176,32 @@ def test_smart_home_power_cycle_result_is_false_on_device_failure(monkeypatch):
     assert result["success"] is False
     assert result["failures"]
     assert "device offline" in result["failures"][0]["error"]
+
+
+def test_smart_home_provider_rejection_does_not_mutate_local_device_state():
+    from smart_home.service import SmartHomeService
+
+    service = object.__new__(SmartHomeService)
+    device = {"id": "d1", "provider_key": "test", "provider_account_id": "a1", "name": "Lamp", "is_on": False, "traits": {}}
+    class Storage:
+        def get_device(self, device_id):
+            return device if device_id == "d1" else None
+        def get_provider_account(self, _account_id):
+            return {"credentials": {}}
+        def update_device(self, *_args, **_kwargs):
+            raise AssertionError("Rejected provider actions must not mutate local state.")
+        def log_activity(self, *_args):
+            pass
+    class Provider:
+        def execute(self, *_args):
+            return {"success": False, "error": "device refused"}
+    class Registry:
+        def get(self, _key):
+            return Provider()
+    service._storage = Storage()
+    service._registry = Registry()
+
+    result = service.execute_device_action("d1", "power", {"is_on": True})
+    assert result["success"] is False
+    assert result["error"] == "device refused"
+    assert device["is_on"] is False
