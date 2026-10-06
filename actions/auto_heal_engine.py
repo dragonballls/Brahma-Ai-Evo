@@ -142,7 +142,15 @@ class SafetySandbox:
         stamp = f"{time.time_ns()}_{uuid.uuid4().hex[:12]}"
         backup_name = f"{file_path.stem}.bak_{stamp}{file_path.suffix}"
         backup_path = BACKUPS_DIR / backup_name
-        shutil.copy2(file_path, backup_path)
+        temp_path = BACKUPS_DIR / f".{backup_name}.tmp"
+        try:
+            shutil.copy2(file_path, temp_path)
+            os.replace(temp_path, backup_path)
+        finally:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
         return backup_path
 
     @staticmethod
