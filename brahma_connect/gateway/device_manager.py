@@ -70,15 +70,24 @@ class DeviceManager:
                 return
             loaded: dict[str, DeviceRecord] = {}
             for device_id, item in (devices or {}).items():
-                if not isinstance(item, dict):
-                    continue
                 try:
+                    if not isinstance(item, dict):
+                        raise ValueError("device record is not an object")
                     record = DeviceRecord.from_dict(item)
-                except Exception:
-                    continue
-                key = str(record.device_id or device_id).strip()
-                if not key or not str(record.secret_hash or "").strip():
-                    continue
+                    key = str(record.device_id or device_id).strip()
+                    if not key or not str(record.secret_hash or "").strip():
+                        raise ValueError("device record is missing identity or secret data")
+                except Exception as exc:
+                    try:
+                        self._quarantine_corrupt_registry()
+                    except OSError as quarantine_exc:
+                        raise RuntimeError(
+                            "Device registry contains an invalid record and could not be quarantined safely."
+                        ) from quarantine_exc
+                    self._devices = {}
+                    raise RuntimeError(
+                        "Device registry contains an invalid record; the original was quarantined."
+                    ) from exc
                 record.device_id = key
                 # A persisted online flag cannot represent a live socket after restart.
                 # Re-establish online state only after successful authentication.
@@ -93,11 +102,18 @@ class DeviceManager:
             temp_path = self.registry_path.with_name(
                 f".{self.registry_path.name}.{uuid.uuid4().hex}.tmp"
             )
-            temp_path.write_text(
-                json.dumps(payload, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
-            temp_path.replace(self.registry_path)
+            try:
+                temp_path.write_text(
+                    json.dumps(payload, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                temp_path.replace(self.registry_path)
+            except Exception:
+                try:
+                    temp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                raise
 
     def list_devices(self) -> list[dict[str, Any]]:
         with self._lock:
@@ -194,7 +210,11 @@ class DeviceManager:
                 metadata=dict(metadata or {}),
             )
             self._devices[device_id] = record
-            self.save()
+            try:
+                self.save()
+            except Exception:
+                self._devices.pop(device_id, None)
+                raise
             return record, secret
 
     def authenticate(self, device_id: str, secret: str, *, ip: str = "", connection_id: str = "") -> DeviceRecord | None:
