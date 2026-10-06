@@ -167,6 +167,8 @@ class SkillCrucible:
                 func = node.func
                 if isinstance(func, ast.Name) and func.id in {"eval", "exec", "__import__"}:
                     return False, f"Security Violation: prohibited dynamic execution '{func.id}'."
+                if isinstance(func, ast.Name) and func.id in imported_dangerous_names:
+                    return False, f"Security Violation: prohibited imported call '{func.id}'."
                 if isinstance(func, ast.Attribute):
                     owner = ""
                     if isinstance(func.value, ast.Name):
@@ -191,6 +193,20 @@ class SkillCrucible:
                     if keyword.arg == "verify" and isinstance(keyword.value, ast.Constant):
                         if keyword.value.value is False:
                             return False, "Security Violation: TLS certificate verification cannot be disabled."
+        imported_dangerous_names: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                module_root = (node.module or "").split(".")[0]
+                dangerous_names = {
+                    "system", "popen", "remove", "unlink", "rmdir", "removedirs",
+                    "replace", "rename", "startfile", "_create_unverified_context",
+                    "rmtree", "copytree", "make_archive",
+                }
+                if module_root in {"os", "shutil", "ssl"}:
+                    for alias in node.names:
+                        if alias.name in dangerous_names:
+                            imported_dangerous_names.add(alias.asname or alias.name)
+
         # Safety scans for banned keywords in string literals or function calls
         for node in ast.walk(tree):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
