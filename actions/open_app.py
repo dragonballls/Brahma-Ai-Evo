@@ -95,8 +95,10 @@ def _launch_windows(app_name: str) -> bool:
         for cp in chrome_paths:
             if cp and (os.path.exists(cp) if os.path.isabs(cp) else True):
                 try:
-                    subprocess.Popen([cp], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    proc = subprocess.Popen([cp], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     time.sleep(1.0)
+                    if proc.poll() is not None:
+                        return False
                     return True
                 except Exception:
                     pass
@@ -113,8 +115,10 @@ def _launch_windows(app_name: str) -> bool:
         for sp in spotify_paths:
             if sp and os.path.exists(sp):
                 try:
-                    subprocess.Popen([sp], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    proc = subprocess.Popen([sp], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     time.sleep(1.0)
+                    if proc.poll() is not None:
+                        return False
                     return True
                 except Exception:
                     pass
@@ -130,8 +134,10 @@ def _launch_windows(app_name: str) -> bool:
     bin_path = shutil.which(app_name) or shutil.which(f"{app_name}.exe")
     if bin_path:
         try:
-            subprocess.Popen([bin_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            proc = subprocess.Popen([bin_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             time.sleep(1.0)
+            if proc.poll() is not None:
+                return False
             return True
         except Exception:
             pass
@@ -191,8 +197,10 @@ def _launch_linux(app_name: str) -> bool:
     )
     if binary:
         try:
-            subprocess.Popen([binary], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            proc = subprocess.Popen([binary], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             time.sleep(1.0)
+            if proc.poll() is not None:
+                return False
             return True
         except Exception:
             pass
