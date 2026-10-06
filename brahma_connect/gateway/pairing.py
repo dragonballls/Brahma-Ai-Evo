@@ -26,7 +26,14 @@ class PairingManager:
     def create_offer(self, host: str, port: int) -> PairingOffer:
         self._prune()
         token = generate_pairing_token()
-        code = f"{secrets.randbelow(1_000_000):06d}"
+        code = ""
+        for _ in range(20):
+            candidate = f"{secrets.randbelow(1_000_000):06d}"
+            if candidate not in self._code_index:
+                code = candidate
+                break
+        if not code:
+            raise RuntimeError("Unable to allocate a unique pairing code; try again.")
         offer = PairingOffer(
             service=self.service_name,
             host=host,
