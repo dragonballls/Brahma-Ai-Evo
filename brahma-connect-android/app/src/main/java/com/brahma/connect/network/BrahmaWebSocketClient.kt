@@ -164,8 +164,8 @@ class BrahmaWebSocketClient(
         val credential = currentCredential
         val (percentage, charging) = batterySnapshot()
         return DeviceSnapshot(
-            deviceId = credential?.deviceId,
-            deviceName = credential?.deviceName ?: android.os.Build.MODEL ?: "Android",
+            deviceId = currentCredential?.deviceId,
+            deviceName = currentCredential?.deviceName ?: android.os.Build.MODEL ?: "Android",
             androidVersion = android.os.Build.VERSION.RELEASE ?: "Unknown",
             agentVersion = "1.0.0",
             batteryPercentage = percentage,
@@ -245,6 +245,11 @@ class BrahmaWebSocketClient(
         val secret = payload.optString("device_secret")
         val deviceId = device.optString("device_id")
         val deviceName = device.optString("name", android.os.Build.MODEL ?: "Android")
+        if (deviceId.isBlank() || secret.isBlank()) {
+            AgentStateStore.setError("Pair approval was malformed; device credentials were not saved.")
+            AgentStateStore.setConnectionState(ConnectionState.DISCONNECTED)
+            return
+        }
         val credential = DeviceCredential(
             deviceId = deviceId,
             deviceSecret = secret,
@@ -279,6 +284,7 @@ class BrahmaWebSocketClient(
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
+            if (socket !== webSocket) return
             runCatching {
                 val root = JSONObject(text)
                 val type = root.optString("type")
