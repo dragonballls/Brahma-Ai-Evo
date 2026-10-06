@@ -77,8 +77,11 @@ class PairingStorage(context: Context) {
         val raw = prefs.getString("last_pairing_offer", null) ?: return null
         return try {
             PairingOffer.fromJson(JSONObject(raw))
-        } catch (_: Exception) {
-            null
+        } catch (exc: Exception) {
+            throw IllegalStateException(
+                "Stored gateway pairing hint is corrupt; refusing to treat it as absent.",
+                exc,
+            )
         }
     }
 }
