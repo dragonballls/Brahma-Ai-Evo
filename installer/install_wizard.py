@@ -39,83 +39,120 @@ class InstallThread(QThread):
         self.payload_zip = payload_zip
 
     def run(self):
+        staging_dir = None
+        backup_dir = None
         try:
             self.status.emit("Preparing installation...")
             self.progress.emit(10)
-            time.sleep(1) # Let user see the text
 
-            if os.path.exists(self.target_dir):
-                self.status.emit("Removing old version...")
-                shutil.rmtree(self.target_dir, ignore_errors=True)
-            
-            self.progress.emit(20)
-            self.status.emit("Copying files... This might take a minute.")
+            target = Path(self.target_dir).expanduser().resolve()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            staging_dir = target.parent / f".{target.name}.staging-{os.getpid()}-{time.time_ns()}"
 
-            if not os.path.exists(self.target_dir):
-                os.makedirs(self.target_dir)
+            self.progress.emit(15)
+            self.status.emit("Validating payload...")
 
             payload_zip = self.payload_zip if self.payload_zip and os.path.isfile(self.payload_zip) else None
             if payload_zip:
-                # The release build embeds one archive instead of tens of thousands
-                # of individual PyInstaller data entries. Extract it directly to the
-                # destination, while rejecting path traversal entries.
-                root = Path(self.target_dir).resolve()
+                root = staging_dir.resolve()
+                root.mkdir(parents=True, exist_ok=False)
                 with zipfile.ZipFile(payload_zip, "r") as archive:
                     members = [m for m in archive.infolist() if not m.is_dir()]
+                    required = {"BrahmaEvo.exe", "BrahmaEvoSupervisor.exe"}
+                    names = {Path(m.filename).as_posix().lstrip("./") for m in members}
+                    missing_required = sorted(required - names)
+                    if missing_required:
+                        raise ValueError(
+                            "Installer payload is incomplete; missing: " + ", ".join(missing_required)
+                        )
+
+                    for member in members:
+                        destination = (root / member.filename).resolve()
+                        if destination != root and root not in destination.parents:
+                            raise ValueError(
+                                f"Unsafe installer payload entry: {member.filename}"
+                            )
+
                     total_files = len(members)
                     copied = 0
                     for member in members:
                         destination = (root / member.filename).resolve()
-                        if destination != root and root not in destination.parents:
-                            raise ValueError(f"Unsafe installer payload entry: {member.filename}")
                         destination.parent.mkdir(parents=True, exist_ok=True)
                         with archive.open(member, "r") as src, open(destination, "wb") as dst:
                             shutil.copyfileobj(src, dst, length=1024 * 1024)
                         copied += 1
                         if total_files > 0:
-                            prog = 20 + int((copied / total_files) * 60)
+                            prog = 20 + int((copied / total_files) * 55)
                             if prog % 5 == 0:
                                 self.progress.emit(prog)
             else:
                 if not self.source_dir or not os.path.isdir(self.source_dir):
                     raise FileNotFoundError("Brahma Evo payload is missing.")
-                total_files = sum(len(files) for _root, _dirs, files in os.walk(self.source_dir))
+                root = staging_dir.resolve()
+                root.mkdir(parents=True, exist_ok=False)
+                total_files = sum(
+                    len(files) for _root, _dirs, files in os.walk(self.source_dir)
+                )
                 copied = 0
-                for src_dir, dirs, files in os.walk(self.source_dir):
-                    dst_dir = src_dir.replace(self.source_dir, self.target_dir, 1)
-                    if not os.path.exists(dst_dir):
-                        os.makedirs(dst_dir)
+                for src_dir, _dirs, files in os.walk(self.source_dir):
+                    relative = os.path.relpath(src_dir, self.source_dir)
+                    dst_dir = root if relative == "." else root / relative
+                    dst_dir.mkdir(parents=True, exist_ok=True)
                     for file_ in files:
-                        src_file = os.path.join(src_dir, file_)
-                        dst_file = os.path.join(dst_dir, file_)
-                        shutil.copy2(src_file, dst_file)
+                        shutil.copy2(
+                            os.path.join(src_dir, file_),
+                            str(dst_dir / file_),
+                        )
                         copied += 1
                         if total_files > 0:
-                            prog = 20 + int((copied / total_files) * 60)
+                            prog = 20 + int((copied / total_files) * 55)
                             if prog % 5 == 0:
                                 self.progress.emit(prog)
 
+            staged_exe = staging_dir / "BrahmaEvo.exe"
+            staged_supervisor = staging_dir / "BrahmaEvoSupervisor.exe"
+            if not staged_exe.is_file() or not staged_supervisor.is_file():
+                raise FileNotFoundError(
+                    "Staged installation is missing BrahmaEvo.exe or BrahmaEvoSupervisor.exe."
+                )
+
             self.progress.emit(80)
+            self.status.emit("Activating verified installation...")
+
+            if target.exists():
+                backup_dir = target.parent / f".{target.name}.backup-{os.getpid()}-{time.time_ns()}"
+                target.replace(backup_dir)
+
+            try:
+                staging_dir.replace(target)
+                staging_dir = None
+            except Exception:
+                if backup_dir is not None and not target.exists() and backup_dir.exists():
+                    backup_dir.replace(target)
+                    backup_dir = None
+                raise
+
+            if backup_dir is not None:
+                shutil.rmtree(backup_dir, ignore_errors=True)
+                backup_dir = None
+
+            self.progress.emit(85)
             self.status.emit("Creating shortcuts...")
-            
-            # Launch Brahma through the independent supervisor so an unexpected
-            # application crash can be repaired/restarted without user intervention.
-            exe_path = os.path.join(self.target_dir, 'BrahmaEvo.exe')
-            supervisor_path = os.path.join(self.target_dir, 'BrahmaEvoSupervisor.exe')
+
+            exe_path = str(target / "BrahmaEvo.exe")
+            supervisor_path = str(target / "BrahmaEvoSupervisor.exe")
             launch_path = supervisor_path if os.path.exists(supervisor_path) else exe_path
 
             if os.path.exists(launch_path):
                 shell = win32com.client.Dispatch("WScript.Shell")
-
-                # Dynamically resolve Desktop path (handles OneDrive, moved folders, etc.).
                 desktop = shell.SpecialFolders("Desktop")
                 shortcut_path = os.path.join(desktop, "Brahma Evo.lnk")
 
                 def _write_shortcut(path):
                     shortcut = shell.CreateShortCut(path)
                     shortcut.Targetpath = launch_path
-                    shortcut.WorkingDirectory = self.target_dir
-                    shortcut.IconLocation = os.path.join(self.target_dir, 'assets', 'Brahma_Lite_Logo.ico')
+                    shortcut.WorkingDirectory = str(target)
+                    shortcut.IconLocation = str(target / "assets" / "Brahma_Lite_Logo.ico")
                     shortcut.WindowStyle = 1
                     shortcut.save()
 
@@ -124,30 +161,30 @@ class InstallThread(QThread):
                 except Exception as e:
                     print(f"Failed to create desktop shortcut: {e}")
 
-                # Start menu shortcut.
                 try:
                     start_menu = shell.SpecialFolders("Programs")
-                    shortcut_path_sm = os.path.join(start_menu, "Brahma Evo.lnk")
-                    _write_shortcut(shortcut_path_sm)
+                    _write_shortcut(os.path.join(start_menu, "Brahma Evo.lnk"))
                 except Exception as e:
                     print(f"Failed to create start menu shortcut: {e}")
 
-                # Keep the supervisor running after Windows logon. This provides
-                # crash recovery after reboot without a visible console window.
-                if os.path.exists(supervisor_path):
-                    try:
-                        startup = shell.SpecialFolders("Startup")
-                        startup_shortcut = os.path.join(startup, "Brahma Evo.lnk")
-                        _write_shortcut(startup_shortcut)
-                    except Exception as e:
-                        print(f"Failed to create startup shortcut: {e}")
+                try:
+                    startup = shell.SpecialFolders("Startup")
+                    _write_shortcut(os.path.join(startup, "Brahma Evo.lnk"))
+                except Exception as e:
+                    print(f"Failed to create startup shortcut: {e}")
 
             self.progress.emit(100)
             self.status.emit("Installation Complete!")
-            time.sleep(0.5)
             self.finished.emit()
-            
+
         except Exception as e:
+            if staging_dir is not None:
+                shutil.rmtree(staging_dir, ignore_errors=True)
+            if backup_dir is not None and not Path(self.target_dir).exists():
+                try:
+                    Path(backup_dir).replace(Path(self.target_dir))
+                except Exception:
+                    pass
             self.error.emit(str(e))
 
 class InstallWizard(QWidget):
