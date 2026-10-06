@@ -138,6 +138,16 @@ BANNED_IMPORT_MODULES = {
     "msvcrt",
 }
 
+# Dotted-module/function paths that expose process-launch capabilities even when
+# the top-level import is an otherwise safe standard-library module.
+BANNED_IMPORT_PATHS = {
+    "asyncio.subprocess",
+}
+BANNED_ASYNCIO_SUBPROCESS_NAMES = {
+    "create_subprocess_exec",
+    "create_subprocess_shell",
+}
+
 BANNED_CALLS = {
     ("os", "system"), ("os", "popen"), ("os", "remove"), ("os", "unlink"),
     ("os", "rmdir"), ("os", "removedirs"), ("os", "replace"), ("os", "rename"),
@@ -348,9 +358,16 @@ class SkillCrucible:
                     if root in BANNED_IMPORT_MODULES:
                         return False, f"Security Violation: prohibited import '{root}'."
             elif isinstance(node, ast.ImportFrom):
-                root = (node.module or "").split(".")[0]
+                module_name = node.module or ""
+                root = module_name.split(".")[0]
                 if root in BANNED_IMPORT_MODULES:
                     return False, f"Security Violation: prohibited import '{root}'."
+                for alias in node.names:
+                    imported_path = f"{module_name}.{alias.name}" if module_name else alias.name
+                    if imported_path in BANNED_IMPORT_PATHS:
+                        return False, f"Security Violation: prohibited import '{imported_path}'."
+                    if module_name == "asyncio" and alias.name in BANNED_ASYNCIO_SUBPROCESS_NAMES:
+                        return False, f"Security Violation: prohibited import '{module_name}.{alias.name}'."
                 if node.module == "concurrent.futures":
                     for alias in node.names:
                         if alias.name == "ProcessPoolExecutor":
@@ -394,6 +411,8 @@ class SkillCrucible:
                     call_key = (owner, func.attr)
                     if call_key in BANNED_CALLS or (owner, "*") in BANNED_CALLS:
                         return False, f"Security Violation: prohibited call '{owner}.{func.attr}'."
+                    if owner == "asyncio" and func.attr in BANNED_ASYNCIO_SUBPROCESS_NAMES:
+                        return False, f"Security Violation: prohibited call 'asyncio.{func.attr}'."
                     if owner == "pathlib.Path" and func.attr in {"unlink", "rmdir", "replace", "rename"}:
                         return False, f"Security Violation: prohibited Path.{func.attr} call."
                 for keyword in node.keywords:
@@ -538,6 +557,7 @@ import builtins as _builtins
 import io as _io
 from pathlib import Path as _SandboxPath
 import shutil as _sandbox_shutil
+import asyncio as _sandbox_asyncio
 
 _SANDBOX_ROOT = _SandboxPath(os.environ["BRAHMA_CRUCIBLE_ROOT"]).resolve()
 _REAL_OS_REALPATH = os.path.realpath
@@ -683,6 +703,15 @@ def _sandbox_mutation(real_fn):
 
 def _sandbox_blocked(*_args, **_kwargs):
     raise PermissionError("Crucible sandbox blocked a process-launch or shell escape.")
+
+# Guard both asyncio's convenience helpers and the event-loop subprocess APIs.
+_sandbox_asyncio.create_subprocess_exec = _sandbox_blocked
+_sandbox_asyncio.create_subprocess_shell = _sandbox_blocked
+for _loop_cls_name in ("BaseEventLoop", "AbstractEventLoop"):
+    _loop_cls = getattr(_sandbox_asyncio, _loop_cls_name, None)
+    if _loop_cls is not None:
+        _loop_cls.subprocess_exec = _sandbox_blocked
+        _loop_cls.subprocess_shell = _sandbox_blocked
 
 _builtins.open = _sandbox_open
 _io.open = _sandbox_io_open
