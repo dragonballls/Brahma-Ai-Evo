@@ -139,6 +139,26 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertNotIn("py -3.12", source)
         self.assertNotIn("python-3.12.10-amd64.exe", source)
 
+    def test_attention_monitor_lifecycle_and_speech_sink_are_single_owner(self):
+        source = self.read("actions/attention_monitor.py")
+        tree = ast.parse(source, filename="actions/attention_monitor.py")
+
+        speech_sink_defs = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "set_speech_sink"
+        ]
+        self.assertEqual(len(speech_sink_defs), 1)
+
+        self.assertIn("self._thread = threading.Thread(", source)
+        self.assertIn("thread.is_alive()", source)
+        self.assertIn("self._thread = None", source)
+        self.assertIn("finally:", source)
+        self.assertIn("self._running = False", source)
+        self.assertIn("_current_speech_proc: subprocess.Popen | None", source)
+        self.assertNotIn("Optional[subprocess.Popen]", source)
+
     def test_brahma_connect_service_has_synchronized_lifecycle(self):
         source = self.read("brahma_connect/service.py")
         self.assertIn("_lock: threading.RLock", source)
