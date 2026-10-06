@@ -164,10 +164,11 @@ class WorkspaceStore:
             return row["value"] if row else None
 
     def _set_state(self, key: str, value: str) -> None:
+        safe_value = _redact_secret_text(str(value or ""))
         with self._lock, self._connect() as conn:
             conn.execute(
                 "INSERT INTO state(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                (key, value),
+                (key, safe_value),
             )
 
     def get_active_conversation_id(self) -> str | None:
@@ -181,6 +182,7 @@ class WorkspaceStore:
                 conn.execute("DELETE FROM state WHERE key = 'active_conversation_id'")
 
     def create_conversation(self, title: str = "New Conversation") -> str:
+        title = _redact_secret_text(_clean_text(title))[:80] or "New Conversation"
         conversation_id = str(uuid.uuid4())
         stamp = _now_ms()
         with self._lock, self._connect() as conn:
@@ -370,7 +372,7 @@ class WorkspaceStore:
         )
 
     def rename_conversation(self, conversation_id: str, title: str) -> None:
-        title = _clean_text(title) or "Conversation"
+        title = _redact_secret_text(_clean_text(title)) or "Conversation"
         with self._lock, self._connect() as conn:
             conn.execute(
                 "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
@@ -448,18 +450,19 @@ class WorkspaceStore:
         conversation_id: str | None = None,
         attachments: list[dict[str, Any]] | None = None,
     ) -> str:
+        safe_content = _redact_secret_text(_clean_text(content))
         if role == "user":
-            conversation_id = conversation_id or self.ensure_active_conversation(content)
+            conversation_id = conversation_id or self.ensure_active_conversation(safe_content)
         else:
             conversation_id = conversation_id or self.get_active_conversation_id() or self.ensure_active_conversation()
-        self.append_message(conversation_id, role, content, attachments=attachments)
+        self.append_message(conversation_id, role, safe_content, attachments=attachments)
         if role == "user":
-            self._ingest_memory(content, conversation_id)
+            self._ingest_memory(safe_content, conversation_id)
         self.set_active_conversation_id(conversation_id)
         return conversation_id
 
     def _ingest_memory(self, user_text: str, conversation_id: str) -> None:
-        text = _clean_text(user_text)
+        text = _redact_secret_text(_clean_text(user_text))
         if len(text) < 4:
             return
         text_low = text.lower()
