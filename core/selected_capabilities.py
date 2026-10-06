@@ -553,6 +553,7 @@ class Life360Provider:
         raw_entities = entity_ids if entity_ids is not None else os.getenv("JARVIS_LIFE360_ENTITY_IDS", "").split(",")
         self.entity_ids = {str(x).strip() for x in raw_entities if str(x).strip()}
         self.timeout = max(0.5, min(float(timeout), 15.0))
+        self._last_error = ""
 
     @staticmethod
     def _host_allowed(host: str) -> bool:
@@ -575,12 +576,20 @@ class Life360Provider:
         return True
 
     def status(self) -> dict[str, Any]:
-        return {
+        configured = bool(self.token)
+        result = {
+            "success": (not self.enabled) or configured,
             "enabled": self.enabled,
-            "configured": bool(self.token),
+            "configured": configured,
             "ha_url": self.base_url,
             "entity_allowlist_count": len(self.entity_ids),
         }
+        if self.enabled and not configured:
+            result["error"] = "Life360 Home Assistant integration is enabled but no access token is configured."
+        elif self._last_error:
+            result["success"] = False
+            result["error"] = self._last_error
+        return result
 
     def _request_json(self, path: str) -> Any:
         from urllib.parse import urlsplit
@@ -607,12 +616,14 @@ class Life360Provider:
         return lat, lon
 
     def locations(self) -> list[dict[str, Any]]:
+        self._last_error = ""
         if not self.enabled or not self.token:
             return []
         try:
             _ = self._request_json("/api/")
             states = self._request_json("/api/states")
-        except (OSError, ValueError, urlerror.URLError, json.JSONDecodeError):
+        except (OSError, ValueError, urlerror.URLError, json.JSONDecodeError) as exc:
+            self._last_error = f"Unable to read Life360 Home Assistant locations: {exc}"
             return []
         if not isinstance(states, list):
             return []
@@ -743,7 +754,10 @@ def execute_selected_capability(name: str, action: str, **kwargs: Any) -> dict[s
 
     if name == "remote_computing":
         if action == "list":
-            return {"success": True, "computers": RemoteComputeManager.computers()}
+            computers = RemoteComputeManager.computers()
+            if len(computers) == 1 and isinstance(computers[0], dict) and computers[0].get("success") is False:
+                return dict(computers[0])
+            return {"success": True, "computers": computers}
         return RemoteComputeManager.route(kwargs.get("target", ""), kwargs.get("remote_action", kwargs.get("action_name", "")), kwargs.get("parameters", {}))
 
     if name == "time_machine":
@@ -772,7 +786,10 @@ def execute_selected_capability(name: str, action: str, **kwargs: Any) -> dict[s
     if name == "life360_family":
         provider = Life360Provider()
         if action == "status":
-            return {"success": True, "provider": provider.status()}
-        return {"success": True, "locations": provider.locations(), "provider": provider.status()}
+            status = provider.status()
+            return {"success": status.get("success", True), "provider": status}
+        locations = provider.locations()
+        status = provider.status()
+        return {"success": status.get("success", True), "locations": locations, "provider": status}
 
     return {"success": False, "error": f"Unknown selected capability: {name}"}

@@ -1025,3 +1025,31 @@ def test_task_queue_console_logging_is_encoding_safe():
     assert 'text.encode("ascii", "replace").decode("ascii")' in source
     assert "print(f\"[TaskQueue]" not in source
     assert source.count("_safe_print(") >= 10
+
+
+
+def test_life360_location_transport_errors_are_not_reported_as_success(monkeypatch):
+    from core.selected_capabilities import Life360Provider
+
+    provider = Life360Provider(enabled=True, token="test-token", base_url="http://127.0.0.1:8123")
+
+    def fail_request(_path):
+        raise OSError("HA unavailable")
+
+    monkeypatch.setattr(provider, "_request_json", fail_request)
+    locations = provider.locations()
+    status = provider.status()
+
+    assert locations == []
+    assert status["success"] is False
+    assert "HA unavailable" in status["error"]
+
+
+def test_remote_compute_inventory_propagates_service_failures(monkeypatch):
+    from core.selected_capabilities import RemoteComputeManager, execute_selected_capability
+
+    monkeypatch.setattr(RemoteComputeManager, "computers", classmethod(lambda cls: [{"success": False, "error": "registry unavailable"}]))
+    result = execute_selected_capability("remote_computing", "list")
+
+    assert result["success"] is False
+    assert result["error"] == "registry unavailable"
