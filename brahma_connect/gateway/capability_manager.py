@@ -5,7 +5,7 @@ from typing import Iterable
 
 class CapabilityManager:
     def normalize(self, capability: str) -> str:
-        return "_".join((capability or "").strip().lower().split())
+        return "_".join(str(capability or "").strip().lower().split())
 
     def normalize_many(self, capabilities: Iterable[str] | None) -> list[str]:
         values = []
