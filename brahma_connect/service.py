@@ -131,9 +131,9 @@ class BrahmaConnectService:
             self._thread.start()
 
     def stop(self) -> None:
-        self.gateway.request_shutdown()
         with self._lock:
             thread = self._thread
+            self.gateway.request_shutdown()
         if thread and thread.is_alive() and thread is not threading.current_thread():
             thread.join(timeout=2.0)
         with self._lock:
