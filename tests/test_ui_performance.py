@@ -39,3 +39,12 @@ def test_background_quality_floor_preserves_visual_rendering():
     source = (ROOT / "assets" / "web_background" / "index.html").read_text(encoding="utf-8")
     match = re.search(r'renderQuality = Math\.max\((0\.65)', source)
     assert match and float(match.group(1)) >= 0.65
+
+def test_scanning_overlay_timer_only_runs_while_visible():
+    source = (ROOT / "ui.py").read_text(encoding="utf-8")
+    assert "self._tmr.timeout.connect(self._tick)" in source
+    assert "self._tmr.start(16)" in source
+    assert "def force_hide(self):" in source
+    assert "self._tmr.stop()" in source
+    assert "def hideEvent(self, event):" in source
+
