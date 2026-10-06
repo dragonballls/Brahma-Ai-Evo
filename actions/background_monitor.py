@@ -112,6 +112,16 @@ def _run_check(m_id, m):
 # permanent polling thread when unused.
 
 def add_monitor(monitor_type: str, target: str, threshold: float, condition: str = "above", interval_sec: int = 60) -> str:
+    monitor_type = str(monitor_type or "").strip().lower()
+    target = str(target or "").strip()
+    condition = str(condition or "above").strip().lower()
+    if monitor_type not in {"system", "crypto", "website"}:
+        raise ValueError("Unsupported monitor type.")
+    if not target:
+        raise ValueError("Monitor target is required.")
+    if condition not in {"above", "below"}:
+        raise ValueError("Monitor condition must be 'above' or 'below'.")
+    interval_sec = max(1, int(interval_sec))
     m_id = f"{monitor_type}_{target}_{time.time_ns()}_{uuid.uuid4().hex[:6]}"
     with _monitor_lock:
         _monitors[m_id] = {
