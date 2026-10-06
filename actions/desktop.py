@@ -8,7 +8,7 @@ import tempfile
 import platform
 from pathlib import Path
 from datetime import datetime
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 import urllib.request
 
 try:
@@ -140,7 +140,7 @@ def set_wallpaper(image_path: str) -> str:
 
         else:
             desktop_env = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
-            uri = "file://" + urllib.parse.quote(str(path).replace("\\", "/"), safe="/:")
+            uri = "file://" + quote(str(path).replace("\\", "/"), safe="/:")
 
             if "gnome" in desktop_env or "unity" in desktop_env:
                 result = subprocess.run([
