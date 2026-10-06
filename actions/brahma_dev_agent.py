@@ -42,6 +42,9 @@ _BLOCKED_EVAL_FLAGS = {
     "-c", "--command", "-command", "-encodedcommand", "-e", "--eval", "-eval",
     "--require", "-r",
 }
+_GIT_EXECUTION_OVERRIDE_FLAGS = {
+    "-u", "--upload-pack", "--upload-pack=", "--receive-pack", "--receive-pack=",
+}
 
 class NativeTools:
     def __init__(self, workspace_dir: Path, on_action: Optional[Callable[[str], None]] = None):
@@ -100,9 +103,19 @@ class NativeTools:
         if any(flag in _BLOCKED_EVAL_FLAGS for flag in lowered):
             return "Error: interpreter evaluation flags are not permitted."
         if executable in {"git"} and any(
-            part.casefold().startswith(("--git-dir=", "--work-tree=")) for part in parts[1:]
+            part.casefold().startswith(
+                ("--git-dir=", "--work-tree=")
+            )
+            or part.casefold() in {"--git-dir", "--work-tree"}
+            for part in parts[1:]
         ):
             return "Error: Git repository/work-tree overrides are not permitted."
+        if executable == "git" and any(
+            part.casefold() in _GIT_EXECUTION_OVERRIDE_FLAGS
+            or part.casefold().startswith(("--upload-pack=", "--receive-pack="))
+            for part in parts[1:]
+        ):
+            return "Error: Git upload/receive-pack execution overrides are not permitted."
 
         root = self.workspace_dir.resolve()
         for arg in parts[1:]:
