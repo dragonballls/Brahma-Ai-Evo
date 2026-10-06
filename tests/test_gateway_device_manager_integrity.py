@@ -57,3 +57,58 @@ def test_device_registry_rejects_symlinked_registry_path(tmp_path):
     from brahma_connect.gateway.device_manager import DeviceManager
     with pytest.raises(RuntimeError, match="must not be a symlink"):
         DeviceManager(link)
+
+
+def test_duplicate_device_id_records_are_quarantined(tmp_path):
+    registry = tmp_path / "devices.json"
+    registry.write_text(
+        json.dumps(
+            {
+                "devices": {
+                    "device-a": {
+                        "device_id": "same",
+                        "name": "A",
+                        "platform": "android",
+                        "secret_hash": "hash-a",
+                    },
+                    "device-b": {
+                        "device_id": "same",
+                        "name": "B",
+                        "platform": "android",
+                        "secret_hash": "hash-b",
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="duplicate device identities"):
+        DeviceManager(registry)
+
+    backups = list(tmp_path.glob("devices.json.corrupt-*"))
+    assert len(backups) == 1
+
+
+def test_mismatched_registry_key_and_embedded_device_id_is_rejected(tmp_path):
+    registry = tmp_path / "devices.json"
+    registry.write_text(
+        json.dumps(
+            {
+                "devices": {
+                    "device-a": {
+                        "device_id": "device-b",
+                        "name": "A",
+                        "platform": "android",
+                        "secret_hash": "hash",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="invalid record"):
+        DeviceManager(registry)
+
+    assert len(list(tmp_path.glob("devices.json.corrupt-*"))) == 1
