@@ -86,3 +86,15 @@ def test_browser_public_contract_does_not_advertise_blocked_arbitrary_code_actio
     assert "evaluate" not in public_block
     assert "run_code" not in public_block
     assert "expression" not in public_block
+
+
+def test_playwright_mcp_errors_cannot_be_returned_as_successful_text():
+    source = (ROOT / "actions" / "playwright_mcp_client.py").read_text(encoding="utf-8")
+    assert "if result_obj.get(\"isError\", False):" in source
+    assert '"success": False' in source[source.index("if result_obj.get(\"isError\", False):"):source.index("if result_obj.get(\"isError\", False):") + 500]
+
+
+def test_playwright_mcp_server_disconnect_wakes_pending_requests():
+    source = (ROOT / "actions" / "playwright_mcp_client.py").read_text(encoding="utf-8")
+    assert "Playwright MCP server connection closed." in source
+    assert "event.set()" in source[source.index("Playwright MCP server connection closed.")-250:source.index("Playwright MCP server connection closed.")+250]
