@@ -78,7 +78,22 @@ class BrahmaConnectService:
             except RuntimeError:
                 future.cancel()
                 pass
-        return asyncio.run(coro)
+
+        # A synchronous API cannot safely block the event-loop thread that owns
+        # the coroutine. Close the coroutine before raising so it is never left
+        # unawaited, and direct async callers to the explicit async API instead.
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coro)
+        try:
+            coro.close()
+        except Exception:
+            pass
+        raise RuntimeError(
+            "Synchronous gateway operation cannot run inside an active event loop; "
+            "use the async gateway API."
+        )
 
     async def _await_on_gateway_loop(self, coro):
         """Await a gateway coroutine on its owning loop without nesting event loops."""
