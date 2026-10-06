@@ -70,6 +70,18 @@ class UniversalCapabilityAgentTests(unittest.TestCase):
         prompt = (Path(__file__).resolve().parents[1] / "core" / "prompt.txt").read_text(encoding="utf-8")
         self.assertIn("call `universal_task`", prompt)
         self.assertIn("Do not merely explain that the capability is unavailable", prompt)
+
+    def test_skill_forge_keeps_generated_network_code_on_verified_tls(self):
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[1] / "core" / "skill_forge.py").read_text(encoding="utf-8")
+        start = source.index("4. Resilient Network & Safe SSL Handling:")
+        end = source.index("5. Visual Deliverables", start)
+        block = source[start:end]
+        self.assertIn("verify=True", block)
+        self.assertNotIn("verify=False", block)
+        self.assertNotIn("_create_unverified_context", block)
+        self.assertNotIn("LIVDSRZULELA", block)
     def test_empty_request_is_rejected(self):
         result = universal_agent.run("   ")
         self.assertFalse(result["success"])
