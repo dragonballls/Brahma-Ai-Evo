@@ -183,7 +183,7 @@ class SelfCodingAgent:
             raise SelfCodingError("Checkpoint metadata id does not match the requested checkpoint.")
         if checkpoint.base_branch != "main":
             raise SelfCodingError("Only checkpoints created from main can be promoted or undone.")
-        if checkpoint.state not in {"pending", "promoting", "approved", "undone"}:
+        if checkpoint.state not in {"pending", "promoting", "approved", "undoing", "undone"}:
             raise SelfCodingError("Checkpoint state metadata is invalid.")
         if not re.fullmatch(r"agent/checkpoint/[A-Za-z0-9._-]+", checkpoint.branch):
             raise SelfCodingError("Checkpoint branch metadata is invalid.")
@@ -460,6 +460,33 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
             self._save(replace(checkpoint, state="pending", promoted_sha=None))
             return self._approve_unlocked(checkpoint_id=checkpoint.checkpoint_id)
         raise SelfCodingError("Promotion state is ambiguous; refusing to mutate main further.")
+    def _recover_undoing(self, checkpoint: Checkpoint) -> str:
+        if not checkpoint.promoted_sha or not checkpoint.undo_commits:
+            raise SelfCodingError("Undoing checkpoint is missing its durable undo commit state.")
+        self.validate_repo()
+        fetched = self._git("fetch", "origin", "main", timeout=300)
+        if fetched.returncode != 0:
+            raise SelfCodingError(fetched.stderr.strip() or "Unable to refresh remote main during undo recovery.")
+        remote = self._git("rev-parse", "refs/remotes/origin/main")
+        local = self._git("rev-parse", "refs/heads/main")
+        if remote.returncode != 0 or local.returncode != 0:
+            raise SelfCodingError("Unable to inspect main during undo recovery.")
+        remote_sha = remote.stdout.strip()
+        local_sha = local.stdout.strip()
+        undo_tip = checkpoint.undo_commits[-1]
+        if local_sha != undo_tip:
+            raise SelfCodingError("Local main does not match the durable undo checkpoint tip.")
+        if remote_sha == undo_tip:
+            self._save(replace(checkpoint, state="undone"))
+            return "undone"
+        if remote_sha != checkpoint.promoted_sha:
+            raise SelfCodingError("Undo recovery found unrelated remote main changes; refusing further mutation.")
+        pushed = self._git("push", "origin", "main", timeout=300)
+        if pushed.returncode != 0:
+            raise SelfCodingError(pushed.stderr.strip() or "Unable to publish the pending checkpoint undo.")
+        self._save(replace(checkpoint, state="undone"))
+        return "undone"
+
     def approve(self, checkpoint_id: str) -> str:
         with _SELF_CODING_LOCK:
             return self._approve_unlocked(checkpoint_id)
@@ -546,7 +573,9 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
 
     def _undo_unlocked(self, checkpoint_id: str) -> str:
         checkpoint = self._load(checkpoint_id)
-        self._validate_checkpoint(checkpoint)
+        self._validate_checkpoint(checkpoint, checkpoint_id)
+        if checkpoint.state == "undoing":
+            return self._recover_undoing(checkpoint)
         self.validate_repo()
         if checkpoint.base_branch != "main":
             raise SelfCodingError("Only checkpoints created from main can be promoted or undone.")
@@ -583,24 +612,50 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
             raise SelfCodingError(switched.stderr.strip() or "Unable to switch to main for undo.")
         undo_commits: list[str] = []
         try:
+            try:
+                self._save(replace(checkpoint, state="undoing", undo_commits=()))
+            except Exception as save_exc:
+                self._git("switch", current)
+                raise SelfCodingError("Unable to persist the undoing checkpoint before changing main.") from save_exc
             for commit in reversed(checkpoint.commits):
                 reverted = self._git("revert", "--no-edit", commit, timeout=300)
                 if reverted.returncode != 0:
                     self._git("revert", "--abort")
+                    self._git("reset", "--hard", checkpoint.promoted_sha)
                     raise SelfCodingError(reverted.stderr.strip() or f"Unable to revert {commit}.")
                 head = self._git("rev-parse", "HEAD")
+                if head.returncode != 0:
+                    self._git("reset", "--hard", checkpoint.promoted_sha)
+                    raise SelfCodingError("Unable to record an undo commit.")
                 undo_commits.append(head.stdout.strip())
+                self._save(replace(checkpoint, state="undoing", undo_commits=tuple(undo_commits)))
+            status = self._git("status", "--porcelain")
+            if status.returncode != 0 or status.stdout.strip():
+                self._git("reset", "--hard", checkpoint.promoted_sha)
+                raise SelfCodingError("Main became dirty during undo; refusing to publish ambiguous work.")
             pushed = self._git("push", "origin", "main", timeout=300)
             if pushed.returncode != 0:
-                current_head = self._git("rev-parse", "HEAD")
-                status = self._git("status", "--porcelain")
-                if current_head.returncode == 0 and current_head.stdout.strip() != checkpoint.promoted_sha and not status.stdout.strip():
-                    self._git("reset", "--keep", checkpoint.promoted_sha)
+                self._git("reset", "--hard", checkpoint.promoted_sha)
                 self._git("switch", current)
+                self._save(checkpoint)
                 raise SelfCodingError(pushed.stderr.strip() or "Unable to publish checkpoint undo.")
-            undone = replace(checkpoint, state="undone", undo_commits=tuple(undo_commits))
-            self._save(undone)
+            try:
+                self._save(replace(checkpoint, state="undone", undo_commits=tuple(undo_commits)))
+            except Exception as save_exc:
+                raise SelfCodingError(
+                    "Checkpoint undo was published but metadata could not be finalized; "
+                    "retry the same undo to recover the durable state."
+                ) from save_exc
+            self._git("switch", current)
             return "undone"
+        except Exception:
+            try:
+                if self._branch() == "main" and not undo_commits:
+                    self._git("reset", "--hard", checkpoint.promoted_sha)
+                self._git("switch", current)
+            except Exception:
+                pass
+            raise
         except Exception:
             try:
                 if self._branch() == "main":
