@@ -40,20 +40,26 @@ def _now() -> str:
 def _json_load(path: Path, default: Any) -> Any:
     if not path.is_file():
         return default
+    if path.is_symlink():
+        raise RuntimeError(f"Selected capability state path must not be a symlink: {path}")
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(default, (dict, list)) and not isinstance(payload, type(default)):
             raise ValueError("Selected capability state has an unexpected root schema.")
         return payload
-    except (UnicodeError, json.JSONDecodeError, ValueError):
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
         quarantine = path.with_name(
             f"{path.name}.corrupt-{int(time.time())}-{uuid4().hex[:8]}"
         )
         try:
             path.replace(quarantine)
-        except OSError:
-            pass
-        return default
+        except OSError as quarantine_exc:
+            raise RuntimeError(
+                f"Selected capability state is corrupt and could not be quarantined: {path}"
+            ) from quarantine_exc
+        raise RuntimeError(
+            f"Selected capability state was corrupt and has been quarantined: {quarantine.name}"
+        ) from exc
     except OSError as exc:
         raise RuntimeError(f"Unable to read selected capability state: {path}") from exc
 
@@ -365,10 +371,15 @@ class TimeMachine:
         _, payload = cls._get(selector)
         if not payload:
             return {"success": False, "error": "Snapshot not found."}
+        snapshot_state = payload.get("state")
+        snapshot_id = payload.get("id")
+        snapshot_name = payload.get("name")
+        if not isinstance(snapshot_state, dict) or not isinstance(snapshot_id, str) or not isinstance(snapshot_name, str):
+            return {"success": False, "error": "Snapshot is malformed and cannot be restored."}
         return {
             "success": True,
             "snapshot": {k: payload.get(k) for k in ("id", "name", "created_at", "tags")},
-            "state": payload.get("state", {}),
+            "state": snapshot_state,
             "restore_mode": "explicit-apply",
         }
 
@@ -636,6 +647,7 @@ class Life360Provider:
             self._last_error = f"Unable to read Life360 Home Assistant locations: {exc}"
             return []
         if not isinstance(states, list):
+            self._last_error = "Home Assistant returned malformed state data."
             return []
 
         locations = []
