@@ -799,13 +799,17 @@ class DashboardServer:
                 return JSONResponse({"error": "Unauthorized"}, status_code=401)
             body  = await req.json()
             token = req.headers.get("authorization", "").removeprefix("Bearer ").strip()
-            enc   = body.get("enc", "")
+            enc = body.get("enc", "")
             if enc:
-                text = self._decrypt(token, enc)
+                if len(str(enc).encode("utf-8")) > 512 * 1024:
+                    return JSONResponse({"error": "Encrypted command payload is too large."}, status_code=413)
+                text = self._decrypt(token, str(enc))
                 if text is None:
                     return JSONResponse({"error": "Decryption failed"}, status_code=400)
             else:
                 text = (body.get("text") or "").strip()
+            if len(str(text).encode("utf-8")) > 256 * 1024:
+                return JSONResponse({"error": "Command payload is too large."}, status_code=413)
             if text:
                 if not self._enqueue_command(text):
                     return JSONResponse({"error": "Command queue is busy; retry shortly."}, status_code=429)
