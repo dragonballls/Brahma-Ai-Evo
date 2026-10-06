@@ -26,6 +26,7 @@ DEFAULTS={
     "simple_keywords":("hello","hi","hey","thanks","thank you","what time","what day"),
     "profiles":{
         "fast":{"model":"auto/fast","temperature":0.35,"max_tokens":2048,"specialists":0},
+        "balanced":{"model":"auto/smart","temperature":0.3,"max_tokens":3072,"specialists":1,"synthesis_model":"auto/smart"},
         "smart":{"model":"auto/smart","temperature":0.35,"max_tokens":4096,"specialists":2,"synthesis_model":"auto/smart"},
         "coding":{"model":"auto/coding","temperature":0.2,"max_tokens":8192,"specialists":2,"synthesis_model":"auto/coding"},
         "vision":{"model":"auto/vision","temperature":0.2,"max_tokens":2048,"specialists":2,"synthesis_model":"auto/smart"},
@@ -194,7 +195,10 @@ def _ensemble_roles(profile:str,count:int)->tuple[str,...]:
 
 class IntelligenceOrchestrator:
     def _cfg(self,p:str,c:dict)->dict:
-        return dict(c.get("profiles",{}).get(p) or c["profiles"]["smart"])
+        profiles = c.get("profiles", {})
+        requested = str(p or "smart").strip().lower()
+        selected = profiles.get(requested) if isinstance(profiles, dict) else None
+        return dict(selected or profiles.get("smart") or c["profiles"]["smart"])
     def _roles(self,p:str)->tuple[str,...]:
         if p=="coding":return ("senior implementation engineer","independent code reviewer")
         if p=="maintenance":return ("systems diagnostician","independent verifier")
