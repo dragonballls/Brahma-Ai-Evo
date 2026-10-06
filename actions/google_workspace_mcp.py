@@ -14,6 +14,7 @@ from email.header import decode_header
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
+import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 logger = logging.getLogger("google_workspace_mcp")
@@ -29,6 +30,7 @@ EMAIL_KEY_FILE = CONFIG_DIR / ".email_key"
 EMAIL_CREDENTIALS_FILE = CONFIG_DIR / "email_credentials.json"
 GOOGLE_WORKSPACE_CRED_FILE = CONFIG_DIR / "google_workspace_credentials.json"
 GOOGLE_WORKSPACE_TOKEN_FILE = CONFIG_DIR / "google_workspace_token.json"
+_CREDENTIAL_LOCK = threading.RLock()
 
 
 # ── Credential Helpers ───────────────────────────────────────────────────────
@@ -36,12 +38,19 @@ GOOGLE_WORKSPACE_TOKEN_FILE = CONFIG_DIR / "google_workspace_token.json"
 def _get_fernet_cipher():
     try:
         from cryptography.fernet import Fernet
-        if not EMAIL_KEY_FILE.exists():
-            key = Fernet.generate_key()
-            with open(EMAIL_KEY_FILE, "wb") as f:
-                f.write(key)
-        else:
-            with open(EMAIL_KEY_FILE, "rb") as f:
+        with _CREDENTIAL_LOCK:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            if not EMAIL_KEY_FILE.exists():
+                key = Fernet.generate_key()
+                temp = EMAIL_KEY_FILE.with_name(f".{EMAIL_KEY_FILE.name}.{uuid.uuid4().hex}.tmp")
+                temp.write_bytes(key)
+                try:
+                    temp.replace(EMAIL_KEY_FILE)
+                except FileExistsError:
+                    temp.unlink(missing_ok=True)
+                if not EMAIL_KEY_FILE.exists():
+                    raise RuntimeError("Unable to publish email encryption key.")
+            with EMAIL_KEY_FILE.open("rb") as f:
                 key = f.read().strip()
         return Fernet(key)
     except Exception as e:
@@ -84,8 +93,16 @@ def save_stored_gmail_credentials(email_addr: str, app_password: str) -> bool:
             "password_encrypted": enc_pw,
             "updated_at": datetime.now().isoformat()
         }
-        with open(EMAIL_CREDENTIALS_FILE, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2)
+        with _CREDENTIAL_LOCK:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            temp = EMAIL_CREDENTIALS_FILE.with_name(
+                f".{EMAIL_CREDENTIALS_FILE.name}.{uuid.uuid4().hex}.tmp"
+            )
+            temp.write_text(
+                json.dumps(payload, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            temp.replace(EMAIL_CREDENTIALS_FILE)
         return True
     except Exception as e:
         logger.error(f"[Workspace] Failed to save email credentials: {e}")
