@@ -26,3 +26,11 @@ def test_android_initial_capabilities_cover_gateway_requirements():
 
     gateway_capabilities = {cap for values in ACTION_CAPABILITIES.values() for cap in values}
     assert gateway_capabilities <= initial_values
+
+
+def test_android_websocket_reconnect_state_has_visibility_and_stale_socket_guard():
+    source = (ROOT / "brahma-connect-android" / "app" / "src" / "main" / "java" / "com" / "brahma" / "connect" / "network" / "BrahmaWebSocketClient.kt").read_text(encoding="utf-8")
+    assert source.count("@Volatile private var") >= 5
+    reconnect_block = source[source.index("val previousSocket = socket"):source.index("BrahmaSocketListener()", source.index("val previousSocket = socket"))]
+    assert "socket = null" in reconnect_block
+    assert reconnect_block.index("socket = null") < reconnect_block.index('previousSocket?.close')
