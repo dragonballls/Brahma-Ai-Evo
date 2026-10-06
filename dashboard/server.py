@@ -894,10 +894,14 @@ class DashboardServer:
 
         @app.get("/web_background/{filename:path}")
         async def web_background_static(filename: str):
-            bg_dir = BASE_DIR / "assets" / "web_background"
+            bg_dir = (BASE_DIR / "assets" / "web_background").resolve()
             safe = filename if filename else "index.html"
-            target = bg_dir / safe
-            if target.exists() and target.is_file():
+            try:
+                target = (bg_dir / safe).resolve()
+                target.relative_to(bg_dir)
+            except (OSError, ValueError):
+                return JSONResponse({"error": "Not found"}, status_code=404)
+            if target.is_file():
                 return FileResponse(str(target))
             return JSONResponse({"error": "Not found"}, status_code=404)
 
