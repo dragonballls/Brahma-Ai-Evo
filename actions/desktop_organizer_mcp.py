@@ -91,12 +91,20 @@ def _resolve_target_dir(target: str) -> Path:
     elif cleaned in ("videos", "movies"):
         return home / "Videos"
     
-    # Try custom path
-    p = Path(target).expanduser().resolve()
-    if p.exists() and p.is_dir():
-        return p
-    # Fallback to Downloads if target invalid
-    return home / "Downloads"
+    # Custom targets must remain inside the user's home directory.
+    raw = str(target or "").strip()
+    if not raw:
+        raise ValueError("Organizer target is required.")
+    p = Path(raw).expanduser().resolve()
+    try:
+        p.relative_to(home.resolve())
+    except ValueError as exc:
+        raise ValueError("Organizer target must remain inside the user's home directory.") from exc
+    if not p.exists():
+        raise FileNotFoundError(f"Organizer target not found: {p}")
+    if not p.is_dir():
+        raise NotADirectoryError(f"Organizer target is not a directory: {p}")
+    return p
 
 
 def _format_bytes(size: int) -> str:
@@ -181,12 +189,26 @@ class SmartOrganizerEngine:
             return []
         try:
             with open(self.history_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logger.warning(f"Could not load history: {e}")
+                data = json.load(f)
+            if not isinstance(data, list):
+                raise ValueError("Organizer history root must be a JSON list.")
+            return [item for item in data if isinstance(item, dict)]
+        except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+            quarantine = self.history_file.with_name(
+                f"{self.history_file.name}.corrupt-{time.time_ns()}-{uuid.uuid4().hex[:8]}"
+            )
+            try:
+                self.history_file.replace(quarantine)
+                logger.warning("Quarantined corrupt organizer history as %s", quarantine.name)
+            except OSError as quarantine_error:
+                raise RuntimeError(
+                    f"Unable to quarantine corrupt organizer history: {quarantine_error}"
+                ) from exc
             return []
+        except OSError as exc:
+            raise RuntimeError("Unable to read persistent organizer history.") from exc
 
-    def _save_history(self, history: List[Dict[str, Any]]) -> None:
+    def _save_history(self, history: List[Dict[str, Any]]) -> bool:
         try:
             # Keep at most 20 history runs and publish atomically so a crash
             # cannot leave a partially-written transaction log.
@@ -201,8 +223,10 @@ class SmartOrganizerEngine:
                     encoding="utf-8",
                 )
                 temp.replace(self.history_file)
+            return True
         except Exception as e:
             logger.warning(f"Could not save history: {e}")
+            return False
 
     def preview(self, target: str = "downloads", mode: str = "by_type") -> str:
         """Dry-run preview of planned file moves without touching any files."""
@@ -251,6 +275,17 @@ class SmartOrganizerEngine:
 
         lines.append("💡 *No files have been moved yet. Say 'Organize my downloads' or execute with action='organize' to apply.*")
         return "\n".join(lines)
+
+    def _rollback_moves(self, moves: List[Dict[str, str]]) -> None:
+        for move in reversed(moves):
+            try:
+                current = Path(move["current"])
+                original = Path(move["original"])
+                if current.exists() and not original.exists():
+                    original.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(current), str(original))
+            except Exception as exc:
+                logger.error("Organizer rollback failed for %s: %s", move, exc)
 
     def organize(self, target: str = "downloads", mode: str = "by_type") -> str:
         """Executes intelligent file reorganization and logs reversible transactions."""
@@ -306,7 +341,11 @@ class SmartOrganizerEngine:
             return f"✨ **{dir_path.name}** has no loose files to organize."
 
         # Save to transaction history for undo
-        history = self._load_history()
+        try:
+            history = self._load_history()
+        except RuntimeError as exc:
+            self._rollback_moves(moves_recorded)
+            return f"❌ Organization was rolled back because history could not be read: {exc}"
         history.append({
             "id": datetime.now().strftime("%Y%m%d_%H%M%S"),
             "timestamp": datetime.now().isoformat(),
@@ -315,7 +354,9 @@ class SmartOrganizerEngine:
             "count": moved_count,
             "moves": moves_recorded
         })
-        self._save_history(history)
+        if not self._save_history(history):
+            self._rollback_moves(moves_recorded)
+            return "❌ Organization was rolled back because its undo history could not be persisted."
 
         try:
             from core.undo import push_undo
