@@ -322,6 +322,12 @@ class DynamicToolRegistry:
                     return w[:-len(sfx)]
             return w
 
+        def contains_term(query: str, term: object) -> bool:
+            normalized = re.sub(r"\s+", " ", str(term or "").strip().lower().replace("_", " "))
+            if not normalized:
+                return False
+            return re.search(rf"(?<![a-z0-9]){re.escape(normalized)}(?![a-z0-9])", query) is not None
+
         q_meaningful = [w for w in q_words if w not in stopwords and len(w) > 2]
         q_stems = {stem(w) for w in q_meaningful}
 
@@ -366,27 +372,27 @@ class DynamicToolRegistry:
 
             # Explicit trigger phrases defined by the feature
             for trig in getattr(skill, "triggers", []):
-                if trig.lower() in q_lower:
+                if contains_term(q_lower, trig):
                     score += 200
                     break
 
             # Explicit aliases defined by the feature
             for alias in getattr(skill, "aliases", []):
-                if alias.lower() in q_lower or alias.replace("_", " ").lower() in q_lower:
+                if contains_term(q_lower, alias):
                     score += 180
                     break
 
             # Exact skill name match or clean underscore-replaced match
-            if skill.name.lower() in q_lower or skill.name.replace("_", " ").lower() in q_lower:
+            if contains_term(q_lower, skill.name):
                 score += 150
 
             # Direct phrase match in query (e.g. 'internet speed', 'speed test')
             for phrase_len in (3, 2):
                 for i in range(len(q_words) - phrase_len + 1):
                     phrase = " ".join(q_words[i:i + phrase_len])
-                    if phrase in skill.name.replace("_", " ").lower() and not all(pw in stopwords for pw in q_words[i:i + phrase_len]):
+                    if contains_term(skill.name.replace("_", " ").lower(), phrase) and not all(pw in stopwords for pw in q_words[i:i + phrase_len]):
                         score += 60
-                    elif phrase in skill.description.lower() and not all(pw in stopwords for pw in q_words[i:i + phrase_len]):
+                    elif contains_term(skill.description.lower(), phrase) and not all(pw in stopwords for pw in q_words[i:i + phrase_len]):
                         score += 25
 
             # Skill name stem overlap
