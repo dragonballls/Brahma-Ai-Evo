@@ -47,8 +47,7 @@ class LearnedRulesEngine:
             changed = False
             for item in data:
                 if not isinstance(item, dict):
-                    changed = True
-                    continue
+                    raise ValueError("Learned-rules file contains an invalid record.")
                 current = dict(item)
                 rule = str(current.get("rule") or "")
                 if _SECRET_RE.search(rule) or _TOKEN_RE.search(rule):
@@ -66,9 +65,14 @@ class LearnedRulesEngine:
             try:
                 RULES_FILE.replace(quarantine)
                 logger.warning("[LearnedRules] Quarantined corrupted rules file as %s", quarantine.name)
-            except OSError:
-                logger.warning("[LearnedRules] Failed to quarantine corrupted rules state: %s", exc)
-            return []
+            except OSError as quarantine_exc:
+                logger.error("[LearnedRules] Failed to quarantine corrupted rules state: %s", exc)
+                raise RuntimeError(
+                    "Learned-rules state is corrupted and could not be quarantined safely."
+                ) from quarantine_exc
+            raise RuntimeError(
+                "Learned-rules state was corrupted and the original file was quarantined."
+            ) from exc
         except OSError as exc:
             logger.error("[LearnedRules] Refusing to mutate unreadable rules state: %s", exc)
             raise RuntimeError("Unable to read persistent learned-rules state.") from exc
