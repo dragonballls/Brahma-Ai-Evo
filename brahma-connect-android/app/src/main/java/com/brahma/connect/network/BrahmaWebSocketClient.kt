@@ -102,7 +102,7 @@ class BrahmaWebSocketClient(
         }
         if (!endpoint.tls) {
             currentEndpoint = endpoint
-            currentCredential = credential
+            currentCredential = resolvedCredential
             currentOffer = offer
             AgentStateStore.setGateway(endpoint)
             AgentStateStore.setConnectionState(ConnectionState.DISCONNECTED)
