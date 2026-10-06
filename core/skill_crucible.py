@@ -378,8 +378,16 @@ class SkillCrucible:
                     check_script = "import PIL.Image"
                 elif dep == "cv2":
                     check_script = "import cv2; assert hasattr(cv2, 'imread')"
-                check_cmd = [py_exe, "-c", check_script]
-                proc = subprocess.run(check_cmd, capture_output=True, timeout=5, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                check_cmd = [py_exe, "-P", "-c", check_script]
+                with tempfile.TemporaryDirectory(prefix=".crucible-import-") as import_root:
+                    proc = subprocess.run(
+                        check_cmd,
+                        capture_output=True,
+                        timeout=5,
+                        cwd=import_root,
+                        env=_sandbox_environment(Path(import_root)),
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    )
                 if proc.returncode == 0:
                     is_healthy = True
             except Exception:

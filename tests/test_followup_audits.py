@@ -741,3 +741,11 @@ def test_crucible_rejects_unapproved_dependency_before_import_probe(monkeypatch)
     ok, message = crucible.SkillCrucible.resolve_dependencies(["definitely_not_approved"])
     assert ok is False
     assert "not an approved Brahma runtime package" in message
+
+
+def test_crucible_dependency_import_probe_uses_safe_path_and_sandbox_cwd():
+    source = Path("core/skill_crucible.py").read_text(encoding="utf-8")
+    assert 'check_cmd = [py_exe, "-P", "-c", check_script]' in source
+    assert 'with tempfile.TemporaryDirectory(prefix=".crucible-import-")' in source
+    assert 'env=_sandbox_environment(Path(import_root))' in source
+    assert "cwd=import_root" in source
