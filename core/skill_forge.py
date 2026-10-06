@@ -88,7 +88,15 @@ class SkillForge:
         manifest = synthesis["manifest"]
         code = synthesis["code"]
         test_cases = synthesis.get("test_cases", [{"input": {}}])
-        actual_name = manifest.get("name", name_hint or "custom_skill")
+        raw_name = manifest.get("name", name_hint or "custom_skill")
+        if not isinstance(raw_name, str):
+            return {"success": False, "message": "Skill synthesis returned an invalid skill name."}
+        actual_name = raw_name.strip()
+        if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", actual_name):
+            return {
+                "success": False,
+                "message": "Skill synthesis returned an unsafe skill name; no files were written.",
+            }
 
         # 2. Iterative Verification & Self-Repair Loop
         for attempt in range(max_repair_attempts + 1):
@@ -177,9 +185,18 @@ class SkillForge:
             feature_code = header + feature_code
 
         # The package directory is the single authoritative persisted form.
-        target_dir = skills_dir / actual_name
+        target_dir = (skills_dir / actual_name).resolve()
         try:
-            target_dir.mkdir(parents=True, exist_ok=True)
+            target_dir.relative_to(skills_dir.resolve())
+        except ValueError:
+            return {"success": False, "message": "Generated skill path escaped the skill vault."}
+        if target_dir.exists():
+            return {
+                "success": False,
+                "message": f"Skill '{actual_name}' already exists; refusing to overwrite an existing capability.",
+            }
+        try:
+            target_dir.mkdir(parents=True, exist_ok=False)
             with open(target_dir / "manifest.json", "w", encoding="utf-8") as f:
                 json.dump(manifest, f, indent=4, ensure_ascii=False)
             with open(target_dir / "skill.py", "w", encoding="utf-8") as f:
