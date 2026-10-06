@@ -4,6 +4,7 @@ from core.github_research import GitHubResearchClient
 from core.efficiency_policy import EFFICIENCY_DIRECTIVE
 import os
 import re
+import shlex
 import sys
 import json
 import fnmatch
@@ -26,6 +27,21 @@ SETTINGS_PATH = APP_SETTINGS_PATH
 # ==============================================================================
 # NATIVE CLAUDE-CODE TOOLS (REBRANDED FOR BRAHMA DEV)
 # ==============================================================================
+
+_SAFE_BASH_PROGRAMS = {
+    "python", "python3", "pytest", "pip", "pip3", "uv", "ruff", "mypy", "pyright",
+    "node", "npm", "yarn", "pnpm", "bun", "deno", "git",
+    "cargo", "rustc", "go", "java", "javac", "gradle", "gradlew", "mvn",
+    "dotnet", "msbuild", "cmake", "make", "gcc", "g++", "clang", "clang++",
+}
+_BLOCKED_COMMAND_INTERPRETERS = {
+    "powershell", "powershell.exe", "pwsh", "pwsh.exe", "cmd", "cmd.exe",
+    "bash", "sh", "zsh", "fish", "wsl", "wsl.exe",
+}
+_BLOCKED_EVAL_FLAGS = {
+    "-c", "--command", "-command", "-encodedcommand", "-e", "--eval", "-eval",
+    "--require", "-r",
+}
 
 class NativeTools:
     def __init__(self, workspace_dir: Path, on_action: Optional[Callable[[str], None]] = None):
@@ -54,37 +70,88 @@ class NativeTools:
         return target
 
     def bash(self, command: str, timeout: int = 120) -> str:
-        """Executes a shell command in the workspace directory."""
-        self._notify(f"⚡ Running command: {command}")
+        """Run one bounded development command without invoking a shell."""
+        raw = str(command or "").strip()
+        if not raw:
+            return "Error: command is required."
+        if len(raw) > 8000:
+            return "Error: command is too long."
+        if any(token in raw for token in (";", "&&", "||", "|", ">", "<", "\n", "\r")):
+            return "Error: shell control operators and redirection are not permitted."
+
         try:
-            is_win = sys.platform.startswith("win")
-            shell_cmd = ["powershell", "-NoProfile", "-Command", command] if is_win else command
-            
+            parts = shlex.split(raw, posix=not sys.platform.startswith("win"))
+        except ValueError as exc:
+            return f"Error: invalid command quoting: {exc}"
+        if not parts:
+            return "Error: command is required."
+
+        executable = Path(parts[0]).name.casefold()
+        if executable in _BLOCKED_COMMAND_INTERPRETERS:
+            return f"Error: shell interpreters are not permitted: {executable}"
+        if executable not in _SAFE_BASH_PROGRAMS:
+            return f"Error: unsupported development executable: {executable}"
+
+        lowered = [str(part).casefold() for part in parts[1:]]
+        if any(flag in _BLOCKED_EVAL_FLAGS for flag in lowered):
+            return "Error: interpreter evaluation flags are not permitted."
+        if executable in {"git"} and any(
+            part.casefold().startswith(("--git-dir=", "--work-tree=")) for part in parts[1:]
+        ):
+            return "Error: Git repository/work-tree overrides are not permitted."
+
+        root = self.workspace_dir.resolve()
+        for arg in parts[1:]:
+            value = str(arg)
+            normalized = value.replace("\\", "/")
+            candidate_text = value.split("=", 1)[-1] if "=" in value else value
+            path_candidate = Path(candidate_text)
+            looks_like_path = (
+                path_candidate.is_absolute()
+                or value.startswith("~")
+                or ".." in Path(normalized.split("=", 1)[-1]).parts
+                or normalized.startswith("./")
+                or normalized.startswith("../")
+            )
+            if looks_like_path:
+                try:
+                    resolved = path_candidate.expanduser().resolve()
+                    resolved.relative_to(root)
+                except (OSError, ValueError):
+                    return "Error: command arguments may not access paths outside the configured developer workspace."
+
+        self._notify(f"⚡ Running command: {raw}")
+        try:
+            try:
+                timeout_value = max(1, min(900, int(timeout)))
+            except (TypeError, ValueError):
+                return "Error: command timeout must be an integer."
             res = subprocess.run(
-                shell_cmd,
+                parts,
                 cwd=str(self.workspace_dir),
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
-                timeout=timeout,
-                shell=not is_win,
+                timeout=timeout_value,
+                shell=False,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                check=False,
             )
             stdout = res.stdout.strip()
             stderr = res.stderr.strip()
-            exit_code = res.returncode
-            
             output = []
             if stdout:
                 output.append(stdout)
             if stderr:
-                output.append(f"[stderr]:\n{stderr}")
-            if not stdout and not stderr:
+                output.append(f"STDERR: {stderr}")
+            if not output:
                 output.append("(No output)")
-            output.append(f"[Exit code: {exit_code}]")
+            output.append(f"[Exit code: {res.returncode}]")
+            if res.returncode != 0:
+                output.insert(0, "Error: command failed.")
             return "\n".join(output)
         except subprocess.TimeoutExpired:
-            return f"Error: Command timed out after {timeout} seconds."
+            return f"Error: Command timed out after {timeout_value} seconds."
         except Exception as e:
             return f"Error running command: {e}"
 
