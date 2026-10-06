@@ -46,6 +46,8 @@ class MainActivity : ComponentActivity() {
                     name = "Brahma PC",
                     host = it.host,
                     port = it.port,
+                    tls = it.tlsEnabled,
+                    tlsCertificateSha256 = it.tlsCertificateSha256,
                 )
             )
         }
