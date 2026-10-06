@@ -158,7 +158,7 @@ def calendar_scheduler(
     """
     p = parameters or {}
     action = p.get("action", "list_events").lower().strip()
-    title = p.get("title", "").strip()
+    title = str(p.get("title", "") or "").strip()[:_MAX_TEXT]
     date_str = _parse_date(p.get("date"))
     time_str = _parse_time(p.get("time"))
     try:
@@ -272,7 +272,9 @@ def calendar_scheduler(
         ics_lines.append("END:VCALENDAR")
 
         desktop_ics = Path.home() / "Desktop" / "brahma_calendar.ics"
-        desktop_ics.write_text("\n".join(ics_lines), encoding="utf-8")
+        temp_ics = desktop_ics.with_name(f".{desktop_ics.name}.{uuid.uuid4().hex}.tmp")
+        temp_ics.write_text("\n".join(ics_lines), encoding="utf-8")
+        temp_ics.replace(desktop_ics)
         return f"Exported calendar events to {desktop_ics}"
 
     return f"Unknown calendar action: '{action}'."
