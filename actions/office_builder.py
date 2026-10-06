@@ -26,7 +26,13 @@ def _sanitize_filename(name: str, default: str) -> str:
     return safe or default
 
 
-def _resolve_output_path(output_path: str | None, title: str, ext: str) -> Path:
+def _resolve_output_path(
+    output_path: str | None,
+    title: str,
+    ext: str,
+    *,
+    overwrite: bool = False,
+) -> Path:
     if output_path:
         path = Path(output_path).expanduser()
         if not path.is_absolute():
@@ -40,11 +46,35 @@ def _resolve_output_path(output_path: str | None, title: str, ext: str) -> Path:
                 path = Path.cwd() / path
         if path.suffix.lower() != ext:
             path = path.with_suffix(ext)
+        home = Path.home().resolve()
+        try:
+            resolved = path.resolve(strict=False)
+            resolved.relative_to(home)
+        except (OSError, ValueError) as exc:
+            raise ValueError("Office output path must remain inside the user's home directory.") from exc
+        current = Path(path.anchor) if path.anchor else Path(".")
+        parts = path.parts[1:] if path.anchor else path.parts
+        for part in parts:
+            current = current / part
+            if current.is_symlink():
+                raise ValueError("Office output path may not contain symlinked components.")
         path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and not overwrite:
+            raise FileExistsError(
+                f"Refusing to overwrite existing Office output without overwrite=True: {path}"
+            )
         return path
 
     DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    return DEFAULT_OUTPUT_DIR / f"{_sanitize_filename(title, 'brahma_ai_output')}{ext}"
+    base = DEFAULT_OUTPUT_DIR / f"{_sanitize_filename(title, 'brahma_ai_output')}{ext}"
+    if overwrite or not base.exists():
+        return base
+    counter = 1
+    while True:
+        candidate = DEFAULT_OUTPUT_DIR / f"{base.stem}_{counter}{base.suffix}"
+        if not candidate.exists():
+            return candidate
+        counter += 1
 
 
 def _parse_json_arg(value, fallback):
@@ -356,7 +386,7 @@ def create_presentation(parameters: dict, player=None) -> str:
     subtitle = (parameters.get("subtitle") or parameters.get("audience") or "").strip()
     theme_hint = parameters.get("theme") or parameters.get("visual_theme") or parameters.get("style")
     theme = _theme_pack(theme_hint, title, subtitle)
-    output_path = _resolve_output_path(parameters.get("output_path"), title, ".pptx")
+    output_path = _resolve_output_path(parameters.get("output_path"), title, ".pptx", overwrite=bool(parameters.get("overwrite", False)))
     auto_open = parameters.get("auto_open", True)
     slides = _slides_from_outline(parameters.get("outline"), _parse_json_arg(parameters.get("slides"), None))
     slides = slides[:20] if slides else slides
@@ -526,7 +556,7 @@ def create_spreadsheet(parameters: dict, player=None) -> str:
     Workbook, BarChart, LineChart, PieChart, Reference, Alignment, Font, PatternFill, get_column_letter = WorkbookClasses
 
     title = (parameters.get("title") or parameters.get("name") or "Workbook").strip()
-    output_path = _resolve_output_path(parameters.get("output_path"), title, ".xlsx")
+    output_path = _resolve_output_path(parameters.get("output_path"), title, ".xlsx", overwrite=bool(parameters.get("overwrite", False)))
     auto_open = parameters.get("auto_open", True)
     sheets = _parse_json_arg(parameters.get("worksheets"), None) or _parse_json_arg(parameters.get("sheets"), None)
     if not sheets:
