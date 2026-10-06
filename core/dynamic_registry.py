@@ -221,24 +221,46 @@ class DynamicToolRegistry:
                     except Exception as e:
                         logger.warning(f"[Registry] Failed to load feature package '{item.name}': {e}")
 
-        # 2. Check legacy AppData skills vault for backward compatibility
+        # 2. Check legacy AppData skills vault for backward compatibility.
+        # User-generated code is treated as untrusted on every reload: keep it
+        # inside the vault and re-run Crucible validation before importing it.
         if APPDATA_SKILLS_DIR.exists():
+            vault_root = APPDATA_SKILLS_DIR.resolve()
             for item in APPDATA_SKILLS_DIR.iterdir():
-                if item.is_dir() and item.name not in cls._skills:
-                    manifest_file = item / "manifest.json"
-                    code_file = item / "skill.py"
-                    if manifest_file.exists() and code_file.exists():
-                        try:
-                            with open(manifest_file, "r", encoding="utf-8") as f:
-                                manifest = json.load(f)
-                            skill = DynamicSkill(item, manifest)
-                            cls._skills[skill.name] = skill
-                            for alias in skill.aliases:
-                                if alias not in cls._skills:
-                                    cls._skills[str(alias)] = skill
-                            count += 1
-                        except Exception:
-                            pass
+                if not item.is_dir() or item.name in cls._skills:
+                    continue
+                try:
+                    skill_root = item.resolve()
+                    skill_root.relative_to(vault_root)
+                    manifest_file = (skill_root / "manifest.json").resolve()
+                    code_file = (skill_root / "skill.py").resolve()
+                    manifest_file.relative_to(skill_root)
+                    code_file.relative_to(skill_root)
+                    if not manifest_file.is_file() or not code_file.is_file():
+                        continue
+                    source = code_file.read_text(encoding="utf-8")
+                    safe, reason = SkillCrucible.validate_ast(source)
+                    if not safe:
+                        logger.warning(
+                            "[Registry] Refusing unsafe persisted skill '%s': %s",
+                            item.name,
+                            _redact_text(reason),
+                        )
+                        continue
+                    with manifest_file.open("r", encoding="utf-8") as f:
+                        manifest = json.load(f)
+                    skill = DynamicSkill(skill_root, manifest)
+                    cls._skills[skill.name] = skill
+                    for alias in skill.aliases:
+                        if alias not in cls._skills:
+                            cls._skills[str(alias)] = skill
+                    count += 1
+                except Exception as exc:
+                    logger.warning(
+                        "[Registry] Refusing persisted skill '%s': %s",
+                        item.name,
+                        _redact_text(exc),
+                    )
 
         cls._initialized = True
         logger.info(f"[Registry] Initialized with {count} features and skills.")
