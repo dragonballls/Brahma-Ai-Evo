@@ -260,10 +260,11 @@ Skill Architecture Guidelines:
    - In `execute(**kwargs)`, ALWAYS assign safe fallback defaults to all expected parameters (e.g. `query = kwargs.get('query') or kwargs.get('search') or 'headphones'`).
    - If called with empty kwargs `{}` (such as during sandbox verification), the skill MUST execute cleanly without throwing KeyError or TypeError.
 4. Resilient Network & Safe SSL Handling:
-   - When external live data or web downloads are needed, prefer `requests` with `timeout=8, verify=False`, OR if using `urllib`, ALWAYS bypass Windows SSL verification via `import ssl; ctx = ssl._create_unverified_context()` because Python on Windows frequently throws `[SSL: CERTIFICATE_VERIFY_FAILED]`.
-   - NEVER require or assume environment API keys (e.g. `GIPHY_API_KEY`, `OPENAI_API_KEY`). Skills must be 100% self-contained and run out of the box using public open APIs (such as Tenor public key `LIVDSRZULELA` or open REST) or local Python logic.
-   - If any network call fails or times out, ALWAYS catch generic `Exception` and supply a working fallback so `execute()` NEVER returns an `{'error': ...}` dictionary.
-   - Do NOT use heavy scrapers (avoid selenium/playwright).
+   - When external live data or web downloads are needed, prefer `requests` with an explicit timeout and normal certificate verification (`verify=True` by default). Never disable TLS certificate verification and never call `ssl._create_unverified_context()`.
+   - When using `urllib`, use its normal verified TLS context. Only add a custom context when it preserves certificate verification and hostname checking.
+   - NEVER hard-code, invent, or expose API keys/tokens. Use Brahma's canonical credential/config accessors only when a capability legitimately requires credentials, and keep secrets out of logs, files, return values, prompts, and generated source.
+   - If any network call fails or times out, catch the narrowest practical exception and provide a deterministic local fallback where appropriate. Do not silently convert security failures into successful-looking results.
+   - Do NOT use heavy scrapers (avoid selenium/playwright) unless the goal explicitly requires the browser stack and the capability has been approved for that integration.
 5. Visual Deliverables, Images, GIFs, & UI Cards:
    - If the user asks for images, drawings, graphics, headphones, cars, animals, cartoons, plots, scorecards, charts, or GIFs:
      a) ALWAYS produce an actual deliverable image file (.png or .gif) saved to:
