@@ -37,7 +37,19 @@ def save_config(updates: dict[str, Any]) -> None:
         raise TypeError("configuration updates must be a dictionary")
     with _CONFIG_LOCK:
         API_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        current = get_config()
+        current: dict[str, Any] = {"os_system": platform.system().lower() or "windows"}
+        if API_CONFIG_PATH.is_file():
+            try:
+                data = json.loads(API_CONFIG_PATH.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                raise RuntimeError(
+                    "API configuration is unreadable or corrupted; refusing to overwrite it."
+                ) from exc
+            if not isinstance(data, dict):
+                raise RuntimeError(
+                    "API configuration has an invalid root schema; refusing to overwrite it."
+                )
+            current.update(data)
         current.update(updates)
         temp = API_CONFIG_PATH.with_suffix(".json.tmp")
         try:
