@@ -22,8 +22,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install targeted test dependency
-        run: python -m pip install --disable-pip-version-check requests
+      - name: Install targeted test dependencies
+        run: python -m pip install --disable-pip-version-check requests fastapi uvicorn
 
       - name: Compile touched Python modules
         run: >
@@ -50,3 +50,4 @@ jobs:
           tests.test_repository_integrity.RepositoryIntegrityTests.test_bootstrap_validates_existing_venv_python_version
           tests.test_repository_integrity.RepositoryIntegrityTests.test_bootstrap_caches_and_validates_runtime_installers
           tests.test_capability_usability
+          tests.test_followup_audits
