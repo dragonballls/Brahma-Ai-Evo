@@ -893,3 +893,11 @@ if __name__ == "__main__":
         self.assertEqual(payload["pairing_token"], "<redacted>")
         self.assertEqual(payload["session_key"], "<redacted>")
         self.assertEqual(payload["device_name"], "Pixel")
+
+    def test_dashboard_auth_state_is_bounded_and_pruned(self):
+        source = self.read("dashboard/server.py")
+        self.assertIn("def _prune_auth_state(self) -> None:", source)
+        self.assertIn("if len(self._tokens) > 512:", source)
+        self.assertIn("if len(self._device_sessions) > 256:", source)
+        self.assertIn("if len(self._login_failures) > 2048:", source)
+        self.assertIn("self._prune_auth_state()", source)
