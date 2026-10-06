@@ -134,23 +134,28 @@ BANNED_IMPORT_MODULES = {
 }
 
 BANNED_CALLS = {
-    ("os", "system"),
-    ("os", "popen"),
-    ("os", "remove"),
-    ("os", "unlink"),
-    ("os", "rmdir"),
-    ("os", "removedirs"),
-    ("os", "replace"),
-    ("os", "rename"),
-    ("os", "startfile"),
-    ("shutil", "rmtree"),
-    ("shutil", "copytree"),
-    ("shutil", "make_archive"),
+    ("os", "system"), ("os", "popen"), ("os", "remove"), ("os", "unlink"),
+    ("os", "rmdir"), ("os", "removedirs"), ("os", "replace"), ("os", "rename"),
+    ("os", "startfile"), ("os", "listdir"), ("os", "scandir"), ("os", "walk"),
+    ("os", "fwalk"), ("os", "stat"), ("os", "lstat"), ("os", "access"),
+    ("os", "readlink"), ("os", "spawnl"), ("os", "spawnle"), ("os", "spawnv"),
+    ("os", "spawnve"), ("os", "posix_spawn"), ("os", "posix_spawnp"),
+    ("os", "execl"), ("os", "execle"), ("os", "execlp"), ("os", "execv"),
+    ("os", "execve"), ("os", "execvp"), ("os", "execvpe"), ("os", "_exit"),
+    ("os", "abort"), ("os", "kill"), ("os", "killpg"),
+    ("os.path", "realpath"), ("os.path", "abspath"), ("os.path", "exists"),
+    ("os.path", "lexists"), ("os.path", "getsize"), ("os.path", "getmtime"),
+    ("os.path", "getatime"), ("os.path", "getctime"), ("os.path", "getmode"),
+    ("os.path", "samefile"),
+    ("shutil", "rmtree"), ("shutil", "copytree"), ("shutil", "make_archive"),
     ("subprocess", "*"),
-    ("pathlib.Path", "unlink"),
-    ("pathlib.Path", "rmdir"),
-    ("pathlib.Path", "replace"),
-    ("pathlib.Path", "rename"),
+    ("pathlib.Path", "unlink"), ("pathlib.Path", "rmdir"), ("pathlib.Path", "replace"),
+    ("pathlib.Path", "rename"), ("pathlib.Path", "iterdir"), ("pathlib.Path", "glob"),
+    ("pathlib.Path", "rglob"), ("pathlib.Path", "walk"), ("pathlib.Path", "resolve"),
+    ("pathlib.Path", "absolute"), ("pathlib.Path", "stat"), ("pathlib.Path", "lstat"),
+    ("pathlib.Path", "exists"), ("pathlib.Path", "is_file"), ("pathlib.Path", "is_dir"),
+    ("pathlib.Path", "is_symlink"), ("pathlib.Path", "readlink"),
+    ("pathlib.Path", "owner"), ("pathlib.Path", "group"),
     ("ssl", "_create_unverified_context"),
 }
 
@@ -241,6 +246,14 @@ class SkillCrucible:
             "system", "popen", "remove", "unlink", "rmdir", "removedirs",
             "replace", "rename", "startfile", "_create_unverified_context",
             "rmtree", "copytree", "make_archive",
+            "listdir", "scandir", "walk", "fwalk", "stat", "lstat", "access",
+            "readlink", "realpath", "abspath", "exists", "lexists", "getsize",
+            "getmtime", "getatime", "getctime", "getmode", "samefile",
+            "symlink", "link", "mkdir", "makedirs", "chmod", "chown", "lchown",
+            "utime", "truncate", "ftruncate", "spawnl", "spawnle", "spawnv",
+            "spawnve", "posix_spawn", "posix_spawnp", "execl", "execle",
+            "execlp", "execv", "execve", "execvp", "execvpe", "_exit", "abort",
+            "kill", "killpg",
         }
 
         for node in ast.walk(tree):
@@ -267,6 +280,14 @@ class SkillCrucible:
                     "system", "popen", "remove", "unlink", "rmdir", "removedirs",
                     "replace", "rename", "startfile", "_create_unverified_context",
                     "rmtree", "copytree", "make_archive",
+                    "listdir", "scandir", "walk", "fwalk", "stat", "lstat", "access",
+                    "readlink", "realpath", "abspath", "exists", "lexists", "getsize",
+                    "getmtime", "getatime", "getctime", "getmode", "samefile",
+                    "symlink", "link", "mkdir", "makedirs", "chmod", "chown", "lchown",
+                    "utime", "truncate", "ftruncate", "spawnl", "spawnle", "spawnv",
+                    "spawnve", "posix_spawn", "posix_spawnp", "execl", "execle",
+                    "execlp", "execv", "execve", "execvp", "execvpe", "_exit", "abort",
+                    "kill", "killpg",
                 }
                 if module_root in {"os", "shutil", "ssl"}:
                     for alias in node.names:
@@ -301,7 +322,11 @@ class SkillCrucible:
                         attr_name = str(func.args[1].value)
                         if module_root in sensitive_modules and attr_name in dangerous_names:
                             return False, f"Security Violation: prohibited dynamic access '{module_root}.{attr_name}'."
-                        if symbol_root == "pathlib.Path" and attr_name in {"unlink", "rmdir", "replace", "rename"}:
+                        if symbol_root == "pathlib.Path" and attr_name in {
+                            "unlink", "rmdir", "replace", "rename", "iterdir", "glob", "rglob",
+                            "walk", "resolve", "absolute", "stat", "lstat", "exists", "is_file",
+                            "is_dir", "is_symlink", "readlink", "owner", "group",
+                        }:
                             return False, f"Security Violation: prohibited dynamic access 'pathlib.Path.{attr_name}'."
                 if isinstance(func, ast.Attribute):
                     def _expression_symbol(expr: ast.AST) -> str:
@@ -467,14 +492,12 @@ from pathlib import Path as _SandboxPath
 import shutil as _sandbox_shutil
 
 _SANDBOX_ROOT = _SandboxPath(os.environ["BRAHMA_CRUCIBLE_ROOT"]).resolve()
-_REAL_OS_REALPATH = os.path.realpath
-
 def _sandbox_path(value):
     if isinstance(value, (str, bytes, os.PathLike)):
         candidate = _SandboxPath(value)
         if not candidate.is_absolute():
             candidate = _SANDBOX_ROOT / candidate
-        resolved = _SandboxPath(_REAL_OS_REALPATH(os.fspath(candidate)))
+        resolved = candidate.resolve()
         try:
             resolved.relative_to(_SANDBOX_ROOT)
         except ValueError as exc:
@@ -484,17 +507,11 @@ def _sandbox_path(value):
         raise PermissionError("Crucible sandbox denied direct file-descriptor access.")
     return value
 
-def _sandbox_dir_arg(value):
-    return _sandbox_path(value)
-
 _real_open = _builtins.open
 _real_io_open = _io.open
 _real_os_open = os.open
 _real_os_listdir = os.listdir
 _real_os_scandir = os.scandir
-_real_os_stat = os.stat
-_real_os_lstat = os.lstat
-_real_os_access = os.access
 _real_os_walk = os.walk
 _real_os_fwalk = os.fwalk
 _real_os_readlink = os.readlink
@@ -508,8 +525,6 @@ _real_os_mkdir = os.mkdir
 _real_os_makedirs = os.makedirs
 _real_os_symlink = os.symlink
 _real_os_link = os.link
-_real_os_system = os.system
-_real_os_popen = os.popen
 _real_os_startfile = getattr(os, "startfile", None)
 
 def _sandbox_open(file, *args, **kwargs):
@@ -529,21 +544,6 @@ def _sandbox_listdir(path="."):
 def _sandbox_scandir(path="."):
     return _real_os_scandir(_sandbox_path(path))
 
-def _sandbox_stat(path, *args, **kwargs):
-    if kwargs.get("dir_fd") is not None or (len(args) >= 2 and args[1] is not None):
-        raise PermissionError("Crucible sandbox denied dir_fd filesystem access.")
-    return _real_os_stat(_sandbox_path(path))
-
-def _sandbox_lstat(path, *args, **kwargs):
-    if kwargs.get("dir_fd") is not None or (len(args) >= 2 and args[1] is not None):
-        raise PermissionError("Crucible sandbox denied dir_fd filesystem access.")
-    return _real_os_lstat(_sandbox_path(path))
-
-def _sandbox_access(path, *args, **kwargs):
-    if kwargs.get("dir_fd") is not None or (len(args) >= 2 and args[1] is not None):
-        raise PermissionError("Crucible sandbox denied dir_fd filesystem access.")
-    return _real_os_access(_sandbox_path(path), *args[:1], **{{k: v for k, v in kwargs.items() if k != "dir_fd"}})
-
 def _sandbox_walk(top, *args, **kwargs):
     return _real_os_walk(_sandbox_path(top), *args, **kwargs)
 
@@ -557,8 +557,13 @@ def _sandbox_readlink(path, *args, **kwargs):
         raise PermissionError("Crucible sandbox denied dir_fd filesystem access.")
     link_path = _sandbox_path(path)
     target = _real_os_readlink(link_path)
-    resolved_target = _SandboxPath(_REAL_OS_REALPATH(os.path.join(os.path.dirname(os.fspath(link_path)), target)))
-    resolved_target.relative_to(_SANDBOX_ROOT)
+    target_path = _SandboxPath(target)
+    if not target_path.is_absolute():
+        target_path = link_path.parent / target_path
+    try:
+        target_path.resolve().relative_to(_SANDBOX_ROOT)
+    except ValueError as exc:
+        raise PermissionError("Crucible sandbox denied symlink targets outside its temporary root.") from exc
     return target
 
 def _sandbox_mutation(real_fn):
@@ -584,9 +589,6 @@ _io.open = _sandbox_io_open
 os.open = _sandbox_os_open
 os.listdir = _sandbox_listdir
 os.scandir = _sandbox_scandir
-os.stat = _sandbox_stat
-os.lstat = _sandbox_lstat
-os.access = _sandbox_access
 os.walk = _sandbox_walk
 os.fwalk = _sandbox_fwalk
 os.readlink = _sandbox_readlink
@@ -611,12 +613,6 @@ try:
     _sandbox_shutil.make_archive = _sandbox_blocked
 except Exception:
     pass
-
-# Keep path helpers from exposing or escaping the sandbox when they reach os.*
-_real_os_realpath_fn = os.path.realpath
-def _sandbox_realpath(path, *args, **kwargs):
-    return os.fspath(_sandbox_path(path))
-os.path.realpath = _sandbox_realpath
 
 {skill_code}
 
