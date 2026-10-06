@@ -8,11 +8,15 @@ from typing import Callable, Any
 
 def _safe_print(message: object) -> None:
     """Emit task-queue diagnostics without crashing on legacy Windows code pages."""
+    import sys
+
     text = str(message)
+    encoding = getattr(sys.stdout, "encoding", None) or "ascii"
     try:
-        _safe_print(text)
-    except UnicodeEncodeError:
-        _safe_print(text.encode("ascii", "replace").decode("ascii"))
+        safe_text = text.encode(encoding, "replace").decode(encoding, "replace")
+    except (LookupError, UnicodeError):
+        safe_text = text.encode("ascii", "replace").decode("ascii")
+    print(safe_text)
 
 
 
