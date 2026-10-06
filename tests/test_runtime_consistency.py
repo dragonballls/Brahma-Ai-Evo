@@ -746,6 +746,8 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("def _refresh_credentials", source)
         self.assertIn("_credential_lock", source)
         self.assertIn("_model_state_lock", source)
+        self.assertIn("headers=headers,", source)
+        self.assertNotIn("headers=self._headers,", source)
 
     def test_dashboard_encryption_contract_is_consistent(self):
         server = self.read("dashboard/server.py")
