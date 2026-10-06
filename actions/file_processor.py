@@ -715,6 +715,28 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
 
     return f"Unknown video action: '{action}'. Try: info, trim, extract_audio, extract_frame, compress, transcribe, convert"
 
+def _safe_archive_destination(value: str | Path, fallback: Path) -> Path:
+    raw = Path(value).expanduser() if str(value).strip() else fallback
+    if not raw.is_absolute():
+        raw = Path.cwd() / raw
+    home = Path.home().resolve()
+    try:
+        resolved = raw.resolve(strict=False)
+        resolved.relative_to(home)
+    except (OSError, ValueError) as exc:
+        raise ValueError("Archive extraction is limited to destinations inside the user's home directory.") from exc
+    current = Path(raw.anchor) if raw.anchor else Path(".")
+    parts = raw.parts[1:] if raw.anchor else raw.parts
+    for part in parts:
+        current = current / part
+        try:
+            if current.is_symlink():
+                raise ValueError("Archive extraction destinations may not contain symlinked path components.")
+        except OSError as exc:
+            raise ValueError("Unable to safely validate the archive destination path.") from exc
+    return resolved
+
+
 def _safe_archive_target(root: Path, member_name: str) -> Path:
     normalized = str(member_name or "").replace("\\", "/")
     if not normalized or normalized.startswith("/") or re.match(r"^[A-Za-z]:/", normalized):
@@ -827,9 +849,14 @@ def _process_archive(path: Path, action: str, params: dict, speak=None) -> str:
             return f"List failed: {e}"
 
     if action == "extract":
-        dest = Path(params.get("destination", str(path.parent / path.stem)))
-        dest.mkdir(parents=True, exist_ok=True)
         try:
+            dest = _safe_archive_destination(
+                params.get("destination", str(path.parent / path.stem)),
+                path.parent / path.stem,
+            )
+            dest.mkdir(parents=True, exist_ok=True)
+            if dest.is_symlink():
+                raise ValueError("Archive extraction destination may not be a symlink.")
             _safe_extract_archive(path, dest)
             return f"Extracted to: {dest}"
         except Exception as e:
