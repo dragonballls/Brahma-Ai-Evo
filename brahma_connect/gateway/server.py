@@ -812,16 +812,19 @@ class BrahmaGateway:
                         continue
 
                     if msg_type == ProtocolTypes.AUTHENTICATE:
-                        device_id = str(payload.get("device_id") or "").strip()
+                        attempted_device_id = str(payload.get("device_id") or "").strip()
                         secret = str(payload.get("device_secret") or "").strip()
                         record = self.device_manager.authenticate(
-                            device_id,
+                            attempted_device_id,
                             secret,
                             ip=websocket.client.host if websocket.client else "",
                         )
                         if record is None:
+                            device_id = ""
+                            pairing_deadline = None
                             await websocket.send_json(build_message(ProtocolTypes.ERROR, {"error": "Authentication failed."}, request_id=request_id))
                             continue
+                        device_id = record.device_id
                         await self.hub.register(websocket, record.device_id)
                         self.device_manager.touch(record.device_id, ip=websocket.client.host if websocket.client else "")
                         self._append_log("DEVICE_CONNECTED", device_id=record.device_id, name=record.name)
