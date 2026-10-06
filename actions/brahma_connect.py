@@ -223,7 +223,7 @@ def connect_pair_device(parameters: dict[str, Any] | None = None, player=None, s
         service = _service()
         pending_id = str(params.get("pending_id") or "").strip()
         if pending_id:
-            result = asyncio.run(service.approve_pending_request(pending_id))
+            result = service.approve_pending_request_sync(pending_id)
             return _dump(result)
 
         device_name = str(params.get("device_name") or params.get("name") or "Unknown Device").strip()
