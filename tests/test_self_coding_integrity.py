@@ -37,4 +37,31 @@ def test_self_coding_approve_has_one_remote_push_and_persists_promoting_before_i
 
 def test_self_coding_rejects_checkpoint_filename_id_mismatch():
     source = (ROOT / "core" / "self_coding.py").read_text(encoding="utf-8")
-    assert "checkpoint.checkpoint_id != checkpoint_id" in source
+    assert "expected_checkpoint_id" in source
+    assert "checkpoint.checkpoint_id != expected_checkpoint_id" in source
+
+
+def test_self_coding_checkpoint_validation_accepts_matching_expected_id():
+    from core.self_coding import Checkpoint, SelfCodingAgent
+
+    agent = object.__new__(SelfCodingAgent)
+    baseline = "a" * 40
+    commit = "b" * 40
+
+    class Result:
+        returncode = 0
+        stdout = f"{commit} {baseline}\n"
+        stderr = ""
+
+    agent._git = lambda *args, **kwargs: Result()
+
+    checkpoint = Checkpoint(
+        checkpoint_id="checkpoint-1",
+        branch="agent/checkpoint/checkpoint-1",
+        baseline=baseline,
+        base_branch="main",
+        commits=(commit,),
+        created_at="now",
+        state="pending",
+    )
+    agent._validate_checkpoint(checkpoint, "checkpoint-1")
