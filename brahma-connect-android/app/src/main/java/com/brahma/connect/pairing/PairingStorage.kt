@@ -36,18 +36,25 @@ class PairingStorage(context: Context) {
         val raw = prefs.getString("device_credential", null) ?: return null
         return try {
             val json = JSONObject(raw)
+            val deviceId = json.optString("device_id").trim()
+            val deviceSecret = json.optString("device_secret").trim()
+            val gatewayHost = json.optString("gateway_host").trim()
+            val gatewayPort = json.optInt("gateway_port", -1)
+            if (deviceId.isBlank() || deviceSecret.isBlank() || gatewayHost.isBlank() || gatewayPort !in 1..65535) {
+                throw IllegalArgumentException("Stored device credentials are incomplete.")
+            }
             DeviceCredential(
-                deviceId = json.optString("device_id"),
-                deviceSecret = json.optString("device_secret"),
+                deviceId = deviceId,
+                deviceSecret = deviceSecret,
                 deviceName = json.optString("device_name", Build.MODEL),
-                gatewayHost = json.optString("gateway_host"),
-                gatewayPort = json.optInt("gateway_port", 8765),
+                gatewayHost = gatewayHost,
+                gatewayPort = gatewayPort,
                 tls = json.optBoolean("tls", true),
                 tlsCertificateSha256 = json.optString("tls_certificate_sha256"),
                 pairedAt = json.optString("paired_at"),
             )
-        } catch (_: Exception) {
-            null
+        } catch (exc: Exception) {
+            throw IllegalStateException("Stored device credentials are corrupt; reconnect requires explicit repair.", exc)
         }
     }
 
