@@ -18,7 +18,7 @@ jobs:
     timeout-minutes: 90
     steps:
       - name: Checkout main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 1
 
@@ -32,7 +32,7 @@ jobs:
           "OMNIROUTE_VERSION=$omni" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: "3.12"
           cache: pip
@@ -53,7 +53,7 @@ jobs:
 
       - name: Restore cached OmniRoute runtime
         id: omni-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6.1.0
         with:
           path: build_vendor/omniroute_runtime
           key: windows-omniroute-${{ hashFiles('core/runtime_contract.py', 'scripts/prepare_omniroute_runtime.py') }}
@@ -78,7 +78,7 @@ jobs:
 
       - name: Cache verified OmniRoute runtime
         if: ${{ success() && steps.omni-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6.1.0
         with:
           path: build_vendor/omniroute_runtime
           key: windows-omniroute-${{ hashFiles('core/runtime_contract.py', 'scripts/prepare_omniroute_runtime.py') }}
@@ -114,7 +114,7 @@ jobs:
 
       - name: Restore cached Brahma Evo payload
         id: payload-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6.1.0
         with:
           path: dist/BrahmaEvoPayload.zip
           key: windows-payload-${{ hashFiles('dist/BrahmaEvo/**') }}
@@ -135,7 +135,7 @@ jobs:
 
       - name: Cache verified Brahma Evo payload
         if: ${{ success() && steps.payload-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6.1.0
         with:
           path: dist/BrahmaEvoPayload.zip
           key: windows-payload-${{ hashFiles('dist/BrahmaEvo/**') }}
@@ -272,7 +272,7 @@ jobs:
 
 
       - name: Publish verified Brahma Evo application
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: Brahma-Evo-Windows-App-${{ github.run_number }}
           compression-level: 0
@@ -283,7 +283,7 @@ jobs:
           retention-days: 30
 
       - name: Publish verified setup wizard
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: Brahma-Evo-Windows-Installer-${{ github.run_number }}
           compression-level: 0
