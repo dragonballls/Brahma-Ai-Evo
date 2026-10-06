@@ -630,6 +630,9 @@ class BrahmaGateway:
         async def ws_endpoint(websocket: WebSocket):
             await websocket.accept()
             state = await self.hub.attach(websocket)
+            if state is None:
+                await websocket.close(code=1013, reason="Gateway connection capacity reached")
+                return
             device_id = ""
             try:
                 while True:
