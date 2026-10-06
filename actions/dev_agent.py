@@ -3,6 +3,7 @@ import subprocess
 import sys
 import json
 import re
+import shlex
 import time
 import shutil
 from pathlib import Path
@@ -17,6 +18,11 @@ def get_base_dir():
 BASE_DIR         = get_base_dir()
 PROJECTS_DIR     = Path.home() / "Desktop" / "BrahmaProjects"
 MAX_FIX_ATTEMPTS = 5
+_SAFE_RUN_PROGRAMS = {
+    "python", "python3", "pytest", "uvicorn", "ruff", "mypy",
+    "npm", "node", "npx", "cargo", "go", "dotnet", "java", "ruby", "php",
+}
+_BLOCKED_RUN_FLAGS = {"-c", "--command", "--eval", "-e", "--execute", "--require", "--import"}
 MODEL_PLANNER    = "gemini-flash-latest"
 MODEL_WRITER     = "gemini-flash-latest"
 
@@ -308,35 +314,45 @@ def _open_vscode(project_dir: Path) -> bool:
     return False
 
 def _run_project(run_command: str, project_dir: Path, timeout: int = 30) -> str:
-    print(f"[DevAgent] 🚀 Running: {run_command}")
+    print(f"[DevAgent] Running: {run_command}")
     try:
-        parts = run_command.split()
-        if parts[0].lower() == "python":
+        parts = shlex.split(str(run_command or ""))
+        if not parts:
+            return "Run error: empty command."
+
+        program = Path(parts[0]).name.casefold()
+        if program.endswith(".exe"):
+            program = program[:-4]
+        if program.endswith(".cmd"):
+            program = program[:-4]
+        if program not in _SAFE_RUN_PROGRAMS:
+            return f"Run blocked: unsupported development executable '{parts[0]}'."
+        if any(str(arg).casefold() in _BLOCKED_RUN_FLAGS for arg in parts[1:]):
+            return "Run blocked: interpreter evaluation flags are not permitted."
+
+        if program in {"python", "python3"} and parts[0].casefold() == "python":
             parts[0] = sys.executable
 
         result = subprocess.run(
             parts,
             capture_output=True, text=True,
             encoding="utf-8", errors="replace",
-            timeout=timeout,
-            cwd=str(project_dir)
+            timeout=timeout, cwd=str(project_dir)
         )
-
         stdout = result.stdout.strip()
         stderr = result.stderr.strip()
-
         combined_parts = []
         if stdout:
             combined_parts.append(f"STDOUT:\n{stdout}")
         if stderr:
             combined_parts.append(f"STDERR:\n{stderr}")
-
         return "\n\n".join(combined_parts) if combined_parts else "Ran with no output."
-
     except subprocess.TimeoutExpired:
-        return f"Timed out after {timeout}s — long-running app (server/GUI) is likely working."
+        return f"Timed out after {timeout}s."
     except FileNotFoundError as e:
         return f"Command not found: {e}"
+    except ValueError as e:
+        return f"Run error: {e}"
     except Exception as e:
         return f"Run error: {e}"
 
