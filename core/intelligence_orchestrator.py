@@ -181,7 +181,8 @@ def _ensemble_models(cfg:dict, profile_cfg:dict, profile:str="smart")->list[tupl
     for provider in providers:
         model=_select_provider_model(provider,models,overrides,profile)
         if model: selected.append((provider,model))
-    return selected[:max(2,int(cfg.get('ensemble_max_providers',8)))]
+    provider_cap = max(2, min(int(cfg.get('ensemble_max_providers', 8)), 1 + max(0, int(cfg.get('max_specialists', 2)))))
+    return selected[:provider_cap]
 
 def _ensemble_roles(profile:str,count:int)->tuple[str,...]:
     roles={
