@@ -198,6 +198,28 @@ def test_service_restart_prepares_gateway_start():
     assert calls == ["prepared"]
 
 
+def test_service_sync_gateway_api_closes_coroutine_inside_running_loop():
+    from brahma_connect.service import BrahmaConnectService
+
+    service = object.__new__(BrahmaConnectService)
+    service._lock = threading.RLock()
+    service._loop = None
+    service.gateway = type("Gateway", (), {
+        "config": type("Config", (), {"request_timeout_seconds": 1})(),
+    })()
+
+    async def scenario():
+        coroutine = asyncio.sleep(0)
+        with pytest.raises(
+            RuntimeError,
+            match="Synchronous gateway operation cannot run inside an active event loop",
+        ):
+            service._run_on_gateway_loop(coroutine)
+        assert coroutine.cr_frame is None or coroutine.cr_running is False
+
+    asyncio.run(scenario())
+
+
 def test_service_gateway_timeout_cancels_submitted_future():
     from brahma_connect.service import BrahmaConnectService
 
