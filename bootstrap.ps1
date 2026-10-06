@@ -49,6 +49,42 @@ function Update-Environment {
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
 }
 
+function Get-Sha256([string]$Path) {
+    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Download-And-Verify([string]$Url, [string]$Destination, [string]$ExpectedSha256) {
+    $temp = "$Destination.download"
+    Remove-Item $temp -Force -ErrorAction SilentlyContinue
+    Invoke-WebRequest -Uri $Url -OutFile $temp
+    if (-not (Test-Path $temp -PathType Leaf)) {
+        throw "Download failed: $Url"
+    }
+    $actual = Get-Sha256 $temp
+    if ($actual -ne $ExpectedSha256.ToLowerInvariant()) {
+        Remove-Item $temp -Force -ErrorAction SilentlyContinue
+        throw "Checksum verification failed for $Url."
+    }
+    Move-Item -Force $temp $Destination
+}
+
+function Get-NodeChecksum([string]$Version, [string]$FileName) {
+    $sumUrl = "https://nodejs.org/dist/v$Version/SHASUMS256.txt"
+    $response = Invoke-WebRequest -Uri $sumUrl -UseBasicParsing
+    $line = ($response.Content -split "\r?\n") | Where-Object { $_ -match ("\s" + [regex]::Escape($FileName) + "$") } | Select-Object -First 1
+    if (-not $line) {
+        throw "Official Node.js SHA256 manifest did not contain $FileName."
+    }
+    return (($line -split "\s+")[0]).Trim().ToLowerInvariant()
+}
+
+function Test-Authenticode([string]$Path) {
+    $signature = Get-AuthenticodeSignature -FilePath $Path
+    if ($signature.Status -ne "Valid") {
+        throw "Authenticode signature verification failed for $Path (status: $($signature.Status))."
+    }
+}
+
 # 3. Check for the canonical Python runtime
 $PythonExe = $null
 $PythonArgs = @("-$PythonMajorMinor")
@@ -90,9 +126,13 @@ if (-not $PythonExe) {
         if (-not (Test-Path $tempPythonInstaller -PathType Leaf) -or (Get-Item $tempPythonInstaller).Length -lt 1MB) {
             throw "Python bootstrap download was incomplete."
         }
+        # Python publishes signed Windows installers; require a valid Authenticode signature
+        # before the installer is ever executed.
+        Test-Authenticode $tempPythonInstaller
         Move-Item -Force $tempPythonInstaller $PythonInstaller
     } else {
         Write-Host "Using cached Python installer: $PythonInstaller" -ForegroundColor DarkGray
+        Test-Authenticode $PythonInstaller
     }
 
     Write-Host "Installing Python $PythonBootstrapVersion (Silent Mode)..." -ForegroundColor Yellow
@@ -142,9 +182,20 @@ if ($NodeNeedsRepair) {
         if (-not (Test-Path $tempNodeInstaller -PathType Leaf) -or (Get-Item $tempNodeInstaller).Length -lt 1MB) {
             throw "Node bootstrap download was incomplete."
         }
+        $nodeExpectedSha = Get-NodeChecksum $NodeVersion (Split-Path $NodeInstaller -Leaf)
+        $nodeActualSha = Get-Sha256 $tempNodeInstaller
+        if ($nodeActualSha -ne $nodeExpectedSha) {
+            Remove-Item $tempNodeInstaller -Force -ErrorAction SilentlyContinue
+            throw "Node.js installer SHA256 verification failed."
+        }
         Move-Item -Force $tempNodeInstaller $NodeInstaller
     } else {
         Write-Host "Using cached Node installer: $NodeInstaller" -ForegroundColor DarkGray
+        $nodeExpectedSha = Get-NodeChecksum $NodeVersion (Split-Path $NodeInstaller -Leaf)
+        if ((Get-Sha256 $NodeInstaller) -ne $nodeExpectedSha) {
+            Remove-Item $NodeInstaller -Force
+            throw "Cached Node.js installer failed official SHA256 verification."
+        }
     }
     
     Write-Host "Installing Node.js v$NodeVersion (Silent Mode)..." -ForegroundColor Yellow
