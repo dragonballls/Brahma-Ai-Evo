@@ -548,10 +548,25 @@ class WorkspaceStore:
         convo = self.get_conversation(conversation_id)
         if not convo:
             raise ValueError("Conversation not found")
-        target = Path(path)
+
+        target = Path(path).expanduser()
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(convo, indent=2, ensure_ascii=False), encoding="utf-8")
-        return target
+        fd, temp_name = tempfile.mkstemp(
+            prefix=f".{target.name}.export-",
+            dir=str(target.parent),
+            text=True,
+        )
+        os.close(fd)
+        temp = Path(temp_name)
+        try:
+            temp.write_text(
+                json.dumps(convo, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            temp.replace(target)
+            return target
+        finally:
+            temp.unlink(missing_ok=True)
 
     def all_memories(self) -> list[dict[str, Any]]:
         with self._lock, self._connect() as conn:
