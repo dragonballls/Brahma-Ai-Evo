@@ -218,20 +218,52 @@ class DeviceCommandHandler(private val context: Context) {
     }
 
     private fun resolveFileTarget(path: String?): java.io.File {
-        val storage = android.os.Environment.getExternalStorageDirectory()
+        val storage = android.os.Environment.getExternalStorageDirectory().canonicalFile
         if (path.isNullOrBlank() || path.equals("home", ignoreCase = true)) {
             return storage
         }
-        val lower = path.lowercase().trim()
-        val baseDir = when (lower) {
-            "downloads" -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
-            "documents" -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS)
-            "pictures" -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_PICTURES)
-            "music" -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC)
-            "movies", "videos" -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MOVIES)
-            else -> java.io.File(storage, path)
+        val normalized = path.trim().replace('\\', '/')
+        if (normalized.startsWith("/") || Regex("^[A-Za-z]:").containsMatchIn(normalized)) {
+            throw IllegalArgumentException("Absolute file paths are not allowed.")
         }
-        return baseDir
+        val parts = normalized.split('/').filter { it.isNotEmpty() }
+        if (parts.any { it == ".." }) {
+            throw IllegalArgumentException("Path traversal is not allowed.")
+        }
+        val lower = parts.firstOrNull()?.lowercase().orEmpty()
+        val baseDir = when (lower) {
+            "downloads" -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS).canonicalFile
+            "documents" -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS).canonicalFile
+            "pictures" -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_PICTURES).canonicalFile
+            "music" -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC).canonicalFile
+            "movies", "videos" -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MOVIES).canonicalFile
+            else -> storage
+        }
+        val relative = if (lower in setOf("downloads", "documents", "pictures", "music", "movies", "videos")) {
+            parts.drop(1)
+        } else {
+            parts
+        }
+        val target = java.io.File(baseDir, relative.joinToString("/")).canonicalFile
+        if (target != baseDir && !target.path.startsWith(baseDir.path + java.io.File.separator)) {
+            throw IllegalArgumentException("Resolved path escaped the allowed storage directory.")
+        }
+        return target
+    }
+
+    private fun rejectProtectedStorageRoot(file: java.io.File): CommandResult? {
+        val storage = android.os.Environment.getExternalStorageDirectory().canonicalFile
+        val protectedRoots = setOf(
+            storage.path,
+            android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS).canonicalPath,
+            android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS).canonicalPath,
+            android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_PICTURES).canonicalPath,
+            android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC).canonicalPath,
+            android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MOVIES).canonicalPath,
+        )
+        return if (file.canonicalPath in protectedRoots) {
+            CommandResult(false, errorCode = "PROTECTED_PATH", error = "Deleting a storage root is not allowed.")
+        } else null
     }
 
     private fun fileList(parameters: Map<String, Any?>): CommandResult {
@@ -253,9 +285,16 @@ class DeviceCommandHandler(private val context: Context) {
 
     private fun fileRead(parameters: Map<String, Any?>): CommandResult {
         val path = parameters["path"]?.toString()
-        val file = resolveFileTarget(path)
+        val file = try {
+            resolveFileTarget(path)
+        } catch (e: IllegalArgumentException) {
+            return CommandResult(false, errorCode = "INVALID_PATH", error = e.message ?: "Invalid file path.")
+        }
         if (!file.exists() || !file.isFile) {
             return CommandResult(false, errorCode = "NOT_FOUND", error = "File not found: ${file.absolutePath}")
+        }
+        if (file.length() > 10L * 1024L * 1024L) {
+            return CommandResult(false, errorCode = "FILE_TOO_LARGE", error = "File exceeds the 10 MB remote-read limit.")
         }
         return try {
             val content = file.readText()
@@ -269,7 +308,14 @@ class DeviceCommandHandler(private val context: Context) {
         val path = parameters["path"]?.toString()
         val content = parameters["content"]?.toString() ?: ""
         val append = parameters["append"] as? Boolean ?: false
-        val file = resolveFileTarget(path)
+        val file = try {
+            resolveFileTarget(path)
+        } catch (e: IllegalArgumentException) {
+            return CommandResult(false, errorCode = "INVALID_PATH", error = e.message ?: "Invalid file path.")
+        }
+        if (content.toByteArray(Charsets.UTF_8).size > 10 * 1024 * 1024) {
+            return CommandResult(false, errorCode = "FILE_TOO_LARGE", error = "File exceeds the 10 MB remote-write limit.")
+        }
         return try {
             file.parentFile?.mkdirs()
             if (append) {
@@ -285,7 +331,12 @@ class DeviceCommandHandler(private val context: Context) {
 
     private fun fileDelete(parameters: Map<String, Any?>): CommandResult {
         val path = parameters["path"]?.toString()
-        val file = resolveFileTarget(path)
+        val file = try {
+            resolveFileTarget(path)
+        } catch (e: IllegalArgumentException) {
+            return CommandResult(false, errorCode = "INVALID_PATH", error = e.message ?: "Invalid file path.")
+        }
+        rejectProtectedStorageRoot(file)?.let { return it }
         if (!file.exists()) {
             return CommandResult(false, errorCode = "NOT_FOUND", error = "File or directory not found: ${file.absolutePath}")
         }
