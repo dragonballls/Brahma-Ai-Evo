@@ -386,11 +386,11 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertIn("actions/cache/save@v6", workflow)
         self.assertIn("actions/cache/restore@v6", workflow)
 
-    def test_windows_payload_is_reused_by_content_hash(self):
+    def test_windows_payload_is_reused_by_commit_hash(self):
         workflow = self.read(".github/workflows/windows-release.yml")
         self.assertIn("id: payload-cache", workflow)
-        self.assertIn("windows-payload-", workflow)
-        self.assertIn("hashFiles('dist/BrahmaEvo/**')", workflow)
+        self.assertEqual(workflow.count("windows-payload-${{ github.sha }}"), 2)
+        self.assertNotIn("hashFiles('dist/BrahmaEvo/**')", workflow)
         self.assertIn("steps.payload-cache.outputs.cache-hit != 'true'", workflow)
         self.assertIn("compression-level: 0", workflow)
 
