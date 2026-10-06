@@ -65,7 +65,7 @@ def test_device_manager_skips_corrupt_registry_records(tmp_path: Path):
     registry = tmp_path / "devices.json"
     registry.write_text(
         '{"devices": {"good": {"device_id": "good", "name": "Good", "platform": "android"},'
-        '"bad": {"device_id": ["not-a-string"], "name": "Bad", "platform": "android"}}}',
+        '"bad": {"device_id": "bad", "name": "Bad", "platform": "android", "capabilities": 42}}}',
         encoding="utf-8",
     )
     manager = DeviceManager(registry)
