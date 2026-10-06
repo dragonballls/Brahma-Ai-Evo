@@ -96,7 +96,7 @@ class ConnectionHub:
                 await asyncio.wait_for(
                     state.websocket.send_json(message), timeout=SOCKET_SEND_TIMEOUT_SECONDS
                 )
-            except (asyncio.TimeoutError, Exception):
+            except Exception:
                 return False
             return True
 
