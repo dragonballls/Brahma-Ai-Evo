@@ -9,15 +9,26 @@ import logging
 import os
 import shutil
 import sys
+import uuid
 from pathlib import Path
 
-from core.runtime_paths import PATCH_HISTORY_PATH, FATAL_CRASH_LOG_PATH
+from core.runtime_paths import PATCH_HISTORY_PATH, FATAL_CRASH_LOG_PATH, PATCH_BACKUPS_DIR
 
 logger = logging.getLogger("BootSentry")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 CRASH_LOG = FATAL_CRASH_LOG_PATH
 PATCH_HISTORY_FILE = PATCH_HISTORY_PATH
+BACKUPS_DIR = PATCH_BACKUPS_DIR
+PROTECTED_BOOT_FILES = {
+    "boot_sentry.py",
+    "auto_heal_engine.py",
+    "crash_recovery.py",
+    "process_supervisor.py",
+    "setup.py",
+    "requirements.txt",
+    "version.txt",
+}
 
 
 def mark_startup_healthy() -> None:
@@ -72,17 +83,29 @@ def check_and_recover_on_boot() -> bool:
     if last_patch is None:
         return False
 
-    target_file = Path(last_patch.get("target_file", ""))
-    backup_file = Path(last_patch.get("backup_path", ""))
+    try:
+        target_file = Path(last_patch.get("target_file", "")).resolve()
+        backup_file = Path(last_patch.get("backup_path", "")).resolve()
+        target_file.relative_to(BASE_DIR.resolve())
+        backup_file.relative_to(BACKUPS_DIR.resolve())
+    except (OSError, ValueError):
+        logger.warning("Refusing boot rollback outside protected roots.")
+        return False
 
-    if not backup_file.exists() or not target_file.exists():
+    if target_file.name in PROTECTED_BOOT_FILES:
+        logger.warning("Refusing boot rollback of protected safety file: %s", target_file.name)
+        return False
+
+    if not backup_file.is_file() or not target_file.is_file():
         return False
 
     print(f"[BootSentry] ⚠️ Fatal crash detected after patch '{last_patch.get('patch_id')}'.")
     print(f"[BootSentry] 🛡️ Initiating automatic rollback of '{target_file.name}' from backup...")
 
     try:
-        target_tmp = target_file.with_name(f".{target_file.name}.rollback-{os.getpid()}.tmp")
+        target_tmp = target_file.with_name(
+            f".{target_file.name}.rollback-{os.getpid()}-{uuid4().hex}.tmp"
+        )
         try:
             shutil.copy2(backup_file, target_tmp)
             os.replace(target_tmp, target_file)
