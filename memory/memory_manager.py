@@ -5,6 +5,8 @@ import json
 import os
 import re
 from datetime import datetime
+import time
+import uuid
 from threading import Lock
 from pathlib import Path
 import sys
@@ -28,6 +30,13 @@ BASE_DIR         = get_base_dir()
 MEMORY_PATH      = get_user_data_dir() / "memory" / "long_term.json"
 _lock            = Lock()
 MAX_VALUE_LENGTH = 380
+
+_SECRET_RE = re.compile(
+    r"(?i)(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret|bearer)\s*[:=]\s*\S+"
+)
+_TOKEN_RE = re.compile(
+    r"\b(?:sk-[A-Za-z0-9_-]{20,}|gsk_[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b"
+)
 
 # ── Why there are two very different numbers here ────────────────────────────
 #
@@ -74,14 +83,34 @@ def load_memory() -> dict:
             data = json.loads(MEMORY_PATH.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 base = _empty_memory()
+                changed = False
+
+                def scrub(value):
+                    nonlocal changed
+                    if isinstance(value, str):
+                        if _SECRET_RE.search(value) or _TOKEN_RE.search(value):
+                            changed = True
+                            value = _SECRET_RE.sub("[REDACTED_SECRET]", value)
+                            value = _TOKEN_RE.sub("[REDACTED_SECRET]", value)
+                        return value
+                    if isinstance(value, dict):
+                        return {key: scrub(item) for key, item in value.items()}
+                    if isinstance(value, list):
+                        return [scrub(item) for item in value]
+                    return value
+
+                data = scrub(data)
                 for key in base:
                     if key not in data:
                         data[key] = {}
+                        changed = True
+                if changed:
+                    _atomic_write_json(MEMORY_PATH, data)
                 return data
             return _empty_memory()
         except (UnicodeError, json.JSONDecodeError, ValueError) as e:
             quarantine = MEMORY_PATH.with_name(
-                f"{MEMORY_PATH.name}.corrupt-{int(__import__('time').time())}-{__import__('uuid').uuid4().hex[:8]}"
+                f"{MEMORY_PATH.name}.corrupt-{int(time.time())}-{uuid.uuid4().hex[:8]}"
             )
             try:
                 MEMORY_PATH.replace(quarantine)
@@ -196,6 +225,18 @@ def _recursive_update(target: dict, updates: dict) -> bool:
 def update_memory(memory_update: dict) -> dict:
     if not isinstance(memory_update, dict) or not memory_update:
         return load_memory()
+    def contains_secret(value) -> bool:
+        if isinstance(value, str):
+            return bool(_SECRET_RE.search(value) or _TOKEN_RE.search(value))
+        if isinstance(value, dict):
+            return any(contains_secret(item) for item in value.values())
+        if isinstance(value, list):
+            return any(contains_secret(item) for item in value)
+        return False
+
+    if contains_secret(memory_update):
+        return load_memory()
+
     memory = load_memory()
     if _recursive_update(memory, memory_update):
         save_memory(memory)
