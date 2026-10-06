@@ -40,7 +40,7 @@ jobs:
       - name: Run capability usability regressions
         run: python -m unittest tests.test_capability_usability -v
       - name: Run follow-up audit regressions
-        run: python -m unittest tests.test_followup_audits -v
+        run: python -m pytest -q tests/test_followup_audits.py
 
   parallel-regressions:
     runs-on: windows-latest
