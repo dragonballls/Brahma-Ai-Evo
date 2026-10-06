@@ -1008,3 +1008,11 @@ def test_learning_record_is_serialized_under_concurrency(tmp_path, monkeypatch):
     assert len(results) == 8
     events = capabilities.LearningEngine.recent(20)
     assert len(events) == 8
+
+
+def test_installer_source_copy_rejects_symlink_entries():
+    source = Path("installer/install_wizard.py").read_text(encoding="utf-8")
+    assert "followlinks=False" in source
+    assert "source_root.is_symlink()" in source
+    assert "os.path.islink(src_path)" in source
+    assert "Unsafe installer source symlink" in source

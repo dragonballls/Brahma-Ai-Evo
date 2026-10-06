@@ -88,21 +88,36 @@ class InstallThread(QThread):
             else:
                 if not self.source_dir or not os.path.isdir(self.source_dir):
                     raise FileNotFoundError("Brahma Evo payload is missing.")
+                source_root = Path(self.source_dir).expanduser().resolve()
+                if source_root.is_symlink():
+                    raise ValueError("Brahma Evo payload source may not be a symlink.")
                 root = staging_dir.resolve()
                 root.mkdir(parents=True, exist_ok=False)
-                total_files = sum(
-                    len(files) for _root, _dirs, files in os.walk(self.source_dir)
-                )
+                total_files = 0
+                for src_dir, dirs, files in os.walk(source_root, followlinks=False):
+                    for directory in dirs:
+                        if os.path.islink(os.path.join(src_dir, directory)):
+                            raise ValueError(
+                                f"Unsafe installer source symlink: {os.path.join(src_dir, directory)}"
+                            )
+                    total_files += len(files)
                 copied = 0
-                for src_dir, _dirs, files in os.walk(self.source_dir):
-                    relative = os.path.relpath(src_dir, self.source_dir)
+                for src_dir, dirs, files in os.walk(source_root, followlinks=False):
+                    for directory in dirs:
+                        if os.path.islink(os.path.join(src_dir, directory)):
+                            raise ValueError(
+                                f"Unsafe installer source symlink: {os.path.join(src_dir, directory)}"
+                            )
+                    relative = os.path.relpath(src_dir, source_root)
                     dst_dir = root if relative == "." else root / relative
                     dst_dir.mkdir(parents=True, exist_ok=True)
                     for file_ in files:
-                        shutil.copy2(
-                            os.path.join(src_dir, file_),
-                            str(dst_dir / file_),
-                        )
+                        src_path = os.path.join(src_dir, file_)
+                        if os.path.islink(src_path):
+                            raise ValueError(f"Unsafe installer source symlink: {src_path}")
+                        if not os.path.isfile(src_path):
+                            raise ValueError(f"Unsupported installer source entry: {src_path}")
+                        shutil.copy2(src_path, str(dst_dir / file_))
                         copied += 1
                         if total_files > 0:
                             prog = 20 + int((copied / total_files) * 55)
