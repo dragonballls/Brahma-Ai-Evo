@@ -8,6 +8,8 @@ import tempfile
 import platform
 from pathlib import Path
 from datetime import datetime
+from urllib.parse import urlparse
+import urllib.request
 
 try:
     import pyautogui
@@ -225,19 +227,37 @@ for (var i = 0; i < allDesktops.length; i++) {{
 
 
 def set_wallpaper_from_url(url: str) -> str:
+    parsed = urlparse(str(url or "").strip())
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        return "Could not download wallpaper: only HTTP(S) URLs are allowed."
+    tmp = None
     try:
-        import urllib.request
-        suffix = Path(url.split("?")[0]).suffix or ".jpg"
-        tmp    = Path(tempfile.mktemp(suffix=suffix))
-        urllib.request.urlretrieve(url, str(tmp))
-        result = set_wallpaper(str(tmp))
-        try:
-            tmp.unlink()
-        except Exception:
-            pass
-        return result
+        suffix = Path(parsed.path).suffix.lower() or ".jpg"
+        if suffix not in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}:
+            suffix = ".jpg"
+        fd, temp_name = tempfile.mkstemp(suffix=suffix)
+        os.close(fd)
+        tmp = Path(temp_name)
+        total = 0
+        max_bytes = 20 * 1024 * 1024
+        with urllib.request.urlopen(str(url).strip(), timeout=15) as response, tmp.open("wb") as output:
+            while True:
+                chunk = response.read(64 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    return "Could not download wallpaper: image exceeds the 20 MiB safety limit."
+                output.write(chunk)
+        return set_wallpaper(str(tmp))
     except Exception as e:
         return f"Could not download wallpaper: {e}"
+    finally:
+        if tmp is not None:
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 def get_current_wallpaper() -> str:
