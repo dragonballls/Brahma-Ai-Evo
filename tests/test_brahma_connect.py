@@ -406,3 +406,30 @@ def test_gateway_rejects_unauthenticated_event_and_chat_paths():
     assert 'Authentication required for chat messages.' in chat_block
     assert 'Authentication required for device events.' in event_block
     assert 'Authentication required for device status changes.' in offline_block
+
+def test_command_router_enforces_canonical_sensitive_capabilities():
+    from brahma_connect.gateway.command_router import ACTION_CAPABILITIES
+    assert ACTION_CAPABILITIES["file_write"] == ("files",)
+    assert ACTION_CAPABILITIES["file_delete"] == ("files",)
+    assert ACTION_CAPABILITIES["ui_type"] == ("ui_control",)
+    assert ACTION_CAPABILITIES["unlock_phone"] == ("unlock_phone",)
+
+
+def test_android_remote_file_boundary_is_canonical_and_protected():
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "brahma-connect-android"
+        / "app"
+        / "src"
+        / "main"
+        / "java"
+        / "com"
+        / "brahma"
+        / "connect"
+        / "commands"
+        / "DeviceCommandHandler.kt"
+    ).read_text(encoding="utf-8")
+    assert 'if (normalized.startsWith("/") || Regex("^[A-Za-z]:").containsMatchIn(normalized))' in source
+    assert 'if (parts.any { it == ".." })' in source
+    assert 'Deleting a storage root is not allowed.' in source
+    assert '10 MB remote-read limit' in source
