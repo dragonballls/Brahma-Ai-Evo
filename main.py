@@ -5512,7 +5512,15 @@ class BrahmaLive:
             else:
                 loop = asyncio.get_event_loop()
                 result = await loop.run_in_executor(None, undo_stack.undo_last)
-            self.speak("Undone.")
+                normalized_undo = str(result or "").strip().casefold()
+                if (
+                    not normalized_undo
+                    or normalized_undo.startswith("there is nothing to undo")
+                    or normalized_undo.startswith("could not undo")
+                ):
+                    self.speak("I couldn't undo anything, sir.")
+                else:
+                    self.speak("Undone.")
             self.ui.set_state("LISTENING")
             return types.FunctionResponse(name=name, id=fc.id, response={"result": result})
 
@@ -6545,12 +6553,29 @@ class BrahmaLive:
 
         result_declared_failed = False
         if isinstance(result, dict):
-            result_declared_failed = result.get("success") is False or result.get("ok") is False
+            result_declared_failed = (
+                result.get("success") is False
+                or result.get("ok") is False
+            )
         elif isinstance(result, str):
             normalized_result = result.strip().casefold()
-            result_declared_failed = normalized_result.startswith(
-                ("error:", "failed:", "failure:", "unable to ", "could not ")
-            )
+            if normalized_result.startswith("{"):
+                try:
+                    parsed_result = json.loads(result)
+                except (TypeError, ValueError):
+                    parsed_result = None
+                if isinstance(parsed_result, dict):
+                    result_declared_failed = (
+                        parsed_result.get("success") is False
+                        or parsed_result.get("ok") is False
+                    )
+            if not result_declared_failed:
+                result_declared_failed = normalized_result.startswith(
+                    (
+                        "error:", "failed:", "failure:", "unable to ",
+                        "could not ", "couldn't ", "cannot ", "can't ",
+                    )
+                )
         execution_failed = execution_failed or result_declared_failed
         display_result = self._redact_sensitive_text(result)
         try:
