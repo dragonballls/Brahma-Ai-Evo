@@ -232,13 +232,14 @@ class TaskQueue:
 
     def _run_task(self, task: Task) -> None:
         print(f"[TaskQueue] ▶️ Running: [{task.task_id}] {task.goal[:60]}")
+        released = False
         try:
             executor = self._get_executor()
-            result   = executor.execute(
-                goal        = task.goal,
-                speak       = task.speak,
-                cancel_flag = task.cancel_flag,
-                player      = task.player,
+            result = executor.execute(
+                goal=task.goal,
+                speak=task.speak,
+                cancel_flag=task.cancel_flag,
+                player=task.player,
             )
 
             with self._lock:
@@ -247,7 +248,8 @@ class TaskQueue:
                 else:
                     task.status = TaskStatus.COMPLETED
                     task.result = result
-                self._active_count -= 1
+                self._active_count = max(0, self._active_count - 1)
+                released = True
 
             if task.on_complete and not task.cancel_flag.is_set():
                 try:
@@ -264,16 +266,29 @@ class TaskQueue:
                     task.error = ""
                 else:
                     task.status = TaskStatus.FAILED
-                    task.error  = str(e)
-                self._active_count -= 1
+                    task.error = str(e)
+                if not released:
+                    self._active_count = max(0, self._active_count - 1)
+                    released = True
             if task.cancel_flag.is_set():
                 print(f"[TaskQueue] 🚫 Cancelled: [{task.task_id}]")
             else:
                 print(f"[TaskQueue] ❌ Failed: [{task.task_id}] {e}")
 
-        with self._condition:
-            self._task_threads.pop(task.task_id, None)
-            self._condition.notify()
+        except BaseException as e:
+            with self._lock:
+                task.status = TaskStatus.CANCELLED if task.cancel_flag.is_set() else TaskStatus.FAILED
+                task.error = "" if task.cancel_flag.is_set() else str(e)
+                if not released:
+                    self._active_count = max(0, self._active_count - 1)
+                    released = True
+            print(f"[TaskQueue] ⚠️ Task thread terminated by {type(e).__name__}: [{task.task_id}]")
+            raise
+
+        finally:
+            with self._condition:
+                self._task_threads.pop(task.task_id, None)
+                self._condition.notify_all()
 
 _queue = TaskQueue()
 _queue_lock = threading.Lock()
