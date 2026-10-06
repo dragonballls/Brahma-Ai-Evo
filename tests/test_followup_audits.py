@@ -838,3 +838,64 @@ def test_crucible_blocks_native_windows_escape_modules():
         ok, error = SkillCrucible.validate_ast(code)
         assert ok is False
         assert "prohibited import" in (error or "")
+
+def _make_payload_source(root: Path) -> Path:
+    source = root / "payload"
+    source.mkdir()
+    (source / "BrahmaEvo.exe").write_bytes(b"app")
+    (source / "BrahmaEvoSupervisor.exe").write_bytes(b"supervisor")
+    return source
+
+
+def test_payload_builder_rejects_symlink_sources(tmp_path: Path):
+    import scripts.pack_windows_payload as payload
+
+    source = _make_payload_source(tmp_path)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret", encoding="utf-8")
+    try:
+        (source / "leak.txt").symlink_to(outside)
+    except OSError:
+        pytest.skip("Symlink creation is unavailable on this runner.")
+
+    with pytest.raises(ValueError, match="symlinks"):
+        payload._validate_source(source)
+
+
+def test_payload_builder_does_not_destroy_existing_archive_on_failed_verification(tmp_path: Path, monkeypatch):
+    import scripts.pack_windows_payload as payload
+
+    source = _make_payload_source(tmp_path)
+    output = tmp_path / "payload.zip"
+    output.write_bytes(b"known-good-old-archive")
+
+    def fail_verify(*_args, **_kwargs):
+        raise RuntimeError("verification failed")
+
+    monkeypatch.setattr(payload, "verify", fail_verify)
+    with pytest.raises(RuntimeError, match="verification failed"):
+        payload.build(source, output)
+
+    assert output.read_bytes() == b"known-good-old-archive"
+
+
+def test_payload_verifier_rejects_zip_symlinks_and_traversal(tmp_path: Path):
+    import scripts.pack_windows_payload as payload
+    import stat
+    import zipfile
+
+    source = _make_payload_source(tmp_path)
+    for mode, name in (
+        (stat.S_IFLNK | 0o777, "leak.txt"),
+        (0o100644, "../escape.txt"),
+    ):
+        archive_path = tmp_path / f"malicious-{name.replace('/', '_')}.zip"
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            archive.writestr("BrahmaEvo.exe", b"app")
+            archive.writestr("BrahmaEvoSupervisor.exe", b"supervisor")
+            info = zipfile.ZipInfo(name)
+            info.external_attr = mode << 16
+            archive.writestr(info, b"bad")
+
+        with pytest.raises(RuntimeError):
+            payload.verify(source, archive_path)

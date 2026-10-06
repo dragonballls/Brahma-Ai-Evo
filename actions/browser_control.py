@@ -378,8 +378,11 @@ class _BrowserThread:
     # ── Eylemler ─────────────────────────────────────────────────────────────
 
     async def _go_to(self, url: str) -> str:
-        if not url.startswith("http"):
-            url = "https://" + url
+        from actions.playwright_mcp_client import validate_browser_url
+        try:
+            url = validate_browser_url(url)
+        except ValueError as exc:
+            return f"Navigation blocked: {exc}"
         page = await self._get_page()
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=15000)
@@ -631,7 +634,7 @@ def browser_control(
         time_ms     : milliseconds to wait
     """
     import time
-    from actions.playwright_mcp_client import get_playwright_mcp_client
+    from actions.playwright_mcp_client import get_playwright_mcp_client, validate_browser_url
 
     action = (parameters or {}).get("action", "").lower().strip()
     result = "Unknown action."

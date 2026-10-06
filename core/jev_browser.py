@@ -24,16 +24,19 @@ def run_goal(url: str, goal: str, *, max_steps: int = 60) -> dict[str, Any]:
     if not available():
         raise JevBrowserUnavailable("Jev browser layer is disabled or has no TYPESAFE_API_KEY")
 
+    from actions.playwright_mcp_client import validate_browser_url
+    validated_url = validate_browser_url(url)
+
     try:
         from jev_ultrafast import Agent
     except Exception as exc:
         raise JevBrowserUnavailable("jev-ultrafast is not installed") from exc
 
-    if not url or not goal:
-        raise ValueError("url and goal are required")
+    if not goal:
+        raise ValueError("goal is required")
 
     states: list[dict[str, Any]] = []
-    with Agent(url, goal) as agent:
+    with Agent(validated_url, goal) as agent:
         for state in agent.run():
             states.append({
                 "status": state.get("status"),

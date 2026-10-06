@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -45,3 +47,22 @@ def test_browser_backend_registers_process_exit_cleanup():
 def test_browser_shutdown_cleanup_is_registered_after_definition():
     source = (ROOT / "actions" / "browser_control.py").read_text(encoding="utf-8")
     assert source.index("def shutdown_browser") < source.index("atexit.register(shutdown_browser)")
+
+def test_browser_navigation_rejects_local_and_script_url_schemes():
+    from actions.playwright_mcp_client import validate_browser_url
+
+    for unsafe in (
+        "file:///C:/Users/test/secret.txt",
+        "FILE:///C:/Users/test/secret.txt",
+        "javascript:alert(1)",
+        "data:text/html,<h1>secret</h1>",
+        "vbscript:MsgBox(1)",
+        "about:srcdoc",
+    ):
+        with pytest.raises(ValueError):
+            validate_browser_url(unsafe)
+
+    assert validate_browser_url("https://example.com") == "https://example.com"
+    assert validate_browser_url("http://127.0.0.1:8080/health") == "http://127.0.0.1:8080/health"
+    assert validate_browser_url("localhost:8765") == "https://localhost:8765"
+    assert validate_browser_url("about:blank") == "about:blank"

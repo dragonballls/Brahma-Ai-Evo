@@ -3,7 +3,10 @@
 from __future__ import annotations
 import argparse
 import hashlib
-from pathlib import Path
+import os
+from pathlib import Path, PurePosixPath
+import stat
+import tempfile
 import zipfile
 
 REQUIRED_FILES = ("BrahmaEvo.exe", "BrahmaEvoSupervisor.exe")

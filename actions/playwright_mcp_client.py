@@ -8,9 +8,43 @@ import sys
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
+from urllib.parse import urlsplit
 
 logger = logging.getLogger("playwright_mcp_client")
 logger.setLevel(logging.INFO)
+
+
+_ALLOWED_BROWSER_URL_SCHEMES = frozenset({"http", "https"})
+_ALLOWED_BROWSER_ABOUT_URLS = frozenset({"about:blank"})
+
+
+def validate_browser_url(url: str) -> str:
+    """Normalize and validate public browser navigation URLs.
+
+    Browser automation may expose page contents back to the assistant, so local-file
+    and script/data URL schemes are intentionally not reachable through navigation.
+    Local HTTP(S) services, including loopback development servers, remain allowed.
+    """
+    raw = str(url or "").strip()
+    if not raw:
+        raise ValueError("Browser URL is required.")
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in raw):
+        raise ValueError("Browser URL contains control characters.")
+
+    lowered = raw.lower()
+    if lowered in _ALLOWED_BROWSER_ABOUT_URLS:
+        return "about:blank"
+    if lowered.startswith("about:"):
+        raise ValueError("Only about:blank is allowed for browser navigation.")
+
+    candidate = raw if "://" in raw else f"https://{raw}"
+    parsed = urlsplit(candidate)
+    scheme = parsed.scheme.lower()
+    if scheme not in _ALLOWED_BROWSER_URL_SCHEMES:
+        raise ValueError(f"Browser navigation to '{scheme}:' URLs is blocked.")
+    if not parsed.hostname:
+        raise ValueError("Browser URL must include a host.")
+    return candidate
 
 
 def _get_app_data_dir() -> Path:
@@ -256,8 +290,7 @@ class PlaywrightMCPClient:
     # ── High-Level Convenience Methods for All 24 MCP Tools ─────────────────────
 
     def navigate(self, url: str) -> str:
-        if not url.startswith("http://") and not url.startswith("https://") and not url.startswith("file://") and not url.startswith("about:"):
-            url = "https://" + url
+        url = validate_browser_url(url)
         res = self.call_tool("browser_navigate", {"url": url}, timeout=60)
         return res.get("text") or res.get("error") or f"Navigated to {url}"
 
