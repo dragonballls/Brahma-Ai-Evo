@@ -1,4 +1,5 @@
 import importlib.util
+import inspect
 import sys
 from pathlib import Path
 from typing import Any
@@ -14,11 +15,17 @@ class PluginManager:
     def load_plugins(self) -> None:
         if not self.plugins_dir.exists():
             return
+        plugin_root = self.plugins_dir.resolve()
         for p in sorted(self.plugins_dir.glob("*.py")):
             if p.name.startswith("__"):
                 continue
             try:
-                spec = importlib.util.spec_from_file_location(p.stem, str(p))
+                if p.is_symlink():
+                    print(f"[Plugins] Refusing symlinked plugin: {p.name}")
+                    continue
+                resolved = p.resolve()
+                resolved.relative_to(plugin_root)
+                spec = importlib.util.spec_from_file_location(p.stem, str(resolved))
                 if not spec or not spec.loader:
                     continue
                 mod = importlib.util.module_from_spec(spec)
@@ -49,11 +56,25 @@ class PluginManager:
             try:
                 fn = getattr(p, hook, None)
                 if callable(fn):
-                    # call with brahma if plugin expects it
                     try:
-                        res = fn(*args, **kwargs, brahma=self.brahma)
-                    except TypeError:
-                        res = fn(*args, **kwargs)
+                        signature = inspect.signature(fn)
+                    except (TypeError, ValueError):
+                        signature = None
+                    accepts_brahma = bool(
+                        signature
+                        and (
+                            "brahma" in signature.parameters
+                            or any(
+                                param.kind is inspect.Parameter.VAR_KEYWORD
+                                for param in signature.parameters.values()
+                            )
+                        )
+                    )
+                    res = (
+                        fn(*args, **kwargs, brahma=self.brahma)
+                        if accepts_brahma
+                        else fn(*args, **kwargs)
+                    )
                     if res is True:
                         return True
             except Exception as exc:
