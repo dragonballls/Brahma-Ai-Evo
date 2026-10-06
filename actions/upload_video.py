@@ -144,6 +144,8 @@ def run(parameters: dict, player=None, speak=None, session_memory=None) -> str:
     brief = (parameters.get("description") or parameters.get("query") or "").strip()
     platform_name = (parameters.get("platform") or "tiktok").strip().lower()
     custom_video_path = parameters.get("video_path")
+    if not brief:
+        return "Video upload preparation failed: a video description is required."
 
     if platform_name not in _PLATFORM_URLS:
         if "yt" in platform_name or "short" in platform_name or "tube" in platform_name:
@@ -171,7 +173,7 @@ def run(parameters: dict, player=None, speak=None, session_memory=None) -> str:
         file_info = f"'{video_file.name}' ({size_mb:.1f} MB)"
         _log(f"[Publisher] Found candidate video: {video_file} ({size_mb:.1f} MB)")
     else:
-        file_info = "video file"
+        return "Video upload preparation failed: no supported video file was found."
 
     # Step 2: Generate Viral Copy
     _log(f"[Publisher] Generating viral caption and hashtags for '{brief}'...")
@@ -200,11 +202,32 @@ def run(parameters: dict, player=None, speak=None, session_memory=None) -> str:
 
     # Step 5: Launch Creator Upload Portal
     upload_url = _PLATFORM_URLS.get(platform_name, _PLATFORM_URLS["tiktok"])
+    browser_opened = False
     try:
-        webbrowser.open(upload_url)
-        _log(f"[Publisher] Launched {platform_name.title()} Creator Studio in browser.")
+        browser_opened = webbrowser.open(upload_url) is True
     except Exception as e:
         logger.error(f"Failed to open upload URL: {e}")
+    if not browser_opened:
+        return (
+            f"Video upload preparation failed: could not open the {platform_name.title()} "
+            "Creator Studio. No upload was performed."
+        )
+    _log(f"[Publisher] Launched {platform_name.title()} Creator Studio in browser.")
+
+    # Re-check the selected source before presenting success; the file may have
+    # disappeared or changed while AI copy generation/browser startup was running.
+    try:
+        if not video_file.is_file() or video_file.suffix.lower() not in _VIDEO_EXTENSIONS:
+            return "Video upload preparation failed: the selected video file is no longer available."
+    except OSError as e:
+        return f"Video upload preparation failed: could not validate the selected video file ({e})."
+
+    clipboard_label = "Copied to Clipboard" if clipboard_status else "Clipboard copy unavailable"
+    clipboard_instruction = (
+        "Press **Ctrl + V** in the description box to paste your optimized caption and hashtags."
+        if clipboard_status
+        else "Copy the generated caption and hashtags from this card into the description box."
+    )
 
     # Step 6: Present Rich Card in Brahma UI
     ui_card = (
@@ -213,11 +236,11 @@ def run(parameters: dict, player=None, speak=None, session_memory=None) -> str:
         f"- **Path**: `{video_file if video_file else 'N/A'}`\n"
         f"- **Hook Title**: **{hook}**\n"
         f"- **Platform Studio**: [{platform_name.title()} Upload Page]({upload_url})\n\n"
-        f"#### 📋 Generated Caption & Tags (Copied to Clipboard):\n"
+        f"#### 📋 Generated Caption & Tags ({clipboard_label}):\n"
         f"```text\n{full_copy}\n```\n\n"
         f"💡 **Next Steps**:\n"
         f"1. Drag `{video_file.name if video_file else 'your video'}` into the browser window.\n"
-        f"2. Press **Ctrl + V** in the description box to paste your optimized caption and hashtags."
+        f"2. {clipboard_instruction}"
     )
 
     if player and hasattr(player, "show_content"):
@@ -227,9 +250,14 @@ def run(parameters: dict, player=None, speak=None, session_memory=None) -> str:
             pass
 
     spoken = (
-        f"I've prepped your video {file_info} for {platform_name.title()}! "
-        f"The studio uploader is open, and your viral caption and hashtags are copied to your clipboard. "
-        f"Simply drag the file in and press Control V."
+        f"I've prepared {file_info} for {platform_name.title()}. "
+        "The creator studio is open; the video has not been uploaded automatically. "
+        + (
+            "Your optimized caption and hashtags are copied to the clipboard."
+            if clipboard_status
+            else "Clipboard copy was unavailable, so the generated caption is shown in Brahma."
+        )
+        + " Drag the video into the uploader to finish the upload."
     )
     return spoken
 
