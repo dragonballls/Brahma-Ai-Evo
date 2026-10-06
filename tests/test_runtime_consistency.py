@@ -753,8 +753,9 @@ class RuntimeConsistencyTests(unittest.TestCase):
         source = self.read("or_client.py")
         self.assertIn("tool-capable response had no choices; trying next model", source)
         self.assertIn("tool-capable response had no usable content or tool calls; trying next model", source)
-        block = source[source.index("if resp.status_code == 200:", source.index("def _call_tool_capable")):]
-        block = block[:block.index("if resp.status_code == 403:")]
+        block = source[source.index("    def _call_tool_capable("):source.index("    def _call_omniroute_tool_capable(", source.index("    def _call_tool_capable("))]
+        self.assertIn("if not isinstance(data, dict):", block)
+        self.assertIn("if not isinstance(choices, list) or not choices:", block)
         self.assertIn("return {}", block)
 
     def test_dashboard_encryption_contract_is_consistent(self):
