@@ -164,7 +164,7 @@ for (var i = 0; i < allDesktops.length; i++) {{
     d = allDesktops[i];
     d.wallpaperPlugin = "org.kde.image";
     d.currentConfigGroup = ["Wallpaper", "org.kde.image", "General"];
-    d.writeConfig("Image", "file://{path}");
+    d.writeConfig("Image", "{uri}");
 }}
 """
                 result = subprocess.run(
