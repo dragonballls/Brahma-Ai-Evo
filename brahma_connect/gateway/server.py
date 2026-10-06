@@ -767,8 +767,10 @@ class BrahmaGateway:
                 log_config=None,
                 access_log=False,
             )
-            self._server = uvicorn.Server(cfg)
-            self._server.install_signal_handlers = lambda: None
+            with self._serve_lock:
+                self._server = uvicorn.Server(cfg)
+                self._server.install_signal_handlers = lambda: None
+                self._server.should_exit = self._shutdown.is_set()
             await self._server.serve()
         finally:
             self._server = None
