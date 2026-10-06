@@ -420,6 +420,17 @@ class RepositoryIntegrityTests(unittest.TestCase):
         self.assertIn("Existing .venv uses a different Python major/minor; recreating it.", source)
         self.assertIn("if (-not (Test-Path $VenvPython))", source)
 
+    def test_browser_runtime_is_verified_on_all_install_paths(self):
+        bootstrap = self.read("bootstrap.ps1")
+        setup = self.read("setup.py")
+        probe = "playwright.sync_api import sync_playwright"
+        self.assertIn("$BrowserNeedsRepair = $true", bootstrap)
+        self.assertIn(probe, bootstrap)
+        self.assertIn("Playwright Chromium runtime is missing; installing it", bootstrap)
+        self.assertIn("if (_chromium_ready())", setup)
+        self.assertIn(probe, setup)
+        self.assertNotIn('print("Installing Playwright browsers...")', setup)
+
     def test_source_launcher_routes_through_repair_bootstrap(self):
         source = self.read("start_brahma.vbs")
         bootstrap_pos = source.index("ElseIf fso.FileExists(bootstrap) And fso.FileExists(mainPy) Then")
