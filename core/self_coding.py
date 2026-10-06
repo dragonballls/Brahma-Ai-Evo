@@ -181,6 +181,8 @@ class SelfCodingAgent:
     def _validate_checkpoint(self, checkpoint: Checkpoint) -> None:
         if checkpoint.base_branch != "main":
             raise SelfCodingError("Only checkpoints created from main can be promoted or undone.")
+        if checkpoint.state not in {"pending", "promoting", "approved", "undone"}:
+            raise SelfCodingError("Checkpoint state metadata is invalid.")
         if not re.fullmatch(r"agent/checkpoint/[A-Za-z0-9._-]+", checkpoint.branch):
             raise SelfCodingError("Checkpoint branch metadata is invalid.")
         if checkpoint.branch.rsplit("/", 1)[-1] != checkpoint.checkpoint_id:
@@ -200,6 +202,8 @@ class SelfCodingAgent:
             previous = commit
         if checkpoint.promoted_sha is not None and not re.fullmatch(r"[0-9a-f]{40}", str(checkpoint.promoted_sha)):
             raise SelfCodingError("Checkpoint promoted SHA is invalid.")
+        if checkpoint.promoted_sha is not None and checkpoint.promoted_sha != checkpoint.commits[-1]:
+            raise SelfCodingError("Checkpoint promoted SHA does not match the checkpoint tip.")
         if any(not re.fullmatch(r"[0-9a-f]{40}", value) for value in checkpoint.undo_commits):
             raise SelfCodingError("Checkpoint undo metadata is invalid.")
     def _load(self, checkpoint_id: str) -> Checkpoint:
@@ -431,6 +435,29 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
                 raise SelfCodingError(f"Self-coding failed and rollback also failed: {rollback_exc}") from exc
             raise SelfCodingError(f"Self-coding failed safely: {exc}") from exc
 
+    def _recover_promoting(self, checkpoint: Checkpoint) -> str:
+        if not checkpoint.promoted_sha:
+            raise SelfCodingError("Promoting checkpoint has no promoted SHA.")
+        self.validate_repo()
+        remote = self._git("fetch", "origin", "main", timeout=300)
+        if remote.returncode != 0:
+            raise SelfCodingError(remote.stderr.strip() or "Unable to refresh remote main during promotion recovery.")
+        remote_head = self._git("rev-parse", "refs/remotes/origin/main")
+        local_head = self._git("rev-parse", "refs/heads/main")
+        if remote_head.returncode != 0 or local_head.returncode != 0:
+            raise SelfCodingError("Unable to inspect main during promotion recovery.")
+        remote_sha = remote_head.stdout.strip()
+        local_sha = local_head.stdout.strip()
+        if remote_sha == checkpoint.promoted_sha and local_sha == checkpoint.promoted_sha:
+            self._save(replace(checkpoint, state="approved", promoted_sha=checkpoint.promoted_sha))
+            return checkpoint.promoted_sha
+        if remote_sha == checkpoint.baseline and local_sha == checkpoint.promoted_sha:
+            reset = self._git("reset", "--hard", checkpoint.baseline)
+            if reset.returncode != 0:
+                raise SelfCodingError(reset.stderr.strip() or "Unable to restore an unpublished promotion.")
+            self._save(replace(checkpoint, state="pending", promoted_sha=None))
+            return self._approve_unlocked(checkpoint_id=checkpoint.checkpoint_id)
+        raise SelfCodingError("Promotion state is ambiguous; refusing to mutate main further.")
     def approve(self, checkpoint_id: str) -> str:
         with _SELF_CODING_LOCK:
             return self._approve_unlocked(checkpoint_id)
@@ -438,6 +465,8 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
     def _approve_unlocked(self, checkpoint_id: str) -> str:
         checkpoint = self._load(checkpoint_id)
         self._validate_checkpoint(checkpoint)
+        if checkpoint.state == "promoting":
+            return self._recover_promoting(checkpoint)
         if checkpoint.state != "pending":
             raise SelfCodingError(f"Checkpoint is not pending: {checkpoint.state}")
         if checkpoint.base_branch != "main":
@@ -477,8 +506,25 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
             self._git("switch", previous)
             self._save(checkpoint)
             raise SelfCodingError(pushed.stderr.strip() or "Approval publish failed safely.")
-        approved = replace(checkpoint, state="approved", promoted_sha=promoted_sha)
-        self._save(approved)
+        promoting = replace(checkpoint, state="promoting", promoted_sha=promoted_sha)
+        self._save(promoting)
+        pushed = self._git("push", "origin", "main", timeout=300)
+        if pushed.returncode != 0:
+            current_head = self._git("rev-parse", "HEAD")
+            status = self._git("status", "--porcelain")
+            if current_head.returncode == 0 and current_head.stdout.strip() == promoted_sha and not status.stdout.strip():
+                self._git("reset", "--hard", checkpoint.baseline)
+            self._git("switch", previous)
+            self._save(checkpoint)
+            raise SelfCodingError(pushed.stderr.strip() or "Approval publish failed safely.")
+        approved = replace(promoting, state="approved")
+        try:
+            self._save(approved)
+        except Exception as save_exc:
+            raise SelfCodingError(
+                "Approval was published but checkpoint metadata could not be finalized; "
+                "retry the same checkpoint approval to recover the persisted state."
+            ) from save_exc
         return promoted_sha
 
     def undo(self, checkpoint_id: str) -> str:
