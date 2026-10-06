@@ -83,21 +83,32 @@ def _run_skill_forge(
     # Immediately execute the newly forged skill to satisfy the user's initial goal
     execution_output = ""
     try:
-        if DynamicToolRegistry.has_tool(name):
-            exec_args = dict(parameters or {})
-            if "goal" not in exec_args and "query" not in exec_args and "input" not in exec_args:
-                exec_args["query"] = goal
-                exec_args["goal"] = goal
-            if player and hasattr(player, "write_log"):
-                player.write_log(f"▶️ [Evolution] Running newly registered skill '{name}'...")
-            run_result = DynamicToolRegistry.execute_sync(name, exec_args)
-            if run_result:
-                if isinstance(run_result, dict):
-                    execution_output = str(run_result.get("summary") or run_result.get("output") or run_result.get("text") or run_result).strip()
-                else:
-                    execution_output = str(run_result).strip()
+        if not DynamicToolRegistry.has_tool(name):
+            raise RuntimeError(f"Newly forged skill '{name}' was not registered.")
+        exec_args = dict(parameters or {})
+        if "goal" not in exec_args and "query" not in exec_args and "input" not in exec_args:
+            exec_args["query"] = goal
+            exec_args["goal"] = goal
+        if player and hasattr(player, "write_log"):
+            player.write_log(f"▶️ [Evolution] Running newly registered skill '{name}'...")
+        run_result = DynamicToolRegistry.execute_sync(name, exec_args)
+        _raise_for_failed_tool_result(run_result)
+        if isinstance(run_result, dict):
+            execution_output = str(
+                run_result.get("summary")
+                or run_result.get("output")
+                or run_result.get("text")
+                or run_result
+            ).strip()
+        else:
+            execution_output = str(run_result).strip()
     except Exception as e_run:
-        execution_output = f"(Execution failed: {e_run})"
+        message = f"Feature '{name}' was created, but its initial execution failed: {e_run}"
+        if player and hasattr(player, "write_log"):
+            player.write_log(f"ERR: {message}")
+        if speak:
+            speak(message)
+        return {"success": False, "error": message, "name": name, "created": True}
 
     full_result = announcement
     if execution_output:
@@ -215,6 +226,15 @@ def _translate_to_goal_language(content: str, goal: str) -> str:
         print(f"[Executor] ⚠️ Translation failed: {e}")
         return content
 
+def _require_tool_result(tool: str, result: Any) -> Any:
+    """Reject empty results at the executor boundary instead of inventing success text."""
+    if result is None:
+        raise RuntimeError(f"Tool '{tool}' returned no result.")
+    if isinstance(result, str) and not result.strip():
+        raise RuntimeError(f"Tool '{tool}' returned an empty result.")
+    return result
+
+
 def _call_tool(tool: str, parameters: dict, speak: Callable | None, player: Any = None) -> str:
     # Live Thinking Out Loud Breadcrumb
     params = parameters or {}
@@ -241,12 +261,12 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None, player: Any 
         from actions.pdf_tools import create_pdf
         p = dict(parameters or {})
         p.setdefault("auto_open", True)
-        return create_pdf(parameters=p, player=player) or "PDF created."
+        return _require_tool_result(tool, create_pdf(parameters=p, player=player))
 
     elif tool in ("word_document", "docx_tools"):
         from actions.docx_tools import word_document
         p = dict(parameters or {})
-        return word_document(parameters=p, player=player, speak=speak) or "Word document created."
+        return _require_tool_result(tool, word_document(parameters=p, player=player, speak=speak))
 
     elif tool == "open_app":
         from actions.open_app import open_app
@@ -369,12 +389,12 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None, player: Any 
     elif tool in ("presentation_builder", "presentation", "create_presentation"):
         from actions.office_generator import generate_presentation_from_prompt
         topic = parameters.get("topic") or parameters.get("title") or parameters.get("description") or "Presentation"
-        return generate_presentation_from_prompt(topic, player=None, speak=speak) or "Presentation created."
+        return _require_tool_result(tool, generate_presentation_from_prompt(topic, player=None, speak=speak))
 
     elif tool in ("spreadsheet_builder", "spreadsheet", "create_spreadsheet"):
         from actions.office_generator import generate_spreadsheet_from_prompt
         topic = parameters.get("topic") or parameters.get("title") or parameters.get("description") or "Spreadsheet"
-        return generate_spreadsheet_from_prompt(topic, player=None, speak=speak) or "Spreadsheet created."
+        return _require_tool_result(tool, generate_spreadsheet_from_prompt(topic, player=None, speak=speak))
 
     elif tool in ("google_workspace", "workspace_gmail", "workspace_calendar", "workspace_drive") or tool.startswith("workspace_"):
         from actions.google_workspace_mcp import google_workspace
@@ -408,7 +428,13 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None, player: Any 
     elif tool == "circuit_assembler":
         from actions.circuit_assembler import circuit_assembler
         result = circuit_assembler(parameters=parameters or {}, player=player, speak=speak)
-        return result.get("summary", "Circuit schematic ready.") if isinstance(result, dict) else str(result or "Circuit schematic ready.")
+        if isinstance(result, dict) and (
+            result.get("success") is False or result.get("error")
+        ):
+            return result
+        if isinstance(result, dict):
+            return result.get("summary") or result
+        return _require_tool_result(tool, result)
 
     elif tool == "geospatial_globe":
         from core.globe_window import GlobeWindow
@@ -643,7 +669,12 @@ class AgentExecutor:
 
                         elif decision == ErrorDecision.SKIP:
                             print(f"[Executor] ⏭️ Skipping step {step_num}")
-                            completed_steps.append(step)
+                            skipped_step = dict(step)
+                            skipped_step["_skipped"] = True
+                            skipped_step["description"] = (
+                                f"SKIPPED after failure: {desc or f'Step {step_num}'}"
+                            )
+                            completed_steps.append(skipped_step)
                             step_ok = True
                             break
 
