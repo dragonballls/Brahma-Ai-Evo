@@ -95,7 +95,11 @@ def _send_instagram(receiver: str, message: str) -> str:
     try:
         from actions.instagram_mcp import InstagramService
         res = InstagramService.instance().send_dm(receiver, message, open_in_browser=True)
-        if not isinstance(res, dict) or res.get("status") not in {"success", "ok"} and res.get("success") is not True:
+        if (
+            not isinstance(res, dict)
+            or res.get("success") is False
+            or (res.get("success") is not True and res.get("status") not in {"success", "ok"})
+        ):
             error = res.get("error") if isinstance(res, dict) else "Instagram returned a malformed send result."
             return f"Instagram send failed: {error}"
         return f"Message sent to @{receiver} via Instagram. Thread opened in browser."
@@ -123,12 +127,20 @@ def _upload_instagram_media(media_path: str, caption: str = "", mode: str = "pos
         svc = InstagramService.instance()
         if path.suffix.lower() in VIDEO_EXTS:
             res = svc.post_reel(str(path), caption=caption, open_in_browser=True)
-            if not isinstance(res, dict) or res.get("status") not in {"success", "ok"} and res.get("success") is not True:
+            if (
+            not isinstance(res, dict)
+            or res.get("success") is False
+            or (res.get("success") is not True and res.get("status") not in {"success", "ok"})
+        ):
                 return f"Instagram Reel publish failed: {res.get('error') if isinstance(res, dict) else 'malformed result'}"
             return f"Instagram Reel published: {res.get('reel_url')} (opened in browser)"
         else:
             res = svc.post_photo(str(path), caption=caption, open_in_browser=True)
-            if not isinstance(res, dict) or res.get("status") not in {"success", "ok"} and res.get("success") is not True:
+            if (
+            not isinstance(res, dict)
+            or res.get("success") is False
+            or (res.get("success") is not True and res.get("status") not in {"success", "ok"})
+        ):
                 return f"Instagram Photo publish failed: {res.get('error') if isinstance(res, dict) else 'malformed result'}"
             return f"Instagram Photo published: {res.get('post_url')} (opened in browser)"
     except Exception as e:
