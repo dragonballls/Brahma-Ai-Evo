@@ -379,7 +379,10 @@ def rename_file(path: str, name: str = "", new_name: str = "") -> str:
         if not new_name:
             return "No new name provided."
 
+        new_name = str(new_name).strip()
         new_path = target.parent / new_name
+        if not _is_safe_path(new_path):
+            return f"Access denied (destination): {new_path}"
         if new_path.exists():
             return f"A file named '{new_name}' already exists here."
 
