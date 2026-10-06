@@ -5,6 +5,7 @@ import os
 import tempfile
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -40,22 +41,59 @@ class WorkspaceStore:
             "app_preferences": {},
         }
 
+    def _quarantine_corrupt(self) -> Path:
+        quarantine = self.path.with_name(
+            f"{self.path.name}.corrupt-{uuid.uuid4().hex[:8]}"
+        )
+        self.path.replace(quarantine)
+        return quarantine
+
+    def _validate_loaded_state(self, raw: object) -> dict[str, Any]:
+        if not isinstance(raw, dict):
+            raise ValueError("Workspace state root must be an object.")
+        version = raw.get("version", self.VERSION)
+        if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+            raise ValueError("Workspace state version is invalid.")
+        if version > self.VERSION:
+            raise ValueError("Workspace state was created by a newer version.")
+        workspaces = raw.get("workspaces")
+        if not isinstance(workspaces, dict):
+            raise ValueError("Workspace state workspaces must be an object.")
+        for name, workspace in workspaces.items():
+            if not isinstance(name, str) or not isinstance(workspace, dict):
+                raise ValueError("Workspace state contains an invalid workspace.")
+            windows = workspace.get("windows", [])
+            if not isinstance(windows, list) or any(not isinstance(item, dict) for item in windows):
+                raise ValueError("Workspace state contains invalid window data.")
+        preferences = raw.get("app_preferences", {})
+        if not isinstance(preferences, dict):
+            raise ValueError("Workspace app preferences must be an object.")
+        merged = self._default()
+        merged.update(raw)
+        merged["workspaces"] = workspaces
+        return merged
+
     def load(self) -> dict[str, Any]:
         with self._lock:
             try:
                 if not self.path.exists():
                     return self._default()
+                if self.path.is_symlink():
+                    raise RuntimeError("Workspace state path must not be a symlink.")
                 raw = json.loads(self.path.read_text(encoding="utf-8"))
-                if not isinstance(raw, dict):
-                    return self._default()
-                merged = self._default()
-                merged.update(raw)
-                workspaces = raw.get("workspaces")
-                if isinstance(workspaces, dict):
-                    merged["workspaces"] = workspaces
-                return merged
-            except Exception:
-                return self._default()
+                return self._validate_loaded_state(raw)
+            except RuntimeError:
+                raise
+            except Exception as exc:
+                try:
+                    self._quarantine_corrupt()
+                except OSError as quarantine_exc:
+                    raise RuntimeError(
+                        "Workspace state is corrupt and could not be quarantined safely."
+                    ) from quarantine_exc
+                raise RuntimeError(
+                    "Workspace state was corrupt; the original was quarantined."
+                ) from exc
 
     def save(self, state: dict[str, Any]) -> bool:
         with self._lock:
@@ -88,13 +126,16 @@ class WorkspaceStore:
                 return False
 
     def set(self, **changes: Any) -> dict[str, Any]:
-        state = self.load()
-        state.update(changes)
-        self.save(state)
-        return state
+        with self._lock:
+            state = self.load()
+            state.update(changes)
+            if not self.save(state):
+                raise RuntimeError("Workspace state could not be persisted.")
+            return state
 
     def upsert_window(self, workspace: str, item: dict[str, Any]) -> bool:
-        state = self.load()
+        with self._lock:
+            state = self.load()
         workspaces = state.setdefault("workspaces", {})
         ws = workspaces.setdefault(workspace, {"name": workspace.title(), "windows": []})
         windows = ws.setdefault("windows", [])
@@ -110,10 +151,11 @@ class WorkspaceStore:
             if str(existing.get("identity") or "") != identity
         ]
         windows.append(item)
-        return self.save(state)
+            return self.save(state)
 
     def remove_window(self, workspace: str, identity: str) -> bool:
-        state = self.load()
+        with self._lock:
+            state = self.load()
         ws = state.get("workspaces", {}).get(workspace)
         if not isinstance(ws, dict):
             return False
@@ -125,7 +167,7 @@ class WorkspaceStore:
             item for item in windows
             if str(item.get("identity") or "") != str(identity)
         ]
-        return before != len(ws["windows"]) and self.save(state)
+            return before != len(ws["windows"]) and self.save(state)
 
     def snapshot(self) -> dict[str, Any]:
         return self.load()
