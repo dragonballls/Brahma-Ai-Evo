@@ -9,6 +9,19 @@ from .protocol import ProtocolTypes, build_message, new_request_id
 from .websocket import ConnectionHub
 
 
+ACTION_CAPABILITIES: dict[str, tuple[str, ...]] = {
+    "file_list": ("files",),
+    "file_read": ("files",),
+    "file_write": ("files",),
+    "file_delete": ("files",),
+    "ui_dump": ("ui_control",),
+    "ui_tap": ("ui_control",),
+    "ui_swipe": ("ui_control",),
+    "ui_type": ("ui_control",),
+    "unlock_phone": ("unlock_phone",),
+}
+
+
 class CommandRouter:
     def __init__(self, device_manager: DeviceManager, hub: ConnectionHub, capability_manager: CapabilityManager):
         self.device_manager = device_manager
@@ -53,7 +66,14 @@ class CommandRouter:
                 "error_code": "DEVICE_OFFLINE",
             }
 
-        required = parameters.pop("required_capabilities", [])
+        requested_capabilities = parameters.pop("required_capabilities", [])
+        canonical_capabilities = ACTION_CAPABILITIES.get(str(action or "").strip().lower(), ())
+        required = list(canonical_capabilities)
+        if isinstance(requested_capabilities, str):
+            requested_capabilities = [requested_capabilities]
+        for capability in list(requested_capabilities or []):
+            if capability not in required:
+                required.append(capability)
         missing = self.capability_manager.missing(device.capabilities, required)
         if missing:
             return {
