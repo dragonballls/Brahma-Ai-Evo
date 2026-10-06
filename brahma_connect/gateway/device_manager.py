@@ -31,6 +31,8 @@ class DeviceManager:
 
     def load(self) -> None:
         with self._lock:
+            if self.registry_path.is_symlink():
+                raise RuntimeError("Device registry path must not be a symlink.")
             if not self.registry_path.exists():
                 self._devices = {}
                 return
@@ -98,6 +100,8 @@ class DeviceManager:
 
     def save(self) -> None:
         with self._lock:
+            if self.registry_path.is_symlink():
+                raise RuntimeError("Device registry path must not be a symlink.")
             payload = {"devices": {device_id: record.to_storage_dict() for device_id, record in self._devices.items()}}
             temp_path = self.registry_path.with_name(
                 f".{self.registry_path.name}.{uuid.uuid4().hex}.tmp"
