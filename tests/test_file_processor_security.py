@@ -76,3 +76,15 @@ def test_archive_extraction_destination_is_home_confined_and_symlink_free():
     assert "Archive extraction is limited to destinations inside the user's home directory." in source
     assert "Archive extraction destinations may not contain symlinked path components." in source
     assert "_safe_archive_destination(" in source
+
+
+def test_file_processor_bounds_large_inputs_and_document_dimensions():
+    source = (ROOT / "actions" / "file_processor.py").read_text(encoding="utf-8")
+    assert "MAX_INPUT_BYTES = 128 * 1024 * 1024" in source
+    assert "MAX_DOCUMENT_PAGES = 500" in source
+    assert "MAX_PRESENTATION_SLIDES = 500" in source
+    assert "MAX_IMAGE_DIMENSION = 12000" in source
+    assert "Input file exceeds the" in source
+    assert "PDF exceeds the {MAX_DOCUMENT_PAGES}-page processing limit." in source
+    assert "Presentation exceeds the {MAX_PRESENTATION_SLIDES}-slide processing limit." in source
+    assert "Image dimensions exceed the {MAX_IMAGE_DIMENSION}px safety limit." in source
