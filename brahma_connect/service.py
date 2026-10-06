@@ -74,6 +74,24 @@ class BrahmaConnectService:
                 pass
         return asyncio.run(coro)
 
+    async def _await_on_gateway_loop(self, coro):
+        """Await a gateway coroutine on its owning loop without nesting event loops."""
+        with self._lock:
+            loop = self._loop
+        if loop is None or loop.is_closed():
+            return await coro
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:
+            current = None
+        if current is loop:
+            return await coro
+        try:
+            future = asyncio.run_coroutine_threadsafe(coro, loop)
+            return await asyncio.wrap_future(future)
+        except RuntimeError:
+            return await coro
+
     def start_background(self) -> None:
         with self._lock:
             if self._thread and self._thread.is_alive():
@@ -156,10 +174,14 @@ class BrahmaConnectService:
         )
 
     async def disconnect_device(self, target: str, *, reason: str = "Disconnected by Brahma") -> dict[str, Any]:
-        return await self.gateway.disconnect_device(target, reason=reason)
+        return await self._await_on_gateway_loop(
+            self.gateway.disconnect_device(target, reason=reason)
+        )
 
     async def reconnect_device(self, target: str) -> dict[str, Any]:
-        return await self.gateway.reconnect_device(target)
+        return await self._await_on_gateway_loop(
+            self.gateway.reconnect_device(target)
+        )
 
     async def reject_pending_request(self, pending_id: str) -> bool:
         return self.gateway.reject_pending_request(pending_id)
@@ -168,7 +190,9 @@ class BrahmaConnectService:
         return self.gateway.list_pending_requests()
 
     async def approve_pending_request(self, pending_id: str) -> dict[str, Any]:
-        return await self.gateway.approve_pending_request(pending_id)
+        return await self._await_on_gateway_loop(
+            self.gateway.approve_pending_request(pending_id)
+        )
 
 
 _SERVICE: BrahmaConnectService | None = None
