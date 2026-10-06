@@ -22,6 +22,21 @@ def _optional_int(value: object) -> int | None:
         return None
 
 
+def _bool(value: object, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return bool(value)
+    text = str(value).strip().casefold()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off", ""}:
+        return False
+    return default
+
+
 def _string_mapping(value: object) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
@@ -112,14 +127,14 @@ class DeviceRecord:
             os_version=str(data.get("os_version", "")),
             agent_version=str(data.get("agent_version", "")),
             ip=str(data.get("ip", "")),
-            online=bool(data.get("online", False)),
+            online=_bool(data.get("online", False)),
             last_seen=str(data.get("last_seen", "")),
             battery=_optional_int(data.get("battery")),
             capabilities=_string_list(data.get("capabilities")),
             permissions=_string_list(data.get("permissions")),
             paired_at=str(data.get("paired_at", "")),
             secret_hash=str(data.get("secret_hash", "")),
-            revoked=bool(data.get("revoked", False)),
+            revoked=_bool(data.get("revoked", False)),
             connection_id=str(data.get("connection_id", "")),
             identity_fingerprint=str(data.get("identity_fingerprint", "")),
             metadata=_string_mapping(data.get("metadata")),
