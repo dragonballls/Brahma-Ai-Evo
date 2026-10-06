@@ -29,9 +29,13 @@ def _load() -> dict[str, Any]:
         )
         try:
             _PATH.replace(quarantine)
-        except OSError:
-            pass
-        return {"schema_version": 1, "models": {}}
+        except OSError as quarantine_exc:
+            raise RuntimeError(
+                f"Model-performance state is corrupt and could not be quarantined: {_PATH}"
+            ) from quarantine_exc
+        raise RuntimeError(
+            f"Model-performance state was corrupt and has been quarantined: {quarantine.name}"
+        ) from exc
     except OSError:
         raise
 
