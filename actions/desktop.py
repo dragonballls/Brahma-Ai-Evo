@@ -6,6 +6,8 @@ import shutil
 import subprocess
 import tempfile
 import platform
+import ipaddress
+import socket
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import quote, urlparse
@@ -201,10 +203,38 @@ for (var i = 0; i < allDesktops.length; i++) {{
         return f"Could not set wallpaper: {e}"
 
 
-def set_wallpaper_from_url(url: str) -> str:
+
+def _validate_remote_http_target(url: str) -> str:
     parsed = urlparse(str(url or "").strip())
-    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
-        return "Could not download wallpaper: only HTTP(S) URLs are allowed."
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Only absolute HTTP(S) URLs are allowed.")
+    if parsed.username or parsed.password:
+        raise ValueError("Remote URLs may not contain embedded credentials.")
+    try:
+        addresses = {item[4][0] for item in socket.getaddrinfo(parsed.hostname, parsed.port, type=socket.SOCK_STREAM)}
+    except OSError as exc:
+        raise ValueError(f"Remote host could not be resolved: {exc}") from exc
+    if not addresses:
+        raise ValueError("Remote host could not be resolved.")
+    for raw in addresses:
+        address = ipaddress.ip_address(raw)
+        if (
+            address.is_private
+            or address.is_loopback
+            or address.is_link_local
+            or address.is_reserved
+            or address.is_multicast
+        ):
+            raise ValueError("Remote wallpaper URLs may not target private or local network addresses.")
+    return parsed.geturl()
+
+
+def set_wallpaper_from_url(url: str) -> str:
+    try:
+        safe_url = _validate_remote_http_target(url)
+    except ValueError as exc:
+        return f"Could not download wallpaper: {exc}"
+    parsed = urlparse(safe_url)
     tmp = None
     try:
         suffix = Path(parsed.path).suffix.lower() or ".jpg"
@@ -215,7 +245,7 @@ def set_wallpaper_from_url(url: str) -> str:
         tmp = Path(temp_name)
         total = 0
         max_bytes = 20 * 1024 * 1024
-        with urllib.request.urlopen(str(url).strip(), timeout=15) as response, tmp.open("wb") as output:
+        with urllib.request.urlopen(safe_url, timeout=15) as response, tmp.open("wb") as output:
             while True:
                 chunk = response.read(64 * 1024)
                 if not chunk:
