@@ -1,10 +1,12 @@
 # actions/reminder.py
 
 import subprocess
+import json
 import os
 import sys
 import uuid
 from datetime import datetime
+from xml.sax.saxutils import escape as xml_escape
 
 
 def reminder(
@@ -39,7 +41,13 @@ def reminder(
             return "That time is already in the past."
 
         task_name    = f"MARKReminder_{target_dt.strftime('%Y%m%d_%H%M')}_{uuid.uuid4().hex[:8]}"
-        safe_message = message.replace('"', '').replace("'", "").strip()[:200]
+        safe_message = str(message or "Reminder").strip()[:200]
+        safe_message = "".join(
+            ch for ch in safe_message
+            if ch in "\t\r\n" or ord(ch) >= 0x20
+        )
+        message_literal = json.dumps(safe_message, ensure_ascii=False)
+        xml_message = xml_escape(safe_message)
 
         python_exe = sys.executable
         if python_exe.lower().endswith("python.exe"):
@@ -53,8 +61,9 @@ def reminder(
             os.path.join(os.path.dirname(__file__), "..")
         )
 
+        project_root_literal = json.dumps(project_root, ensure_ascii=False)
         script_code = f'''import sys, os, time
-sys.path.insert(0, r"{project_root}")
+sys.path.insert(0, {project_root_literal})
 
 try:
     import winsound
@@ -68,14 +77,14 @@ try:
     from win10toast import ToastNotifier
     ToastNotifier().show_toast(
         "MARK Reminder",
-        "{safe_message}",
+        {message_literal},
         duration=15,
         threaded=False
     )
 except Exception:
     try:
         import subprocess
-        subprocess.run(["msg", "*", "/TIME:30", "{safe_message}"], shell=True)
+        subprocess.run(["msg", "*", "/TIME:30", {message_literal}], shell=False)
     except Exception:
         pass
 
@@ -91,7 +100,7 @@ except Exception:
         xml_content = f'''<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>MARK Reminder: {safe_message}</Description>
+    <Description>MARK Reminder: {xml_message}</Description>
   </RegistrationInfo>
   <Triggers>
     <TimeTrigger>
@@ -101,8 +110,8 @@ except Exception:
   </Triggers>
   <Actions>
     <Exec>
-      <Command>{python_exe}</Command>
-      <Arguments>"{notify_script}"</Arguments>
+      <Command>{xml_escape(python_exe)}</Command>
+      <Arguments>{xml_escape(json.dumps(notify_script, ensure_ascii=False))}</Arguments>
     </Exec>
   </Actions>
   <Settings>
@@ -127,8 +136,8 @@ except Exception:
             f.write(xml_content)
 
         result = subprocess.run(
-            f'schtasks /Create /TN "{task_name}" /XML "{xml_path}" /F',
-            shell=True,
+            ["schtasks", "/Create", "/TN", task_name, "/XML", xml_path, "/F"],
+            shell=False,
             capture_output=True,
             text=True,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
