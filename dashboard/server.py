@@ -837,6 +837,9 @@ class DashboardServer:
             try:
                 while True:
                     data = await websocket.receive_bytes()
+                    if len(data) > 256 * 1024:
+                        await websocket.close(code=1009, reason="Audio frame too large")
+                        break
                     try:
                         self._phone_audio_queue.put_nowait(
                             {"data": data, "mime_type": "audio/pcm"}
