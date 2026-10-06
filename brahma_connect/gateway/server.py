@@ -20,6 +20,7 @@ from .models import PairingOffer
 from .pairing import PairingManager
 from .protocol import ProtocolTypes, build_message, validate_message, now_iso, new_request_id
 from .websocket import ConnectionHub
+from core.local_tls import certificate_sha256, ensure_local_certificate
 
 
 def _safe_int(value: object, default: int, *, minimum: int | None = None, maximum: int | None = None) -> int:
@@ -85,6 +86,9 @@ class BrahmaGatewayConfig:
     service_name: str = "_BRAHMA._tcp.local."
     pairing_ttl_seconds: int = 300
     request_timeout_seconds: int = 30
+    tls_enabled: bool = True
+    tls_certfile: Path | None = None
+    tls_keyfile: Path | None = None
     config_path: Path | None = None
     registry_path: Path | None = None
 
@@ -99,6 +103,7 @@ class BrahmaGatewayConfig:
             "service_name": "_BRAHMA._tcp.local.",
             "pairing_ttl_seconds": 300,
             "request_timeout_seconds": 30,
+            "tls_enabled": True,
         }
         config_path = _default_config_path(base_dir)
         if config_path.exists():
@@ -116,6 +121,9 @@ class BrahmaGatewayConfig:
             service_name=str(data.get("service_name", "_BRAHMA._tcp.local.")).strip() or "_BRAHMA._tcp.local.",
             pairing_ttl_seconds=_safe_int(data.get("pairing_ttl_seconds", 300), 300, minimum=60),
             request_timeout_seconds=_safe_int(data.get("request_timeout_seconds", 30), 30, minimum=1),
+            tls_enabled=_safe_bool(data.get("tls_enabled", True), True),
+            tls_certfile=Path(str(data.get("tls_certfile") or "")).expanduser() if data.get("tls_certfile") else None,
+            tls_keyfile=Path(str(data.get("tls_keyfile") or "")).expanduser() if data.get("tls_keyfile") else None,
             config_path=config_path,
             registry_path=_default_registry_path(base_dir),
         )
@@ -129,6 +137,7 @@ class BrahmaGatewayConfig:
             "service_name": self.service_name,
             "pairing_ttl_seconds": self.pairing_ttl_seconds,
             "request_timeout_seconds": self.request_timeout_seconds,
+            "tls_enabled": self.tls_enabled,
         }
 
     def save(self) -> None:
@@ -148,6 +157,9 @@ class BrahmaGateway:
         self.command_router = CommandRouter(self.device_manager, self.hub, self.capability_manager)
         self.pairing_manager = PairingManager(self.config.service_name, self.config.pairing_ttl_seconds)
         self.discovery = GatewayDiscovery(self.config.service_name)
+        self._tls_certfile: Path | None = None
+        self._tls_keyfile: Path | None = None
+        self._tls_fingerprint: str = ""
         self._running = False
         self._shutdown = threading.Event()
         self._server: uvicorn.Server | None = None
@@ -301,9 +313,35 @@ class BrahmaGateway:
         self._append_log("DEVICE_RECONNECTED", device_id=record.device_id, name=record.name)
         return {"success": True, "device": record.to_dict(), "reconnected": True}
 
+    def _ensure_tls(self) -> None:
+        if not self.config.tls_enabled:
+            self._tls_certfile = None
+            self._tls_keyfile = None
+            self._tls_fingerprint = ""
+            return
+        cert_dir = self.base_dir / "config" / "certs"
+        keyfile = self.config.tls_keyfile or (cert_dir / "gateway.key")
+        certfile = self.config.tls_certfile or (cert_dir / "gateway.crt")
+        key_path, cert_path = ensure_local_certificate(
+            keyfile.parent,
+            key_name=keyfile.name,
+            cert_name=certfile.name,
+            common_name="Brahma Connect Local Gateway",
+            hosts=[self.config.host, "localhost", "127.0.0.1", local_ip()],
+        )
+        self._tls_keyfile = key_path
+        self._tls_certfile = cert_path
+        self._tls_fingerprint = certificate_sha256(cert_path)
+
     def create_pairing_offer(self, *, device_name: str = "Unknown Device", platform: str = "unknown") -> dict[str, Any]:
         advertised_host = local_ip() if self.config.host in {"0.0.0.0", "::"} else self.config.host
-        offer = self.pairing_manager.create_offer(advertised_host, self.config.port)
+        self._ensure_tls()
+        offer = self.pairing_manager.create_offer(
+            advertised_host,
+            self.config.port,
+            tls_enabled=self.config.tls_enabled,
+            tls_certificate_sha256=self._tls_fingerprint,
+        )
         self._append_log("PAIRING_REQUEST", device=device_name, platform=platform)
         return offer.to_dict()
 
@@ -772,7 +810,12 @@ class BrahmaGateway:
                 advertised = self.discovery.start(
                     host=self.config.host,
                     port=self.config.port,
-                    properties={"service": "brahma", "version": "1"},
+                    properties={
+                        "service": "brahma",
+                        "version": "1",
+                        "tls": "1" if self.config.tls_enabled else "0",
+                        "tls_certificate_sha256": self._tls_fingerprint,
+                    },
                 )
             self._append_log("GATEWAY_STARTING", host=self.config.host, port=self.config.port, advertised=advertised)
             cfg = uvicorn.Config(
@@ -785,6 +828,9 @@ class BrahmaGateway:
             )
             with self._serve_lock:
                 self._server = uvicorn.Server(cfg)
+                if self.config.tls_enabled:
+                    cfg.ssl_keyfile = str(self._tls_keyfile)
+                    cfg.ssl_certfile = str(self._tls_certfile)
                 self._server.install_signal_handlers = lambda: None
                 self._server.should_exit = self._shutdown.is_set()
             await self._server.serve()
