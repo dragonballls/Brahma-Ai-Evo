@@ -44,3 +44,16 @@ def test_pairing_save_failure_rolls_back_in_memory_state(tmp_path, monkeypatch):
         manager.create_from_pairing(name="Phone", platform="android")
 
     assert manager.list_devices() == []
+
+
+def test_device_registry_rejects_symlinked_registry_path(tmp_path):
+    target = tmp_path / "real.json"
+    target.write_text('{"devices": {}}', encoding="utf-8")
+    link = tmp_path / "devices.json"
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError):
+        return
+    from brahma_connect.gateway.device_manager import DeviceManager
+    with pytest.raises(RuntimeError, match="must not be a symlink"):
+        DeviceManager(link)
