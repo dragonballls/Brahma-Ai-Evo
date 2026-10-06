@@ -117,7 +117,9 @@ def set_wallpaper(image_path: str) -> str:
             if path.suffix.lower() in {".webp", ".png"}:
                 try:
                     from PIL import Image
-                    bmp_path = Path(tempfile.mktemp(suffix=".bmp"))
+                    fd, temp_name = tempfile.mkstemp(suffix=".bmp")
+                    os.close(fd)
+                    bmp_path = Path(temp_name)
                     Image.open(path).convert("RGB").save(bmp_path, "BMP")
                     path = bmp_path
                 except ImportError:
