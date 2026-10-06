@@ -404,7 +404,7 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertNotIn("QWebEngineView", wizard)
         self.assertIn("Unsafe installer payload entry", wizard)
         self.assertIn("BrahmaEvoPayload.zip", workflow)
-        self.assertIn("actions/cache/restore@v4", workflow)
+        self.assertIn("actions/cache/restore@v6", workflow)
         self.assertIn("required", packer)
         self.assertIn("--verify", packer)
         self.assertIn("compresslevel=1", packer)
