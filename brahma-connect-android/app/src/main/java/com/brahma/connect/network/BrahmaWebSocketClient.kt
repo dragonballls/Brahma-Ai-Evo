@@ -370,7 +370,7 @@ class BrahmaWebSocketClient(
         val pending = ChatMessage(msgId, "user", text, timestamp, "Sending...")
         AgentStateStore.addChatMessage(pending)
         val accepted = send(payload)
-        val finalStatus = if (accepted) "Sent" else "Failed — not connected"
+        val finalStatus = if (accepted) "Queued — awaiting gateway acknowledgement" else "Failed — not connected"
         AgentStateStore.addChatMessage(pending.copy(status = finalStatus))
     }
 }
