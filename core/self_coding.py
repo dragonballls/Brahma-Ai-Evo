@@ -206,8 +206,20 @@ class SelfCodingAgent:
             raise SelfCodingError("Checkpoint promoted SHA is invalid.")
         if checkpoint.promoted_sha is not None and checkpoint.promoted_sha != checkpoint.commits[-1]:
             raise SelfCodingError("Checkpoint promoted SHA does not match the checkpoint tip.")
+        if len(checkpoint.undo_commits) > len(checkpoint.commits):
+            raise SelfCodingError("Checkpoint undo metadata contains too many commits.")
         if any(not re.fullmatch(r"[0-9a-f]{40}", value) for value in checkpoint.undo_commits):
             raise SelfCodingError("Checkpoint undo metadata is invalid.")
+        if checkpoint.undo_commits:
+            previous = checkpoint.promoted_sha or checkpoint.commits[-1]
+            for commit in checkpoint.undo_commits:
+                parents = self._git("rev-list", "--parents", "-n", "1", commit)
+                if parents.returncode != 0:
+                    raise SelfCodingError("Checkpoint references a missing undo commit.")
+                fields = parents.stdout.strip().split()
+                if len(fields) != 2 or fields[1] != previous:
+                    raise SelfCodingError("Checkpoint undo commits are not the expected linear chain.")
+                previous = commit
     def _load(self, checkpoint_id: str) -> Checkpoint:
         path = self._path(checkpoint_id)
         try:
@@ -461,8 +473,8 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
             return self._approve_unlocked(checkpoint_id=checkpoint.checkpoint_id)
         raise SelfCodingError("Promotion state is ambiguous; refusing to mutate main further.")
     def _recover_undoing(self, checkpoint: Checkpoint) -> str:
-        if not checkpoint.promoted_sha or not checkpoint.undo_commits:
-            raise SelfCodingError("Undoing checkpoint is missing its durable undo commit state.")
+        if not checkpoint.promoted_sha:
+            raise SelfCodingError("Undoing checkpoint is missing its promoted SHA.")
         self.validate_repo()
         fetched = self._git("fetch", "origin", "main", timeout=300)
         if fetched.returncode != 0:
@@ -473,6 +485,11 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
             raise SelfCodingError("Unable to inspect main during undo recovery.")
         remote_sha = remote.stdout.strip()
         local_sha = local.stdout.strip()
+        if not checkpoint.undo_commits:
+            if remote_sha == checkpoint.promoted_sha and local_sha == checkpoint.promoted_sha:
+                self._save(replace(checkpoint, state="approved", undo_commits=()))
+                return self._undo_unlocked(checkpoint.checkpoint_id)
+            raise SelfCodingError("Undo started but no durable undo commit was recorded; main state is ambiguous.")
         undo_tip = checkpoint.undo_commits[-1]
         if local_sha != undo_tip:
             raise SelfCodingError("Local main does not match the durable undo checkpoint tip.")
@@ -628,7 +645,18 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
                     self._git("reset", "--hard", checkpoint.promoted_sha)
                     raise SelfCodingError("Unable to record an undo commit.")
                 undo_commits.append(head.stdout.strip())
-                self._save(replace(checkpoint, state="undoing", undo_commits=tuple(undo_commits)))
+                try:
+                    self._save(replace(checkpoint, state="undoing", undo_commits=tuple(undo_commits)))
+                except Exception as save_exc:
+                    self._git("reset", "--hard", checkpoint.promoted_sha)
+                    self._git("switch", current)
+                    try:
+                        self._save(checkpoint)
+                    except Exception:
+                        pass
+                    raise SelfCodingError(
+                        "Undo checkpoint persistence failed; local main was restored to the promoted state."
+                    ) from save_exc
             status = self._git("status", "--porcelain")
             if status.returncode != 0 or status.stdout.strip():
                 self._git("reset", "--hard", checkpoint.promoted_sha)
