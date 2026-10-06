@@ -592,12 +592,14 @@ def test_dynamic_registry_redacts_credential_like_errors():
 
 
 def test_gateway_pair_attempt_tracking_is_bounded():
+    from types import SimpleNamespace
     from brahma_connect.gateway.server import BrahmaGateway
 
     gateway = BrahmaGateway(Path("."))
     gateway._pair_attempts = {
         f"192.0.2.{i}": (1, 0.0) for i in range(4105)
     }
-    # Any pairing attempt should prune stale entries before adding more state.
-    gateway._pair_attempts["current"] = (1, 0.0)
-    assert len(gateway._pair_attempts) <= 4106
+    websocket = SimpleNamespace(client=SimpleNamespace(host="198.51.100.10"))
+    result = asyncio.run(gateway._pair_device({"pairing_token": "invalid"}, websocket))
+    assert result["success"] is False
+    assert len(gateway._pair_attempts) <= 4096
