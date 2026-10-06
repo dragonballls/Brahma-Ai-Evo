@@ -5206,7 +5206,7 @@ class BrahmaLive:
         ).start()
 
     def speak_error(self, tool_name: str, error: str):
-        short = str(error)[:120]
+        short = self._redact_sensitive_text(str(error))[:120]
         self.ui.write_log(f"ERR: {tool_name} — {short}")
         self.speak(f"Sir, {tool_name} encountered an error. {short}")
 
@@ -6505,7 +6505,7 @@ class BrahmaLive:
                 safe_tb,
                 source=f"tool:{name}",
             )
-            self.speak_error(name, e)
+            self.speak_error(name, safe_error)
 
         result_declared_failed = False
         if isinstance(result, dict):
