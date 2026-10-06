@@ -141,8 +141,10 @@ class OmniRouteGateway:
                 raise RuntimeError("OmniRoute is not ready; provider configuration was not applied.")
             current_base_url = self.provisioner.base_url.rstrip("/")
 
-        with self._credentials_lock:
-            result = self.provisioner.configure_provider(provider, api_key)
+            # Keep the lifecycle lock through credential registration so stop()
+            # cannot terminate or race the gateway while its provider state changes.
+            with self._credentials_lock:
+                result = self.provisioner.configure_provider(provider, api_key)
 
         with self._lock:
             self.base_url = current_base_url
