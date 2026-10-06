@@ -75,59 +75,61 @@ def _build_sandbox() -> dict:
     return sandbox
 
 
-def _execute_generated_code(code: str, player=None) -> str:
-    if not code or code.strip() == "UNSAFE":
+def _execute_desktop_plan(plan_text: str, player=None) -> str:
+    """Execute only declarative UI operations returned by the desktop planner."""
+    raw = str(plan_text or "").strip()
+    if not raw or raw.upper() == "UNSAFE":
         return "This action cannot be performed safely."
-
-    # Kod temizleme
-    if code.startswith("```"):
-        lines = code.split("\n")
-        code  = "\n".join(lines[1:-1]).strip()
-
-    sandbox      = _build_sandbox()
-    output_lines = []
-    sandbox["__builtins__"]["print"] = lambda *a: output_lines.append(" ".join(str(x) for x in a))
-
+    if raw.startswith("```"):
+        raw = "\n".join(raw.split("\n")[1:-1]).strip()
     try:
-        exec(compile(code, "<brahma_desktop>", "exec"), sandbox)
-        return "\n".join(output_lines) if output_lines else "Done."
-    except Exception as e:
-        print(f"[Desktop] Exec error: {e}\nCode:\n{code[:300]}")
-        return f"Execution error: {e}"
+        plan = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        return f"Invalid desktop action plan: {exc}"
+    actions = plan.get("actions") if isinstance(plan, dict) else None
+    if not isinstance(actions, list) or len(actions) > 20:
+        return "Invalid desktop action plan."
+    allowed = {"click", "double_click", "right_click", "move", "drag", "hotkey", "press", "scroll", "type", "smart_type", "wait", "screenshot", "screen_find", "screen_click"}
+    from actions.computer_control import computer_control
+    results = []
+    for item in actions:
+        if not isinstance(item, dict):
+            return "Invalid desktop action entry."
+        action = str(item.get("action") or item.get("op") or "").strip().lower()
+        if action not in allowed:
+            return f"Desktop action '{action}' is not permitted."
+        params = dict(item)
+        params["action"] = action
+        params.pop("op", None)
+        if action == "wait":
+            try:
+                params["seconds"] = min(10.0, max(0.0, float(params.get("seconds", 1.0))))
+            except (TypeError, ValueError):
+                return "Invalid wait duration."
+        try:
+            results.append(str(computer_control(params, player=player)))
+        except Exception as exc:
+            return f"Desktop action '{action}' failed: {exc}"
+    return "\n".join(results) if results else "No desktop actions were requested."
+
 
 def _ask_gemini_for_desktop_action(task: str) -> str:
     from llm_client import client
-
-    desktop = str(_get_desktop())
-    os_specific = {
-        "Windows": "- ctypes (Windows API calls, read-only)\n- winreg (registry READ only)",
-        "Darwin":  "- subprocess is NOT available; use pyautogui or Path only",
-        "Linux":   "- subprocess is NOT available; use pyautogui or Path only",
-    }.get(_OS, "")
-
-    prompt = f"""You are a desktop automation assistant.
-Current OS: {_OS}
-Desktop path: {desktop}
-Generate safe Python code to accomplish the task below.
-Allowed modules ONLY:
-- pyautogui (mouse, keyboard — if needed)
-- pathlib.Path (file/folder inspection only, no deletion)
-- shutil.copy2, shutil.copytree, shutil.disk_usage (NO move, NO rmtree)
-- os_path (os.path equivalent, read-only)
-- time.sleep
-{os_specific}
-Hard rules:
-- NO file deletion, NO subprocess, NO exec/eval inside the code
-- NO import statements, NO file write except explicitly requested
-- If task cannot be done safely with these tools, output exactly: UNSAFE
-Output ONLY the Python code. No explanation, no markdown, no backticks.
-Task: {task}"""
-
+    prompt = (
+        "Create a JSON desktop action plan only. Allowed actions: click, double_click, "
+        "right_click, move, drag, hotkey, press, scroll, type, smart_type, wait, "
+        "screenshot, screen_find, screen_click. Maximum 20 actions. "
+        "Never output Python, JavaScript, shell commands, subprocesses, deletion, "
+        "file writes, terminal actions, or arbitrary code. If the task cannot be "
+        "completed with these actions, output {\"actions\":[],\"unsafe\":true}.\nTask: "
+        + str(task)
+    )
     try:
-        return client.chat(prompt, system="You are a code generator. Output only raw Python code.")
-    except Exception as e:
-        return f"ERROR: {e}"
-        
+        return client.chat(prompt, system="Return JSON only.")
+    except Exception as exc:
+        return json.dumps({"actions": [], "unsafe": True, "error": str(exc)})
+
+
 def set_wallpaper(image_path: str) -> str:
     path = Path(image_path).expanduser().resolve()
     if not path.exists():
@@ -405,13 +407,13 @@ def desktop_control(
             if player:
                 player.write_log("[Desktop] Generating action...")
 
-            code = _ask_gemini_for_desktop_action(actual_task)
-            return _execute_generated_code(code, player=player)
+            plan = _ask_gemini_for_desktop_action(actual_task)
+            return _execute_desktop_plan(plan, player=player)
 
         else:
             if action:
-                code = _ask_gemini_for_desktop_action(action)
-                return _execute_generated_code(code, player=player)
+                plan = _ask_gemini_for_desktop_action(action)
+                return _execute_desktop_plan(plan, player=player)
             return "No action or task specified."
 
     except Exception as e:
