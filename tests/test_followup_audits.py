@@ -473,3 +473,10 @@ def test_local_json_error_does_not_echo_raw_model_output():
     source = Path("or_client.py").read_text(encoding="utf-8")
     assert "Raw output:" not in source
     assert "Local model returned unparseable JSON." in source
+
+
+def test_pair_approval_tool_result_never_contains_device_secret():
+    source = Path("brahma_connect/gateway/server.py").read_text(encoding="utf-8")
+    approval = source.split("async def approve_pending_request", 1)[1]
+    assert '"device_secret": secret' not in approval
+    assert "credentials delivered directly to the paired device" in approval
