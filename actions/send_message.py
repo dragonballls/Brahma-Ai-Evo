@@ -57,7 +57,7 @@ def _send_whatsapp(receiver: str, message: str) -> str:
         pyautogui.write(message, interval=0.03)
         time.sleep(0.2)
         pyautogui.press("enter")
-        return f"Message sent to {receiver} via WhatsApp."
+        return f"Attempted to send to {receiver} via WhatsApp; the desktop UI provided no delivery acknowledgement."
     except Exception as e:
         return f"WhatsApp error: {e}"
 
@@ -145,7 +145,7 @@ def _send_telegram(receiver: str, message: str) -> str:
         pyautogui.write(message, interval=0.03)
         time.sleep(0.2)
         pyautogui.press("enter")
-        return f"Message sent to {receiver} via Telegram."
+        return f"Attempted to send to {receiver} via Telegram; the desktop UI provided no delivery acknowledgement."
     except Exception as e:
         return f"Telegram error: {e}"
 
@@ -223,7 +223,7 @@ def _send_generic(platform: str, receiver: str, message: str) -> str:
         pyautogui.write(message, interval=0.03)
         time.sleep(0.2)
         pyautogui.press("enter")
-        return f"Message sent to {receiver} via {platform}."
+        return f"Attempted to send to {receiver} via {platform}; the desktop UI provided no delivery acknowledgement."
     except Exception as e:
         return f"{platform} error: {e}"
 
