@@ -37,6 +37,8 @@ class Task:
 
 class TaskQueue:
     def __init__(self, max_concurrent: int = 1):
+        if not isinstance(max_concurrent, int) or max_concurrent < 1:
+            raise ValueError("max_concurrent must be at least 1.")
         self._queue:        list[Task]       = []
         self._lock:         threading.Lock   = threading.Lock()
         self._condition:    threading.Condition = threading.Condition(self._lock)
@@ -213,14 +215,30 @@ class TaskQueue:
                         pass
 
             if task:
-                task_thread = threading.Thread(
-                    target=self._run_task,
-                    args=(task,),
-                    daemon=True,
-                    name=f"AgentTask-{task.task_id}"
-                )
-                self._task_threads[task.task_id] = task_thread
-                task_thread.start()
+                with self._condition:
+                    if not self._running:
+                        task.cancel_flag.set()
+                        task.status = TaskStatus.CANCELLED
+                        self._active_count = max(0, self._active_count - 1)
+                        self._condition.notify_all()
+                        continue
+                    task_thread = threading.Thread(
+                        target=self._run_task,
+                        args=(task,),
+                        daemon=True,
+                        name=f"AgentTask-{task.task_id}"
+                    )
+                    self._task_threads[task.task_id] = task_thread
+                try:
+                    task_thread.start()
+                except BaseException:
+                    with self._condition:
+                        self._task_threads.pop(task.task_id, None)
+                        task.cancel_flag.set()
+                        task.status = TaskStatus.CANCELLED
+                        self._active_count = max(0, self._active_count - 1)
+                        self._condition.notify_all()
+                    raise
 
     def _next_task(self) -> Task | None:
         if self._active_count >= self._max_concurrent:
