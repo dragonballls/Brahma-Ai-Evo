@@ -106,7 +106,10 @@ def _reverse_geocode_osm(lat: float, lon: float) -> Optional[str]:
         url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}"
         req = urllib.request.Request(url, headers={"User-Agent": "BrahmaAI-LocationEngine/1.0"})
         with urllib.request.urlopen(req, timeout=3.0) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            raw = resp.read(64 * 1024 + 1)
+            if len(raw) > 64 * 1024:
+                raise ValueError("Location service response exceeded the safety limit.")
+            data = json.loads(raw.decode("utf-8"))
             addr = data.get("address", {})
             return (
                 addr.get("city")
@@ -124,7 +127,6 @@ def _detect_via_ip_services() -> Optional[Dict[str, Any]]:
     """Fast, accurate IP geolocation using multi-provider cascade."""
     endpoints = [
         ("ipwho.is", "https://ipwho.is/", "city", "latitude", "longitude", "region"),
-        ("ip-api.com", "http://ip-api.com/json", "city", "lat", "lon", "regionName"),
         ("freeipapi.com", "https://freeipapi.com/api/json", "cityName", "latitude", "longitude", "regionName"),
     ]
 
@@ -132,7 +134,10 @@ def _detect_via_ip_services() -> Optional[Dict[str, Any]]:
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "curl/7.68.0"})
             with urllib.request.urlopen(req, timeout=2.5) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
+                raw = resp.read(64 * 1024 + 1)
+                if len(raw) > 64 * 1024:
+                    raise ValueError("Location service response exceeded the safety limit.")
+                data = json.loads(raw.decode("utf-8"))
                 city = data.get(city_k)
                 if city and isinstance(city, str) and city.strip() and city.lower() != "none":
                     return {
