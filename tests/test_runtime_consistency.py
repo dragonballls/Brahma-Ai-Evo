@@ -856,3 +856,16 @@ if __name__ == "__main__":
             _raise_for_failed_tool_result('{"success": false, "error": "failed"}')
         with self.assertRaises(RuntimeError):
             _raise_for_failed_tool_result("")
+
+    def test_tool_execution_logs_redact_credential_fields(self):
+        from main import BrahmaEvo
+
+        payload = BrahmaEvo._redact_tool_args({
+            "api_key": "secret-api-key",
+            "nested": {"token": "secret-token", "value": "safe"},
+            "items": [{"password": "secret-password"}],
+        })
+        self.assertEqual(payload["api_key"], "<redacted>")
+        self.assertEqual(payload["nested"]["token"], "<redacted>")
+        self.assertEqual(payload["nested"]["value"], "safe")
+        self.assertEqual(payload["items"][0]["password"], "<redacted>")
