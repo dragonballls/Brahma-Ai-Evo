@@ -33,6 +33,32 @@ def _clean_text(value: str) -> str:
     return " ".join((value or "").strip().split())
 
 
+_SECRET_RE = re.compile(
+    r"(?i)(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|device[_-]?secret|password|passwd|secret|bearer)\s*[:=]\s*\S+"
+)
+_TOKEN_RE = re.compile(
+    r"\b(?:sk-[A-Za-z0-9_-]{20,}|gsk_[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b"
+)
+
+
+def _redact_secret_text(value: str) -> str:
+    text = str(value or "")
+    text = _SECRET_RE.sub("[REDACTED_SECRET]", text)
+    return _TOKEN_RE.sub("[REDACTED_SECRET]", text)
+
+
+def _redact_persisted(value: Any) -> Any:
+    if isinstance(value, str):
+        return _redact_secret_text(value)
+    if isinstance(value, dict):
+        return {key: _redact_persisted(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_persisted(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_persisted(item) for item in value)
+    return value
+
+
 def _title_from_message(message: str) -> str:
     text = _clean_text(message)
     if not text:
@@ -55,7 +81,7 @@ def _title_from_message(message: str) -> str:
 
 def _serialize_attachments(attachments: list[dict[str, Any]] | None) -> str:
     try:
-        return json.dumps(attachments or [], ensure_ascii=False)
+        return json.dumps(_redact_persisted(attachments or []), ensure_ascii=False)
     except Exception:
         return "[]"
 
@@ -374,7 +400,7 @@ class WorkspaceStore:
         timestamp: int | None = None,
         attachments: list[dict[str, Any]] | None = None,
     ) -> None:
-        content = _clean_text(content)
+        content = _redact_secret_text(_clean_text(content))
         if not content:
             return
         stamp = int(timestamp or _now_ms())
