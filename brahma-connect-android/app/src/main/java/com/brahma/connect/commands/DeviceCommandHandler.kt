@@ -209,20 +209,14 @@ class DeviceCommandHandler(private val context: Context) {
     }
 
     private fun unlockPhone(parameters: Map<String, Any?>): CommandResult {
-        val pin = parameters["pin"]?.toString()
-        if (pin.isNullOrBlank()) {
+        if (parameters["pin"]?.toString().isNullOrBlank()) {
             return CommandResult(false, errorCode = "MISSING_PIN", error = "PIN is required to unlock phone.")
         }
-        val service = com.brahma.connect.accessibility.BrahmaAccessibilityService.instance
-        if (service == null) {
-            return CommandResult(false, errorCode = "ACCESSIBILITY_DISABLED", error = "Brahma Accessibility Service is not enabled.")
-        }
-        val success = service.unlockPhone(pin)
-        return if (success) {
-            CommandResult(true, data = mapOf("message" to "Unlock sequence initiated."))
-        } else {
-            CommandResult(false, errorCode = "UNLOCK_FAILED", error = "Failed to initiate unlock sequence.")
-        }
+        return CommandResult(
+            false,
+            errorCode = "UNSUPPORTED_FEATURE",
+            error = "Remote PIN unlock is not implemented; no unlock operation was performed.",
+        )
     }
 
     private fun resolveFileTarget(path: String?): java.io.File {
@@ -416,6 +410,9 @@ class DeviceCommandHandler(private val context: Context) {
         val text = parameters["text"]?.toString()
         if (text.isNullOrEmpty()) {
             return CommandResult(false, errorCode = "INVALID_ARGUMENT", error = "text is required.")
+        }
+        if (text.toByteArray(Charsets.UTF_8).size > 4 * 1024) {
+            return CommandResult(false, errorCode = "TEXT_TOO_LARGE", error = "Text exceeds the 4 KB remote-input limit.")
         }
         val success = service.typeText(text)
         return CommandResult(success, data = mapOf("action" to "type", "success" to success))
