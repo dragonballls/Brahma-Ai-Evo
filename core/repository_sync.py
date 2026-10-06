@@ -107,7 +107,9 @@ def publish_verified_repair(target_file: str | Path, patch_id: str, explanation:
 
     if expected_postimage_sha256:
         try:
-            actual_postimage = hashlib.sha256(target.read_bytes()).hexdigest()
+            actual_postimage = hashlib.sha256(
+                target.read_text(encoding="utf-8").replace("\r\n", "\n").encode("utf-8")
+            ).hexdigest()
         except OSError:
             return {"published": False, "reason": "target_read_failed"}
         if actual_postimage != expected_postimage_sha256:
@@ -149,7 +151,8 @@ def publish_verified_repair(target_file: str | Path, patch_id: str, explanation:
 
     if expected_preimage_sha256:
         try:
-            head_file = _run(root, ("show", f"HEAD:{str(repo_target).replace(chr(92), '/') }"))
+            repo_target_text = str(repo_target).replace("\\", "/")
+            head_file = _run(root, ("show", f"HEAD:{repo_target_text}"))
             if head_file.returncode != 0:
                 return {"published": False, "reason": "target_preimage_unavailable"}
             actual_preimage = hashlib.sha256(head_file.stdout.encode("utf-8")).hexdigest()
