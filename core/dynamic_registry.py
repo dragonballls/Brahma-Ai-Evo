@@ -27,6 +27,24 @@ from core.user_paths import get_user_data_dir
 
 logger = logging.getLogger("DynamicToolRegistry")
 
+_CREDENTIAL_PATTERNS = (
+    re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"\bAIza[0-9A-Za-z_-]{20,}\b"),
+    re.compile(r"\bgsk_[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b"),
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{20,}"),
+)
+
+
+def _redact_text(value: object) -> str:
+    text = str(value or "")
+    for pattern in _CREDENTIAL_PATTERNS:
+        text = pattern.sub("[REDACTED]", text)
+    return text
+
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 FEATURES_DIR = PROJECT_ROOT / "features"
 APPDATA_SKILLS_DIR = get_user_data_dir() / "skills"
@@ -475,7 +493,7 @@ class DynamicToolRegistry:
                 json.dump(skill.manifest, f, indent=4)
             return True
         except Exception as e:
-            logger.error(f"[Registry] Failed to save toggle status for '{name}': {e}")
+            logger.error(f"[Registry] Failed to save toggle status for '{name}': {_redact_text(e)}")
             return False
 
     @classmethod
@@ -493,7 +511,7 @@ class DynamicToolRegistry:
                     del cls._skills[name]
             return True
         except Exception as e:
-            logger.error(f"[Registry] Failed to delete skill '{name}': {e}")
+            logger.error(f"[Registry] Failed to delete skill '{name}': {_redact_text(e)}")
             return False
 
     @classmethod
@@ -506,8 +524,9 @@ class DynamicToolRegistry:
         try:
             return skill.execute_sync(**args)
         except Exception as e:
-            skill.last_error = str(e)
-            logger.error(f"[Registry] Execution error in feature '{name}': {e}", exc_info=True)
+            safe_error = _redact_text(e)
+            skill.last_error = safe_error
+            logger.error(f"[Registry] Execution error in feature '{name}': {safe_error}")
             try:
                 import traceback
                 from actions.auto_heal_engine import AutoHealEngine
@@ -527,8 +546,9 @@ class DynamicToolRegistry:
             result = await skill.execute_async(**args)
             return result
         except Exception as e:
-            skill.last_error = str(e)
-            logger.error(f"[Registry] Execution error in skill '{name}': {e}", exc_info=True)
+            safe_error = _redact_text(e)
+            skill.last_error = safe_error
+            logger.error(f"[Registry] Execution error in skill '{name}': {safe_error}")
             # Route to auto heal engine if available
             try:
                 import traceback
