@@ -43,8 +43,8 @@ def _unprotect_secret(value: object) -> str:
         import win32crypt
         blob = base64.b64decode(raw[len(_PROTECTED_PREFIX):], validate=True)
         return win32crypt.CryptUnprotectData(blob, None)[1].decode("utf-8")
-    except Exception:
-        return ""
+    except Exception as exc:
+        raise RuntimeError("Stored Windows API-key protection could not be decrypted.") from exc
 
 
 def _encode_config_for_storage(config: dict[str, Any]) -> dict[str, Any]:
