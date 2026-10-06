@@ -55,14 +55,17 @@ def kill_process(pid: int = None, name: str = None) -> str:
     if pid is None and not name:
         return "A process PID or exact process name is required."
 
-    target_pid = int(pid) if pid is not None else None
+    try:
+        target_pid = int(pid) if pid is not None else None
+    except (TypeError, ValueError):
+        return "Process PID must be a valid integer."
     target_name = str(name or "").strip().casefold()
 
     if target_pid is not None and target_pid <= 1:
         return "Refusing to terminate a protected system PID."
 
-    killed = []
     current_user = getpass.getuser()
+    matches = []
     for p in psutil.process_iter(["pid", "name", "username"]):
         try:
             process_pid = int(p.info["pid"])
@@ -79,15 +82,28 @@ def kill_process(pid: int = None, name: str = None) -> str:
             owner_short = owner.casefold().rsplit("\\", 1)[-1]
             if owner and current_user and owner_short != current_user.casefold():
                 continue
-
-            p.kill()
-            killed.append(f"{process_name} (PID: {process_pid})")
+            matches.append(p)
         except (psutil.NoSuchProcess, psutil.AccessDenied, ValueError):
             continue
 
-    if killed:
-        return f"Successfully closed: {', '.join(killed)}"
-    return f"No matching user-owned process found for '{name or pid}' or access was denied."
+    if target_pid is None and len(matches) > 1:
+        names = ", ".join(f"{str(p.info.get('name') or '').strip()} (PID {int(p.info['pid'])})" for p in matches[:5])
+        return f"Multiple matching processes found; refusing mass termination. Specify a PID. Matches: {names}"
+
+    if not matches:
+        return f"No matching user-owned process found for '{name or pid}' or access was denied."
+
+    process = matches[0]
+    try:
+        process.kill()
+        process.wait(timeout=2)
+    except psutil.NoSuchProcess:
+        return f"Process {process.pid} is already terminated."
+    except psutil.TimeoutExpired:
+        return f"Failed to confirm termination of process {process.pid} within the safety timeout."
+    except (psutil.AccessDenied, ValueError) as exc:
+        return f"Failed to terminate process {process.pid}: {exc}"
+    return f"Successfully closed: {str(process.info.get('name') or '').strip()} (PID: {process.pid})"
 def run(parameters: dict, player=None, session_memory=None) -> str:
     try:
         import psutil
