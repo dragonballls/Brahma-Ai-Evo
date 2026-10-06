@@ -1,3 +1,4 @@
+import hashlib
 import importlib.util
 import inspect
 import sys
@@ -25,12 +26,18 @@ class PluginManager:
                     continue
                 resolved = p.resolve()
                 resolved.relative_to(plugin_root)
-                spec = importlib.util.spec_from_file_location(p.stem, str(resolved))
+                module_key = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:16]
+                module_name = f"_brahma_plugin_{p.stem}_{module_key}"
+                spec = importlib.util.spec_from_file_location(module_name, str(resolved))
                 if not spec or not spec.loader:
                     continue
                 mod = importlib.util.module_from_spec(spec)
-                sys.modules[p.stem] = mod
-                spec.loader.exec_module(mod)
+                sys.modules[module_name] = mod
+                try:
+                    spec.loader.exec_module(mod)
+                except Exception:
+                    sys.modules.pop(module_name, None)
+                    raise
                 plugin = getattr(mod, "plugin", None)
                 if plugin is None:
                     # fallback: accept module with functions
