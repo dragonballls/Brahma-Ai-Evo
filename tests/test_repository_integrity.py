@@ -446,10 +446,15 @@ class RepositoryIntegrityTests(unittest.TestCase):
 
     def test_user_facing_provider_status_text_has_no_mojibake_bullet(self):
         source = self.read("ui.py")
-        self.assertNotIn("ΓÇó", source)
+        self.assertNotIn("Γ", source)
         self.assertIn('return "••••••••"', source)
         self.assertIn('return f"{key[:4]}••••••••{key[-4:]}"', source)
         self.assertIn('f"{platform} • {status}"', source)
+        self.assertIn("● System Online", source)
+        self.assertIn("Restart Brahma Evo", source)
+        self.assertIn("Reload Configuration", source)
+        self.assertIn("Check for Updates", source)
+        self.assertIn("← Back to Devices", source)
 
     def test_source_launcher_routes_through_repair_bootstrap(self):
         source = self.read("start_brahma.vbs")
