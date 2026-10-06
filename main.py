@@ -5569,21 +5569,27 @@ class BrahmaLive:
             return types.FunctionResponse(name=name, id=fc.id, response={"result": res})
 
         if name == "save_memory":
-            category = args.get("category", "notes")
-            key      = args.get("key", "")
-            value    = args.get("value", "")
-            if key and value:
-                update_memory({category: {key: {"value": value}}})
-                print(f"[Memory] 💾 save_memory: {category}/{key} = {value}")
-                try:
-                    self.ui.finish_task_workspace("Memory saved.", "Memory updated.", 100)
-                except Exception:
-                    pass
+            category = str(args.get("category", "notes") or "notes").strip()
+            key = str(args.get("key", "") or "").strip()
+            value = args.get("value", "")
+            if not category or not key or value is None or not str(value).strip():
+                result = "Memory was not saved: category, key, and a non-empty value are required."
+                self.ui.set_state("LISTENING")
+                return types.FunctionResponse(
+                    id=fc.id, name=name,
+                    response={"result": result}
+                )
+            update_memory({category: {key: {"value": value}}})
+            print(f"[Memory] 💾 save_memory: {category}/{key} updated.")
+            try:
+                self.ui.finish_task_workspace("Memory saved.", "Memory updated.", 100)
+            except Exception:
+                pass
             if not self.ui.muted:
                 self.ui.set_state("LISTENING")
             return types.FunctionResponse(
                 id=fc.id, name=name,
-                response={"result": "ok", "silent": True}
+                response={"result": "Memory saved.", "silent": True}
             )
 
         loop   = asyncio.get_event_loop()
