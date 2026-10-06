@@ -207,6 +207,21 @@ try {
     Remove-Item Env:BRAHMA_EVO_TEST_MODE -ErrorAction SilentlyContinue
     Remove-Item Env:BRAHMA_SKIP_STARTUP_UPDATE -ErrorAction SilentlyContinue
 }
+
+# Import success alone is not enough for browser automation: Playwright can be
+# installed while its Chromium runtime is absent. Probe the browser itself so
+# every supported launch path reaches the same usable state.
+$BrowserNeedsRepair = $true
+try {
+    & $VenvPython -c "from playwright.sync_api import sync_playwright; p=sync_playwright().start(); b=p.chromium.launch(headless=True); b.close(); p.stop()" 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        $BrowserNeedsRepair = $false
+        Write-Host "Playwright Chromium runtime is ready." -ForegroundColor Green
+    }
+} catch {
+    $BrowserNeedsRepair = $true
+}
+
 if ($NeedsRepair) {
     Write-Host "Brahma dependencies need repair; installing into .venv..." -ForegroundColor Cyan
     if (-not $IsAdministrator) {
@@ -216,10 +231,22 @@ if ($NeedsRepair) {
     if ($LASTEXITCODE -ne 0) {
         throw "Dependency installation failed."
     }
+}
+
+if ($BrowserNeedsRepair) {
+    Write-Host "Playwright Chromium runtime is missing; installing it..." -ForegroundColor Cyan
+    & $VenvPython -m playwright install chromium
+    if ($LASTEXITCODE -ne 0) {
+        throw "Playwright Chromium installation failed."
+    }
+
     try {
-        & $VenvPython -m playwright install chromium
+        & $VenvPython -c "from playwright.sync_api import sync_playwright; p=sync_playwright().start(); b=p.chromium.launch(headless=True); b.close(); p.stop()" 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Chromium launch probe returned exit code $LASTEXITCODE."
+        }
     } catch {
-        Write-Host "Playwright browser installation skipped: $($_.Exception.Message)" -ForegroundColor Yellow
+        throw "Playwright Chromium installation could not be verified: $($_.Exception.Message)"
     }
 }
 
