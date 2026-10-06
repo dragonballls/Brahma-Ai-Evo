@@ -54,21 +54,28 @@ class TaskQueue:
         return self._executor
 
     def start(self) -> None:
-        if self._running:
-            return
-        self._running      = True
-        self._worker_thread = threading.Thread(
-            target=self._worker_loop,
-            daemon=True,
-            name="AgentTaskQueue"
-        )
-        self._worker_thread.start()
+        with self._condition:
+            if self._running:
+                return
+            self._running = True
+            self._worker_thread = threading.Thread(
+                target=self._worker_loop,
+                daemon=True,
+                name="AgentTaskQueue"
+            )
+            self._worker_thread.start()
         print("[TaskQueue] ✅ Started")
 
     def stop(self) -> None:
-        self._running = False
         with self._condition:
+            self._running = False
             self._condition.notify_all()
+        thread = self._worker_thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=2.0)
+        with self._condition:
+            if self._worker_thread is thread and (thread is None or not thread.is_alive()):
+                self._worker_thread = None
         print("[TaskQueue] 🔴 Stopped")
 
     def submit(
