@@ -899,3 +899,23 @@ def test_payload_verifier_rejects_zip_symlinks_and_traversal(tmp_path: Path):
 
         with pytest.raises(RuntimeError):
             payload.verify(source, archive_path)
+
+
+
+def test_conversation_export_preserves_existing_file_if_atomic_promotion_fails(tmp_path: Path, monkeypatch):
+    from workspace_store import WorkspaceStore
+
+    workspace = WorkspaceStore(tmp_path / "workspace.sqlite3")
+    conversation_id = workspace.create_conversation("Export test")
+    destination = tmp_path / "conversation.json"
+    destination.write_text("old export", encoding="utf-8")
+
+    def fail_replace(_self, _target):
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+    with pytest.raises(OSError, match="simulated replace failure"):
+        workspace.export_conversation(conversation_id, destination)
+
+    assert destination.read_text(encoding="utf-8") == "old export"
+    assert not list(tmp_path.glob(".conversation.json.export-*"))
