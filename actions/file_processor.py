@@ -70,9 +70,16 @@ def _file_size_str(path: Path) -> str:
     return f"{size/1024**3:.1f} GB"
 
 def _output_path(src: Path, suffix: str, new_ext: str = None) -> Path:
-    ext  = new_ext or src.suffix
-    name = f"{src.stem}_{suffix}{ext}"
-    return src.parent / name
+    ext = new_ext or src.suffix
+    base = src.parent / f"{src.stem}_{suffix}{ext}"
+    if not base.exists():
+        return base
+    counter = 1
+    while True:
+        candidate = src.parent / f"{src.stem}_{suffix}_{counter}{ext}"
+        if not candidate.exists():
+            return candidate
+        counter += 1
 
 def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
     try:
@@ -453,17 +460,7 @@ def _process_code(path: Path, action: str, params: dict, speak=None) -> str:
 
     if action == "run":
         if ext == "py":
-            try:
-                result = subprocess.run(
-                    ["python", str(path)],
-                    capture_output=True, text=True, timeout=30
-                )
-                out = result.stdout or result.stderr
-                return f"Output:\n{out[:2000]}" if out else "No output."
-            except subprocess.TimeoutExpired:
-                return "Execution timed out (30s)."
-            except Exception as e:
-                return f"Run failed: {e}"
+            return _run_python_with_confirmation(path)
         return f"Direct execution not supported for .{ext} files."
 
     if action == "info":
@@ -874,16 +871,67 @@ def _process_pptx(path: Path, action: str, params: dict, speak=None) -> str:
 
     return f"Unknown PPTX action: '{action}'. Try: summarize, extract_text, analyze"
 
+def _resolve_input_path(value: str) -> Path:
+    raw = str(value or "").strip()
+    if not raw:
+        raise ValueError("No file path provided.")
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    resolved = path.resolve(strict=False)
+    home = Path.home().resolve()
+    try:
+        resolved.relative_to(home)
+    except ValueError as exc:
+        raise ValueError("File processing is limited to paths inside the user's home directory.") from exc
+    if path.is_symlink() and not resolved.exists():
+        raise FileNotFoundError(f"File not found: {value}")
+    if not resolved.exists():
+        raise FileNotFoundError(f"File not found: {value}")
+    if not resolved.is_file():
+        raise ValueError(f"Path is not a file: {value}")
+    return resolved
+
+
+def _run_python_with_confirmation(path: Path) -> str:
+    from core.confirm import request
+
+    def _execute() -> str:
+        try:
+            result = subprocess.run(
+                ["python", str(path)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=str(path.parent),
+                check=False,
+            )
+            output = (result.stdout or result.stderr or "").strip()
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"Python execution failed (exit {result.returncode}): {output[:1200]}"
+                )
+            return f"Python execution completed. Output:\n{output[:2000]}" if output else "Python execution completed with no output."
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("Python execution timed out after 30 seconds.") from exc
+
+    return request(
+        key=f"file-execute:{path}",
+        title="Run Python file",
+        detail=f"Run the Python file '{path.name}' from '{path.parent}'?",
+        run=_execute,
+    )
+
+
 def file_processor(parameters: dict, player=None, speak=None) -> str:
     file_path_str = parameters.get("file_path", "").strip()
     if not file_path_str:
         return "No file path provided."
 
-    path = Path(file_path_str)
-    if not path.exists():
-        return f"File not found: {file_path_str}"
-    if not path.is_file():
-        return f"Path is not a file: {file_path_str}"
+    try:
+        path = _resolve_input_path(file_path_str)
+    except (ValueError, FileNotFoundError) as exc:
+        return f"File processing denied: {exc}"
 
     file_type   = _detect_type(path)
     action      = (parameters.get("action") or "").lower().strip()
