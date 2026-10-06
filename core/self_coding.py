@@ -17,6 +17,7 @@ import re
 import subprocess
 import sys
 import threading
+import uuid
 from typing import Any
 
 from core.efficiency_policy import EFFICIENCY_DIRECTIVE
@@ -145,7 +146,7 @@ class SelfCodingAgent:
     def _save(self, checkpoint: Checkpoint) -> None:
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         target = self._path(checkpoint.checkpoint_id)
-        temp = target.with_suffix(target.suffix + ".tmp")
+        temp = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
         payload = json.dumps(
             {
                 "checkpoint_id": checkpoint.checkpoint_id,
@@ -170,20 +171,62 @@ class SelfCodingAgent:
                 pass
             raise
 
-    def _load(self, checkpoint_id: str) -> Checkpoint:
-        data = json.loads(self._path(checkpoint_id).read_text(encoding="utf-8"))
-        return Checkpoint(
-            checkpoint_id=str(data["checkpoint_id"]),
-            branch=str(data["branch"]),
-            baseline=str(data["baseline"]),
-            base_branch=str(data["base_branch"]),
-            commits=tuple(str(x) for x in data.get("commits", [])),
-            created_at=str(data["created_at"]),
-            state=str(data["state"]),
-            promoted_sha=data.get("promoted_sha"),
-            undo_commits=tuple(str(x) for x in data.get("undo_commits", [])),
-        )
+    def _quarantine_checkpoint(self, checkpoint_id: str) -> None:
+        path = self._path(checkpoint_id)
+        if not path.exists():
+            return
+        quarantine = path.with_name(f"{path.name}.corrupt-{uuid.uuid4().hex[:8]}")
+        path.replace(quarantine)
 
+    def _validate_checkpoint(self, checkpoint: Checkpoint) -> None:
+        if checkpoint.base_branch != "main":
+            raise SelfCodingError("Only checkpoints created from main can be promoted or undone.")
+        if not re.fullmatch(r"agent/checkpoint/[A-Za-z0-9._-]+", checkpoint.branch):
+            raise SelfCodingError("Checkpoint branch metadata is invalid.")
+        if checkpoint.branch.rsplit("/", 1)[-1] != checkpoint.checkpoint_id:
+            raise SelfCodingError("Checkpoint branch does not match its checkpoint id.")
+        if not re.fullmatch(r"[0-9a-f]{40}", checkpoint.baseline):
+            raise SelfCodingError("Checkpoint baseline is invalid.")
+        if not checkpoint.commits or any(not re.fullmatch(r"[0-9a-f]{40}", value) for value in checkpoint.commits):
+            raise SelfCodingError("Checkpoint commit metadata is invalid.")
+        previous = checkpoint.baseline
+        for commit in checkpoint.commits:
+            parents = self._git("rev-list", "--parents", "-n", "1", commit)
+            if parents.returncode != 0:
+                raise SelfCodingError("Checkpoint references a missing Git commit.")
+            fields = parents.stdout.strip().split()
+            if len(fields) != 2 or fields[1] != previous:
+                raise SelfCodingError("Checkpoint commits are not the expected linear chain.")
+            previous = commit
+        if checkpoint.promoted_sha is not None and not re.fullmatch(r"[0-9a-f]{40}", str(checkpoint.promoted_sha)):
+            raise SelfCodingError("Checkpoint promoted SHA is invalid.")
+        if any(not re.fullmatch(r"[0-9a-f]{40}", value) for value in checkpoint.undo_commits):
+            raise SelfCodingError("Checkpoint undo metadata is invalid.")
+    def _load(self, checkpoint_id: str) -> Checkpoint:
+        path = self._path(checkpoint_id)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            checkpoint = Checkpoint(
+                checkpoint_id=str(data["checkpoint_id"]),
+                branch=str(data["branch"]),
+                baseline=str(data["baseline"]),
+                base_branch=str(data["base_branch"]),
+                commits=tuple(str(x) for x in data.get("commits", [])),
+                created_at=str(data["created_at"]),
+                state=str(data["state"]),
+                promoted_sha=data.get("promoted_sha"),
+                undo_commits=tuple(str(x) for x in data.get("undo_commits", [])),
+            )
+            self._validate_checkpoint(checkpoint)
+            return checkpoint
+        except SelfCodingError:
+            raise
+        except Exception as exc:
+            try:
+                self._quarantine_checkpoint(checkpoint_id)
+            except Exception:
+                pass
+            raise SelfCodingError("Checkpoint metadata is corrupt and was quarantined.") from exc
     def list_checkpoints(self) -> list[dict[str, Any]]:
         if not self.checkpoint_dir.is_dir():
             return []
@@ -394,6 +437,7 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
 
     def _approve_unlocked(self, checkpoint_id: str) -> str:
         checkpoint = self._load(checkpoint_id)
+        self._validate_checkpoint(checkpoint)
         if checkpoint.state != "pending":
             raise SelfCodingError(f"Checkpoint is not pending: {checkpoint.state}")
         if checkpoint.base_branch != "main":
@@ -443,6 +487,7 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
 
     def _undo_unlocked(self, checkpoint_id: str) -> str:
         checkpoint = self._load(checkpoint_id)
+        self._validate_checkpoint(checkpoint)
         self.validate_repo()
         if checkpoint.base_branch != "main":
             raise SelfCodingError("Only checkpoints created from main can be promoted or undone.")
