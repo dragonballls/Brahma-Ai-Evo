@@ -116,8 +116,9 @@ class EvolutionEngine:
         try:
             from memory import config_manager
             return bool(config_manager.get_setting("offline_mode_enabled", False))
-        except Exception:
-            return False
+        except Exception as exc:
+            logger.error("Unable to determine offline mode safely; halting autonomous evolution: %s", exc)
+            return True
 
     def _default_state(self) -> dict[str, Any]:
         return {
@@ -133,32 +134,39 @@ class EvolutionEngine:
         }
 
     def _load_state(self) -> dict[str, Any]:
-        data = self._default_state()
+        if not self._state_path.exists():
+            return self._default_state()
         try:
             raw = self._state_path.read_text(encoding="utf-8")
             loaded = json.loads(raw)
-            if isinstance(loaded, dict):
-                data.update(loaded)
-        except Exception:
-            pass
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                f"Evolution state is unreadable or corrupted: {self._state_path}"
+            ) from exc
+        if not isinstance(loaded, dict):
+            raise RuntimeError("Evolution state has an invalid root schema.")
+        data = self._default_state()
+        data.update(loaded)
         return data
 
     def _save_state(self) -> None:
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
-        temp = self._state_path.with_suffix(".json.tmp")
-        temp.write_text(
-            json.dumps(self._state, indent=2, ensure_ascii=False),
-            encoding="utf-8",
+        temp = self._state_path.with_name(
+            f".{self._state_path.name}.{os.getpid()}-{time.time_ns()}.tmp"
         )
-        temp.replace(self._state_path)
+        try:
+            temp.write_text(
+                json.dumps(self._state, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            temp.replace(self._state_path)
+        finally:
+            temp.unlink(missing_ok=True)
 
     def _set_state(self, **updates: Any) -> None:
         with self._state_lock:
             self._state.update(updates)
-            try:
-                self._save_state()
-            except Exception as exc:
-                logger.warning("Unable to persist evolution state: %s", exc)
+            self._save_state()
 
     def _notify(self, message: str) -> None:
         logger.info("%s", message)
