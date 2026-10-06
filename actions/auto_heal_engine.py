@@ -18,6 +18,7 @@ import re
 import shutil
 import sys
 import time
+import threading
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -125,6 +126,8 @@ class TracebackAnalyzer:
 class SafetySandbox:
     """Manages atomic backups, AST parsing, compilation tests, and instant rollback."""
 
+    _history_lock = threading.RLock()
+
     @staticmethod
     def create_backup(file_path: Path) -> Path:
         BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
@@ -188,9 +191,22 @@ class SafetySandbox:
     @staticmethod
     def _save_history(history: List[Dict[str, Any]]) -> None:
         try:
-            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            with open(PATCH_HISTORY_FILE, "w", encoding="utf-8") as f:
-                json.dump(history, f, indent=4)
+            with SafetySandbox._history_lock:
+                CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+                temp = PATCH_HISTORY_FILE.with_name(
+                    f".{PATCH_HISTORY_FILE.name}.{os.getpid()}-{uuid.uuid4().hex}.tmp"
+                )
+                try:
+                    temp.write_text(
+                        json.dumps(history, indent=4, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+                    os.replace(temp, PATCH_HISTORY_FILE)
+                finally:
+                    try:
+                        temp.unlink(missing_ok=True)
+                    except OSError:
+                        pass
         except Exception as e:
             logger.error(f"[AutoHeal] Failed to save patch history: {e}")
 
