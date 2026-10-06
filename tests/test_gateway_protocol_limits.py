@@ -33,3 +33,16 @@ def test_command_router_marks_device_offline_when_delivery_fails():
     source = (ROOT / "brahma_connect" / "gateway" / "command_router.py").read_text(encoding="utf-8")
     assert "if not sent:" in source
     assert "self.device_manager.mark_offline(device.device_id)" in source
+
+
+def test_gateway_rechecks_current_socket_before_sending():
+    source = (ROOT / "brahma_connect" / "gateway" / "websocket.py").read_text(encoding="utf-8")
+    assert "current = self._connections.get(str(device_id))" in source
+    assert "if current is not state or not state.authenticated:" in source
+    assert "MAX_PENDING_PER_CONNECTION = 32" in source
+
+
+def test_gateway_close_does_not_report_success_after_connection_replacement():
+    source = (ROOT / "brahma_connect" / "gateway" / "websocket.py").read_text(encoding="utf-8")
+    assert "if current is not state or not state.authenticated:" in source
+    assert "return False" in source
