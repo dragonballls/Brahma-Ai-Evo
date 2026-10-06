@@ -23,7 +23,8 @@ def test_platform_script_paths_are_escaped_before_interpolation():
     assert "def _escape_script_string" in source
     assert "escaped_path = _escape_script_string(str(path))" in source
     assert 'POSIX file "{escaped_path}"' in source
-    assert "file://{_escape_script_string(str(path))}" in source
+    assert "uri = \"file://\" + quote(" in source
+    assert 'd.writeConfig("Image", "{uri}");' in source
 
 
 def test_remote_wallpaper_download_is_scheme_bounded_and_size_bounded():
@@ -50,3 +51,13 @@ def test_windows_wallpaper_conversion_uses_race_safe_temp_creation():
     assert "tempfile.mkstemp(suffix=\".bmp\")" in source
     assert "os.close(fd)" in source
     assert "tempfile.mktemp(" not in source
+
+
+def test_wallpaper_script_backends_check_exit_status_before_reporting_success():
+    source = (ROOT / "actions" / "desktop.py").read_text(encoding="utf-8")
+    start = source.index("def set_wallpaper")
+    block = source[start:source.index("def set_wallpaper_from_url", start)]
+    assert "osascript exited with" in block
+    assert "gsettings exited with" in block
+    assert "qdbus exited with" in block
+    assert "xfconf-query exited with" in block
