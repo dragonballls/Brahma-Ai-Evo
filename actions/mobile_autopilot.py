@@ -57,14 +57,29 @@ def _verify_completion(ui_tree, verification):
     return all(claim.casefold() in visible for claim in claims)
 
 def _build_prompt(instruction: str, ui_tree: dict) -> str:
+    if not isinstance(ui_tree, dict):
+        raise ValueError("Mobile UI dump data must be an object.")
     nodes = ui_tree.get("nodes", [])
+    if not isinstance(nodes, list):
+        raise ValueError("Mobile UI dump nodes must be a list.")
     simplified_ui = []
-    for i, node in enumerate(nodes):
-        bounds = node.get("bounds", [0, 0, 0, 0])
-        cx = (bounds[0] + bounds[2]) // 2
-        cy = (bounds[1] + bounds[3]) // 2
-        desc = node.get("content_description") or node.get("text") or node.get("class")
-        simplified_ui.append(f"[{i}] {desc} (clickable: {node.get('is_clickable')}) -> x:{cx}, y:{cy}")
+    for i, node in enumerate(nodes[:500]):
+        if not isinstance(node, dict):
+            continue
+        bounds = node.get("bounds")
+        if (
+            not isinstance(bounds, (list, tuple))
+            or len(bounds) != 4
+            or any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in bounds)
+        ):
+            continue
+        try:
+            cx = _validate_coordinate((float(bounds[0]) + float(bounds[2])) / 2, "ui_center_x")
+            cy = _validate_coordinate((float(bounds[1]) + float(bounds[3])) / 2, "ui_center_y")
+        except ValueError:
+            continue
+        desc = node.get("content_description") or node.get("text") or node.get("class") or "Unnamed element"
+        simplified_ui.append(f"[{i}] {desc} (clickable: {bool(node.get('is_clickable'))}) -> x:{cx}, y:{cy}")
     
     ui_text = "\n".join(simplified_ui)
     
@@ -128,7 +143,10 @@ def mobile_autopilot(parameters: dict, response=None, player=None, session_memor
         except (RuntimeError, ValueError) as exc:
             return json.dumps({"success": False, "error": str(exc), "steps_attempted": step})
         ui_tree = dump_res.get("data", {})
-        prompt = _build_prompt(instruction, ui_tree)
+        try:
+            prompt = _build_prompt(instruction, ui_tree)
+        except ValueError as exc:
+            return json.dumps({"success": False, "error": str(exc), "steps_attempted": step})
         
         try:
             decision = generate_json(
