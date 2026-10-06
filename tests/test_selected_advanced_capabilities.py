@@ -160,3 +160,11 @@ def test_life360_marks_malformed_home_assistant_state_as_failure():
     source = (ROOT / "core" / "selected_capabilities.py").read_text(encoding="utf-8")
     assert "Home Assistant returned malformed state data." in source
     assert "self._last_error" in source
+
+
+def test_selected_capabilities_bound_untrusted_input_sizes():
+    source = (ROOT / "core" / "selected_capabilities.py").read_text(encoding="utf-8")
+    assert "Analysis input exceeds the 10,000-sample limit." in source
+    assert "200,000-sample limit" in source
+    assert "Learning context exceeds the safe size limit." in source
+    assert "Snapshot exceeds the 2 MB state limit." in source
