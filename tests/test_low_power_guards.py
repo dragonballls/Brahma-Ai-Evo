@@ -51,6 +51,14 @@ class LowPowerGuardTests(unittest.TestCase):
         self.assertNotIn('Path("config/api_keys.json")', ui)
         self.assertNotIn('Path("config/ig_session.json")', ui)
 
+    def test_attention_monitor_caches_process_name_lookups(self):
+        source = self.read("actions/attention_monitor.py")
+        self.assertIn("_PROC_NAME_CACHE: dict[int, tuple[float, str]] = {}", source)
+        self.assertIn("_PROC_NAME_CACHE_TTL = 15.0", source)
+        self.assertIn("cached = _PROC_NAME_CACHE.get(int(pid))", source)
+        self.assertIn("psutil.Process(int(pid)).name().lower()", source)
+        self.assertIn("if len(_PROC_NAME_CACHE) > 512:", source)
+
     def test_passive_watchers_back_off(self):
         sensorium = self.read("core/sensorium.py")
         attention = self.read("actions/attention_monitor.py")
