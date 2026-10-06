@@ -5425,13 +5425,13 @@ class BrahmaLive:
     def _redact_sensitive_text(value):
         text = str(value or "")
         patterns = (
-            (r"(?i)(authorization\\s*[:=]\\s*bearer\\s+)[A-Za-z0-9._~+/=-]+", r"\\1<redacted>"),
-            (r"(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|device[_-]?secret|password|passwd|secret|session[_-]?key|pairing[_-]?token|pin)\\s*[:=]\\s*)[^\\s,;]+", r"\\1<redacted>"),
-            (r"\\bsk-[A-Za-z0-9_-]{20,}\\b", "<redacted>"),
-            (r"\\bgsk_[A-Za-z0-9_-]{20,}\\b", "<redacted>"),
-            (r"\\bAIza[0-9A-Za-z_-]{20,}\\b", "<redacted>"),
-            (r"\\bgh[pousr]_[A-Za-z0-9_]{20,}\\b", "<redacted>"),
-            (r"\\bgithub_pat_[A-Za-z0-9_]{20,}\\b", "<redacted>"),
+            (r"(?i)(authorization\s*[:=]\s*bearer\s+)[A-Za-z0-9._~+/=-]+", r"\1<redacted>"),
+            (r"(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|device[_-]?secret|password|passwd|secret|session[_-]?key|pairing[_-]?token|pin)\s*[:=]\s*)[^\s,;]+", r"\1<redacted>"),
+            (r"\bsk-[A-Za-z0-9_-]{20,}\b", "<redacted>"),
+            (r"\bgsk_[A-Za-z0-9_-]{20,}\b", "<redacted>"),
+            (r"\bAIza[0-9A-Za-z_-]{20,}\b", "<redacted>"),
+            (r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b", "<redacted>"),
+            (r"\bgithub_pat_[A-Za-z0-9_]{20,}\b", "<redacted>"),
         )
         for pattern, replacement in patterns:
             text = re.sub(pattern, replacement, text)
