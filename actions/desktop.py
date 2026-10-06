@@ -130,6 +130,15 @@ def _ask_gemini_for_desktop_action(task: str) -> str:
         return json.dumps({"actions": [], "unsafe": True, "error": str(exc)})
 
 
+def _escape_script_string(value: str) -> str:
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\r", "\\r")
+        .replace("\n", "\\n")
+    )
+
 def set_wallpaper(image_path: str) -> str:
     path = Path(image_path).expanduser().resolve()
     if not path.exists():
@@ -152,9 +161,10 @@ def set_wallpaper(image_path: str) -> str:
             return f"Wallpaper set: {path.name}"
 
         elif _OS == "Darwin":
+            escaped_path = _escape_script_string(str(path))
             script = (
-                f'tell application "System Events" to tell every desktop to '
-                f'set picture to POSIX file "{path}"'
+                'tell application "System Events" to tell every desktop to '
+                f'set picture to POSIX file "{escaped_path}"'
             )
             subprocess.run(["osascript", "-e", script], capture_output=True)
             return f"Wallpaper set: {path.name}"
