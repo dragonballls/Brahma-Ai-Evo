@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import json
+import os
+import time
+import uuid
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -13,19 +16,29 @@ _LOCK = RLock()
 
 
 def _load() -> dict[str, Any]:
+    if not _PATH.is_file():
+        return {"schema_version": 1, "models": {}}
     try:
-        if _PATH.is_file():
-            payload = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(payload, dict):
-                return payload
-    except Exception:
-        pass
-    return {"schema_version": 1, "models": {}}
+        payload = json.loads(_PATH.read_text(encoding="utf-8"))
+        if isinstance(payload, dict) and isinstance(payload.get("models", {}), dict):
+            return payload
+        raise ValueError("Model-performance state has an invalid schema.")
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        quarantine = _PATH.with_name(
+            f"{_PATH.name}.corrupt-{int(time.time())}-{uuid.uuid4().hex[:8]}"
+        )
+        try:
+            _PATH.replace(quarantine)
+        except OSError:
+            pass
+        return {"schema_version": 1, "models": {}}
+    except OSError:
+        raise
 
 
 def _save(payload: dict[str, Any]) -> None:
     _PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = _PATH.with_name(f".{_PATH.name}.{__import__('os').getpid()}.tmp")
+    tmp_path = _PATH.with_name(f".{_PATH.name}.{os.getpid()}-{uuid.uuid4().hex}.tmp")
     try:
         tmp_path.write_text(
             json.dumps(payload, indent=2, sort_keys=True),
