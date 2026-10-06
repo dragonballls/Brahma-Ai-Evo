@@ -189,6 +189,13 @@ class RepositoryIntegrityTests(unittest.TestCase):
         self.assertIn("'speech_recognition'", source)
         self.assertIn("'pocketsphinx'", source)
 
+    def test_android_chat_delivery_reports_actual_socket_acceptance(self):
+        source = self.read("brahma-connect-android/app/src/main/java/com/brahma/connect/network/BrahmaWebSocketClient.kt")
+        self.assertIn("private fun send(json: JSONObject): Boolean", source)
+        self.assertIn("val accepted = send(payload)", source)
+        self.assertIn('if (accepted) "Sent" else "Failed — not connected"', source)
+        self.assertNotIn("send(payload)\n        val sent = pending.copy(status = "Sent")", source)
+
     def test_pyinstaller_datas_use_two_part_entries(self):
         source = (ROOT / "installer" / "BrahmaEvo.spec").read_text(encoding="utf-8")
         tree = ast.parse(source, filename="installer/BrahmaEvo.spec")
