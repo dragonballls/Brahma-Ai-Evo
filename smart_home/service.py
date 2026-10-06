@@ -141,7 +141,7 @@ class SmartHomeService:
         self._storage.forget_device(device_id)
         self._storage.log_activity(device["name"], "Device forgotten.")
 
-    def restart_device(self, device_id: str) -> None:
+    def restart_device(self, device_id: str) -> dict[str, Any]:
         device = self._storage.get_device(device_id)
         if not device:
             raise ValueError("Device not found.")
@@ -151,9 +151,11 @@ class SmartHomeService:
         runtime_device["provider_credentials"] = (account or {}).get("credentials", {})
         try:
             provider.execute(runtime_device, "restart", {})
-        except Exception:
-            pass
+        except Exception as exc:
+            self._storage.log_activity(device["name"], f"Restart command failed: {exc}")
+            return {"success": False, "error": str(exc), "device": device}
         self._storage.log_activity(device["name"], "Restart command sent.")
+        return {"success": True, "device": self.get_device(device_id)}
 
     def voice_state_for_command(self, command: str) -> list[tuple[str, str]]:
         text = (command or "").strip()
@@ -203,21 +205,26 @@ class SmartHomeService:
             raise ValueError("I couldn't find a matching smart home device.")
 
         results: list[str] = []
+        failures: list[dict[str, str]] = []
         for device in targets:
             device_id = str(device["id"])
             # handle sequence mode: power cycling
             if sequence_mode == "power_cycle":
+                device_failures = 0
                 for i in range(repeat_count):
                     try:
-                        # off
                         self.execute_device_action(device_id, "power", {"is_on": False})
                         time.sleep(0.3)
-                        # on
                         self.execute_device_action(device_id, "power", {"is_on": True})
                         time.sleep(0.3)
-                    except Exception:
-                        pass
-                results.append(f"Power-cycled {device.get('name')} {repeat_count} time(s)")
+                    except Exception as exc:
+                        device_failures += 1
+                        failures.append({"device": str(device.get("name") or device_id), "error": str(exc)})
+                        break
+                if device_failures:
+                    results.append(f"Power cycle failed for {device.get('name')} after {device_failures} failed attempt(s)")
+                else:
+                    results.append(f"Power-cycled {device.get('name')} {repeat_count} time(s)")
                 continue
 
             # normal / repeated toggle if requested
@@ -232,8 +239,9 @@ class SmartHomeService:
                     try:
                         response = self.execute_device_action(device_id, action_name, payload)
                         results.append(str(response.get("detail") or "Device updated."))
-                    except Exception:
+                    except Exception as exc:
                         results.append("Device action failed")
+                        failures.append({"device": str(device.get("name") or device_id), "error": str(exc)})
                     time.sleep(0.2)
                 continue
 
@@ -248,10 +256,12 @@ class SmartHomeService:
 
         detail = " ".join(results)
         return {
+            "success": not failures,
             "action": action,
             "targets": [str(device.get("name", "")) for device in targets],
             "detail": detail,
             "count": len(targets),
+            "failures": failures,
         }
 
     def _normalize(self, text: str) -> str:

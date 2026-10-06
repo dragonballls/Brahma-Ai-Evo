@@ -1132,3 +1132,47 @@ def test_save_memory_rejects_secret_bypass(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="Credential-like values"):
         memory.save_memory(payload)
     assert not path.exists()
+
+
+def test_smart_home_restart_reports_provider_failure(monkeypatch):
+    from smart_home.service import SmartHomeService
+
+    service = object.__new__(SmartHomeService)
+    device = {"id": "d1", "provider_key": "test", "provider_account_id": "a1", "name": "Lamp"}
+    class Storage:
+        def get_device(self, device_id):
+            return device if device_id == "d1" else None
+        def get_provider_account(self, _account_id):
+            return {"credentials": {}}
+        def log_activity(self, *_args):
+            pass
+    class Provider:
+        def execute(self, *_args):
+            raise RuntimeError("restart unavailable")
+    class Registry:
+        def get(self, _key):
+            return Provider()
+    service._storage = Storage()
+    service._registry = Registry()
+
+    result = service.restart_device("d1")
+    assert result["success"] is False
+    assert result["error"] == "restart unavailable"
+
+
+def test_smart_home_power_cycle_result_is_false_on_device_failure(monkeypatch):
+    from smart_home.service import SmartHomeService
+
+    service = object.__new__(SmartHomeService)
+    device = {"id": "d1", "name": "Lamp", "is_on": True, "traits": {}, "room": "Kitchen"}
+    service.list_devices = lambda search="", room="": [device]
+    calls = {"count": 0}
+    def fail_once(*_args, **_kwargs):
+        calls["count"] += 1
+        raise RuntimeError("device offline")
+    service.execute_device_action = fail_once
+
+    result = service.execute_command("turn off and on 3 times")
+    assert result["success"] is False
+    assert result["failures"]
+    assert "device offline" in result["failures"][0]["error"]
