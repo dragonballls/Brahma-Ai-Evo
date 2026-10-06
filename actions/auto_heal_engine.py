@@ -345,14 +345,21 @@ class AutoHealEngine:
         # Create atomic backup
         backup_path = SafetySandbox.create_backup(target_path)
 
-        # Write patch to disk
+        # Publish the verified source atomically so a process crash cannot leave
+        # a partially rewritten target before rollback history is durable.
+        target_tmp = target_path.with_name(
+            f".{target_path.name}.autopatch-{os.getpid()}-{uuid.uuid4().hex}.tmp"
+        )
         try:
-            with open(target_path, "w", encoding="utf-8") as f:
-                f.write(staged_source)
+            target_tmp.write_text(staged_source, encoding="utf-8")
+            os.replace(target_tmp, target_path)
         except Exception as e:
-            # Immediate rollback if write failed
-            shutil.copy2(backup_path, target_path)
-            return {"success": False, "message": f"File write failed, restored backup: {e}"}
+            return {"success": False, "message": f"Atomic file replacement failed; original source preserved: {e}"}
+        finally:
+            try:
+                target_tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
         # Verify on-disk compilation via py_compile
         try:
