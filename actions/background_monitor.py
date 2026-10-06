@@ -161,9 +161,10 @@ def add_monitor(monitor_type: str, target: str, threshold: float, condition: str
     with _monitor_lock:
         if len(_monitors) >= MAX_MONITORS:
             raise RuntimeError(f"Background monitor limit reached ({MAX_MONITORS}).")
+        stored_target = target.lower() if monitor_type in {"system", "crypto"} else target
         _monitors[m_id] = {
             "type": monitor_type,
-            "target": target.lower(),
+            "target": stored_target,
             "threshold": threshold,
             "condition": condition,
             "interval": interval_sec,
