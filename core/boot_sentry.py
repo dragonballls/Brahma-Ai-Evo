@@ -82,17 +82,48 @@ def check_and_recover_on_boot() -> bool:
     print(f"[BootSentry] 🛡️ Initiating automatic rollback of '{target_file.name}' from backup...")
 
     try:
-        shutil.copy2(backup_file, target_file)
+        target_tmp = target_file.with_name(f".{target_file.name}.rollback-{os.getpid()}.tmp")
+        try:
+            shutil.copy2(backup_file, target_tmp)
+            os.replace(target_tmp, target_file)
+        finally:
+            try:
+                target_tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+
         last_patch["status"] = "rolled_back_on_boot"
         last_patch["rollback_reason"] = "App crashed on startup after patch."
 
-        with open(PATCH_HISTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(history, f, indent=4)
+        history_tmp = PATCH_HISTORY_FILE.with_name(
+            f".{PATCH_HISTORY_FILE.name}.tmp-{os.getpid()}"
+        )
+        try:
+            history_tmp.write_text(
+                json.dumps(history, indent=4, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            os.replace(history_tmp, PATCH_HISTORY_FILE)
+        finally:
+            try:
+                history_tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
-        # Archive the crash log
-        crash_archive = CRASH_LOG.with_name("FATAL_CRASH_RECOVERED.log")
+        # Archive the crash log without allowing archive-name collisions to
+        # turn a successful rollback into a reported failure.
         if CRASH_LOG.exists():
-            shutil.move(str(CRASH_LOG), str(crash_archive))
+            crash_archive = CRASH_LOG.with_name(
+                f"FATAL_CRASH_RECOVERED-{int(crash_time)}.log"
+            )
+            if crash_archive.exists():
+                crash_archive = CRASH_LOG.with_name(
+                    f"FATAL_CRASH_RECOVERED-{int(crash_time)}-{os.getpid()}.log"
+                )
+            try:
+                shutil.move(str(CRASH_LOG), str(crash_archive))
+            except OSError as archive_exc:
+                logger.warning("Rollback succeeded but crash-log archiving failed: %s", archive_exc)
 
         print(f"[BootSentry] ✅ Successfully restored '{target_file.name}'! Brahma AI recovered.")
         return True
