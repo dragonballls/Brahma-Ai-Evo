@@ -12,3 +12,16 @@ def test_system_manager_kill_is_exact_user_owned_and_protected():
     assert 'owner_short = owner.casefold().rsplit("\\", 1)[-1]' in block
     assert "Refusing to terminate a protected system PID." in block
     assert "name.lower() in" not in block
+
+
+def test_process_manager_refuses_ambiguous_name_based_mass_kills():
+    source = (ROOT / "actions" / "system_manager.py").read_text(encoding="utf-8")
+    assert "Multiple matching processes found; refusing mass termination." in source
+    assert "Specify a PID." in source
+
+
+def test_process_manager_requires_verified_process_termination_before_success():
+    source = (ROOT / "actions" / "system_manager.py").read_text(encoding="utf-8")
+    assert "process.kill()" in source
+    assert "process.wait(timeout=2)" in source
+    assert "Failed to confirm termination" in source
