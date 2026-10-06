@@ -74,6 +74,7 @@ class BrahmaWebSocketClient(
     @Volatile private var currentCredential: DeviceCredential? = null
     @Volatile private var manualDisconnect = false
     @Volatile private var reconnectAttempt = 0
+    @Volatile private var connectionGeneration = 0L
     private var lastConnectUptime = 0L
 
     fun connect(endpoint: GatewayEndpoint, credential: DeviceCredential? = storage.loadCredential(), offer: PairingOffer? = null) {
@@ -93,6 +94,7 @@ class BrahmaWebSocketClient(
             AgentStateStore.setStatus("Secure gateway required")
             return
         }
+        connectionGeneration += 1
         currentEndpoint = endpoint
         currentCredential = credential
         currentOffer = offer
@@ -123,20 +125,27 @@ class BrahmaWebSocketClient(
     private fun reconnectLater() {
         if (manualDisconnect) return
         val endpoint = currentEndpoint ?: return
+        val generation = connectionGeneration
         reconnectAttempt += 1
         AgentStateStore.setConnectionState(ConnectionState.RECONNECTING)
         val delayMs = min(30_000L, 1_000L * (1 shl min(reconnectAttempt, 5)))
         AgentStateStore.setStatus("Reconnecting in ${delayMs / 1000}s")
-        Thread {
-            try {
-                Thread.sleep(delayMs)
-            } catch (_: InterruptedException) {
-                return@Thread
-            }
-            if (!manualDisconnect && currentEndpoint == endpoint) {
-                connect(endpoint, currentCredential, currentOffer)
-            }
-        }.start()
+        Thread(
+            {
+                try {
+                    Thread.sleep(delayMs)
+                } catch (_: InterruptedException) {
+                    return@Thread
+                }
+                if (!manualDisconnect && currentEndpoint == endpoint && connectionGeneration == generation) {
+                    connect(endpoint, currentCredential, currentOffer)
+                }
+            },
+            "BrahmaConnect-Reconnect-" + generation + "-" + reconnectAttempt,
+        ).apply {
+            isDaemon = true
+            start()
+        }
     }
 
     private fun send(json: JSONObject): Boolean {
