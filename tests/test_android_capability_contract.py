@@ -6,7 +6,7 @@ from brahma_connect.gateway.command_router import ACTION_CAPABILITIES
 
 ROOT = Path(__file__).resolve().parents[1]
 ANDROID_HANDLER = ROOT / "brahma-connect-android" / "app" / "src" / "main" / "java" / "com" / "brahma" / "connect" / "commands" / "DeviceCommandHandler.kt"
-ANDROID_CAPABILITIES = ROOT / "brahma-connect-android" / "app" / "src" / "main" / "java" / "com" / "brahma" / "connect" / "core" / "BrahmaConnectCapabilities.kt"
+ANDROID_STATE = ROOT / "brahma-connect-android" / "app" / "src" / "main" / "java" / "com" / "brahma" / "connect" / "core" / "AgentStateStore.kt"
 
 
 def test_android_remote_actions_are_capability_gated():
@@ -17,7 +17,7 @@ def test_android_remote_actions_are_capability_gated():
 
 
 def test_android_initial_capabilities_cover_gateway_requirements():
-    capability_source = ANDROID_CAPABILITIES.read_text(encoding="utf-8")
+    capability_source = ANDROID_STATE.read_text(encoding="utf-8")
     initial_block = re.search(r'val INITIAL: List<String> = listOf\((.*?)\n    \)', capability_source, re.DOTALL)
     assert initial_block
     constants = set(re.findall(r'\b([A-Z][A-Z0-9_]*)\b', initial_block.group(1)))
