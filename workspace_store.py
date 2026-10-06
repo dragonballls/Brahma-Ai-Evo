@@ -150,6 +150,9 @@ class WorkspaceStore:
     def set_active_conversation_id(self, conversation_id: str | None) -> None:
         if conversation_id:
             self._set_state("active_conversation_id", conversation_id)
+        else:
+            with self._lock, self._connect() as conn:
+                conn.execute("DELETE FROM state WHERE key = 'active_conversation_id'")
 
     def create_conversation(self, title: str = "New Conversation") -> str:
         conversation_id = str(uuid.uuid4())
