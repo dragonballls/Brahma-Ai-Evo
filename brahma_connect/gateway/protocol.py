@@ -47,4 +47,6 @@ def validate_message(message: dict) -> tuple[bool, str]:
     for key in ("type", "request_id", "timestamp"):
         if not str(message.get(key, "")).strip():
             return False, f"Missing required field: {key}"
+    if "payload" in message and message["payload"] is not None and not isinstance(message["payload"], dict):
+        return False, "Payload must be a JSON object."
     return True, ""
