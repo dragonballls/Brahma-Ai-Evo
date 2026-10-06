@@ -943,3 +943,29 @@ def test_windows_focus_script_treats_false_appactivate_as_failure():
     source = Path("actions/computer_control.py").read_text(encoding="utf-8")
     assert 'if (-not $ok) { exit 1 }' in source
     assert "if result.returncode != 0:" in source
+
+
+
+def test_phone_link_status_does_not_report_success_on_service_failure(monkeypatch):
+    from core.selected_capabilities import PhoneLinkBridge
+
+    class FailingService:
+        def list_devices(self):
+            raise RuntimeError("device registry unavailable")
+
+    monkeypatch.setattr(PhoneLinkBridge, "_service", lambda: FailingService())
+    monkeypatch.setattr(PhoneLinkBridge, "installed", classmethod(lambda cls: False))
+
+    result = PhoneLinkBridge.status()
+
+    assert result["success"] is False
+    assert "device registry unavailable" in result["error"]
+
+
+def test_selected_capability_async_bridge_works_from_running_event_loop():
+    from core.selected_capabilities import asyncio_run
+
+    async def scenario():
+        return asyncio_run(asyncio.sleep(0, result="bridge-ok"))
+
+    assert asyncio.run(scenario()) == "bridge-ok"

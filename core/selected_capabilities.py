@@ -421,13 +421,26 @@ def asyncio_run(awaitable):
     import asyncio
 
     try:
-        return asyncio.run(awaitable)
+        asyncio.get_running_loop()
     except RuntimeError:
-        loop = asyncio.new_event_loop()
+        return asyncio.run(awaitable)
+
+    # A synchronous capability may still be invoked from an async caller. Run the
+    # coroutine on a dedicated event-loop thread rather than nesting loops in the
+    # same thread, which asyncio forbids.
+    holder: dict[str, Any] = {}
+    def _runner() -> None:
         try:
-            return loop.run_until_complete(awaitable)
-        finally:
-            loop.close()
+            holder["result"] = asyncio.run(awaitable)
+        except BaseException as exc:
+            holder["error"] = exc
+
+    worker = threading.Thread(target=_runner, name="BrahmaCapabilityAsyncBridge", daemon=False)
+    worker.start()
+    worker.join()
+    if "error" in holder:
+        raise holder["error"]
+    return holder.get("result")
 
 
 class PhoneLinkBridge:
@@ -458,21 +471,26 @@ class PhoneLinkBridge:
     def status(cls) -> dict[str, Any]:
         computers = []
         phones = []
+        service_error = ""
         try:
             service = cls._service()
             devices = service.list_devices()
             phones = [d for d in devices if str(d.get("platform", "")).lower() in {"android", "ios"}]
             computers = [d for d in devices if str(d.get("platform", "")).lower() in {"windows", "pc", "desktop"}]
-        except Exception:
-            pass
-        return {
-            "success": True,
+        except Exception as exc:
+            service_error = str(exc) or exc.__class__.__name__
+
+        result = {
+            "success": not bool(service_error),
             "phone_link_installed": cls.installed(),
             "paired_phones": phones,
             "paired_computers": computers,
             "bridge": "phone-link-surface + Brahma-Connect-device-transport",
             "microsoft_client_api": False,
         }
+        if service_error:
+            result["error"] = f"Unable to read paired device status: {service_error}"
+        return result
 
     @staticmethod
     def _service():
