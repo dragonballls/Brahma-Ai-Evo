@@ -134,6 +134,8 @@ def _encode_config_for_storage(config: dict[str, Any]) -> dict[str, Any]:
     encoded = dict(config)
     for key, value in list(encoded.items()):
         if key.endswith(_SECRET_SUFFIXES) and value:
+            if isinstance(value, str) and value.startswith(_PROTECTED_PREFIX):
+                continue
             encoded[key] = _protect_secret(value)
     return encoded
 
