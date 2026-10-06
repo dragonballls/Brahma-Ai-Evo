@@ -110,6 +110,28 @@ def _run_skill_forge(
     return full_result
 
 
+def _raise_for_failed_tool_result(result: Any) -> None:
+    """Turn structured tool failures into executor errors so recovery can run."""
+    if result is None:
+        raise RuntimeError("Tool returned no result.")
+    if isinstance(result, dict):
+        if result.get("success") is False or result.get("error"):
+            raise RuntimeError(str(result.get("error") or result.get("message") or "Tool reported failure."))
+        return
+    text_result = str(result).strip()
+    if not text_result:
+        raise RuntimeError("Tool returned an empty result.")
+    if text_result.startswith(("{", "[")):
+        try:
+            parsed = json.loads(text_result)
+        except (TypeError, ValueError):
+            parsed = None
+        if isinstance(parsed, dict) and (
+            parsed.get("success") is False or parsed.get("error")
+        ):
+            raise RuntimeError(str(parsed.get("error") or parsed.get("message") or "Tool reported failure."))
+
+
 def _inject_context(params: dict, tool: str, step_results: dict, goal: str = "") -> dict:
     if not step_results:
         return params
@@ -488,9 +510,9 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None, player: Any 
                     player.write_log(f"Brahma Evo [{tool}]:\n{out_str}")
                 return out_str
         except Exception as exc:
-            return f"Feature '{tool}' failed: {exc}"
+            raise RuntimeError(f"Feature '{tool}' failed: {exc}") from exc
         print(f"[Executor] ⚠️ Unknown tool '{tool}' — no developer fallback is configured")
-        return f"Unknown action: {tool}"
+        raise RuntimeError(f"Unknown action: {tool}")
 
 class AgentExecutor:
 
@@ -560,7 +582,8 @@ class AgentExecutor:
                         break
                     try:
                         result = _call_tool(tool, params, speak, player=player)
-                        step_results[step_num] = result 
+                        _raise_for_failed_tool_result(result)
+                        step_results[step_num] = result
                         completed_steps.append(step)
                         print(f"[Executor] ✅ Step {step_num} done: {str(result)[:100]}")
                         step_ok = True
