@@ -139,6 +139,21 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertNotIn("py -3.12", source)
         self.assertNotIn("python-3.12.10-amd64.exe", source)
 
+    def test_attention_monitor_window_dedupe_is_only_active_state(self):
+        source = self.read("actions/attention_monitor.py")
+        self.assertIn("self._active_window_keys: set[str] = set()", source)
+        self.assertIn("current_window_keys: set[str] = set()", source)
+        self.assertIn("current_window_keys.add(dedupe)", source)
+        self.assertIn("if dedupe in self._active_window_keys:", source)
+        self.assertIn(
+            "self._active_window_keys.intersection_update(current_window_keys)",
+            source,
+        )
+        self.assertNotIn(
+            "self._remember_seen(dedupe)",
+            source[source.index("def _poll_windows"):],
+        )
+
     def test_attention_monitor_lifecycle_and_speech_sink_are_single_owner(self):
         source = self.read("actions/attention_monitor.py")
         tree = ast.parse(source, filename="actions/attention_monitor.py")
