@@ -203,7 +203,8 @@ class SafetySandbox:
                         SafetySandbox._restore_backup_atomically(backup, target)
                         entry["status"] = "rolled_back"
                         entry["rolled_back_at"] = time.time()
-                        SafetySandbox._save_history(history)
+                        if not SafetySandbox._save_history(history):
+                            return {"success": False, "message": "Patch rolled back, but rollback history could not be persisted."}
                         return {
                             "success": True,
                             "message": f"Successfully rolled back patch {entry.get('patch_id')} on '{target.name}'.",
@@ -220,12 +221,27 @@ class SafetySandbox:
             return []
         try:
             with open(PATCH_HISTORY_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
+                data = json.load(f)
+            if not isinstance(data, list):
+                raise ValueError("Patch history root must be a JSON list.")
+            return [item for item in data if isinstance(item, dict)]
+        except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+            quarantine = PATCH_HISTORY_FILE.with_name(
+                f"{PATCH_HISTORY_FILE.name}.corrupt-{time.time_ns()}-{uuid.uuid4().hex[:8]}"
+            )
+            try:
+                PATCH_HISTORY_FILE.replace(quarantine)
+                logger.warning("[AutoHeal] Quarantined corrupted patch history as %s", quarantine.name)
+            except OSError as quarantine_error:
+                raise RuntimeError(
+                    f"Unable to quarantine corrupted patch history: {quarantine_error}"
+                ) from exc
             return []
+        except OSError as exc:
+            raise RuntimeError("Unable to read persistent patch history.") from exc
 
     @staticmethod
-    def _save_history(history: List[Dict[str, Any]]) -> None:
+    def _save_history(history: List[Dict[str, Any]]) -> bool:
         try:
             with SafetySandbox._history_lock:
                 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -243,8 +259,10 @@ class SafetySandbox:
                         temp.unlink(missing_ok=True)
                     except OSError:
                         pass
+            return True
         except Exception as e:
             logger.error(f"[AutoHeal] Failed to save patch history: {e}")
+            return False
 
 
 # ── 3. Patch Synthesizer & Auto-Heal Controller ─────────────────────────────
@@ -400,9 +418,33 @@ class AutoHealEngine:
         }
 
         with SafetySandbox._history_lock:
-            history = SafetySandbox._load_history()
+            try:
+                history = SafetySandbox._load_history()
+            except RuntimeError as history_error:
+                try:
+                    SafetySandbox._restore_backup_atomically(backup_path, target_path)
+                except Exception as restore_err:
+                    return {
+                        "success": False,
+                        "message": f"Patch history was unavailable and rollback failed: {restore_err}",
+                    }
+                return {
+                    "success": False,
+                    "message": f"Patch was rolled back because patch history could not be read: {history_error}",
+                }
             history.append(entry)
-            SafetySandbox._save_history(history)
+            if not SafetySandbox._save_history(history):
+                try:
+                    SafetySandbox._restore_backup_atomically(backup_path, target_path)
+                except Exception as restore_err:
+                    return {
+                        "success": False,
+                        "message": f"Patch history could not be saved and rollback failed: {restore_err}",
+                    }
+                return {
+                    "success": False,
+                    "message": "Patch was rolled back because patch history could not be persisted.",
+                }
 
         # Publish only after all in-process verification and history persistence
         # succeed. Self-coding checkpoints remain separate and approval-gated.
