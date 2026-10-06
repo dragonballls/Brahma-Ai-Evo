@@ -133,3 +133,28 @@ class ContinuousEvolutionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+    def test_corrupt_evolution_state_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = EvolutionEngine(tmp)
+            engine._state_path = Path(tmp) / "evolution" / "state.json"
+            engine._state_path.parent.mkdir(parents=True, exist_ok=True)
+            engine._state_path.write_text("{broken", encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                engine._load_state()
+
+    def test_state_save_failure_rolls_back_in_memory_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = EvolutionEngine(tmp)
+            before = dict(engine._state)
+            with patch.object(engine, "_save_state", side_effect=RuntimeError("disk failure")):
+                with self.assertRaises(RuntimeError):
+                    engine._set_state(last_error="not persisted")
+            self.assertEqual(engine._state, before)
+
+    def test_offline_mode_fails_closed_when_settings_cannot_be_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = EvolutionEngine(tmp)
+            with patch("memory.config_manager.get_setting", side_effect=RuntimeError("corrupt settings")):
+                self.assertTrue(engine.offline_mode)
