@@ -535,8 +535,6 @@ _bt         = _BrowserThread()
 _bt_started = False
 _bt_lock    = threading.Lock()
 
-atexit.register(shutdown_browser)
-
 
 def shutdown_browser() -> None:
     global _bt_started
@@ -563,6 +561,9 @@ def shutdown_browser() -> None:
         _bt._pages = []
         _bt._startup_error = None
         _bt_started = False
+
+
+atexit.register(shutdown_browser)
 
 
 def browser_evaluate_internal(expression: str) -> str:
