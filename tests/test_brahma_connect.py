@@ -60,6 +60,49 @@ def test_pairing_manager_returns_expiring_offer():
     assert pairing.get_offer_by_code(offer.pairing_code) is not None
 
 
+
+def test_device_manager_skips_corrupt_registry_records(tmp_path: Path):
+    registry = tmp_path / "devices.json"
+    registry.write_text(
+        '{"devices": {"good": {"device_id": "good", "name": "Good", "platform": "android"},'
+        '"bad": {"device_id": ["not-a-string"], "name": "Bad", "platform": "android"}}}',
+        encoding="utf-8",
+    )
+    manager = DeviceManager(registry)
+    assert manager.get("good") is not None
+    assert manager.get("bad") is None
+
+
+def test_capability_manager_accepts_single_required_capability():
+    manager = CapabilityManager()
+    assert manager.missing(["camera"], "camera") == []
+    assert manager.missing([], "camera") == ["camera"]
+
+
+def test_connection_hub_rejects_pending_commands_on_disconnect():
+    class Socket:
+        async def send_json(self, message):
+            return None
+
+    async def scenario():
+        hub = ConnectionHub()
+        socket = Socket()
+        state = await hub.register(socket, "android_disconnect")
+        future = await hub.set_pending("android_disconnect", "req-1")
+        await hub.unregister(socket)
+        return state, future
+
+    state, future = asyncio.run(scenario())
+    assert state.pending == {}
+    assert future.done()
+    try:
+        future.result()
+    except RuntimeError as exc:
+        assert "connection closed" in str(exc).lower()
+    else:
+        raise AssertionError("Pending command future was not rejected")
+
+
 def test_command_router_cleans_pending_when_device_send_fails(tmp_path: Path):
     registry_path = tmp_path / "devices.json"
     manager = DeviceManager(registry_path)
