@@ -941,7 +941,7 @@ def test_focus_window_never_reports_success_when_backend_returns_failure(monkeyp
 
 def test_windows_focus_script_treats_false_appactivate_as_failure():
     source = Path("actions/computer_control.py").read_text(encoding="utf-8")
-    assert 'if (-not $ok) { exit 1 }' in source
+    assert 'if (-not $ok) {{ exit 1 }}' in source
     assert "if result.returncode != 0:" in source
 
 
@@ -1016,3 +1016,12 @@ def test_installer_source_copy_rejects_symlink_entries():
     assert "source_root.is_symlink()" in source
     assert "os.path.islink(src_path)" in source
     assert "Unsafe installer source symlink" in source
+
+
+
+def test_task_queue_console_logging_is_encoding_safe():
+    source = Path("agent/task_queue.py").read_text(encoding="utf-8")
+    assert "def _safe_print(message: object)" in source
+    assert 'text.encode("ascii", "replace").decode("ascii")' in source
+    assert "print(f\"[TaskQueue]" not in source
+    assert source.count("_safe_print(") >= 10

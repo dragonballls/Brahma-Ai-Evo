@@ -6,6 +6,17 @@ from enum import Enum
 from typing import Callable, Any
 
 
+def _safe_print(message: object) -> None:
+    """Emit task-queue diagnostics without crashing on legacy Windows code pages."""
+    text = str(message)
+    try:
+        _safe_print(text)
+    except UnicodeEncodeError:
+        _safe_print(text.encode("ascii", "replace").decode("ascii"))
+
+
+
+
 class TaskStatus(Enum):
     PENDING    = "pending"
     RUNNING    = "running"
@@ -74,7 +85,7 @@ class TaskQueue:
                 name="AgentTaskQueue"
             )
             self._worker_thread.start()
-        print("[TaskQueue] ✅ Started")
+        _safe_print("[TaskQueue] ✅ Started")
 
     def stop(self) -> None:
         deadline = time.monotonic() + self._stop_timeout
@@ -104,7 +115,7 @@ class TaskQueue:
         with self._condition:
             if self._worker_thread is thread and (thread is None or not thread.is_alive()):
                 self._worker_thread = None
-        print("[TaskQueue] 🔴 Stopped")
+        _safe_print("[TaskQueue] 🔴 Stopped")
 
     def is_running(self) -> bool:
         with self._condition:
@@ -148,7 +159,7 @@ class TaskQueue:
             self._tasks[task_id] = task
             self._condition.notify()
 
-        print(f"[TaskQueue] 📥 Task queued: [{task_id}] {goal[:60]}")
+        _safe_print(f"[TaskQueue] 📥 Task queued: [{task_id}] {goal[:60]}")
         return task_id
 
     def cancel(self, task_id: str) -> bool:
@@ -167,7 +178,7 @@ class TaskQueue:
                 except ValueError:
                     pass
             task.status = TaskStatus.CANCELLED
-            print(f"[TaskQueue] 🚫 Task cancelled: [{task_id}]")
+            _safe_print(f"[TaskQueue] 🚫 Task cancelled: [{task_id}]")
             return True
 
     def get_status(self, task_id: str) -> dict | None:
@@ -249,7 +260,7 @@ class TaskQueue:
         return None
 
     def _run_task(self, task: Task) -> None:
-        print(f"[TaskQueue] ▶️ Running: [{task.task_id}] {task.goal[:60]}")
+        _safe_print(f"[TaskQueue] ▶️ Running: [{task.task_id}] {task.goal[:60]}")
         released = False
         try:
             executor = self._get_executor()
@@ -273,9 +284,9 @@ class TaskQueue:
                 try:
                     task.on_complete(task.task_id, result)
                 except Exception as e:
-                    print(f"[TaskQueue] ⚠️ on_complete callback error: {e}")
+                    _safe_print(f"[TaskQueue] ⚠️ on_complete callback error: {e}")
 
-            print(f"[TaskQueue] ✅ Completed: [{task.task_id}]")
+            _safe_print(f"[TaskQueue] ✅ Completed: [{task.task_id}]")
 
         except Exception as e:
             with self._lock:
@@ -289,9 +300,9 @@ class TaskQueue:
                     self._active_count = max(0, self._active_count - 1)
                     released = True
             if task.cancel_flag.is_set():
-                print(f"[TaskQueue] 🚫 Cancelled: [{task.task_id}]")
+                _safe_print(f"[TaskQueue] 🚫 Cancelled: [{task.task_id}]")
             else:
-                print(f"[TaskQueue] ❌ Failed: [{task.task_id}] {e}")
+                _safe_print(f"[TaskQueue] ❌ Failed: [{task.task_id}] {e}")
 
         except BaseException as e:
             with self._lock:
@@ -300,7 +311,7 @@ class TaskQueue:
                 if not released:
                     self._active_count = max(0, self._active_count - 1)
                     released = True
-            print(f"[TaskQueue] ⚠️ Task thread terminated by {type(e).__name__}: [{task.task_id}]")
+            _safe_print(f"[TaskQueue] ⚠️ Task thread terminated by {type(e).__name__}: [{task.task_id}]")
             raise
 
         finally:
