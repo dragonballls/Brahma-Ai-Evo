@@ -205,10 +205,37 @@ def prepare(destination: Path) -> None:
         if not _healthy(staging):
             raise RuntimeError("Prepared OmniRoute runtime failed native/version verification.")
 
-        if destination.exists():
-            shutil.rmtree(destination)
-        shutil.copytree(staging, destination)
-        (destination / "runtime-manifest.txt").write_text(expected_manifest, encoding="utf-8")
+        # Promote only after the complete runtime has passed integrity/native checks.
+        # Keep the old cache intact until the replacement directory is fully built.
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        promotion = Path(
+            tempfile.mkdtemp(prefix=f".{destination.name}.build-", dir=str(destination.parent))
+        )
+        backup: Path | None = None
+        try:
+            shutil.copytree(staging, promotion, dirs_exist_ok=True)
+            (promotion / "runtime-manifest.txt").write_text(expected_manifest, encoding="utf-8")
+            if destination.exists():
+                backup = destination.with_name(f".{destination.name}.backup-{os.getpid()}")
+                if backup.exists():
+                    shutil.rmtree(backup)
+                destination.replace(backup)
+            try:
+                promotion.replace(destination)
+                promotion = None
+            except Exception:
+                if backup is not None and not destination.exists() and backup.exists():
+                    backup.replace(destination)
+                    backup = None
+                raise
+            if backup is not None:
+                shutil.rmtree(backup, ignore_errors=True)
+                backup = None
+        finally:
+            if promotion is not None and promotion.exists():
+                shutil.rmtree(promotion, ignore_errors=True)
+            if backup is not None and backup.exists() and not destination.exists():
+                backup.replace(destination)
 
 
 def main() -> int:
