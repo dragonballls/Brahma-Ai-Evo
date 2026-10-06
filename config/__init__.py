@@ -19,6 +19,71 @@ _SECRET_SUFFIXES = ("_api_key",)
 _PROTECTED_PREFIX = "dpapi:"
 
 
+def _dpapi_protect(text: str) -> bytes:
+    import ctypes
+    from ctypes import wintypes
+
+    class DATA_BLOB(ctypes.Structure):
+        _fields_ = [
+            ("cbData", wintypes.DWORD),
+            ("pbData", ctypes.POINTER(ctypes.c_ubyte)),
+        ]
+
+    crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    payload = text.encode("utf-8")
+    buf = ctypes.create_string_buffer(payload)
+    in_blob = DATA_BLOB(len(payload), ctypes.cast(buf, ctypes.POINTER(ctypes.c_ubyte)))
+    out_blob = DATA_BLOB()
+    ok = crypt32.CryptProtectData(
+        ctypes.byref(in_blob),
+        "Brahma Evo runtime secret",
+        None,
+        None,
+        None,
+        0,
+        ctypes.byref(out_blob),
+    )
+    if not ok:
+        raise OSError(ctypes.get_last_error(), "CryptProtectData failed")
+    try:
+        return ctypes.string_at(out_blob.pbData, out_blob.cbData)
+    finally:
+        kernel32.LocalFree(out_blob.pbData)
+
+
+def _dpapi_unprotect(blob: bytes) -> str:
+    import ctypes
+    from ctypes import wintypes
+
+    class DATA_BLOB(ctypes.Structure):
+        _fields_ = [
+            ("cbData", wintypes.DWORD),
+            ("pbData", ctypes.POINTER(ctypes.c_ubyte)),
+        ]
+
+    crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    buf = ctypes.create_string_buffer(blob)
+    in_blob = DATA_BLOB(len(blob), ctypes.cast(buf, ctypes.POINTER(ctypes.c_ubyte)))
+    out_blob = DATA_BLOB()
+    ok = crypt32.CryptUnprotectData(
+        ctypes.byref(in_blob),
+        None,
+        None,
+        None,
+        None,
+        0,
+        ctypes.byref(out_blob),
+    )
+    if not ok:
+        raise OSError(ctypes.get_last_error(), "CryptUnprotectData failed")
+    try:
+        return ctypes.string_at(out_blob.pbData, out_blob.cbData).decode("utf-8")
+    finally:
+        kernel32.LocalFree(out_blob.pbData)
+
+
 def _protect_secret(value: object) -> str:
     text = str(value or "")
     if not text or platform.system().lower() != "windows":
@@ -30,9 +95,9 @@ def _protect_secret(value: object) -> str:
             "Brahma Evo runtime secret",
             None, None, None, 0,
         )[1]
-        return _PROTECTED_PREFIX + base64.b64encode(protected).decode("ascii")
-    except Exception as exc:
-        raise RuntimeError("Windows secret protection is unavailable; refusing to store API keys in plaintext.") from exc
+    except Exception:
+        protected = _dpapi_protect(text)
+    return _PROTECTED_PREFIX + base64.b64encode(protected).decode("ascii")
 
 
 def _unprotect_secret(value: object) -> str:
@@ -40,9 +105,12 @@ def _unprotect_secret(value: object) -> str:
     if not raw.startswith(_PROTECTED_PREFIX):
         return raw
     try:
-        import win32crypt
         blob = base64.b64decode(raw[len(_PROTECTED_PREFIX):], validate=True)
-        return win32crypt.CryptUnprotectData(blob, None)[1].decode("utf-8")
+        try:
+            import win32crypt
+            return win32crypt.CryptUnprotectData(blob, None)[1].decode("utf-8")
+        except Exception:
+            return _dpapi_unprotect(blob)
     except Exception as exc:
         raise RuntimeError("Stored Windows API-key protection could not be decrypted.") from exc
 
