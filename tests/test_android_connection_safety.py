@@ -87,3 +87,55 @@ def test_android_chat_send_reports_queue_not_delivery():
     source = CLIENT.read_text(encoding="utf-8")
     assert 'Queued — awaiting gateway acknowledgement' in source
     assert 'val finalStatus = if (accepted) "Sent"' not in source
+
+
+def test_android_pairing_hint_corruption_is_not_treated_as_absent():
+    source = (
+        ROOT
+        / "brahma-connect-android"
+        / "app"
+        / "src"
+        / "main"
+        / "java"
+        / "com"
+        / "brahma"
+        / "connect"
+        / "pairing"
+        / "PairingStorage.kt"
+    ).read_text(encoding="utf-8")
+    assert "Stored gateway pairing hint is corrupt; refusing to treat it as absent." in source
+
+
+def test_android_main_activity_surfaces_corrupt_persistent_state():
+    source = (
+        ROOT
+        / "brahma-connect-android"
+        / "app"
+        / "src"
+        / "main"
+        / "java"
+        / "com"
+        / "brahma"
+        / "connect"
+        / "MainActivity.kt"
+    ).read_text(encoding="utf-8")
+    assert "Stored credentials require repair" in source
+    assert "Stored pairing hint requires repair" in source
+
+
+def test_android_foreground_service_stops_reconnect_on_corrupt_persistent_state():
+    source = (
+        ROOT
+        / "brahma-connect-android"
+        / "app"
+        / "src"
+        / "main"
+        / "java"
+        / "com"
+        / "brahma"
+        / "connect"
+        / "BrahmaConnectForegroundService.kt"
+    ).read_text(encoding="utf-8")
+    assert "Stored credentials require repair" in source
+    assert "Stored pairing hint requires repair" in source
+    assert "return" in source[source.index("private fun connectIfPossible"):source.index("private fun updateNotification")]
