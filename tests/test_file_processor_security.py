@@ -51,3 +51,20 @@ def test_ffmpeg_operations_report_failure_instead_of_success():
         "Convert failed (ffmpeg exit",
     ):
         assert phrase in source
+
+def test_file_processor_confines_input_paths_and_avoids_overwrite():
+    source = (ROOT / "actions" / "file_processor.py").read_text(encoding="utf-8")
+    assert "def _resolve_input_path" in source
+    assert "File processing is limited to paths inside the user's home directory." in source
+    assert "if not base.exists():" in source
+    assert 'f"{src.stem}_{suffix}_{counter}{ext}"' in source
+
+
+def test_file_processor_python_execution_requires_confirmation_and_checks_exit_code():
+    source = (ROOT / "actions" / "file_processor.py").read_text(encoding="utf-8")
+    assert "def _run_python_with_confirmation" in source
+    assert "from core.confirm import request" in source
+    assert 'key=f"file-execute:{path}"' in source
+    assert "Python execution failed (exit" in source
+    assert "Python execution timed out after 30 seconds." in source
+    assert 'return _run_python_with_confirmation(path)' in source
