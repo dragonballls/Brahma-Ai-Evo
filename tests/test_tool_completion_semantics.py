@@ -17,3 +17,12 @@ def test_tool_completion_detects_explicit_failure_results():
     assert 'result.get("success") is False' in source
     assert 'result.get("ok") is False' in source
     assert 'startswith(\n                ("error:", "failed:", "failure:", "unable to ", "could not ")' in source
+
+def test_main_execute_tool_has_strict_runtime_result_gate():
+    source = (ROOT / "main.py").read_text(encoding="utf-8")
+    start = source.index("async def _execute_tool")
+    block = source[start:source.index("async def _serve_dashboard", start)]
+    assert "def _require_runtime_result" in block
+    assert "value is None or value is False" in block
+    assert "value.get(" in block
+    assert "result = r or" not in block
