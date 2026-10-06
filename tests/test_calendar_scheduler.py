@@ -29,3 +29,10 @@ def test_calendar_ics_fields_are_escaped():
     assert '_ics_escape(ev.get("title"))' in source
     assert '_ics_escape(ev.get("description", \'\'))' in source
     assert '_ics_escape(ev.get("location", \'\'))' in source
+
+
+def test_calendar_title_is_bounded_and_export_is_atomic():
+    source = (ROOT / "actions" / "calendar_scheduler.py").read_text(encoding="utf-8")
+    assert 'title = str(p.get("title", "") or "").strip()[:_MAX_TEXT]' in source
+    assert 'temp_ics = desktop_ics.with_name' in source
+    assert 'temp_ics.replace(desktop_ics)' in source
