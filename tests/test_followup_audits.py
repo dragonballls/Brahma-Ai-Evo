@@ -444,3 +444,31 @@ def test_followup_audit_workflows_execute_module_tests_with_pytest():
     assert "python -m pytest -q tests/test_followup_audits.py" in windows
     assert "python -m pytest -q tests/test_followup_audits.py" in targeted
     assert "tests.test_followup_audits" not in windows
+
+
+def test_api_config_refuses_to_overwrite_corrupt_file(tmp_path: Path, monkeypatch):
+    import config as config_module
+
+    path = tmp_path / "api_keys.json"
+    path.write_text("{broken", encoding="utf-8")
+    monkeypatch.setattr(config_module, "API_CONFIG_PATH", path)
+    with pytest.raises(RuntimeError, match="corrupted"):
+        config_module.save_config({"openrouter_api_key": "should-not-be-written"})
+    assert path.read_text(encoding="utf-8") == "{broken"
+
+
+def test_settings_refuse_to_overwrite_corrupt_file(tmp_path: Path, monkeypatch):
+    from memory import config_manager
+
+    path = tmp_path / "app_settings.json"
+    path.write_text("{broken", encoding="utf-8")
+    monkeypatch.setattr(config_manager, "SETTINGS_FILE", path)
+    with pytest.raises(RuntimeError, match="corrupted"):
+        config_manager.save_settings({"wake_word_enabled": False})
+    assert path.read_text(encoding="utf-8") == "{broken"
+
+
+def test_local_json_error_does_not_echo_raw_model_output():
+    source = Path("or_client.py").read_text(encoding="utf-8")
+    assert "Raw output:" not in source
+    assert "Local model returned unparseable JSON." in source
