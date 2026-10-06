@@ -21,6 +21,43 @@ from core.github_research import GitHubResearchClient, _result_score
 
 
 class OmniRouteSelfCodingTests(unittest.TestCase):
+    def test_direct_tool_fallback_rejects_undeclared_tool_calls(self):
+        from unittest.mock import Mock, patch
+        from or_client import OpenRouterClient
+
+        client = OpenRouterClient()
+        executor = Mock(return_value="should not execute")
+        response = {
+            "choices": [{
+                "message": {
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call-1",
+                        "function": {
+                            "name": "undeclared_sensitive_action",
+                            "arguments": "{}",
+                        },
+                    }],
+                },
+                "finish_reason": "tool_calls",
+            }]
+        }
+        with patch.object(client, "_call_omniroute_tool_capable", return_value=None), patch.object(
+            client, "_call_tool_capable", return_value=response
+        ):
+            with self.assertRaises(RuntimeError):
+                client.chat_with_tools(
+                    messages=[{"role": "user", "content": "test"}],
+                    tools=[{
+                        "name": "declared_safe_action",
+                        "description": "safe test action",
+                        "parameters": {"type": "object", "properties": {}},
+                    }],
+                    tool_executor=executor,
+                    max_rounds=1,
+                )
+        executor.assert_not_called()
+
     def test_omniroute_release_contract(self):
         self.assertEqual(DEFAULT_PORT, 20128)
         self.assertEqual(OMNIROUTE_VERSION, "3.8.50")
