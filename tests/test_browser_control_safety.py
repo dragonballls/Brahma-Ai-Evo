@@ -19,3 +19,9 @@ def test_public_browser_code_execution_requires_explicit_opt_in():
     source = (ROOT / "actions" / "browser_control.py").read_text(encoding="utf-8")
     assert "allow_unsafe_code=true" in source
     assert 'if action in {"evaluate", "eval", "run_code", "execute"}' in source
+
+
+def test_playwright_mcp_launcher_does_not_request_shell_execution():
+    source = (ROOT / "actions" / "playwright_mcp_client.py").read_text(encoding="utf-8")
+    assert "resolved_npx = shutil.which(npx_cmd)" in source
+    assert "shell=False" in source
