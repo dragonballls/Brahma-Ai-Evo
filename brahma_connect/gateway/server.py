@@ -357,6 +357,10 @@ class BrahmaGateway:
         async def health():
             return {"ok": True, "running": self.is_running(), "host": self.config.host, "port": self.config.port}
 
+        def _local_management_allowed(req: Request) -> bool:
+            host = str(getattr(getattr(req, "client", None), "host", "") or "").strip().lower()
+            return host in {"127.0.0.1", "::1"} or host.startswith("::ffff:127.0.0.1")
+
         @app.get("/gateway/info")
         async def info():
             return {
@@ -370,44 +374,60 @@ class BrahmaGateway:
             }
 
         @app.get("/gateway/pair")
-        async def get_pairing_offer():
+        async def get_pairing_offer(req: Request):
+            if not _local_management_allowed(req):
+                return JSONResponse({"ok": False, "error": "Local management endpoint."}, status_code=403)
             return self.create_pairing_offer()
 
         @app.get("/gateway/devices")
-        async def list_devices():
+        async def list_devices(req: Request):
+            if not _local_management_allowed(req):
+                return JSONResponse({"ok": False, "error": "Local management endpoint."}, status_code=403)
             return {"ok": True, "devices": self.device_manager.list_devices()}
 
         @app.post("/gateway/devices/{device_id}/revoke")
-        async def revoke_device(device_id: str):
+        async def revoke_device(device_id: str, req: Request):
+            if not _local_management_allowed(req):
+                return JSONResponse({"ok": False, "error": "Local management endpoint."}, status_code=403)
             if not self.device_manager.revoke(device_id):
                 return JSONResponse({"ok": False, "error": "Device not found."}, status_code=404)
             self._append_log("DEVICE_REVOKED", device_id=device_id)
             return {"ok": True}
 
         @app.post("/gateway/devices/{device_id}/forget")
-        async def forget_device(device_id: str):
+        async def forget_device(device_id: str, req: Request):
+            if not _local_management_allowed(req):
+                return JSONResponse({"ok": False, "error": "Local management endpoint."}, status_code=403)
             if not self.device_manager.remove(device_id):
                 return JSONResponse({"ok": False, "error": "Device not found."}, status_code=404)
             self._append_log("DEVICE_FORGOTTEN", device_id=device_id)
             return {"ok": True}
 
         @app.get("/gateway/logs")
-        async def logs():
+        async def logs(req: Request):
+            if not _local_management_allowed(req):
+                return JSONResponse({"ok": False, "error": "Local management endpoint."}, status_code=403)
             return {"ok": True, "entries": self.log()}
 
         @app.get("/gateway/pending")
-        async def pending_requests():
+        async def pending_requests(req: Request):
+            if not _local_management_allowed(req):
+                return JSONResponse({"ok": False, "error": "Local management endpoint."}, status_code=403)
             return {"ok": True, "requests": self.list_pending_requests()}
 
         @app.post("/gateway/pending/{pending_id}/approve")
-        async def approve_pending(pending_id: str):
+        async def approve_pending(pending_id: str, req: Request):
+            if not _local_management_allowed(req):
+                return JSONResponse({"ok": False, "error": "Local management endpoint."}, status_code=403)
             result = await self.approve_pending_request(pending_id)
             if not result.get("success"):
                 return JSONResponse(result, status_code=404)
             return result
 
         @app.post("/gateway/pending/{pending_id}/reject")
-        async def reject_pending(pending_id: str):
+        async def reject_pending(pending_id: str, req: Request):
+            if not _local_management_allowed(req):
+                return JSONResponse({"ok": False, "error": "Local management endpoint."}, status_code=403)
             if not self.reject_pending_request(pending_id):
                 return JSONResponse({"ok": False, "error": "Pending request not found."}, status_code=404)
             return {"ok": True}
