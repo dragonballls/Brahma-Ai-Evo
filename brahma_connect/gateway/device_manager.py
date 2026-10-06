@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +21,14 @@ class DeviceManager:
         self._devices: dict[str, DeviceRecord] = {}
         self.load()
 
+    def _quarantine_corrupt_registry(self) -> Path:
+        """Move a malformed registry aside without overwriting the original data."""
+        backup = self.registry_path.with_name(
+            f"{self.registry_path.name}.corrupt-{int(time.time())}-{uuid.uuid4().hex[:8]}"
+        )
+        self.registry_path.replace(backup)
+        return backup
+
     def load(self) -> None:
         with self._lock:
             if not self.registry_path.exists():
@@ -26,15 +36,38 @@ class DeviceManager:
                 return
             try:
                 raw = json.loads(self.registry_path.read_text(encoding="utf-8"))
-            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            except (UnicodeError, json.JSONDecodeError) as exc:
+                try:
+                    self._quarantine_corrupt_registry()
+                except OSError as quarantine_exc:
+                    raise RuntimeError(
+                        "Device registry is corrupted and could not be quarantined safely."
+                    ) from quarantine_exc
+                self._devices = {}
+                return
+            except OSError as exc:
                 raise RuntimeError(
-                    "Device registry is unreadable or corrupted; refusing to overwrite it."
+                    "Device registry could not be read safely; refusing to overwrite it."
                 ) from exc
             if not isinstance(raw, dict):
-                raise RuntimeError("Device registry has an invalid root schema; refusing to overwrite it.")
+                try:
+                    self._quarantine_corrupt_registry()
+                except OSError as quarantine_exc:
+                    raise RuntimeError(
+                        "Device registry has an invalid schema and could not be quarantined safely."
+                    ) from quarantine_exc
+                self._devices = {}
+                return
             devices = raw.get("devices", raw)
             if not isinstance(devices, dict):
-                raise RuntimeError("Device registry has an invalid devices schema; refusing to overwrite it.")
+                try:
+                    self._quarantine_corrupt_registry()
+                except OSError as quarantine_exc:
+                    raise RuntimeError(
+                        "Device registry has an invalid devices schema and could not be quarantined safely."
+                    ) from quarantine_exc
+                self._devices = {}
+                return
             loaded: dict[str, DeviceRecord] = {}
             for device_id, item in (devices or {}).items():
                 if not isinstance(item, dict):
