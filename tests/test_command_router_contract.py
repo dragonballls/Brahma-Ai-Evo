@@ -65,3 +65,19 @@ def test_remote_command_preserves_explicit_failure():
     result = asyncio.run(router.route("test", "get_device_info"))
     assert result["success"] is False
     assert result["error"] == "Permission denied"
+
+
+def test_command_router_rejects_non_object_parameters():
+    router = CommandRouter(FakeDevices(), ResultHub({"success": True}), CapabilityManager())
+    result = asyncio.run(router.route("test", "get_device_info", ["not", "an", "object"]))
+    assert result["success"] is False
+    assert result["error_code"] == "MALFORMED_PARAMETERS"
+
+
+def test_command_router_rejects_malformed_required_capabilities():
+    router = CommandRouter(FakeDevices(), ResultHub({"success": True}), CapabilityManager())
+    result = asyncio.run(
+        router.route("test", "get_device_info", {"required_capabilities": {"bad": "shape"}})
+    )
+    assert result["success"] is False
+    assert result["error_code"] == "MALFORMED_PARAMETERS"
