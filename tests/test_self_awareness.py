@@ -110,3 +110,18 @@ class SelfAwarenessTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+    def test_corrupt_self_model_state_fails_closed(self):
+        with tempfile.TemporaryDirectory() as td, patch("core.self_model.PATH", Path(td) / "self_awareness.json"):
+            path = Path(td) / "self_awareness.json"
+            path.write_text("{broken", encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                SelfAwareness()
+
+    def test_self_model_save_failure_is_not_silently_ignored(self):
+        with tempfile.TemporaryDirectory() as td, patch("core.self_model.PATH", Path(td) / "self_awareness.json"):
+            awareness = SelfAwareness()
+            with patch.object(Path, "write_text", side_effect=OSError("disk full")):
+                with self.assertRaises(OSError):
+                    awareness.save()
