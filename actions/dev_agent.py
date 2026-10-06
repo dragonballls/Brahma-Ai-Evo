@@ -123,6 +123,21 @@ def _has_error(output: str, run_command: str) -> bool:
 class RateLimitError(Exception):
     pass
 
+def _safe_project_path(project_dir: Path, raw_path: str) -> Path:
+    value = str(raw_path or "").strip().replace("\\\\", "/")
+    candidate = Path(value)
+    if not value or candidate.is_absolute() or ".." in candidate.parts:
+        raise ValueError(f"Project path escapes the project root: {raw_path}")
+    resolved_root = project_dir.resolve()
+    resolved = (resolved_root / candidate).resolve()
+    try:
+        resolved.relative_to(resolved_root)
+    except ValueError as exc:
+        raise ValueError(f"Project path escapes the project root: {raw_path}") from exc
+    if len(value) > 240:
+        raise ValueError("Project path is too long.")
+    return resolved
+
 
 def _plan_project(description: str, language: str) -> dict:
     model = _get_model(MODEL_PLANNER)
@@ -183,7 +198,8 @@ def _write_file(
 ) -> str:
     model = _get_model(MODEL_WRITER)
 
-    file_path = file_info["path"]
+    file_path = str(file_info["path"])
+    _safe_project_path(project_dir, file_path)
     file_desc = file_info.get("description", "")
     file_imports = file_info.get("imports", [])
 
@@ -245,7 +261,7 @@ Code for {file_path}:"""
         response = model.generate_content(prompt)
         code = _strip_fences(response.text)
 
-        full_path = project_dir / file_path
+        full_path = _safe_project_path(project_dir, file_path)
         full_path.parent.mkdir(parents=True, exist_ok=True)
         full_path.write_text(code, encoding="utf-8")
 
@@ -466,7 +482,7 @@ Fixed code for {fix_path}:"""
             response = model.generate_content(prompt)
             fixed = _strip_fences(response.text)
 
-            full_path = project_dir / fix_path
+            full_path = _safe_project_path(project_dir, fix_path)
             full_path.parent.mkdir(parents=True, exist_ok=True)
             full_path.write_text(fixed, encoding="utf-8")
 
@@ -512,7 +528,18 @@ def _build_project(
     project_dir.mkdir(parents=True, exist_ok=True)
 
     files        = plan.get("files", [])
-    entry_point  = plan.get("entry_point", "main.py")
+    entry_point  = str(plan.get("entry_point", "main.py"))
+    if not isinstance(files, list) or not files or len(files) > 100:
+        raise ValueError("Planner returned an invalid file list.")
+    file_paths = []
+    for file_info in files:
+        if not isinstance(file_info, dict) or not file_info.get("path"):
+            raise ValueError("Planner returned an invalid project file entry.")
+        safe_file = _safe_project_path(project_dir, file_info["path"])
+        file_paths.append(str(Path(file_info["path"]).as_posix()))
+    entry_safe = _safe_project_path(project_dir, entry_point)
+    if entry_point.replace("\\", "/") not in file_paths:
+        raise ValueError("Planner entry point must be one of the generated project files.")
     run_command  = plan.get("run_command", f"python {entry_point}")
     dependencies = plan.get("dependencies", [])
 
