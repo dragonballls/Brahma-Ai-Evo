@@ -40,15 +40,39 @@ class BrahmaConnectService:
     _loop: asyncio.AbstractEventLoop | None = field(init=False, default=None)
     _lock: threading.RLock = field(init=False, repr=False)
 
-    def broadcast_chat_message(self, event: dict):
+    def broadcast_chat_message(self, event: dict) -> bool:
         from .gateway.protocol import ProtocolTypes, build_message
-        if not self._loop:
-            return
+        with self._lock:
+            loop = self._loop
+        if loop is None or loop.is_closed():
+            return False
         msg = build_message(ProtocolTypes.CHAT_MESSAGE, event)
-        asyncio.run_coroutine_threadsafe(
-            self.gateway.hub.broadcast_chat_message(msg),
-            self._loop
-        )
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                self.gateway.hub.broadcast_chat_message(msg),
+                loop,
+            )
+            future.add_done_callback(
+                lambda done: done.exception() if not done.cancelled() else None
+            )
+            return True
+        except (RuntimeError, OSError):
+            return False
+
+    def _run_on_gateway_loop(self, coro):
+        """Execute a gateway coroutine on the gateway's owning event loop.
+        Falls back to a private loop only when the gateway is not running yet.
+        """
+        with self._lock:
+            loop = self._loop
+        if loop is not None and not loop.is_closed():
+            try:
+                return asyncio.run_coroutine_threadsafe(coro, loop).result(
+                    timeout=max(1.0, float(self.gateway.config.request_timeout_seconds) + 5.0)
+                )
+            except RuntimeError:
+                pass
+        return asyncio.run(coro)
 
     def start_background(self) -> None:
         with self._lock:
@@ -127,7 +151,9 @@ class BrahmaConnectService:
         return self.gateway.rename_device(target, new_name)
 
     def route_command(self, target: str, action: str, parameters: dict[str, Any] | None = None) -> dict[str, Any]:
-        return asyncio.run(self.gateway.route_command(target, action, parameters or {}))
+        return self._run_on_gateway_loop(
+            self.gateway.route_command(target, action, parameters or {})
+        )
 
     async def disconnect_device(self, target: str, *, reason: str = "Disconnected by Brahma") -> dict[str, Any]:
         return await self.gateway.disconnect_device(target, reason=reason)
