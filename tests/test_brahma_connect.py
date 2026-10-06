@@ -103,6 +103,32 @@ def test_connection_hub_rejects_pending_commands_on_disconnect():
         raise AssertionError("Pending command future was not rejected")
 
 
+def test_connection_hub_slow_send_does_not_block_global_state_lock():
+    class SlowSocket:
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def send_json(self, message):
+            self.started.set()
+            await self.release.wait()
+
+    async def scenario():
+        hub = ConnectionHub()
+        socket = SlowSocket()
+        await hub.register(socket, "slow-device")
+        sending = asyncio.create_task(
+            hub.send_to_device("slow-device", {"type": "EXECUTE"})
+        )
+        await asyncio.wait_for(socket.started.wait(), timeout=1.0)
+        state = await asyncio.wait_for(hub.get("slow-device"), timeout=0.1)
+        socket.release.set()
+        assert state is not None
+        assert await asyncio.wait_for(sending, timeout=1.0) is True
+
+    asyncio.run(scenario())
+
+
 def test_connection_hub_old_socket_cannot_unregister_new_connection():
     class Socket:
         def __init__(self, name):
