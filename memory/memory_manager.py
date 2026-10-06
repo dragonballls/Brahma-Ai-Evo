@@ -2,6 +2,7 @@ from __future__ import annotations
 from core.user_paths import get_user_data_dir
 
 import json
+import os
 import re
 from datetime import datetime
 from threading import Lock
@@ -78,8 +79,18 @@ def load_memory() -> dict:
                         data[key] = {}
                 return data
             return _empty_memory()
-        except Exception as e:
-            print(f"[Memory] ⚠️ Load error: {e}")
+        except (UnicodeError, json.JSONDecodeError, ValueError) as e:
+            quarantine = MEMORY_PATH.with_name(
+                f"{MEMORY_PATH.name}.corrupt-{int(__import__('time').time())}-{__import__('uuid').uuid4().hex[:8]}"
+            )
+            try:
+                MEMORY_PATH.replace(quarantine)
+                print(f"[Memory] ⚠️ Corrupt memory quarantined as {quarantine.name}")
+            except OSError:
+                print(f"[Memory] ⚠️ Load error; corrupt memory could not be quarantined: {e}")
+            return _empty_memory()
+        except OSError as e:
+            print(f"[Memory] ⚠️ Memory I/O error; refusing to overwrite: {e}")
             return _empty_memory()
 
 def _all_entries(memory: dict) -> list[tuple]:
@@ -129,7 +140,7 @@ def _trim_to_limit(memory: dict) -> dict:
 def _atomic_write_json(path: Path, value: object) -> None:
     """Write JSON via a sibling temp file and atomic replace under the memory lock."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix(path.suffix + ".tmp")
+    temp = path.with_name(f".{path.name}.{os.getpid()}-{__import__('uuid').uuid4().hex}.tmp")
     try:
         temp.write_text(
             json.dumps(value, indent=2, ensure_ascii=False),
