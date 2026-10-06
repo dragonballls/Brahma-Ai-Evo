@@ -34,3 +34,9 @@ def test_browser_evaluation_is_not_exposed_as_a_planner_action():
     assert '\"evaluate\"' not in planner
     assert "def browser_evaluate_internal" in browser
     assert 'allow_unsafe_code=true' not in browser
+
+
+def test_browser_backend_registers_process_exit_cleanup():
+    source = (ROOT / "actions" / "browser_control.py").read_text(encoding="utf-8")
+    assert "import atexit" in source
+    assert "atexit.register(shutdown_browser)" in source
