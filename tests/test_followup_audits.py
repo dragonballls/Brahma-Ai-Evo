@@ -35,6 +35,20 @@ def test_device_public_serialization_excludes_internal_credentials():
     assert storage["secret_hash"] == "sensitive-hash"
 
 
+def test_corrupt_device_registry_is_quarantined_for_recovery(tmp_path: Path):
+    from brahma_connect.gateway.device_manager import DeviceManager
+
+    path = tmp_path / "devices.json"
+    path.write_text("{not-json", encoding="utf-8")
+    manager = DeviceManager(path)
+
+    assert manager.list_devices() == []
+    assert not path.exists()
+    backups = list(tmp_path.glob("devices.json.corrupt-*"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == "{not-json"
+
+
 def test_persisted_online_state_is_reset_on_manager_restart(tmp_path: Path):
     from brahma_connect.gateway.device_manager import DeviceManager
 
@@ -153,6 +167,34 @@ def test_command_router_cancellation_cleans_pending_future():
         assert hub.rejected is True
 
     asyncio.run(scenario())
+
+
+def test_service_restart_prepares_gateway_start():
+    from brahma_connect.service import BrahmaConnectService
+
+    service = object.__new__(BrahmaConnectService)
+    service._lock = threading.RLock()
+    service._thread = None
+    calls = []
+
+    class Gateway:
+        def prepare_start(self):
+            calls.append("prepared")
+
+    service.gateway = Gateway()
+
+    class FakeThread:
+        def __init__(self, *args, **kwargs):
+            pass
+        def start(self):
+            pass
+        def is_alive(self):
+            return False
+
+    with patch("brahma_connect.service.threading.Thread", FakeThread):
+        service.start_background()
+
+    assert calls == ["prepared"]
 
 
 def test_service_gateway_timeout_cancels_submitted_future():
