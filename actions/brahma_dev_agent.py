@@ -5,6 +5,7 @@ from core.efficiency_policy import EFFICIENCY_DIRECTIVE
 import os
 import re
 import shlex
+import shutil
 import sys
 import json
 import fnmatch
@@ -44,6 +45,19 @@ _BLOCKED_EVAL_FLAGS = {
 }
 _GIT_EXECUTION_OVERRIDE_FLAGS = {
     "-u", "--upload-pack", "--upload-pack=", "--receive-pack", "--receive-pack=",
+    "-c", "--config", "--config-env", "--exec-path", "--exec-path=", "--exec-path",
+}
+_EXECUTION_ENV_OVERRIDES = {
+    "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "PYTHONINSPECT",
+    "NODE_OPTIONS", "NODE_PATH",
+    "RUBYOPT", "RUBYLIB", "PERL5OPT",
+    "BASH_ENV", "ENV",
+    "GIT_SSH", "GIT_SSH_COMMAND", "GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR",
+    "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_COUNT",
+    "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS",
+}
+_RESPONSE_FILE_CAPABLE_PROGRAMS = {
+    "javac", "gcc", "g++", "clang", "clang++", "rustc", "msbuild",
 }
 
 class NativeTools:
@@ -89,6 +103,8 @@ class NativeTools:
         if not parts:
             return "Error: command is required."
 
+        if "/" in parts[0] or "\\" in parts[0]:
+            return "Error: executable paths must use the approved bare development-command names."
         executable = Path(parts[0]).name.casefold()
         for suffix in (".exe", ".cmd", ".bat"):
             if executable.endswith(suffix):
@@ -112,10 +128,17 @@ class NativeTools:
             return "Error: Git repository/work-tree overrides are not permitted."
         if executable == "git" and any(
             part.casefold() in _GIT_EXECUTION_OVERRIDE_FLAGS
-            or part.casefold().startswith(("--upload-pack=", "--receive-pack="))
+            or part.casefold().startswith((
+                "--upload-pack=", "--receive-pack=", "--exec-path=", "--config-env="
+            ))
             for part in parts[1:]
         ):
-            return "Error: Git upload/receive-pack execution overrides are not permitted."
+            return "Error: Git execution/configuration overrides are not permitted."
+
+        if executable in _RESPONSE_FILE_CAPABLE_PROGRAMS and any(
+            str(part).startswith("@") for part in parts[1:]
+        ):
+            return "Error: response-file arguments are not permitted."
 
         root = self.workspace_dir.resolve()
         for arg in parts[1:]:
@@ -143,8 +166,26 @@ class NativeTools:
                 timeout_value = max(1, min(900, int(timeout)))
             except (TypeError, ValueError):
                 return "Error: command timeout must be an integer."
+            env = {
+                key: value
+                for key, value in os.environ.items()
+                if key.upper() not in _EXECUTION_ENV_OVERRIDES
+            }
+            resolved_executable = shutil.which(parts[0], path=env.get("PATH"))
+            if not resolved_executable:
+                return f"Error: executable '{parts[0]}' could not be resolved safely."
+            resolved_path = Path(resolved_executable).resolve()
+            try:
+                resolved_path.relative_to(root)
+            except ValueError:
+                pass
+            else:
+                return "Error: executable resolution may not use files from the developer workspace."
+            if sys.platform.startswith("win") and resolved_path.name.casefold() != executable.casefold() + resolved_path.suffix.casefold():
+                return "Error: executable resolution did not match the approved command."
+            run_parts = [str(resolved_path), *parts[1:]]
             res = subprocess.run(
-                parts,
+                run_parts,
                 cwd=str(self.workspace_dir),
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
@@ -153,6 +194,7 @@ class NativeTools:
                 shell=False,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 check=False,
+                env=env,
             )
             stdout = res.stdout.strip()
             stderr = res.stderr.strip()
