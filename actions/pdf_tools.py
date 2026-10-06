@@ -74,7 +74,15 @@ def _resolve_output_path(
         return path
 
     DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    return DEFAULT_OUTPUT_DIR / f"{_sanitize_filename(title, fallback_name)}{ext}"
+    base = DEFAULT_OUTPUT_DIR / f"{_sanitize_filename(title, fallback_name)}{ext}"
+    if overwrite or not base.exists():
+        return base
+    counter = 1
+    while True:
+        candidate = DEFAULT_OUTPUT_DIR / f"{base.stem}_{counter}{base.suffix}"
+        if not candidate.exists():
+            return candidate
+        counter += 1
 
 
 def _open_file(path: Path) -> None:
