@@ -5,6 +5,29 @@ from datetime import datetime, timezone
 from typing import Any
 
 
+def _string_list(value: object) -> list[str]:
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _string_mapping(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return dict(value)
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -52,6 +75,7 @@ class DeviceRecord:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        """Return the public-safe device representation used by UI/API/tool results."""
         return {
             "device_id": self.device_id,
             "name": self.name,
@@ -65,12 +89,19 @@ class DeviceRecord:
             "capabilities": list(self.capabilities),
             "permissions": list(self.permissions),
             "paired_at": self.paired_at,
-            "secret_hash": self.secret_hash,
             "revoked": self.revoked,
-            "connection_id": self.connection_id,
-            "identity_fingerprint": self.identity_fingerprint,
             "metadata": dict(self.metadata),
         }
+
+    def to_storage_dict(self) -> dict[str, Any]:
+        """Return the complete on-disk representation, including internal secrets."""
+        payload = self.to_dict()
+        payload.update({
+            "secret_hash": self.secret_hash,
+            "connection_id": self.connection_id,
+            "identity_fingerprint": self.identity_fingerprint,
+        })
+        return payload
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "DeviceRecord":
@@ -83,13 +114,13 @@ class DeviceRecord:
             ip=str(data.get("ip", "")),
             online=bool(data.get("online", False)),
             last_seen=str(data.get("last_seen", "")),
-            battery=data.get("battery"),
-            capabilities=list(data.get("capabilities") or []),
-            permissions=list(data.get("permissions") or []),
+            battery=_optional_int(data.get("battery")),
+            capabilities=_string_list(data.get("capabilities")),
+            permissions=_string_list(data.get("permissions")),
             paired_at=str(data.get("paired_at", "")),
             secret_hash=str(data.get("secret_hash", "")),
             revoked=bool(data.get("revoked", False)),
             connection_id=str(data.get("connection_id", "")),
             identity_fingerprint=str(data.get("identity_fingerprint", "")),
-            metadata=dict(data.get("metadata") or {}),
+            metadata=_string_mapping(data.get("metadata")),
         )
