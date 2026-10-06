@@ -1306,3 +1306,9 @@ def test_geospatial_live_failures_do_not_fabricate_data(monkeypatch):
         globe.fetch_live_iss()
     with pytest.raises(RuntimeError, match="Live earthquake"):
         globe.fetch_live_earthquakes()
+
+
+def test_iss_tracker_does_not_fallback_to_plain_http():
+    source = Path("actions/geospatial_globe.py").read_text(encoding="utf-8")
+    assert "http://api.open-notify.org" not in source
+    assert 'raise RuntimeError("Live ISS data is unavailable.") from exc' in source

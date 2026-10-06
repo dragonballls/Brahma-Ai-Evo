@@ -367,29 +367,8 @@ def fetch_live_iss() -> Dict[str, Any]:
                 "visibility": visibility,
                 "timestamp": data.get("timestamp"),
             }
-    except Exception:
-        # Fallback to Open-Notify if WhereTheISS is busy
-        try:
-            url2 = "http://api.open-notify.org/iss-now.json"
-            req2 = urllib.request.Request(url2, headers={"User-Agent": "BrahmaAI-SpaceRadar/1.0"})
-            with urllib.request.urlopen(req2, timeout=4) as resp2:
-                data2 = json.loads(resp2.read().decode("utf-8"))
-                pos = data2.get("iss_position", {})
-                lat = round(float(pos.get("latitude", 0)), 4)
-                lon = round(float(pos.get("longitude", 0)), 4)
-                return {
-                    "name": "International Space Station (ISS)",
-                    "lat": lat,
-                    "lon": lon,
-                    "altitude_km": 420.0,
-                    "altitude_miles": 261.0,
-                    "velocity_kmh": 27600.0,
-                    "velocity_mph": 17150.0,
-                    "visibility": "orbit",
-                    "timestamp": data2.get("timestamp"),
-                }
-        except Exception as exc:
-            raise RuntimeError("Live ISS data is unavailable.") from exc
+    except Exception as exc:
+        raise RuntimeError("Live ISS data is unavailable.") from exc
 
 
 def fetch_live_earthquakes(min_magnitude: float = 2.5) -> List[Dict[str, Any]]:
