@@ -791,45 +791,50 @@ class AttentionMonitor:
 
     def _poll_windows(self, now: float) -> None:
         current_window_keys: set[str] = set()
-        for win in _enum_visible_windows():
-            title = win.get("title") or ""
-            pid = int(win.get("pid") or 0)
-            proc_name = _proc_name(pid)
-            app = _match_app(title, proc_name)
-            if not app:
-                continue
+        scan_succeeded = False
+        try:
+            for win in _enum_visible_windows():
+                title = win.get("title") or ""
+                pid = int(win.get("pid") or 0)
+                proc_name = _proc_name(pid)
+                app = _match_app(title, proc_name)
+                if not app:
+                    continue
 
-            hay = f"{title} {win.get('class') or ''} {proc_name}".lower()
-            if "brahma" in hay:
-                continue
+                hay = f"{title} {win.get('class') or ''} {proc_name}".lower()
+                if "brahma" in hay:
+                    continue
 
-            if app in {"Zoom", "Teams", "WhatsApp"} and _contains_any(hay, ("meeting", "call", "incoming", "ringing", "conference", "joined")):
-                pass
-            elif not _contains_any(hay, _WINDOW_CALL_HINTS):
-                continue
+                if app in {"Zoom", "Teams", "WhatsApp"} and _contains_any(hay, ("meeting", "call", "incoming", "ringing", "conference", "joined")):
+                    pass
+                elif not _contains_any(hay, _WINDOW_CALL_HINTS):
+                    continue
 
-            dedupe = hashlib.sha1(
-                f"window|{app}|{title}|{pid}".encode("utf-8", "ignore")
-            ).hexdigest()
-            current_window_keys.add(dedupe)
-            if dedupe in self._active_window_keys:
-                continue
-            self._active_window_keys.add(dedupe)
+                dedupe = hashlib.sha1(
+                    f"window|{app}|{title}|{pid}".encode("utf-8", "ignore")
+                ).hexdigest()
+                current_window_keys.add(dedupe)
+                if dedupe in self._active_window_keys:
+                    continue
+                self._active_window_keys.add(dedupe)
 
-            event = {
-                "kind": "call",
-                "app": app,
-                "title": title,
-                "preview": title,
-                "source": "window",
-                "notification_id": None,
-                "arrival_time": None,
-                "timestamp": now,
-                "raw": title,
-                "primary_id": proc_name,
-                "actions": [],
-            }
-            if self._on_event:
-                self._on_event(event)
+                event = {
+                    "kind": "call",
+                    "app": app,
+                    "title": title,
+                    "preview": title,
+                    "source": "window",
+                    "notification_id": None,
+                    "arrival_time": None,
+                    "timestamp": now,
+                    "raw": title,
+                    "primary_id": proc_name,
+                    "actions": [],
+                }
+                if self._on_event:
+                    self._on_event(event)
 
-        self._active_window_keys.intersection_update(current_window_keys)
+            scan_succeeded = True
+        finally:
+            if scan_succeeded:
+                self._active_window_keys.intersection_update(current_window_keys)
