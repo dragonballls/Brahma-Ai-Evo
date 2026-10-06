@@ -27,6 +27,8 @@ SAFE_COMMANDS = {
 _BLOCKED_OPEN_EXTENSIONS = {
     ".exe", ".com", ".bat", ".cmd", ".ps1", ".psm1", ".msi", ".msp",
     ".scr", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".hta",
+    ".lnk", ".url", ".website", ".msc", ".cpl", ".reg", ".inf", ".chm",
+    ".scf", ".gadget",
     ".py", ".pyw", ".pyc", ".sh", ".bash", ".zsh", ".fish",
 }
 
@@ -78,11 +80,21 @@ def _open_target(task: str) -> str | None:
     target = next((p for p in candidates if p.exists()), None)
     if target is None:
         return f"Could not find the requested file or application: {remainder}"
-    if target.is_file() and target.suffix.casefold() in _BLOCKED_OPEN_EXTENSIONS:
-        return "Opening executable or script files is blocked by the legacy command adapter. Use a dedicated, explicit application-control action."
+
+    try:
+        resolved_target = target.resolve(strict=True)
+    except OSError as exc:
+        return f"Could not resolve the requested target safely: {exc}"
+
+    if resolved_target.is_file() and resolved_target.suffix.casefold() in _BLOCKED_OPEN_EXTENSIONS:
+        return "Opening executable, script, shortcut, or shell-link files is blocked by the legacy command adapter. Use a dedicated, explicit application-control action."
+    if target.is_symlink():
+        # The resolved extension is checked above; block remaining symlink indirection
+        # so filesystem changes cannot turn a previously safe target into code execution.
+        return "Opening symlink targets is blocked by the legacy command adapter."
 
     if os.name == "nt":
-        os.startfile(str(target))
+        os.startfile(str(resolved_target))
     else:
         subprocess.Popen(
             ["xdg-open", str(target)],
