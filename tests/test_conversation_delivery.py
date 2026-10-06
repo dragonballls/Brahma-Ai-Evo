@@ -60,14 +60,19 @@ class ConversationDeliveryTests(unittest.TestCase):
         self.assertEqual(result, "Direct fallback answer")
 
     def test_multi_model_reasoning_is_available_only_as_text_recovery(self):
+        from core.request_routing import _looks_like_action_request
         from pathlib import Path
 
         main = Path("main.py").read_text(encoding="utf-8")
-        self.assertIn("def _looks_like_action_request(text: str) -> bool:", main)
         self.assertIn("from core.intelligence_orchestrator import orchestrator", main)
         self.assertIn("Multi-model Intelligence", main)
         self.assertIn("not _looks_like_action_request(text)", main)
-        self.assertIn('"intelligence_orchestration_enabled"', Path("core/intelligence_orchestrator.py").read_text(encoding="utf-8"))
+        self.assertTrue(_looks_like_action_request("open calculator"))
+        self.assertFalse(_looks_like_action_request("what is the capital of France?"))
+        self.assertIn(
+            '"intelligence_orchestration_enabled"',
+            Path("core/intelligence_orchestrator.py").read_text(encoding="utf-8"),
+        )
 
     def test_action_requests_are_kept_on_tool_capable_path(self):
         from core.request_routing import _looks_like_action_request
