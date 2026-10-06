@@ -193,4 +193,49 @@ def test_forge_repairs_skill_when_sandbox_returns_error_dict(tmp_path):
             assert isinstance(res, dict) and res.get("title") == "Repaired Deliverable"
     finally:
         DynamicToolRegistry._skills = original_skills
-        DynamicToolRegistry._initialized = original_initialized
+        DynamicToolRegistry._initialized = original_initialized
+def test_skill_forge_repair_prompt_never_requests_tls_bypass():
+    import inspect
+
+    source = inspect.getsource(SkillForge._repair_code)
+    assert "verify=False" not in source
+    assert "_create_unverified_context" not in source
+    assert "normal certificate verification" in source
+
+
+def test_skill_forge_cleans_partial_persistence(tmp_path):
+    original_skills = DynamicToolRegistry._skills.copy()
+    original_initialized = DynamicToolRegistry._initialized
+    payload = {
+        "success": True,
+        "manifest": {
+            "name": "partial_write_test",
+            "description": "Partial write test",
+            "parameters": {"type": "OBJECT", "properties": {}},
+            "active": True,
+        },
+        "code": 'def execute(**kwargs):\n    return "partial"\n',
+        "test_cases": [{"input": {}}],
+    }
+    vault = tmp_path / "vault"
+    real_open = open
+
+    def fail_skill_open(path, *args, **kwargs):
+        if str(path).endswith("skill.py"):
+            raise OSError("simulated disk failure")
+        return real_open(path, *args, **kwargs)
+
+    try:
+        with (
+            patch("core.dynamic_registry.APPDATA_SKILLS_DIR", vault),
+            patch("core.dynamic_registry.FEATURES_DIR", tmp_path / "features"),
+            patch.object(SkillForge, "_call_llm_synthesizer", return_value=payload),
+            patch.object(SkillCrucible, "resolve_dependencies", return_value=(True, "No dependencies.")),
+            patch("builtins.open", side_effect=fail_skill_open),
+        ):
+            result = SkillForge.forge_skill("partial persistence check", "partial_write_test")
+            assert result["success"] is False
+            assert not (vault / "partial_write_test").exists()
+    finally:
+        DynamicToolRegistry._skills = original_skills
+        DynamicToolRegistry._initialized = original_initialized
