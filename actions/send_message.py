@@ -88,6 +88,15 @@ def _open_instagram_post_dialog() -> None:
     time.sleep(2.5)
 
 
+def _is_success_result(res: object) -> bool:
+    """Accept either legacy status or an explicit boolean, but never an explicit false."""
+    if not isinstance(res, dict):
+        return False
+    if "success" in res:
+        return res.get("success") is True
+    return res.get("status") in {"success", "ok"}
+
+
 def _send_instagram(receiver: str, message: str) -> str:
     """
     Sends an Instagram DM via API and opens the thread in the browser.
@@ -95,11 +104,7 @@ def _send_instagram(receiver: str, message: str) -> str:
     try:
         from actions.instagram_mcp import InstagramService
         res = InstagramService.instance().send_dm(receiver, message, open_in_browser=True)
-        if (
-            not isinstance(res, dict)
-            or res.get("success") is False
-            or (res.get("success") is not True and res.get("status") not in {"success", "ok"})
-        ):
+        if not _is_success_result(res):
             error = res.get("error") if isinstance(res, dict) else "Instagram returned a malformed send result."
             return f"Instagram send failed: {error}"
         return f"Message sent to @{receiver} via Instagram. Thread opened in browser."
@@ -127,20 +132,12 @@ def _upload_instagram_media(media_path: str, caption: str = "", mode: str = "pos
         svc = InstagramService.instance()
         if path.suffix.lower() in VIDEO_EXTS:
             res = svc.post_reel(str(path), caption=caption, open_in_browser=True)
-            if (
-            not isinstance(res, dict)
-            or res.get("success") is False
-            or (res.get("success") is not True and res.get("status") not in {"success", "ok"})
-        ):
+            if not _is_success_result(res):
                 return f"Instagram Reel publish failed: {res.get('error') if isinstance(res, dict) else 'malformed result'}"
             return f"Instagram Reel published: {res.get('reel_url')} (opened in browser)"
         else:
             res = svc.post_photo(str(path), caption=caption, open_in_browser=True)
-            if (
-            not isinstance(res, dict)
-            or res.get("success") is False
-            or (res.get("success") is not True and res.get("status") not in {"success", "ok"})
-        ):
+            if not _is_success_result(res):
                 return f"Instagram Photo publish failed: {res.get('error') if isinstance(res, dict) else 'malformed result'}"
             return f"Instagram Photo published: {res.get('post_url')} (opened in browser)"
     except Exception as e:
@@ -205,7 +202,8 @@ def _send_email_via_browser(platform: str, receiver: str, message: str) -> str:
             app_name = f"Gmail in {browser_name}"
             
             print(f"[SendMessage] Automating Chrome to open: {url}")
-            webbrowser.open(url)
+            if not webbrowser.open(url):
+                return f"Could not open {app_name} to compose email."
             
         elif "outlook" in plat_lower:
             quoted_recipient = urllib.parse.quote(receiver)
@@ -213,14 +211,16 @@ def _send_email_via_browser(platform: str, receiver: str, message: str) -> str:
             quoted_body = urllib.parse.quote(message)
             url = f"https://outlook.live.com/default/?path=/mail/action/compose&to={quoted_recipient}&subject={quoted_subject}&body={quoted_body}"
             app_name = f"Outlook in {browser_name}"
-            webbrowser.open(url)
+            if not webbrowser.open(url):
+                return f"Could not open {app_name} to compose email."
         else:
             quoted_recipient = urllib.parse.quote(receiver)
             quoted_subject = urllib.parse.quote(subject)
             quoted_body = urllib.parse.quote(message)
             url = f"mailto:{quoted_recipient}?subject={quoted_subject}&body={quoted_body}"
             app_name = "Default Mail Client"
-            webbrowser.open(url)
+            if not webbrowser.open(url):
+                return "Could not open the default mail client to compose email."
             
         return f"Opened {app_name} to compose email to {receiver}."
     except Exception as e:
