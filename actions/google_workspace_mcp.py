@@ -44,7 +44,7 @@ def _credential_process_lock():
         if os.name == "nt":
             import msvcrt
             handle.seek(0)
-            handle.write(b"\\0")
+            handle.write(b"\0")
             handle.flush()
             handle.seek(0)
             deadline = time.monotonic() + 15.0
@@ -84,8 +84,8 @@ def _get_fernet_cipher():
                     temp.replace(EMAIL_KEY_FILE)
                     if not EMAIL_KEY_FILE.exists():
                         raise RuntimeError("Unable to publish email encryption key.")
-                with EMAIL_KEY_FILE.open("rb") as f:
-                key = f.read().strip()
+                    with EMAIL_KEY_FILE.open("rb") as f:
+                    key = f.read().strip()
         return Fernet(key)
     except Exception as e:
         logger.warning(f"[Workspace] Cryptography initialization error: {e}")
@@ -131,8 +131,8 @@ def save_stored_gmail_credentials(email_addr: str, app_password: str) -> bool:
             with _credential_process_lock():
                 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
                 temp = EMAIL_CREDENTIALS_FILE.with_name(
-                f".{EMAIL_CREDENTIALS_FILE.name}.{uuid.uuid4().hex}.tmp"
-            )
+                    f".{EMAIL_CREDENTIALS_FILE.name}.{uuid.uuid4().hex}.tmp"
+                )
                 temp.write_text(
                     json.dumps(payload, indent=2, ensure_ascii=False),
                     encoding="utf-8",
