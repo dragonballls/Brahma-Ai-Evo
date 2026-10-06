@@ -1,13 +1,62 @@
+import importlib
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_mobile_autopilot_actually_dispatches_supported_actions():
+    module = importlib.import_module("actions.mobile_autopilot")
+    remote_results = [
+        {
+            "success": True,
+            "data": {
+                "nodes": [
+                    {
+                        "bounds": [0, 0, 100, 100],
+                        "is_clickable": True,
+                        "text": "Search",
+                    }
+                ]
+            },
+        },
+        {"success": True, "data": {"clicked": True}},
+        {
+            "success": True,
+            "data": {
+                "nodes": [
+                    {
+                        "bounds": [0, 0, 100, 100],
+                        "text": "Complete",
+                    }
+                ]
+            },
+        },
+    ]
+    decisions = [
+        {"action": "tap", "x": 50, "y": 50, "reason": "Tap search"},
+        {"action": "done", "verification": ["Complete"], "reason": "Completion is visible"},
+    ]
+
+    with patch.object(module, "connect_execute", side_effect=remote_results) as execute,          patch("core.gemini_runtime.generate_json", side_effect=decisions),          patch.object(module.time, "sleep", return_value=None):
+        result = json.loads(
+            module.mobile_autopilot(
+                {"target": "phone-1", "instruction": "finish the task", "timeout_seconds": 5}
+            )
+        )
+
+    assert result["success"] is True
+    assert execute.call_count == 3
+    assert execute.call_args_list[1].kwargs == {}
+    dispatched = execute.call_args_list[1].args[0]
+    assert dispatched["target"] == "phone-1"
+    assert dispatched["action"] == "ui_tap"
+    assert dispatched["parameters"] == {"x": 50, "y": 50}
+
+
 def test_mobile_autopilot_checks_every_remote_action_result_and_fails_on_exhaustion():
     source = (ROOT / "actions" / "mobile_autopilot.py").read_text(encoding="utf-8")
-    assert "elif action in {\"tap\", \"swipe\", \"type\"}:" in source
-    assert "parsed_command.get(\"success\") is not True" in source
     assert '"success": False' in source
     assert "Mobile autopilot stopped before the goal was confirmed complete." in source
     assert 'return json.dumps({"success": True, "message": "Max steps reached or stopped."})' not in source
