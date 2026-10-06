@@ -34,10 +34,10 @@ class BrahmaWebSocketClient(
     private val commandHandler: DeviceCommandHandler,
 ) {
     private fun buildClient(endpoint: GatewayEndpoint): OkHttpClient {
+        require(endpoint.tls) { "Brahma Connect requires TLS for gateway connections." }
         val builder = OkHttpClient.Builder()
             .retryOnConnectionFailure(true)
             .pingInterval(30, TimeUnit.SECONDS)
-        if (!endpoint.tls) return builder.build()
         val fingerprint = endpoint.tlsCertificateSha256.lowercase().trim()
         if (fingerprint.isBlank()) return builder.build()
         val trustManager = object : X509TrustManager {
@@ -82,6 +82,16 @@ class BrahmaWebSocketClient(
             AgentStateStore.setGateway(endpoint)
             return
         }
+        if (!endpoint.tls) {
+            currentEndpoint = endpoint
+            currentCredential = credential
+            currentOffer = offer
+            AgentStateStore.setGateway(endpoint)
+            AgentStateStore.setConnectionState(ConnectionState.DISCONNECTED)
+            AgentStateStore.setError("Brahma Connect requires a TLS-secured gateway.")
+            AgentStateStore.setStatus("Secure gateway required")
+            return
+        }
         currentEndpoint = endpoint
         currentCredential = credential
         currentOffer = offer
@@ -93,9 +103,8 @@ class BrahmaWebSocketClient(
         AgentStateStore.setStatus("Connecting to ${endpoint.name}")
 
         socket?.close(1000, "Reconnecting")
-        val scheme = if (endpoint.tls) "wss" else "ws"
         socket = buildClient(endpoint).newWebSocket(
-            Request.Builder().url(scheme + "://" + endpoint.host + ":" + endpoint.port + "/ws").build(),
+            Request.Builder().url("wss://" + endpoint.host + ":" + endpoint.port + "/ws").build(),
             BrahmaSocketListener(),
         )
     }

@@ -641,7 +641,9 @@ def test_gateway_tls_is_enabled_and_pinned_in_pairing_offers():
 def test_android_gateway_requires_tls_and_uses_wss_with_pinning():
     source = Path("brahma-connect-android/app/src/main/java/com/brahma/connect/network/BrahmaWebSocketClient.kt").read_text(encoding="utf-8")
     manifest = Path("brahma-connect-android/app/src/main/AndroidManifest.xml").read_text(encoding="utf-8")
-    assert 'val scheme = if (endpoint.tls) "wss" else "ws"' in source
+    assert 'require(endpoint.tls) { "Brahma Connect requires TLS for gateway connections." }' in source
+    assert 'AgentStateStore.setError("Brahma Connect requires a TLS-secured gateway.")' in source
+    assert 'url("wss://" + endpoint.host + ":" + endpoint.port + "/ws")' in source
     assert 'endpoint.tlsCertificateSha256.lowercase().trim()' in source
     assert "Gateway TLS certificate fingerprint does not match the pairing record." in source
     assert 'android:usesCleartextTraffic="false"' in manifest
