@@ -6,6 +6,7 @@ import time
 import subprocess
 import platform
 import shutil
+import re
 
 try:
     import psutil
@@ -58,8 +59,8 @@ def _normalize(raw: str) -> str:
     key    = raw.lower().strip()
     if key in _APP_ALIASES:
         return _APP_ALIASES[key].get(system, raw)
-    for alias_key, os_map in _APP_ALIASES.items():
-        if alias_key in key or key in alias_key:
+    for alias_key, os_map in sorted(_APP_ALIASES.items(), key=lambda item: len(item[0]), reverse=True):
+        if re.search(rf"(?<!\w){re.escape(alias_key)}(?!\w)", key):
             return os_map.get(system, raw)
     return raw
 
@@ -71,8 +72,8 @@ def _is_running(app_name: str) -> bool:
     try:
         for proc in psutil.process_iter(["name"]):
             try:
-                proc_name = proc.info["name"].lower().replace(" ", "").replace(".exe", "")
-                if app_lower in proc_name or proc_name in app_lower:
+                proc_name = (proc.info["name"] or "").lower().replace(" ", "").replace(".exe", "")
+                if proc_name == app_lower:
                     return True
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
@@ -144,7 +145,7 @@ def _launch_windows(app_name: str) -> bool:
         time.sleep(0.8)
         pyautogui.press("enter")
         time.sleep(3.0)
-        return True
+        return bool(_PSUTIL and _is_running(app_name))
     except Exception as e:
         print(f"[open_app] ⚠️ Windows launch failed: {e}")
         return False
@@ -203,8 +204,8 @@ def _launch_linux(app_name: str) -> bool:
 
     try:
         desktop_name = app_name.lower().replace(" ", "-")
-        subprocess.run(["gtk-launch", desktop_name], capture_output=True, timeout=5)
-        return True
+        result = subprocess.run(["gtk-launch", desktop_name], capture_output=True, timeout=5)
+        return result.returncode == 0
     except Exception:
         pass
 
