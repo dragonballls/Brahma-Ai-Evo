@@ -6516,15 +6516,16 @@ class BrahmaLive:
                 ("error:", "failed:", "failure:", "unable to ", "could not ")
             )
         execution_failed = execution_failed or result_declared_failed
+        display_result = self._redact_sensitive_text(result)
         try:
             if execution_failed:
                 if not getattr(fc, "silent_completion", False):
                     self.speak(f"{name.replace('_', ' ')} failed.")
-                self.ui.finish_task_workspace(result, "Task failed.", 0)
+                self.ui.finish_task_workspace(display_result, "Task failed.", 0)
             else:
                 if not getattr(fc, "silent_completion", False):
                     self.speak(f"{name.replace('_', ' ')} completed.")
-                self.ui.finish_task_workspace(result, "Task completed.", 100)
+                self.ui.finish_task_workspace(display_result, "Task completed.", 100)
         except Exception:
             pass
 
@@ -6538,7 +6539,7 @@ class BrahmaLive:
                 if p_cand.exists():
                     detected_file = str(p_cand.resolve())
 
-            res_str = str(result)
+            res_str = self._redact_sensitive_text(result)
             bullets = []
             for l in res_str.splitlines():
                 cl = l.strip()
@@ -6571,7 +6572,7 @@ class BrahmaLive:
         if not self.ui.muted:
             self.ui.set_state("LISTENING")
 
-        print(f"[BRAHMA EVO] 📤 {name} → {str(result)[:80]}")
+        print(f"[BRAHMA EVO] 📤 {name} → {self._redact_sensitive_text(result)[:80]}")
 
         return types.FunctionResponse(
             id=fc.id, name=name,
