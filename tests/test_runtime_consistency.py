@@ -765,6 +765,15 @@ class RuntimeConsistencyTests(unittest.TestCase):
         ws_block = source[source.index('@app.websocket("/ws")'):]
         self.assertIn('_valid_token(tok)', ws_block)
 
+    def test_dashboard_background_files_are_path_constrained(self):
+        source = self.read("dashboard/server.py")
+        self.assertIn('async def web_background_static(filename: str)', source)
+        background_block = source[source.index('@app.get("/web_background/{filename:path}")'):]
+        background_block = background_block[:background_block.index('@app.websocket("/ws")')]
+        self.assertIn('bg_dir = (BASE_DIR / "assets" / "web_background").resolve()', background_block)
+        self.assertIn('target.relative_to(bg_dir)', background_block)
+        self.assertNotIn('target = bg_dir / safe', background_block)
+
     def test_startup_health_marker_waits_for_stable_event_loop(self):
         source = self.read("main.py")
         self.assertIn("QTimer.singleShot(15000, _mark_startup_healthy)", source)
