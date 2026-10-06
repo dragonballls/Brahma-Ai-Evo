@@ -4,6 +4,7 @@ import sys
 import time
 import base64
 import logging
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -82,6 +83,7 @@ FAILED_MODEL_COOLDOWN = 30   # seconds before retrying a transiently unavailable
 
 _rate_limited: dict[str, float] = {}
 _failed_until: dict[str, float] = {}
+_model_state_lock = threading.Lock()
 
 class OpenRouterClient:
 
@@ -96,32 +98,36 @@ class OpenRouterClient:
         self._omniroute = _omniroute_gateway()
 
     def _is_rate_limited(self, model: str) -> bool:
-        ts = _rate_limited.get(model)
-        if ts is None:
-            return False
-        if time.time() - ts > RATE_LIMIT_COOLDOWN:
-            del _rate_limited[model]
-            return False
-        return True
+        with _model_state_lock:
+            ts = _rate_limited.get(model)
+            if ts is None:
+                return False
+            if time.time() - ts > RATE_LIMIT_COOLDOWN:
+                _rate_limited.pop(model, None)
+                return False
+            return True
 
     def _mark_rate_limited(self, model: str) -> None:
-        _rate_limited[model] = time.time()
+        with _model_state_lock:
+            _rate_limited[model] = time.time()
         logger.warning(
             f"[OpenRouter] Rate limited: {model} — "
             f"cooling down for {RATE_LIMIT_COOLDOWN}s"
         )
 
     def _is_temporarily_failed(self, model: str) -> bool:
-        until = _failed_until.get(model)
-        if until is None:
-            return False
-        if time.time() >= until:
-            _failed_until.pop(model, None)
-            return False
-        return True
+        with _model_state_lock:
+            until = _failed_until.get(model)
+            if until is None:
+                return False
+            if time.time() >= until:
+                _failed_until.pop(model, None)
+                return False
+            return True
 
     def _mark_temporarily_failed(self, model: str) -> None:
-        _failed_until[model] = time.time() + FAILED_MODEL_COOLDOWN
+        with _model_state_lock:
+            _failed_until[model] = time.time() + FAILED_MODEL_COOLDOWN
         logger.warning(
             f"[OpenRouter] Temporarily unavailable: {model} — "
             f"cooling down for {FAILED_MODEL_COOLDOWN}s"
