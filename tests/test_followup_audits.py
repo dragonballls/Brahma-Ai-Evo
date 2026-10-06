@@ -493,6 +493,7 @@ def test_pair_approval_tool_result_never_contains_device_secret():
     class Record:
         device_id = "device-1"
         name = "Phone"
+        platform = "android"
         def to_dict(self):
             return {"device_id": self.device_id, "name": self.name}
 
