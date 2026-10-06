@@ -66,3 +66,16 @@ class RepositorySyncTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_repository_sync_rejects_target_changes_after_verification():
+    source = (ROOT / "core" / "repository_sync.py").read_text(encoding="utf-8")
+    assert "expected_postimage_sha256" in source
+    assert "target_changed_since_verification" in source
+
+
+def test_repository_sync_rejects_changes_to_the_verified_preimage():
+    source = (ROOT / "core" / "repository_sync.py").read_text(encoding="utf-8")
+    assert "expected_preimage_sha256" in source
+    assert "target_preimage_changed" in source
+    assert '"show", f"HEAD:{' in source
