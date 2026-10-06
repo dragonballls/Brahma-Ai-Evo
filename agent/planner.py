@@ -405,6 +405,41 @@ def _looks_like_website_goal(goal: str) -> bool:
     ))
 
 
+def _validate_plan(plan: object) -> dict:
+    """Validate and normalize LLM-generated plans before the executor consumes them."""
+    if not isinstance(plan, dict):
+        raise ValueError("Plan must be a JSON object.")
+    steps = plan.get("steps")
+    if not isinstance(steps, list) or not steps:
+        raise ValueError("Plan must contain a non-empty steps list.")
+    if len(steps) > 5:
+        raise ValueError("Plan exceeds the five-step execution limit.")
+    normalized = dict(plan)
+    normalized_steps: list[dict] = []
+    for index, step in enumerate(steps, start=1):
+        if not isinstance(step, dict):
+            raise ValueError(f"Plan step {index} must be an object.")
+        tool = step.get("tool")
+        if not isinstance(tool, str) or not tool.strip():
+            raise ValueError(f"Plan step {index} has no valid tool.")
+        description = step.get("description", "")
+        if not isinstance(description, str):
+            raise ValueError(f"Plan step {index} has an invalid description.")
+        parameters = step.get("parameters", {})
+        if parameters is None:
+            parameters = {}
+        if not isinstance(parameters, dict):
+            raise ValueError(f"Plan step {index} parameters must be an object.")
+        item = dict(step)
+        item["step"] = step.get("step", index)
+        item["tool"] = tool.strip()
+        item["description"] = description.strip()
+        item["parameters"] = dict(parameters)
+        normalized_steps.append(item)
+    normalized["steps"] = normalized_steps
+    return normalized
+
+
 def _rewrite_generated_step(step: dict, goal: str) -> None:
     if step.get("tool") != "generated_code":
         return
@@ -433,10 +468,7 @@ def create_plan(goal: str, context: str = "") -> dict:
 
     try:
         text = re.sub(r"```(?:json)?", "", text).strip().rstrip("`").strip()
-        plan = json.loads(text)
-
-        if "steps" not in plan or not isinstance(plan["steps"], list):
-            raise ValueError("Invalid plan structure")
+        plan = _validate_plan(json.loads(text))
 
         for step in plan["steps"]:
             _rewrite_generated_step(step, goal)
@@ -522,9 +554,9 @@ Create a REVISED plan for the remaining work only. Do not repeat completed steps
         if not text:
             raise ValueError("All models failed during replanning")
         text = re.sub(r"```(?:json)?", "", text).strip().rstrip("`").strip()
-        plan = json.loads(text)
+        plan = _validate_plan(json.loads(text))
 
-        for step in plan.get("steps", []):
+        for step in plan["steps"]:
             _rewrite_generated_step(step, goal)
 
         print(f"[Planner] 🔄 Revised plan: {len(plan['steps'])} steps")
