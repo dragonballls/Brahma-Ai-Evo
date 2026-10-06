@@ -743,8 +743,8 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
     def preflight(members):
         total_size = 0
         planned: list[tuple[object, Path]] = []
-        seen_files: set[Path] = set()
-        seen_dirs: set[Path] = set()
+        seen_types: dict[Path, bool] = {}
+        planned: list[tuple[object, Path, bool]] = []
         for member in members:
             size = max(0, int(getattr(member, "file_size", getattr(member, "size", 0))))
             total_size += size
@@ -755,18 +755,16 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
             if target != dest and target.exists():
                 raise ValueError(f"Archive would overwrite an existing path: {target.name}")
             is_dir = member.is_dir() if isinstance(member, zipfile.ZipInfo) else member.isdir()
-            if is_dir:
-                if target in seen_files:
-                    raise ValueError(f"Archive contains file/directory path conflict: {target.name}")
-                seen_dirs.add(target)
-            else:
-                if target in seen_files or target in seen_dirs:
+            previous = seen_types.get(target)
+            if previous is not None:
+                if previous != is_dir or not is_dir:
                     raise ValueError(f"Archive contains duplicate output path: {target.name}")
-                seen_files.add(target)
-            if any(parent in seen_files for parent in target.parents if parent != dest):
+            else:
+                seen_types[target] = is_dir
+
+            if any(parent in seen_types and seen_types[parent] is False for parent in target.parents if parent != dest):
                 raise ValueError(f"Archive contains a file/directory path conflict under {target.name}.")
-            if any(child in seen_files for child in seen_files if child != target and target in child.parents):
-                raise ValueError(f"Archive contains a file/directory path conflict under {target.name}.")
+            planned.append((member, target, is_dir))
 
             if isinstance(member, zipfile.ZipInfo):
                 mode = (member.external_attr >> 16) & 0o170000
@@ -778,7 +776,12 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
                 if not member.isdir() and not member.isfile():
                     raise ValueError("Archive special-file members are not allowed.")
             planned.append((member, target))
-        return planned
+        for _, target, is_dir in planned:
+            if is_dir:
+                continue
+            if any(parent in seen_types and seen_types[parent] is True for parent in target.parents if parent != dest):
+                raise ValueError(f"Archive contains a file/directory path conflict under {target.name}.")
+        return [(member, target) for member, target, _ in planned]
 
     if path.suffix.lower() == ".zip":
         with zipfile.ZipFile(path) as archive:
