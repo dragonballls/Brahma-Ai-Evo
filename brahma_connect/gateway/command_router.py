@@ -73,10 +73,40 @@ class CommandRouter:
         }
         message = build_message(ProtocolTypes.EXECUTE, payload, request_id=request_id)
         future = await self.hub.set_pending(device.device_id, request_id)
-        await self.hub.send_to_device(device.device_id, message)
+        try:
+            sent = await self.hub.send_to_device(device.device_id, message)
+        except Exception as exc:
+            await self.hub.reject_pending(device.device_id, request_id, str(exc))
+            return {
+                "success": False,
+                "device": device.device_id,
+                "action": action,
+                "request_id": request_id,
+                "error": str(exc),
+                "error_code": "ROUTER_ERROR",
+            }
+        if not sent:
+            await self.hub.reject_pending(
+                device.device_id,
+                request_id,
+                f"Unable to send command to {device.name}.",
+            )
+            return {
+                "success": False,
+                "device": device.device_id,
+                "action": action,
+                "request_id": request_id,
+                "error": f"Unable to send command to {device.name}.",
+                "error_code": "DEVICE_UNAVAILABLE",
+            }
         try:
             result = await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError:
+            await self.hub.reject_pending(
+                device.device_id,
+                request_id,
+                f"Timed out waiting for {device.name}.",
+            )
             return {
                 "success": False,
                 "device": device.device_id,
@@ -86,6 +116,7 @@ class CommandRouter:
                 "error_code": "TIMEOUT",
             }
         except Exception as exc:
+            await self.hub.reject_pending(device.device_id, request_id, str(exc))
             return {
                 "success": False,
                 "device": device.device_id,
