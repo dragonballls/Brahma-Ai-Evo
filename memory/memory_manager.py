@@ -107,7 +107,7 @@ def load_memory() -> dict:
                 if changed:
                     _atomic_write_json(MEMORY_PATH, data)
                 return data
-            return _empty_memory()
+            raise RuntimeError("Persistent memory has an invalid root schema.")
         except (UnicodeError, json.JSONDecodeError, ValueError) as e:
             quarantine = MEMORY_PATH.with_name(
                 f"{MEMORY_PATH.name}.corrupt-{int(time.time())}-{uuid.uuid4().hex[:8]}"
@@ -115,9 +115,13 @@ def load_memory() -> dict:
             try:
                 MEMORY_PATH.replace(quarantine)
                 print(f"[Memory] ⚠️ Corrupt memory quarantined as {quarantine.name}")
-            except OSError:
-                print(f"[Memory] ⚠️ Load error; corrupt memory could not be quarantined: {e}")
-            return _empty_memory()
+            except OSError as quarantine_exc:
+                raise RuntimeError(
+                    "Persistent memory is corrupted and could not be quarantined safely."
+                ) from quarantine_exc
+            raise RuntimeError(
+                "Persistent memory was corrupted and the original file was quarantined."
+            ) from e
         except OSError as e:
             # Do not turn an unreadable existing store into a writable empty store;
             # callers must handle the error rather than risk overwriting good data.
@@ -658,9 +662,12 @@ def load_chat_history() -> list[dict]:
             data = json.loads(CHAT_HISTORY_PATH.read_text(encoding="utf-8"))
             if isinstance(data, list):
                 return data
-        except Exception as e:
-            print(f"[Memory] ⚠️ Chat history load error: {e}")
-        return []
+        except (UnicodeError, json.JSONDecodeError) as e:
+            raise RuntimeError("Chat history is corrupted.") from e
+        except OSError as e:
+            raise RuntimeError("Unable to read persistent chat history.") from e
+        except ValueError as e:
+            raise RuntimeError("Chat history has an invalid schema.") from e
 
 def save_chat_history(history: list[dict]) -> None:
     CHAT_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
