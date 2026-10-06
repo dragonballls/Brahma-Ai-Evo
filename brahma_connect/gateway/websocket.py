@@ -84,11 +84,14 @@ class ConnectionHub:
             )
 
     async def send_to_device(self, device_id: str, message: dict[str, Any]) -> bool:
-        state = await self.get(device_id)
-        if state is None:
-            return False
-        await state.websocket.send_json(message)
-        return True
+        # Serialize lookup and send so a device cannot be replaced between
+        # selecting a socket and dispatching a privileged command.
+        async with self._lock:
+            state = self._connections.get(str(device_id))
+            if state is None or not state.authenticated:
+                return False
+            await state.websocket.send_json(message)
+            return True
 
     async def broadcast_chat_message(self, message: dict[str, Any]) -> None:
         async with self._lock:
@@ -115,16 +118,15 @@ class ConnectionHub:
                 if not future.done():
                     future.set_exception(RuntimeError("Device connection failed during broadcast."))
 
-    async def set_pending(self, device_id: str, request_id: str) -> asyncio.Future:
+    async def set_pending(self, device_id: str, request_id: str) -> asyncio.Future | None:
         loop = asyncio.get_running_loop()
-        future: asyncio.Future = loop.create_future()
         async with self._lock:
-            state = self._connections.get(device_id)
-            if state is None:
-                future.cancel()
-                return future
+            state = self._connections.get(str(device_id))
+            if state is None or not state.authenticated:
+                return None
+            future: asyncio.Future = loop.create_future()
             state.pending[request_id] = future
-        return future
+            return future
 
     async def resolve_pending(self, device_id: str, request_id: str, payload: dict[str, Any]) -> None:
         async with self._lock:
