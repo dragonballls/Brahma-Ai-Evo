@@ -61,3 +61,23 @@ def test_android_accessibility_bounds_ui_tree_and_gestures():
     assert "UI tree exceeds safety limits" in source
     assert "fun withinScreen" in source
     assert "MAX_GESTURE_DURATION_MS = 10_000L" in source
+
+
+def test_android_pairing_storage_fails_closed_and_verifies_writes():
+    source = (
+        ROOT
+        / "brahma-connect-android"
+        / "app"
+        / "src"
+        / "main"
+        / "java"
+        / "com"
+        / "brahma"
+        / "connect"
+        / "pairing"
+        / "PairingStorage.kt"
+    ).read_text(encoding="utf-8")
+    assert 'throw IllegalStateException("Stored device credentials are corrupt; reconnect requires explicit repair.", exc)' in source
+    assert ".commit()" in source
+    assert "Failed to persist device credentials safely." in source
+    assert "Failed to clear stored device credentials." in source
