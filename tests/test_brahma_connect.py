@@ -195,6 +195,32 @@ def test_gateway_management_routes_are_local_only():
 
 
 
+def test_device_target_matching_avoids_substring_false_positives(tmp_path: Path):
+    manager = DeviceManager(tmp_path / "devices.json")
+    manager._devices["pc-1"] = DeviceRecord(
+        device_id="pc-1",
+        name="PC",
+        platform="pc",
+        online=True,
+    )
+    assert manager.resolve("space") == []
+    assert [item.device_id for item in manager.resolve("PC")] == ["pc-1"]
+
+
+def test_pairing_codes_are_unique_while_active(tmp_path: Path):
+    pairing = PairingManager(ttl_seconds=120)
+    first = pairing.create_offer("192.168.1.10", 8765)
+    second = pairing.create_offer("192.168.1.10", 8765)
+    assert first.pairing_code != second.pairing_code
+
+
+def test_capability_normalization_tolerates_non_strings():
+    manager = CapabilityManager()
+    assert manager.normalize_many(["camera", 123, None]) == ["123", "camera"]
+
+
+
+
 def test_command_router_cleans_pending_when_device_send_fails(tmp_path: Path):
     registry_path = tmp_path / "devices.json"
     manager = DeviceManager(registry_path)
