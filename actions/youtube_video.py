@@ -7,6 +7,7 @@ import sys
 import time
 import subprocess
 import shutil
+import webbrowser
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import quote_plus, urlparse
@@ -52,16 +53,12 @@ HEADERS = {
 
 _YT_VIDEO_FILTER = "EgIQAQ%3D%3D"
 
-def _open_url(url: str) -> None:
+def _open_url(url: str) -> bool:
     try:
-        if is_mac():
-            subprocess.Popen(["open", url])
-        elif is_linux():
-            subprocess.Popen(["xdg-open", url])
-        else:
-            subprocess.Popen(["cmd", "/c", "start", "", url], shell=False)
+        return webbrowser.open(url) is True
     except Exception as e:
         print(f"[YouTube] ⚠️ open_url failed: {e}")
+        return False
 
 def _scrape_first_video_url(query: str) -> str | None:
 
@@ -469,7 +466,13 @@ def _handle_play(parameters: dict, player) -> str:
         return "Please tell me what you'd like to watch, sir."
 
     if _is_valid_youtube_url(query):
-        browser_control({"action": "go_to", "url": query}, None, player, None)
+        navigation = browser_control({"action": "go_to", "url": query}, None, player, None)
+        if isinstance(navigation, str) and (
+            navigation.startswith("Navigation blocked:")
+            or navigation.startswith("Timeout loading:")
+            or navigation.startswith("Navigation error:")
+        ):
+            return f"I couldn't open that YouTube video, sir: {navigation}"
         if player:
             player.write_log(f"[YouTube] Opening URL: {query}")
         return f"Playing that YouTube video, sir."
@@ -483,7 +486,8 @@ def _handle_play(parameters: dict, player) -> str:
 
     if video_url:
         print(f"[YouTube] ▶️ Opening: {video_url}")
-        _open_url(video_url)
+        if not _open_url(video_url):
+            return "I found a YouTube video, but the browser could not be opened."
         return f"Playing: {query}"
 
     print(f"[YouTube] ⚠️ Scrape failed, opening filtered search page")
@@ -492,7 +496,8 @@ def _handle_play(parameters: dict, player) -> str:
         f"?search_query={quote_plus(query)}"
         f"&sp={_YT_VIDEO_FILTER}"
     )
-    _open_url(fallback_url)
+    if not _open_url(fallback_url):
+        return "I couldn't open the YouTube search page."
     return f"Opened YouTube search for: {query} (manual selection required)"
 
 
