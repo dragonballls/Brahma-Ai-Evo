@@ -1296,7 +1296,7 @@ def test_geospatial_live_failures_do_not_fabricate_data(monkeypatch):
 
     monkeypatch.setattr(globe.urllib.request, "urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("network down")))
 
-    with pytest.raises(RuntimeError, match="Device location|Live weather|Live flight data|Live ISS|Live earthquake|Nearby-place data"):
+    with pytest.raises(ValueError, match="Unable to resolve location"):
         globe.geocode_location("definitely-not-a-real-place-9e7f")
     with pytest.raises(RuntimeError, match="Live weather"):
         globe.fetch_location_weather(34.05, -118.25)
