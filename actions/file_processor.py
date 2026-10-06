@@ -704,6 +704,59 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
 
     return f"Unknown video action: '{action}'. Try: info, trim, extract_audio, extract_frame, compress, transcribe, convert"
 
+def _safe_archive_target(root: Path, member_name: str) -> Path:
+    normalized = str(member_name or "").replace("\\", "/")
+    if not normalized or normalized.startswith("/") or re.match(r"^[A-Za-z]:/", normalized):
+        raise ValueError("Archive contains an absolute member path.")
+    parts = [part for part in normalized.split("/") if part not in {"", "."}]
+    if ".." in parts:
+        raise ValueError("Archive contains a path-traversal member.")
+    target = (root / Path(*parts)).resolve()
+    target.relative_to(root.resolve())
+    return target
+
+
+def _safe_extract_archive(path: Path, dest: Path) -> None:
+    import tarfile
+    import zipfile
+
+    dest = dest.resolve()
+    dest.mkdir(parents=True, exist_ok=True)
+
+    if path.suffix.lower() == ".zip":
+        with zipfile.ZipFile(path) as archive:
+            for info in archive.infolist():
+                target = _safe_archive_target(dest, info.filename)
+                mode = (info.external_attr >> 16) & 0o170000
+                if mode == 0o120000:
+                    raise ValueError("Archive symlink members are not allowed.")
+                if info.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(info, "r") as source, target.open("wb") as output:
+                    shutil.copyfileobj(source, output)
+        return
+
+    with tarfile.open(path) as archive:
+        members = archive.getmembers()
+        for member in members:
+            target = _safe_archive_target(dest, member.name)
+            if member.issym() or member.islnk():
+                raise ValueError("Archive link members are not allowed.")
+            if member.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            if not member.isfile():
+                raise ValueError("Archive special-file members are not allowed.")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            source = archive.extractfile(member)
+            if source is None:
+                raise ValueError("Archive member could not be read safely.")
+            with source, target.open("wb") as output:
+                shutil.copyfileobj(source, output)
+
+
 def _process_archive(path: Path, action: str, params: dict, speak=None) -> str:
     action = action or "list"
 
@@ -729,7 +782,7 @@ def _process_archive(path: Path, action: str, params: dict, speak=None) -> str:
         dest = Path(params.get("destination", str(path.parent / path.stem)))
         dest.mkdir(parents=True, exist_ok=True)
         try:
-            shutil.unpack_archive(path, dest)
+            _safe_extract_archive(path, dest)
             return f"Extracted to: {dest}"
         except Exception as e:
             return f"Extract failed: {e}"
