@@ -488,10 +488,50 @@ def test_local_json_error_does_not_echo_raw_model_output():
 
 
 def test_pair_approval_tool_result_never_contains_device_secret():
-    source = Path("brahma_connect/gateway/server.py").read_text(encoding="utf-8")
-    approval = source.split("async def approve_pending_request", 1)[1]
-    assert '"device_secret": secret' not in approval
-    assert "credentials delivered directly to the paired device" in approval
+    from brahma_connect.gateway.server import BrahmaGateway
+
+    class Record:
+        device_id = "device-1"
+        name = "Phone"
+        def to_dict(self):
+            return {"device_id": self.device_id, "name": self.name}
+
+    class Manager:
+        def create_from_pairing(self, **_kwargs):
+            return Record(), "device-secret"
+
+        def remove(self, _device_id):
+            return True
+
+    class WebSocket:
+        def __init__(self):
+            self.messages = []
+
+        async def send_json(self, message):
+            self.messages.append(message)
+
+    async def scenario():
+        gateway = object.__new__(BrahmaGateway)
+        gateway._pending_lock = threading.RLock()
+        gateway._pending_requests = {
+            "pending-1": {
+                "request_id": "request-1",
+                "websocket": WebSocket(),
+                "device_name": "Phone",
+                "platform": "android",
+            }
+        }
+        gateway.device_manager = Manager()
+        gateway._append_log = lambda *_args, **_kwargs: None
+        result = await gateway.approve_pending_request("pending-1")
+        item = gateway._pending_requests
+        assert "device_secret" not in result
+        assert result["message"] == "Device approved and credentials delivered directly to the paired device."
+        assert item == {}
+
+    asyncio.run(scenario())
+
+
 
 
 def test_device_record_normalizes_string_booleans():
