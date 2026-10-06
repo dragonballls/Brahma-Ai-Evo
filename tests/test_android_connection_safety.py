@@ -81,3 +81,9 @@ def test_android_pairing_storage_fails_closed_and_verifies_writes():
     assert ".commit()" in source
     assert "Failed to persist device credentials safely." in source
     assert "Failed to clear stored device credentials." in source
+
+
+def test_android_chat_send_reports_queue_not_delivery():
+    source = CLIENT.read_text(encoding="utf-8")
+    assert 'Queued — awaiting gateway acknowledgement' in source
+    assert 'val finalStatus = if (accepted) "Sent"' not in source
