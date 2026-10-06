@@ -1,4 +1,5 @@
 from core.user_paths import get_user_data_dir
+from core.runtime_paths import API_CONFIG_PATH
 # actions/desktop_organizer_mcp.py
 """
 Smart Desktop & Downloads Organizer MCP for Brahma AI.
@@ -12,6 +13,8 @@ import json
 import shutil
 import hashlib
 import logging
+import threading
+import uuid
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Any, Optional
@@ -171,6 +174,7 @@ class SmartOrganizerEngine:
 
     def __init__(self):
         self.history_file = HISTORY_FILE
+        self._history_lock = threading.RLock()
 
     def _load_history(self) -> List[Dict[str, Any]]:
         if not self.history_file.exists():
@@ -184,10 +188,19 @@ class SmartOrganizerEngine:
 
     def _save_history(self, history: List[Dict[str, Any]]) -> None:
         try:
-            # Keep at most 20 history runs
+            # Keep at most 20 history runs and publish atomically so a crash
+            # cannot leave a partially-written transaction log.
             history = history[-20:]
-            with open(self.history_file, "w", encoding="utf-8") as f:
-                json.dump(history, f, indent=2)
+            self.history_file.parent.mkdir(parents=True, exist_ok=True)
+            temp = self.history_file.with_name(
+                f".{self.history_file.name}.{uuid.uuid4().hex}.tmp"
+            )
+            with self._history_lock:
+                temp.write_text(
+                    json.dumps(history, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                temp.replace(self.history_file)
         except Exception as e:
             logger.warning(f"Could not save history: {e}")
 
@@ -330,17 +343,35 @@ class SmartOrganizerEngine:
             return "ℹ️ No previous organization transactions found to undo."
 
         last_run = history.pop()
-        moves = last_run.get("moves", [])
         target_name = last_run.get("target_name", "folder")
+        target_raw = str(last_run.get("target") or "")
+        target_root = Path(target_raw).expanduser().resolve() if target_raw else None
+        moves = last_run.get("moves", [])
         restored = 0
         failed = 0
 
+        if target_root is None or not isinstance(moves, list):
+            self._save_history(history)
+            return "Undo refused: transaction history is malformed."
+
         for m in reversed(moves):
-            orig = Path(m["original"])
-            curr = Path(m["current"])
+            try:
+                orig = Path(str(m.get("original") or "")).expanduser().resolve()
+                curr = Path(str(m.get("current") or "")).expanduser().resolve()
+                orig.relative_to(target_root)
+                curr.relative_to(target_root)
+            except (OSError, ValueError, AttributeError):
+                failed += 1
+                logger.warning("Skipped rollback entry outside the recorded target root.")
+                continue
+
             if curr.exists():
                 try:
                     orig.parent.mkdir(parents=True, exist_ok=True)
+                    if orig.exists():
+                        failed += 1
+                        logger.warning(f"Refusing rollback overwrite: {orig}")
+                        continue
                     shutil.move(str(curr), str(orig))
                     restored += 1
                 except Exception as e:
@@ -485,7 +516,12 @@ class SmartOrganizerEngine:
                     arch_folder.mkdir(parents=True, exist_ok=True)
                     dest_file = arch_folder / item.name
                     if dest_file.exists():
-                        dest_file = arch_folder / f"{item.stem}_{int(datetime.now().timestamp())}{item.suffix}"
+                        stem = item.stem
+                        suffix = item.suffix
+                        counter = 1
+                        while dest_file.exists():
+                            dest_file = arch_folder / f"{stem}_{counter}{suffix}"
+                            counter += 1
                     
                     orig_str = str(item.resolve())
                     curr_str = str(dest_file.resolve())
