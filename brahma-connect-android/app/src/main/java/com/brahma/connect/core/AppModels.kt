@@ -17,6 +17,8 @@ data class GatewayEndpoint(
     val host: String,
     val port: Int,
     val online: Boolean = true,
+    val tls: Boolean = true,
+    val tlsCertificateSha256: String = "",
 )
 
 data class PairingOffer(
@@ -26,6 +28,8 @@ data class PairingOffer(
     val pairingToken: String,
     val pairingCode: String,
     val expiresInSeconds: Int,
+    val tlsEnabled: Boolean = true,
+    val tlsCertificateSha256: String = "",
     val createdAt: String,
 ) {
     companion object {
@@ -37,6 +41,8 @@ data class PairingOffer(
                 pairingToken = json.optString("pairing_token"),
                 pairingCode = json.optString("pairing_code"),
                 expiresInSeconds = json.optInt("expires"),
+                tlsEnabled = json.optBoolean("tls", true),
+                tlsCertificateSha256 = json.optString("tls_certificate_sha256"),
                 createdAt = json.optString("created_at"),
             )
         }
@@ -49,6 +55,8 @@ data class PairingOffer(
         .put("pairing_token", pairingToken)
         .put("pairing_code", pairingCode)
         .put("expires", expiresInSeconds)
+        .put("tls", tlsEnabled)
+        .put("tls_certificate_sha256", tlsCertificateSha256)
         .put("created_at", createdAt)
 }
 
@@ -58,6 +66,8 @@ data class DeviceCredential(
     val deviceName: String,
     val gatewayHost: String,
     val gatewayPort: Int,
+    val tls: Boolean = true,
+    val tlsCertificateSha256: String = "",
     val pairedAt: String = Instant.now().toString(),
 )
 
