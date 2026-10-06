@@ -777,6 +777,7 @@ class BrahmaGateway:
                 self._server.should_exit = self._shutdown.is_set()
             await self._server.serve()
         finally:
-            self._server = None
+            with self._serve_lock:
+                self._server = None
+                self._running = False
             self.discovery.stop()
-            self._running = False
