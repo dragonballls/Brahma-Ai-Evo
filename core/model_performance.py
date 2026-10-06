@@ -25,7 +25,18 @@ def _load() -> dict[str, Any]:
 
 def _save(payload: dict[str, Any]) -> None:
     _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    tmp_path = _PATH.with_name(f".{_PATH.name}.{__import__('os').getpid()}.tmp")
+    try:
+        tmp_path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        tmp_path.replace(_PATH)
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def record(*, provider: str, model: str, profile: str, score: float, latency_ms: float = 0.0) -> None:
