@@ -74,6 +74,15 @@ class ConnectionHub:
         async with self._lock:
             return self._connections.get(str(device_id))
 
+    async def is_current(self, websocket: WebSocket, device_id: str) -> bool:
+        async with self._lock:
+            state = self._connections.get(str(device_id))
+            return bool(
+                state
+                and state.authenticated
+                and state.websocket is websocket
+            )
+
     async def send_to_device(self, device_id: str, message: dict[str, Any]) -> bool:
         state = await self.get(device_id)
         if state is None:
@@ -112,7 +121,7 @@ class ConnectionHub:
         async with self._lock:
             state = self._connections.get(device_id)
             if state is None:
-                future.set_exception(RuntimeError("Device connection is unavailable."))
+                future.cancel()
                 return future
             state.pending[request_id] = future
         return future
