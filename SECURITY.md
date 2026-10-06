@@ -115,7 +115,7 @@ Because the gateway binds to `0.0.0.0`, it is reachable from any interface on th
 ### Security limitations
 
 - No built-in gateway TLS/SSL for WebSocket `/ws`; websocket traffic is plaintext on the LAN.
-- Admin REST endpoints have no authentication layer in the current codebase.
+- Gateway admin REST endpoints are loopback-only rather than LAN-accessible; they do not provide a separate bearer-token authentication layer.
 - Local API key storage is plaintext.
 - The gateway host default of `0.0.0.0` exposes the service broadly unless OS firewall restrictions are applied.
 - There is no remote access firewall or gateway-level authentication beyond pairing and device credentials.
