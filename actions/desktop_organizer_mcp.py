@@ -277,16 +277,29 @@ class SmartOrganizerEngine:
         lines.append("💡 *No files have been moved yet. Say 'Organize my downloads' or execute with action='organize' to apply.*")
         return "\n".join(lines)
 
-    def _rollback_moves(self, moves: List[Dict[str, str]]) -> None:
+    def _rollback_moves(self, moves: List[Dict[str, str]], target_root: Path | None = None) -> bool:
+        all_restored = True
+        root = target_root.resolve() if target_root is not None else None
         for move in reversed(moves):
             try:
-                current = Path(move["current"])
-                original = Path(move["original"])
+                current = Path(move["current"]).expanduser().resolve()
+                original = Path(move["original"]).expanduser().resolve()
+                if root is not None:
+                    current.relative_to(root)
+                    original.relative_to(root)
                 if current.exists() and not original.exists():
                     original.parent.mkdir(parents=True, exist_ok=True)
                     shutil.move(str(current), str(original))
+                elif current.exists() and original.exists():
+                    all_restored = False
+                    logger.error("Organizer rollback refused overwrite for %s", original)
+                elif not original.exists():
+                    all_restored = False
+                    logger.error("Organizer rollback source missing: %s", current)
             except Exception as exc:
+                all_restored = False
                 logger.error("Organizer rollback failed for %s: %s", move, exc)
+        return all_restored
 
     def organize(self, target: str = "downloads", mode: str = "by_type") -> str:
         """Executes intelligent file reorganization and logs reversible transactions."""
@@ -345,7 +358,9 @@ class SmartOrganizerEngine:
         try:
             history = self._load_history()
         except RuntimeError as exc:
-            self._rollback_moves(moves_recorded)
+            rolled_back = self._rollback_moves(moves_recorded, dir_path)
+            if not rolled_back:
+                return f"❌ Organization history could not be read and rollback was incomplete: {exc}"
             return f"❌ Organization was rolled back because history could not be read: {exc}"
         history.append({
             "id": datetime.now().strftime("%Y%m%d_%H%M%S"),
@@ -356,7 +371,9 @@ class SmartOrganizerEngine:
             "moves": moves_recorded
         })
         if not self._save_history(history):
-            self._rollback_moves(moves_recorded)
+            rolled_back = self._rollback_moves(moves_recorded, dir_path)
+            if not rolled_back:
+                return "❌ Organization history could not be persisted and rollback was incomplete; inspect the affected files before retrying."
             return "❌ Organization was rolled back because its undo history could not be persisted."
 
         try:
@@ -583,7 +600,9 @@ class SmartOrganizerEngine:
         try:
             history = self._load_history()
         except RuntimeError as exc:
-            self._rollback_moves(moves_recorded)
+            rolled_back = self._rollback_moves(moves_recorded, dir_path)
+            if not rolled_back:
+                return f"❌ Archive history could not be read and rollback was incomplete: {exc}"
             return f"❌ Archive was rolled back because history could not be read: {exc}"
         history.append({
             "id": datetime.now().strftime("%Y%m%d_%H%M%S"),
@@ -594,7 +613,9 @@ class SmartOrganizerEngine:
             "moves": moves_recorded
         })
         if not self._save_history(history):
-            self._rollback_moves(moves_recorded)
+            rolled_back = self._rollback_moves(moves_recorded, dir_path)
+            if not rolled_back:
+                return "❌ Archive history could not be persisted and rollback was incomplete; inspect the affected files before retrying."
             return "❌ Archive was rolled back because its undo history could not be persisted."
 
         try:
