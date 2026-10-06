@@ -38,7 +38,7 @@ jobs:
           core/intelligence_orchestrator.py
           tests/test_omniroute_self_coding.py
 
-      - name: Run targeted regression tests
+      - name: Run selected unittest regression checks
         run: >
           python -m unittest -v
           tests.test_omniroute_self_coding.OmniRouteSelfCodingTests.test_omniroute_release_contract
@@ -54,33 +54,53 @@ jobs:
           tests.test_repository_integrity.RepositoryIntegrityTests.test_android_compose_icon_dependency_matches_usage
           tests.test_repository_integrity.RepositoryIntegrityTests.test_bootstrap_validates_existing_venv_python_version
           tests.test_repository_integrity.RepositoryIntegrityTests.test_bootstrap_caches_and_validates_runtime_installers
-          tests.test_capability_usability
-          tests.test_crucible_security
-          tests.test_android_capability_contract
-          tests.test_background_monitor_guards
-          tests.test_dynamic_registry_matching
-          tests.test_omniroute_lifecycle
-          tests.test_command_router_contract
-          tests.test_gateway_protocol_limits
-          tests.test_gateway_connection_limits
-          tests.test_android_connection_safety
-          tests.test_open_app_safety
-          tests.test_cmd_control_safety
-          tests.test_youtube_video_safety
-          tests.test_send_message_safety
-          tests.test_crash_recovery_security
-          tests.test_self_awareness
-          tests.test_device_location_network_safety
-          tests.test_auto_heal_history_atomicity
-          tests.test_dynamic_registry_security
-          tests.test_local_endpoint_security
-          tests.test_device_manager_resolution
-          tests.test_local_endpoint_security
-          tests.test_secret_redaction
-          tests.test_tool_completion_semantics
-          tests.test_auto_heal_security
-          tests.test_learned_rules_security
-          tests.test_android_capability_contract
+
+      - name: Run function-based targeted regressions
+        run: >
+          python -m pytest -q
+          tests/test_capability_usability.py
+          tests/test_crucible_security.py
+          tests/test_android_capability_contract.py
+          tests/test_background_monitor_guards.py
+          tests/test_dynamic_registry_matching.py
+          tests/test_omniroute_lifecycle.py
+          tests/test_command_router_contract.py
+          tests/test_gateway_protocol_limits.py
+          tests/test_gateway_connection_limits.py
+          tests/test_mobile_autopilot_safety.py
+          tests/test_self_coding_integrity.py
+          tests/test_repository_sync.py
+          tests/test_desktop_organizer_safety.py
+          tests/test_brahma_connect.py
+          tests/test_desktop_workspace_persistence.py
+          tests/test_workspace_store_security.py
+          tests/test_plugin_manager_safety.py
+          tests/test_selected_advanced_capabilities.py
+          tests/test_system_manager_safety.py
+          tests/test_browser_control_safety.py
+          tests/test_file_controller_security.py
+          tests/test_file_processor_security.py
+          tests/test_omniroute_endpoint_safety.py
+          tests/test_android_connection_safety.py
+          tests/test_updater_safety.py
+          tests/test_dev_agent_command_safety.py
+          tests/test_brahma_dev_agent_shell_safety.py
+          tests/test_pdf_output_safety.py
+          tests/test_docx_output_safety.py
+          tests/test_open_app_safety.py
+          tests/test_cmd_control_safety.py
+          tests/test_computer_control_safety.py
+          tests/test_ppt_template_network_safety.py
+          tests/test_app_host_safety.py
+          tests/test_false_success_actions.py
+          tests/test_persistence_fail_closed.py
+          tests/test_model_performance.py
+          tests/test_continuous_evolution.py
+          tests/test_self_awareness.py
+          tests/test_device_location_network_safety.py
+          tests/test_youtube_video_safety.py
+          tests/test_send_message_safety.py
+          tests/test_crash_recovery_security.py
 
       - name: Run lifecycle and browser security regressions
         run: python -m pytest -q tests/test_task_queue_lifecycle.py tests/test_browser_control_safety.py
