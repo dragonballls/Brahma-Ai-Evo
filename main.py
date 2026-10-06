@@ -5421,6 +5421,22 @@ class BrahmaLive:
             return tuple(BrahmaEvo._redact_tool_args(v) for v in value)
         return value
 
+    @staticmethod
+    def _redact_sensitive_text(value):
+        text = str(value or "")
+        patterns = (
+            (r"(?i)(authorization\\s*[:=]\\s*bearer\\s+)[A-Za-z0-9._~+/=-]+", r"\\1<redacted>"),
+            (r"(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|device[_-]?secret|password|passwd|secret|session[_-]?key|pairing[_-]?token|pin)\\s*[:=]\\s*)[^\\s,;]+", r"\\1<redacted>"),
+            (r"\\bsk-[A-Za-z0-9_-]{20,}\\b", "<redacted>"),
+            (r"\\bgsk_[A-Za-z0-9_-]{20,}\\b", "<redacted>"),
+            (r"\\bAIza[0-9A-Za-z_-]{20,}\\b", "<redacted>"),
+            (r"\\bgh[pousr]_[A-Za-z0-9_]{20,}\\b", "<redacted>"),
+            (r"\\bgithub_pat_[A-Za-z0-9_]{20,}\\b", "<redacted>"),
+        )
+        for pattern, replacement in patterns:
+            text = re.sub(pattern, replacement, text)
+        return text
+
     async def _execute_tool(self, fc) -> types.FunctionResponse:
         name = fc.name
         args = dict(fc.args or {})
@@ -6473,18 +6489,20 @@ class BrahmaLive:
 
         except Exception as e:
             execution_failed = True
-            result = f"Tool '{name}' failed: {e}"
+            safe_error = self._redact_sensitive_text(e)
+            result = f"Tool '{name}' failed: {safe_error}"
             tb_str = traceback.format_exc()
-            traceback.print_exc()
+            safe_tb = self._redact_sensitive_text(tb_str)
+            print(safe_tb)
             try:
                 from actions.auto_heal_engine import AutoHealEngine
-                AutoHealEngine.record_last_error(tb_str)
+                AutoHealEngine.record_last_error(safe_tb)
             except Exception:
                 pass
             # The error is now repaired proactively while the conversation
             # continues; the main tool response still returns immediately.
             self._schedule_conversational_auto_heal(
-                tb_str,
+                safe_tb,
                 source=f"tool:{name}",
             )
             self.speak_error(name, e)
