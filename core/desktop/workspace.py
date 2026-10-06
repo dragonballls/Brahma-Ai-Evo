@@ -136,37 +136,41 @@ class WorkspaceStore:
     def upsert_window(self, workspace: str, item: dict[str, Any]) -> bool:
         with self._lock:
             state = self.load()
-        workspaces = state.setdefault("workspaces", {})
-        ws = workspaces.setdefault(workspace, {"name": workspace.title(), "windows": []})
-        windows = ws.setdefault("windows", [])
-        identity = (
-            str(item.get("identity") or "").strip()
-            or str(item.get("exe") or "").strip().lower()
-            or str(item.get("title") or "").strip()
-        )
-        item = dict(item)
-        item["identity"] = identity
-        windows[:] = [
-            existing for existing in windows
-            if str(existing.get("identity") or "") != identity
-        ]
-        windows.append(item)
+            workspaces = state.setdefault("workspaces", {})
+            ws = workspaces.setdefault(workspace, {"name": workspace.title(), "windows": []})
+            if not isinstance(ws, dict):
+                raise RuntimeError("Workspace state contains invalid workspace data.")
+            windows = ws.setdefault("windows", [])
+            if not isinstance(windows, list):
+                raise RuntimeError("Workspace state contains invalid window data.")
+            identity = (
+                str(item.get("identity") or "").strip()
+                or str(item.get("exe") or "").strip().lower()
+                or str(item.get("title") or "").strip()
+            )
+            item = dict(item)
+            item["identity"] = identity
+            windows[:] = [
+                existing for existing in windows
+                if isinstance(existing, dict) and str(existing.get("identity") or "") != identity
+            ]
+            windows.append(item)
             return self.save(state)
 
     def remove_window(self, workspace: str, identity: str) -> bool:
         with self._lock:
             state = self.load()
-        ws = state.get("workspaces", {}).get(workspace)
-        if not isinstance(ws, dict):
-            return False
-        windows = ws.get("windows")
-        if not isinstance(windows, list):
-            return False
-        before = len(windows)
-        ws["windows"] = [
-            item for item in windows
-            if str(item.get("identity") or "") != str(identity)
-        ]
+            ws = state.get("workspaces", {}).get(workspace)
+            if not isinstance(ws, dict):
+                return False
+            windows = ws.get("windows")
+            if not isinstance(windows, list):
+                return False
+            before = len(windows)
+            ws["windows"] = [
+                item for item in windows
+                if isinstance(item, dict) and str(item.get("identity") or "") != str(identity)
+            ]
             return before != len(ws["windows"]) and self.save(state)
 
     def snapshot(self) -> dict[str, Any]:
