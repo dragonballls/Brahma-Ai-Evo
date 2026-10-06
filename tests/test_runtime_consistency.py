@@ -869,3 +869,27 @@ if __name__ == "__main__":
         self.assertEqual(payload["nested"]["token"], "<redacted>")
         self.assertEqual(payload["nested"]["value"], "safe")
         self.assertEqual(payload["items"][0]["password"], "<redacted>")
+
+    def test_dashboard_received_filenames_use_dom_event_handlers_not_inline_js(self):
+        source = self.read("dashboard/static/app.html")
+        received = source.split("function _onFileReceived", 1)[1]
+        self.assertNotIn("onclick=", received)
+        self.assertIn("addEventListener('click'", received)
+        self.assertIn("function esc(s)", source)
+        self.assertIn("String(s ?? '')", source)
+
+    def test_tool_log_redaction_covers_pairing_and_unlock_secrets(self):
+        from main import BrahmaEvo
+
+        payload = BrahmaEvo._redact_tool_args({
+            "pin": "123456",
+            "pairing_code": "ABC123",
+            "pairing_token": "pair-secret",
+            "session_key": "session-secret",
+            "device_name": "Pixel",
+        })
+        self.assertEqual(payload["pin"], "<redacted>")
+        self.assertEqual(payload["pairing_code"], "<redacted>")
+        self.assertEqual(payload["pairing_token"], "<redacted>")
+        self.assertEqual(payload["session_key"], "<redacted>")
+        self.assertEqual(payload["device_name"], "Pixel")
