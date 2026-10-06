@@ -96,7 +96,16 @@ def _rollback_entry(entry: dict[str, Any], reason: str) -> dict[str, Any]:
             "patch_id": entry.get("patch_id"),
         }
     try:
-        shutil.copy2(backup, target)
+        target_tmp = target.with_name(f".{target.name}.rollback-{__import__("os").getpid()}.tmp")
+        try:
+            shutil.copy2(backup, target_tmp)
+            target_tmp.replace(target)
+        finally:
+            try:
+                target_tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+
         entry["status"] = "rolled_back_after_crash"
         entry["rolled_back_at"] = __import__("time").time()
         entry["rollback_reason"] = reason
