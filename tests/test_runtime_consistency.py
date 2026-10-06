@@ -724,7 +724,9 @@ class RuntimeConsistencyTests(unittest.TestCase):
         source = self.read("agent/task_queue.py")
         self.assertIn("thread.join(timeout=2.0)", source)
         self.assertIn("self._worker_thread = None", source)
+        self.assertIn("def is_running(self) -> bool:", source)
         self.assertIn("with self._condition:", source)
+        self.assertNotIn("_queue_started", source)
 
     def test_workspace_active_conversation_can_be_cleared(self):
         source = self.read("workspace_store.py")
@@ -741,7 +743,25 @@ class RuntimeConsistencyTests(unittest.TestCase):
         source = self.read("or_client.py")
         self.assertIn("def _request_headers", source)
         self.assertIn("headers = self._request_headers()", source)
-        self.assertNotIn("def _refresh_credentials", source)
+        self.assertIn("def _refresh_credentials", source)
+        self.assertIn("_credential_lock", source)
+        self.assertIn("_model_state_lock", source)
+
+    def test_dashboard_encryption_contract_is_consistent(self):
+        server = self.read("dashboard/server.py")
+        app = self.read("dashboard/static/app.html")
+        self.assertIn("_AES_SALT = b'BRAHMA-DASHBOARD-v1'", server)
+        self.assertIn("const _AES_SALT = 'BRAHMA-DASHBOARD-v1';", app)
+        self.assertIn("CryptoJS.HmacSHA256(CryptoJS.enc.Hex.parse(bodyHex), _aesKey)", app)
+        self.assertIn("hmac.new(aes_key, body, hashlib.sha256).digest()", server)
+
+    def test_dashboard_download_and_ws_expiry_are_authenticated(self):
+        source = self.read("dashboard/server.py")
+        self.assertIn('async def download_file(req: Request, filename: str)', source)
+        self.assertIn('if not _auth(req):', source)
+        self.assertIn('target.relative_to(root)', source)
+        ws_block = source[source.index('@app.websocket("/ws")'):]
+        self.assertIn('_valid_token(tok)', ws_block)
 
     def test_startup_health_marker_waits_for_stable_event_loop(self):
         source = self.read("main.py")
