@@ -33,12 +33,18 @@ class ApplicationHost:
             try:
                 from .web_host import web_application_host
                 return web_application_host.open(url)
-            except Exception:
+            except Exception as embedded_exc:
                 try:
-                    webbrowser.open(url, new=0)
-                    return {"ok": True, "type": "web", "embedded": False, "target": url}
+                    opened = webbrowser.open(url, new=0)
                 except Exception as exc:
-                    return {"ok": False, "error": str(exc)}
+                    return {"ok": False, "error": str(exc), "embedded_error": str(embedded_exc)}
+                if not opened:
+                    return {
+                        "ok": False,
+                        "error": "The system browser reported that it could not open the URL.",
+                        "embedded_error": str(embedded_exc),
+                    }
+                return {"ok": True, "type": "web", "embedded": False, "target": url}
 
         try:
             if platform.system() == "Windows" and Path(target).exists():
