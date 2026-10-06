@@ -88,7 +88,9 @@ def _execute_desktop_plan(plan_text: str, player=None) -> str:
         plan = json.loads(raw)
     except (TypeError, ValueError) as exc:
         return f"Invalid desktop action plan: {exc}"
-    actions = plan.get("actions") if isinstance(plan, dict) else None
+    if not isinstance(plan, dict) or plan.get("unsafe"):
+        return "This action cannot be performed safely."
+    actions = plan.get("actions")
     if not isinstance(actions, list) or len(actions) > 20:
         return "Invalid desktop action plan."
     allowed = {"click", "double_click", "right_click", "move", "drag", "hotkey", "press", "scroll", "type", "smart_type", "wait", "screenshot", "screen_find", "screen_click"}
@@ -100,6 +102,12 @@ def _execute_desktop_plan(plan_text: str, player=None) -> str:
         action = str(item.get("action") or item.get("op") or "").strip().lower()
         if action not in allowed:
             return f"Desktop action '{action}' is not permitted."
+        if action in {"type", "smart_type"} and len(str(item.get("text") or "")) > 10000:
+            return "Desktop typing input exceeds the 10,000-character safety limit."
+        if action == "screenshot" and item.get("path"):
+            screenshot_path = Path(str(item["path"])).expanduser().resolve()
+            if not (screenshot_path == Path.home().resolve() or screenshot_path.is_relative_to(Path.home().resolve())):
+                return "Desktop screenshots must remain inside the user's home directory."
         params = dict(item)
         params["action"] = action
         params.pop("op", None)
