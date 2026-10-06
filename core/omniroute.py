@@ -157,20 +157,19 @@ class OmniRouteGateway:
             self._credentials_synced = False
 
     def sync_credentials(self) -> dict[str, object]:
-        """Re-sync the current user provider-key file without blocking gateway state operations."""
-        with self._credentials_lock:
-            with self._lock:
-                self._credentials_synced = False
-            try:
-                result = self.provisioner.sync_existing_provider_keys(
-                    API_CONFIG_PATH
-                )
-            except Exception as exc:
-                return {"ok": False, "synced": False, "error": str(exc)}
-            skipped = list(result.get("skipped") or [])
-            with self._lock:
-                self._credentials_synced = not skipped
-            return {"ok": not skipped, "synced": not skipped, **result}
+        """Re-sync provider credentials without racing gateway process shutdown."""
+        with self._lifecycle_lock:
+            with self._credentials_lock:
+                with self._lock:
+                    self._credentials_synced = False
+                try:
+                    result = self.provisioner.sync_existing_provider_keys(API_CONFIG_PATH)
+                except Exception as exc:
+                    return {"ok": False, "synced": False, "error": str(exc)}
+                skipped = list(result.get("skipped") or [])
+                with self._lock:
+                    self._credentials_synced = not skipped
+                return {"ok": not skipped, "synced": not skipped, **result}
 
     def test_provider(self, provider: str) -> dict[str, object]:
         import subprocess
