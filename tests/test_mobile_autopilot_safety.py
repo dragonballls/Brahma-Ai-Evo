@@ -12,6 +12,8 @@ def test_mobile_autopilot_actually_dispatches_supported_actions():
         {
             "success": True,
             "data": {
+                "screen_width": 1080,
+                "screen_height": 2400,
                 "nodes": [
                     {
                         "bounds": [0, 0, 100, 100],
@@ -94,3 +96,13 @@ def test_mobile_autopilot_rejects_malformed_ui_tree_and_bounds_node_count():
     assert "Mobile UI dump nodes must be a list." in source
     assert "nodes[:500]" in source
     assert "import json" in source.splitlines()[:3]
+
+
+def test_mobile_autopilot_requires_actual_device_dimensions_and_visible_taps():
+    source = (ROOT / "actions" / "mobile_autopilot.py").read_text(encoding="utf-8")
+    assert "Mobile UI dump is missing valid device screen dimensions." in source
+    assert "Mobile tap coordinates are outside the actual device screen bounds." in source
+    assert "Mobile tap coordinates do not fall within a visible UI element." in source
+    assert "Current UI elements on screen (" in source
+    assert "len(instruction) > 4_000" in source
+    assert "len(reason) > 1_000" in source
