@@ -65,6 +65,7 @@ jobs:
           tests.test_gateway_connection_limits
           tests.test_android_connection_safety
           tests.test_open_app_safety
+          tests.test_cmd_control_safety
           tests.test_youtube_video_safety
           tests.test_send_message_safety
           tests.test_crash_recovery_security
