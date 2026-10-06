@@ -540,12 +540,21 @@ from pathlib import Path as _SandboxPath
 import shutil as _sandbox_shutil
 
 _SANDBOX_ROOT = _SandboxPath(os.environ["BRAHMA_CRUCIBLE_ROOT"]).resolve()
+_REAL_OS_REALPATH = os.path.realpath
+_REALPATH_RESOLVING = False
+
 def _sandbox_path(value):
+    global _REALPATH_RESOLVING
     if isinstance(value, (str, bytes, os.PathLike)):
         candidate = _SandboxPath(value)
         if not candidate.is_absolute():
             candidate = _SANDBOX_ROOT / candidate
-        resolved = candidate.resolve()
+        _REALPATH_RESOLVING = True
+        try:
+            realpath_value = _REAL_OS_REALPATH(os.fspath(candidate))
+        finally:
+            _REALPATH_RESOLVING = False
+        resolved = _SandboxPath(realpath_value)
         try:
             resolved.relative_to(_SANDBOX_ROOT)
         except ValueError as exc:
@@ -558,6 +567,9 @@ def _sandbox_path(value):
 _real_open = _builtins.open
 _real_io_open = _io.open
 _real_os_open = os.open
+_real_os_stat = os.stat
+_real_os_lstat = os.lstat
+_real_os_access = os.access
 _real_os_listdir = os.listdir
 _real_os_scandir = os.scandir
 _real_os_walk = os.walk
@@ -587,6 +599,27 @@ def _sandbox_os_open(path, flags, mode=0o777, *, dir_fd=None):
         raise PermissionError("Crucible sandbox denied dir_fd filesystem access.")
     return _real_os_open(_sandbox_path(path), flags, mode)
 
+def _sandbox_stat(path, *args, **kwargs):
+    if kwargs.get("dir_fd") is not None or (len(args) >= 2 and args[1] is not None):
+        raise PermissionError("Crucible sandbox denied dir_fd filesystem access.")
+    if _REALPATH_RESOLVING:
+        return _real_os_stat(path, *args[:1], **{k: v for k, v in kwargs.items() if k != "dir_fd"})
+    return _real_os_stat(_sandbox_path(path), *args[:1], **{k: v for k, v in kwargs.items() if k != "dir_fd"})
+
+def _sandbox_lstat(path, *args, **kwargs):
+    if kwargs.get("dir_fd") is not None or (len(args) >= 2 and args[1] is not None):
+        raise PermissionError("Crucible sandbox denied dir_fd filesystem access.")
+    if _REALPATH_RESOLVING:
+        return _real_os_lstat(path, *args[:1], **{k: v for k, v in kwargs.items() if k != "dir_fd"})
+    return _real_os_lstat(_sandbox_path(path), *args[:1], **{k: v for k, v in kwargs.items() if k != "dir_fd"})
+
+def _sandbox_access(path, *args, **kwargs):
+    if kwargs.get("dir_fd") is not None or (len(args) >= 2 and args[1] is not None):
+        raise PermissionError("Crucible sandbox denied dir_fd filesystem access.")
+    if _REALPATH_RESOLVING:
+        return _real_os_access(path, *args[:1], **{k: v for k, v in kwargs.items() if k != "dir_fd"})
+    return _real_os_access(_sandbox_path(path), *args[:1], **{k: v for k, v in kwargs.items() if k != "dir_fd"})
+
 def _sandbox_listdir(path="."):
     return _real_os_listdir(_sandbox_path(path))
 
@@ -595,6 +628,19 @@ def _sandbox_scandir(path="."):
 
 def _sandbox_walk(top, *args, **kwargs):
     return _real_os_walk(_sandbox_path(top), *args, **kwargs)
+
+def _sandbox_path_query(real_fn):
+    def guarded(path, *args, **kwargs):
+        return real_fn(_sandbox_path(path), *args, **kwargs)
+    return guarded
+
+def _sandbox_path_pair_query(real_fn):
+    def guarded(first, second, *args, **kwargs):
+        return real_fn(_sandbox_path(first), _sandbox_path(second), *args, **kwargs)
+    return guarded
+
+def _sandbox_realpath(path, *args, **kwargs):
+    return os.fspath(_sandbox_path(path))
 
 def _sandbox_fwalk(top=".", *args, **kwargs):
     if _real_os_fwalk is None:
@@ -641,6 +687,9 @@ def _sandbox_blocked(*_args, **_kwargs):
 _builtins.open = _sandbox_open
 _io.open = _sandbox_io_open
 os.open = _sandbox_os_open
+os.stat = _sandbox_stat
+os.lstat = _sandbox_lstat
+os.access = _sandbox_access
 os.listdir = _sandbox_listdir
 os.scandir = _sandbox_scandir
 os.walk = _sandbox_walk
@@ -658,6 +707,17 @@ os.mkdir = _sandbox_mutation(_real_os_mkdir)
 os.makedirs = _sandbox_mutation(_real_os_makedirs)
 os.symlink = _sandbox_mutation(_real_os_symlink)
 os.link = _sandbox_mutation(_real_os_link)
+os.path.realpath = _sandbox_realpath
+for _name in ("exists", "lexists", "isfile", "isdir", "islink", "ismount", "getsize", "getmtime", "getatime", "getctime", "getmode"):
+    _real_path_fn = getattr(os.path, _name, None)
+# Guard filesystem-querying os.path helpers individually, without replacing the os.path module.
+for _name in ("exists", "lexists", "isfile", "isdir", "islink", "ismount", "getsize", "getmtime", "getatime", "getctime", "getmode"):
+    _real_path_query = getattr(os.path, _name, None)
+    if _real_path_query is not None:
+        setattr(os.path, _name, _sandbox_path_query(_real_path_query))
+_real_path_samefile = getattr(os.path, "samefile", None)
+if _real_path_samefile is not None:
+    os.path.samefile = _sandbox_path_pair_query(_real_path_samefile)
 os.system = _sandbox_blocked
 os.popen = _sandbox_blocked
 if _real_os_startfile is not None:
