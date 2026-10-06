@@ -50,23 +50,35 @@ class SelfAwareness:
         self._load()
 
     def _load(self) -> None:
+        if not PATH.is_file():
+            return
         try:
-            if PATH.is_file():
-                raw = json.loads(PATH.read_text(encoding="utf-8"))
-                if isinstance(raw, dict):
-                    self._state.update(raw)
-        except Exception:
-            pass
+            raw = json.loads(PATH.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                f"Self-awareness state is unreadable or corrupted: {PATH}"
+            ) from exc
+        if not isinstance(raw, dict):
+            raise RuntimeError("Self-awareness state has an invalid root schema.")
+        schema_version = raw.get("schema_version", self.SCHEMA_VERSION)
+        if schema_version != self.SCHEMA_VERSION:
+            raise RuntimeError(
+                f"Unsupported self-awareness state schema version: {schema_version}"
+            )
+        self._state.update(raw)
+        self._state["schema_version"] = self.SCHEMA_VERSION
 
     def save(self) -> None:
+        PATH.parent.mkdir(parents=True, exist_ok=True)
+        temp = PATH.with_name(f".{PATH.name}.{int(time.time_ns())}.tmp")
         try:
-            PATH.parent.mkdir(parents=True, exist_ok=True)
-            PATH.write_text(
+            temp.write_text(
                 json.dumps(self._state, indent=2, ensure_ascii=False),
                 encoding="utf-8",
             )
-        except Exception:
-            pass
+            temp.replace(PATH)
+        finally:
+            temp.unlink(missing_ok=True)
 
     @staticmethod
     def _owner_name() -> str:
