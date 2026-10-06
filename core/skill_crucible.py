@@ -437,6 +437,7 @@ import json
 import traceback
 import asyncio
 import inspect
+import os
 import builtins as _builtins
 import io as _io
 from pathlib import Path as _SandboxPath
