@@ -673,13 +673,16 @@ class BrahmaGateway:
                 await websocket.close(code=1013, reason="Gateway connection capacity reached")
                 return
             device_id = ""
-            handshake_deadline = asyncio.get_running_loop().time() + AUTH_HANDSHAKE_TIMEOUT_SECONDS
+            loop = asyncio.get_running_loop()
+            handshake_deadline = loop.time() + AUTH_HANDSHAKE_TIMEOUT_SECONDS
+            pairing_deadline: float | None = None
             try:
                 while True:
                     if device_id:
                         raw_message = await websocket.receive_text()
                     else:
-                        remaining = handshake_deadline - asyncio.get_running_loop().time()
+                        deadline = pairing_deadline or handshake_deadline
+                        remaining = deadline - loop.time()
                         if remaining <= 0:
                             await websocket.send_json(
                                 build_message(
@@ -741,6 +744,8 @@ class BrahmaGateway:
                         continue
 
                     if msg_type == ProtocolTypes.HELLO:
+                        # A valid pairing HELLO starts the configured pairing TTL.
+                        pairing_deadline = loop.time() + self.config.pairing_ttl_seconds
                         # Replace any older pending request from this socket and
                         # bound the total pending set so unauthenticated HELLO spam
                         # cannot grow memory without limit.
@@ -809,6 +814,7 @@ class BrahmaGateway:
                         continue
 
                     if msg_type == ProtocolTypes.PAIR_REQUEST:
+                        pairing_deadline = loop.time() + self.config.pairing_ttl_seconds
                         result = await self._pair_device(payload, websocket)
                         await websocket.send_json(build_message(ProtocolTypes.PAIR_APPROVED if result.get("success") else ProtocolTypes.ERROR, result, request_id=request_id))
                         continue
