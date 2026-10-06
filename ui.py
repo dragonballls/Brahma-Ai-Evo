@@ -14357,9 +14357,18 @@ class SmartDevicesSection(QFrame):
 
         self._poll_tmr = QTimer(self)
         self._poll_tmr.timeout.connect(lambda: self.refresh(force=False))
-        self._poll_tmr.start(2500)
 
         self.refresh(force=True)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._poll_tmr.isActive():
+            self._poll_tmr.start(2500)
+
+    def hideEvent(self, event):
+        if self._poll_tmr.isActive():
+            self._poll_tmr.stop()
+        super().hideEvent(event)
 
     def _controller_bridge(self):
         return self._controller
