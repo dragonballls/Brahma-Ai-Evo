@@ -43,15 +43,33 @@ class ConnectionHub:
         stale_pending: list[asyncio.Future] = []
         stale_socket: WebSocket | None = None
         async with self._lock:
+            socket_id = id(websocket)
+            current_socket_device = self._socket_index.get(socket_id)
+            if current_socket_device:
+                existing_for_socket = self._connections.get(current_socket_device)
+                if existing_for_socket is not None and existing_for_socket.websocket is websocket:
+                    if current_socket_device == str(device_id):
+                        # Re-registration on the same authenticated socket must not
+                        # replace the state object and orphan pending requests.
+                        existing_for_socket.role = role
+                        existing_for_socket.authenticated = True
+                        return existing_for_socket
+                    # A socket cannot belong to two logical devices at once.
+                    existing_for_socket.authenticated = False
+                    stale_pending.extend(existing_for_socket.pending.values())
+                    existing_for_socket.pending.clear()
+                    self._connections.pop(current_socket_device, None)
+                    self._socket_index.pop(socket_id, None)
+
             previous = self._connections.get(device_id)
             if previous is not None and previous.websocket is not websocket:
                 previous.authenticated = False
                 stale_socket = previous.websocket
-                stale_pending = list(previous.pending.values())
+                stale_pending.extend(previous.pending.values())
                 previous.pending.clear()
                 self._socket_index.pop(id(previous.websocket), None)
             self._connections[device_id] = state
-            self._socket_index[id(websocket)] = device_id
+            self._socket_index[socket_id] = device_id
 
         for future in stale_pending:
             if not future.done():
