@@ -423,9 +423,7 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
             self._git("switch", previous)
             self._save(checkpoint)
             raise SelfCodingError(pushed.stderr.strip() or "Approval publish failed safely.")
-        approved = Checkpoint(
-            replace(checkpoint, state="approved", promoted_sha=promoted_sha)
-        )
+        approved = replace(checkpoint, state="approved", promoted_sha=promoted_sha)
         self._save(approved)
         return promoted_sha
 
@@ -443,7 +441,7 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
             if current == checkpoint.branch:
                 self._git("switch", checkpoint.base_branch)
             self._git("branch", "-D", checkpoint.branch)
-            undone = Checkpoint(replace(checkpoint, state="undone"))
+            undone = replace(checkpoint, state="undone")
             self._save(undone)
             return "undone"
         if checkpoint.state != "approved" or not checkpoint.promoted_sha:
@@ -476,9 +474,7 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
                     self._git("reset", "--keep", checkpoint.promoted_sha)
                 self._git("switch", current)
                 raise SelfCodingError(pushed.stderr.strip() or "Unable to publish checkpoint undo.")
-            undone = Checkpoint(
-                replace(checkpoint, state="undone", undo_commits=tuple(undo_commits))
-            )
+            undone = replace(checkpoint, state="undone", undo_commits=tuple(undo_commits))
             self._save(undone)
             return "undone"
         except Exception:
