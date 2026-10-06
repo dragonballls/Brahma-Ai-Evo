@@ -287,13 +287,6 @@ class BrahmaGateway:
             return {"success": False, "error": "Device not found.", "error_code": "DEVICE_NOT_FOUND"}
 
         was_online = bool(record.online)
-        disconnected = False
-        try:
-            disconnected = await self.hub.close_device(record.device_id, reason=reason)
-        except Exception:
-            disconnected = False
-        self.device_manager.mark_offline(record.device_id)
-
         if not was_online:
             self._append_log(
                 "DEVICE_DISCONNECTED",
@@ -308,6 +301,12 @@ class BrahmaGateway:
                 "disconnected": False,
                 "already_disconnected": True,
             }
+
+        disconnected = False
+        try:
+            disconnected = await self.hub.close_device(record.device_id, reason=reason)
+        except Exception:
+            disconnected = False
 
         if not disconnected:
             self._append_log(
@@ -324,7 +323,24 @@ class BrahmaGateway:
                 "error_code": "DISCONNECT_FAILED",
             }
 
-        self._append_log(
+        try:
+            self.device_manager.mark_offline(record.device_id)
+        except Exception as exc:
+            self._append_log(
+                "DEVICE_DISCONNECT_PERSISTENCE_FAILED",
+                device_id=record.device_id,
+                name=record.name,
+                error=str(exc),
+            )
+            return {
+                "success": False,
+                "device": record.to_dict(),
+                "disconnected": True,
+                "error": f"Connection closed, but device state could not be persisted: {exc}",
+                "error_code": "DISCONNECT_PERSISTENCE_FAILED",
+            }
+
+        self._append_log
             "DEVICE_DISCONNECTED",
             device_id=record.device_id,
             name=record.name,
