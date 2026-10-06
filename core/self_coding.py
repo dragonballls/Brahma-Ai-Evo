@@ -179,6 +179,8 @@ class SelfCodingAgent:
         path.replace(quarantine)
 
     def _validate_checkpoint(self, checkpoint: Checkpoint) -> None:
+        if checkpoint.checkpoint_id != checkpoint_id:
+            raise SelfCodingError("Checkpoint metadata id does not match the requested checkpoint.")
         if checkpoint.base_branch != "main":
             raise SelfCodingError("Only checkpoints created from main can be promoted or undone.")
         if checkpoint.state not in {"pending", "promoting", "approved", "undone"}:
