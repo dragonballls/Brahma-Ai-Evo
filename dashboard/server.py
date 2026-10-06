@@ -153,46 +153,25 @@ def _ensure_network_access(port: int) -> None:
             except Exception:
                 return False
 
-        def _network_is_public() -> bool:
-            try:
-                r = _quiet_run(
-                    ["powershell", "-NoProfile", "-NonInteractive", "-Command",
-                     "(Get-NetConnectionProfile | "
-                     "Where-Object {$_.NetworkCategory -eq 'Public'} | "
-                     "Measure-Object).Count"],
-                    capture_output=True, text=True, timeout=6,
-                )
-                return r.stdout.strip() not in ("", "0")
-            except Exception:
-                return False
+        need_port = not _netsh_rule_exists(port_rule)
+        need_prog = not _netsh_rule_exists(prog_rule)
 
-        need_port    = not _netsh_rule_exists(port_rule)
-        need_prog    = not _netsh_rule_exists(prog_rule)
-        need_private = _network_is_public()
-
-        if not need_port and not need_prog and not need_private:
+        if not need_port and not need_prog:
             return  # already fully configured
 
         # Build a .bat file — netsh + powershell, runs fast when elevated
         bat_lines = ["@echo off"]
-        if need_private:
-            bat_lines.append(
-                'powershell -NoProfile -NonInteractive -Command "'
-                'Get-NetConnectionProfile | '
-                "Where-Object {$_.NetworkCategory -eq 'Public'} | "
-                'Set-NetConnectionProfile -NetworkCategory Private"'
-            )
         if need_port:
             bat_lines.append(
                 f'netsh advfirewall firewall add rule '
                 f'name="{port_rule}" protocol=TCP dir=in '
-                f'localport={port} action=allow'
+                f'localport={port} action=allow profile=Private'
             )
         if need_prog:
             bat_lines.append(
                 f'netsh advfirewall firewall add rule '
                 f'name="{prog_rule}" dir=in action=allow '
-                f'program="{py_exe}" enable=yes'
+                f'program="{py_exe}" enable=yes profile=Private'
             )
 
         bat_body = "\r\n".join(bat_lines) + "\r\n"
