@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.SystemClock
 import com.brahma.connect.commands.DeviceCommandHandler
 import com.brahma.connect.core.AgentStateStore
+import com.brahma.connect.core.BrahmaConnectCapabilities
 import com.brahma.connect.core.BrahmaProtocol
 import com.brahma.connect.core.ChatMessage
 import com.brahma.connect.core.ConnectionState
@@ -159,17 +160,7 @@ class BrahmaWebSocketClient(
             batteryPercentage = percentage,
             charging = charging,
             wifiEnabled = true,
-            capabilities = listOf(
-                "device_info",
-                "battery",
-                "flashlight",
-                "volume",
-                "media",
-                "launch_app",
-                "apps",
-                "open_url",
-                "wifi_state",
-            ),
+            capabilities = BrahmaConnectCapabilities.INITIAL,
         )
     }
 
