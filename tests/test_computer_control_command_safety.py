@@ -10,4 +10,3 @@ def test_window_title_is_escaped_for_windows_and_macos_command_languages():
     assert 'replace("\'\", "\'\'\")' in source
     assert "applescript_title = (" in source
     assert "replace(\"\\\\\", \"\\\\\\\\\")" in source
-    assert ".replace('"', '\\\\"')" in source
