@@ -70,18 +70,25 @@ object AgentStateStore {
 }
 
 object BrahmaConnectCapabilities {
-    val INITIAL = listOf(
-        "device_info",
-        "battery",
-        "flashlight",
-        "volume",
-        "media",
-        "launch_app",
-        "apps",
-        "open_url",
-        "wifi_state",
-        "files",
-        "ui_control",
-        "unlock_phone",
+    const val DEVICE_INFO = "device_info"
+    const val BATTERY = "battery"
+    const val FLASHLIGHT = "flashlight"
+    const val VOLUME_CONTROL = "volume_control"
+    const val APP_LAUNCH = "app_launch"
+    const val OPEN_URL = "open_url"
+    const val UNLOCK_PHONE = "unlock_phone"
+    const val FILES = "files"
+    const val UI_CONTROL = "ui_control"
+
+    val INITIAL: List<String> = listOf(
+        DEVICE_INFO,
+        BATTERY,
+        FLASHLIGHT,
+        VOLUME_CONTROL,
+        APP_LAUNCH,
+        OPEN_URL,
+        UNLOCK_PHONE,
+        FILES,
+        UI_CONTROL,
     )
 }
