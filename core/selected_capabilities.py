@@ -40,8 +40,11 @@ def _json_load(path: Path, default: Any) -> Any:
     if not path.is_file():
         return default
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (UnicodeError, json.JSONDecodeError):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(default, (dict, list)) and not isinstance(payload, type(default)):
+            raise ValueError("Selected capability state has an unexpected root schema.")
+        return payload
+    except (UnicodeError, json.JSONDecodeError, ValueError):
         quarantine = path.with_name(
             f"{path.name}.corrupt-{int(time.time())}-{uuid4().hex[:8]}"
         )
