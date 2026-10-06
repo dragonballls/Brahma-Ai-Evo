@@ -96,6 +96,10 @@ def publish_verified_repair(target_file: str | Path, patch_id: str, explanation:
         if repo_target.is_absolute() or ".." in repo_target.parts:
             return {"published": False, "reason": "invalid_repository_relative_path"}
         target = (root / repo_target).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError:
+            return {"published": False, "reason": "target_outside_repository"}
 
     if not target.is_file():
         return {"published": False, "reason": "target_missing"}
