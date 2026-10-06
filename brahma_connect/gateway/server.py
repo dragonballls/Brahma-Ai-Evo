@@ -47,6 +47,27 @@ def _safe_bool(value: object, default: bool) -> bool:
     return default
 
 
+_SENSITIVE_LOG_KEYS = {
+    "api_key", "apikey", "authorization", "bearer", "client_secret",
+    "device_secret", "pairing_code", "pairing_token", "pin", "password",
+    "secret", "secret_hash", "session_secret", "session_token", "token",
+}
+
+
+def _redact_log_value(value: Any, key: str = "") -> Any:
+    if key.casefold() in _SENSITIVE_LOG_KEYS or any(
+        marker in key.casefold() for marker in ("api_key", "secret", "password", "token", "pairing", "pin")
+    ):
+        return "[REDACTED]"
+    if isinstance(value, dict):
+        return {str(k): _redact_log_value(v, str(k)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact_log_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_redact_log_value(item) for item in value]
+    return value
+
+
 def _default_config_path(base_dir: Path) -> Path:
     return Path(base_dir) / "config" / "brahma_connect.json"
 
@@ -147,7 +168,8 @@ class BrahmaGateway:
             self._server.should_exit = True
 
     def _append_log(self, event_type: str, **payload: Any) -> None:
-        entry = {"type": event_type, "timestamp": now_iso(), **payload}
+        safe_payload = {str(key): _redact_log_value(value, str(key)) for key, value in payload.items()}
+        entry = {"type": event_type, "timestamp": now_iso(), **safe_payload}
         self._log.append(entry)
         self._log = self._log[-200:]
 
@@ -271,7 +293,7 @@ class BrahmaGateway:
     def create_pairing_offer(self, *, device_name: str = "Unknown Device", platform: str = "unknown") -> dict[str, Any]:
         advertised_host = local_ip() if self.config.host in {"0.0.0.0", "::"} else self.config.host
         offer = self.pairing_manager.create_offer(advertised_host, self.config.port)
-        self._append_log("PAIRING_REQUEST", device=device_name, platform=platform, code=offer.pairing_code)
+        self._append_log("PAIRING_REQUEST", device=device_name, platform=platform)
         return offer.to_dict()
 
     def list_pending_requests(self) -> list[dict[str, Any]]:
