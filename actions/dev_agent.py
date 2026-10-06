@@ -108,16 +108,24 @@ def _classify_error(output: str) -> str:
 
 
 def _has_error(output: str, run_command: str) -> bool:
-    
-    low = output.lower()
+    """Return True when the generated-project command definitely failed.
+
+    A timeout or non-zero process exit is failure even when the process emitted
+    no useful stderr/stdout. This prevents the self-coding path from declaring
+    success after an unsuccessful or incomplete run.
+    """
+    low = str(output or "").lower()
 
     if "timed out" in low:
+        return True
+
+    if re.search(r"\brun failed \(exit -?\d+\)", low):
+        return True
+
+    if not low.strip():
         return False
 
-    if not output.strip():
-        return False
-
-    error_type = _classify_error(output)
+    error_type = _classify_error(low)
     return error_type != "none"
 
 class RateLimitError(Exception):
@@ -364,13 +372,17 @@ def _run_project(run_command: str, project_dir: Path, timeout: int = 30) -> str:
         stdout = result.stdout.strip()
         stderr = result.stderr.strip()
         combined_parts = []
+        if result.returncode != 0:
+            combined_parts.append(f"Run failed (exit {result.returncode}).")
         if stdout:
             combined_parts.append(f"STDOUT:\n{stdout}")
         if stderr:
             combined_parts.append(f"STDERR:\n{stderr}")
-        return "\n\n".join(combined_parts) if combined_parts else "Ran with no output."
+        if not combined_parts:
+            return "Ran with no output."
+        return "\n\n".join(combined_parts)
     except subprocess.TimeoutExpired:
-        return f"Timed out after {timeout}s."
+        return f"Run timed out after {timeout}s."
     except FileNotFoundError as e:
         return f"Command not found: {e}"
     except ValueError as e:
