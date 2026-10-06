@@ -336,11 +336,8 @@ class BrahmaGateway:
             )
             return {"success": False, "error": "Invalid or expired pairing token."}
 
-        # Consume the single-use offer before creating credentials. This prevents
-        # replaying the same code/token to silently pair additional devices.
-        approved_offer = self.pairing_manager.approve(offer.pairing_token)
-        if approved_offer is None:
-            return {"success": False, "error": "Invalid or expired pairing token."}
+        # Consume the single-use offer only after credential persistence succeeds.
+        # This keeps pairing retryable when registry storage has a transient failure.
         self._pair_attempts.pop(client_ip, None)
 
         device_name = str(payload.get("device_name") or "Unknown Device").strip()
@@ -362,6 +359,10 @@ class BrahmaGateway:
             permissions=permissions,
             metadata=metadata,
         )
+        approved_offer = self.pairing_manager.approve(offer.pairing_token)
+        if approved_offer is None:
+            self.device_manager.remove(record.device_id)
+            return {"success": False, "error": "Pairing offer was consumed concurrently; no credentials were retained."}
         self._append_log("PAIR_APPROVED", device=record.device_id, name=record.name, platform=record.platform)
         return {
             "success": True,
