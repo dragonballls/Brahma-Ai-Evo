@@ -18,3 +18,10 @@ def test_dev_agent_treats_timeouts_and_nonzero_exit_codes_as_failures():
     assert dev_agent._has_error("Run timed out after 30s.", "python main.py")
     assert dev_agent._has_error("Run failed (exit 2).", "python main.py")
     assert not dev_agent._has_error("Ran with no output.", "python main.py")
+
+def test_dev_agent_file_tools_confine_paths_to_workspace():
+    source = (ROOT / "actions" / "brahma_dev_agent.py").read_text(encoding="utf-8")
+    assert "def _workspace_path" in source
+    assert "Path escapes the configured developer workspace." in source
+    assert "path = self._workspace_path(file_path)" in source
+    assert "search_root = self._workspace_path(path)" in source
