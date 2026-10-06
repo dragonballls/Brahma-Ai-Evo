@@ -5402,11 +5402,29 @@ class BrahmaLive:
             ),
         )
 
+    @staticmethod
+    def _redact_tool_args(value):
+        sensitive = {
+            "api_key", "apikey", "key", "token", "access_token", "refresh_token",
+            "authorization", "password", "passwd", "secret", "credential",
+            "device_secret", "private_key", "client_secret",
+        }
+        if isinstance(value, dict):
+            return {
+                k: ("<redacted>" if str(k).strip().lower() in sensitive else BrahmaEvo._redact_tool_args(v))
+                for k, v in value.items()
+            }
+        if isinstance(value, list):
+            return [BrahmaEvo._redact_tool_args(v) for v in value]
+        if isinstance(value, tuple):
+            return tuple(BrahmaEvo._redact_tool_args(v) for v in value)
+        return value
+
     async def _execute_tool(self, fc) -> types.FunctionResponse:
         name = fc.name
         args = dict(fc.args or {})
 
-        print(f"[BRAHMA EVO] 🔧 {name}  {args}")
+        print(f"[BRAHMA EVO] 🔧 {name}  {self._redact_tool_args(args)}")
         if not getattr(fc, "silent_completion", False):
             self.speak(f"Working on {name.replace('_', ' ')}...")
         self.ui.set_state("THINKING")
