@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import threading
+import re
 import time
 import uuid
 from pathlib import Path
@@ -21,6 +22,11 @@ logger = logging.getLogger("LearnedRules")
 BASE_DIR = Path(__file__).resolve().parent.parent
 CONFIG_DIR = get_user_data_dir() / "config"
 RULES_FILE = CONFIG_DIR / "learned_rules.json"
+
+_SECRET_RE = re.compile(
+    r"(?i)(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret|bearer)\s*[:=]\s*\S+"
+)
+_TOKEN_RE = re.compile(r"\b(?:sk-[A-Za-z0-9_-]{20,}|gsk_[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b")
 
 
 class LearnedRulesEngine:
@@ -71,15 +77,19 @@ class LearnedRulesEngine:
         if not clean_text:
             return {"success": False, "message": "Rule text cannot be empty."}
 
-        rules = cls._load_raw()
+        if _SECRET_RE.search(clean_text) or _TOKEN_RE.search(clean_text):
+            return {"success": False, "message": "Credential-like values cannot be stored as learned rules."}
 
-        # Deduplicate
-        for r in rules:
-            if r.get("rule", "").lower() == clean_text.lower():
-                r["active"] = True
-                r["updated_at"] = time.time()
-                cls._save_raw(rules)
-                return {"success": True, "rule": r, "message": "Rule already exists and is active."}
+        with cls._lock:
+            rules = cls._load_raw()
+
+                # Deduplicate
+                for r in rules:
+                if r.get("rule", "").lower() == clean_text.lower():
+                    r["active"] = True
+                    r["updated_at"] = time.time()
+                    cls._save_raw(rules)
+                    return {"success": True, "rule": r, "message": "Rule already exists and is active."}
 
         new_rule = {
             "id": str(uuid.uuid4())[:8],
@@ -90,9 +100,9 @@ class LearnedRulesEngine:
             "created_at": time.time(),
             "updated_at": time.time(),
         }
-        rules.append(new_rule)
-        cls._save_raw(rules)
-        return {"success": True, "rule": new_rule, "message": f"Learned new rule: '{clean_text}'"}
+            rules.append(new_rule)
+            cls._save_raw(rules)
+            return {"success": True, "rule": new_rule, "message": f"Learned new rule: '{clean_text}'"}
 
     @classmethod
     def list_rules(cls, active_only: bool = False) -> List[Dict[str, Any]]:
@@ -105,26 +115,28 @@ class LearnedRulesEngine:
     @classmethod
     def toggle_rule(cls, rule_id: str) -> Dict[str, Any]:
         """Toggles a rule on or off."""
-        rules = cls._load_raw()
-        for r in rules:
-            if r.get("id") == rule_id:
-                r["active"] = not r.get("active", True)
-                r["updated_at"] = time.time()
-                cls._save_raw(rules)
-                status = "activated" if r["active"] else "deactivated"
-                return {"success": True, "message": f"Rule {rule_id} {status}."}
-        return {"success": False, "message": f"Rule ID '{rule_id}' not found."}
+        with cls._lock:
+            rules = cls._load_raw()
+            for r in rules:
+                if r.get("id") == rule_id:
+                    r["active"] = not r.get("active", True)
+                    r["updated_at"] = time.time()
+                    cls._save_raw(rules)
+                    status = "activated" if r["active"] else "deactivated"
+                    return {"success": True, "message": f"Rule {rule_id} {status}."}
+            return {"success": False, "message": f"Rule ID '{rule_id}' not found."}
 
     @classmethod
     def delete_rule(cls, rule_id: str) -> Dict[str, Any]:
         """Deletes a rule permanently."""
-        rules = cls._load_raw()
-        initial_len = len(rules)
-        rules = [r for r in rules if r.get("id") != rule_id]
-        if len(rules) < initial_len:
-            cls._save_raw(rules)
-            return {"success": True, "message": f"Rule {rule_id} deleted."}
-        return {"success": False, "message": f"Rule ID '{rule_id}' not found."}
+        with cls._lock:
+            rules = cls._load_raw()
+            initial_len = len(rules)
+            rules = [r for r in rules if r.get("id") != rule_id]
+            if len(rules) < initial_len:
+                cls._save_raw(rules)
+                return {"success": True, "message": f"Rule {rule_id} deleted."}
+            return {"success": False, "message": f"Rule ID '{rule_id}' not found."}
 
     @classmethod
     def get_prompt_injections(cls) -> str:
