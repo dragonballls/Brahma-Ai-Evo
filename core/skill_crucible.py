@@ -19,8 +19,45 @@ import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+import tempfile
+import re
 
 logger = logging.getLogger("SkillCrucible")
+
+_CREDENTIAL_PATTERNS = (
+    re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"\bsk-ant-[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"\bAIza[0-9A-Za-z_-]{20,}\b"),
+    re.compile(r"\bgsk_[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b"),
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{20,}"),
+)
+
+
+def _redact_text(value: object) -> str:
+    text = str(value or "")
+    for pattern in _CREDENTIAL_PATTERNS:
+        text = pattern.sub("[REDACTED]", text)
+    return text
+
+
+def _sandbox_environment(root: Path) -> dict[str, str]:
+    """Keep generated skills away from host credentials and user-scoped files."""
+    blocked = ("API_KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "AUTH", "PRIVATE", "COOKIE", "SESSION", "PIN")
+    env = {
+        key: value for key, value in os.environ.items()
+        if not any(part in key.upper() for part in blocked)
+    }
+    env["LOCALAPPDATA"] = str(root)
+    env["APPDATA"] = str(root)
+    env["HOME"] = str(root)
+    env["USERPROFILE"] = str(root)
+    env["TEMP"] = str(root)
+    env["TMP"] = str(root)
+    env["PYTHONNOUSERSITE"] = "1"
+    return env
 
 # Dangerous calls and patterns that synthetic skills must NEVER execute
 BANNED_AST_PATTERNS = [
@@ -245,6 +282,12 @@ class SkillCrucible:
                         if keyword.value.value is False:
                             return False, "Security Violation: TLS certificate verification cannot be disabled."
 
+        # Reject common hard-coded credential formats before a generated skill can be persisted.
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if any(pattern.search(node.value) for pattern in _CREDENTIAL_PATTERNS):
+                    return False, "Security Violation: hard-coded credential material is prohibited."
+
         # Safety scans for banned keywords in string literals or function calls
         for node in ast.walk(tree):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
@@ -409,16 +452,22 @@ if __name__ == '__main__':
 """
         start_time = time.time()
         try:
-            proc = subprocess.run(
-                [py_exe, "-c", harness_script],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
+            sandbox_root = Path(tempfile.mkdtemp(prefix="brahma-crucible-"))
+            try:
+                proc = subprocess.run(
+                    [py_exe, "-c", harness_script],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    env=_sandbox_environment(sandbox_root),
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+            finally:
+                import shutil
+                shutil.rmtree(sandbox_root, ignore_errors=True)
             elapsed = time.time() - start_time
             if proc.returncode != 0:
-                err_text = proc.stderr.strip() or proc.stdout.strip() or "Process exited with error code."
+                err_text = _redact_text(proc.stderr.strip() or proc.stdout.strip() or "Process exited with error code.")
                 return False, f"Sandbox Test Failed: {err_text[:300]}", {"elapsed_s": elapsed}
 
             output_str = proc.stdout.strip()
@@ -443,7 +492,7 @@ if __name__ == '__main__':
 
             all_passed = all(t.get("success", False) for t in test_results)
             if not all_passed:
-                first_err = next((t.get("error", "Unknown test failure") for t in test_results if not t.get("success")), "Test failed")
+                first_err = _redact_text(next((t.get("error", "Unknown test failure") for t in test_results if not t.get("success")), "Test failed"))
                 return False, f"Test Verification Failed: {first_err}", {"results": test_results, "elapsed_s": elapsed}
 
             return True, f"Passed {len(test_results)}/{len(test_results)} tests in {elapsed:.2f}s", {
