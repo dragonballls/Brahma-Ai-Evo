@@ -644,7 +644,6 @@ def test_android_gateway_requires_tls_and_uses_wss_with_pinning():
 
 
 def test_dashboard_https_and_gateway_tls_helpers(tmp_path: Path):
-    from dashboard import server as dashboard_server
     from core.local_tls import certificate_sha256
     from brahma_connect.gateway.server import BrahmaGateway, BrahmaGatewayConfig
 
@@ -668,7 +667,10 @@ def test_gateway_config_refuses_corrupt_json(tmp_path: Path):
 
 
 def test_windows_api_keys_are_protected_at_rest_or_plaintext_on_non_windows(tmp_path: Path, monkeypatch):
+    import sys
     import config as config_module
+    if sys.platform != "win32":
+        pytest.skip("Windows DPAPI is only available on Windows CI.")
 
     monkeypatch.setattr(config_module, "API_CONFIG_PATH", tmp_path / "api_keys.json")
     monkeypatch.setattr(config_module.platform, "system", lambda: "Windows")
