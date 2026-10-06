@@ -23,7 +23,7 @@ _SAFE_RUN_PROGRAMS = {
     "npm", "node", "npx", "cargo", "go", "dotnet", "java", "ruby", "php",
 }
 _BLOCKED_RUN_FLAGS = {"-c", "--command", "--eval", "-e", "--execute", "--require", "--import"}
-_DEP_SPEC_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(?:\\[[A-Za-z0-9_,.-]+\\])?(?:\\s*(?:==|>=|<=|~=|>|<|!=)\\s*[A-Za-z0-9.*+!_-]+)?$")
+_DEP_SPEC_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(?:\[[A-Za-z0-9_,.-]+\])?(?:\s*(?:==|>=|<=|~=|>|<|!=)\s*[A-Za-z0-9.*+!_-]+)?$")
 MODEL_PLANNER    = "gemini-flash-latest"
 MODEL_WRITER     = "gemini-flash-latest"
 
