@@ -348,8 +348,12 @@ def move_file(path: str, name: str = "", destination: str = "") -> str:
 
         if dst.is_dir():
             dst = dst / src.name
+        if dst.exists() or dst.is_symlink():
+            return f"Destination already exists: {dst.name}. Refusing to overwrite it."
 
         dst.parent.mkdir(parents=True, exist_ok=True)
+        if not _is_safe_path(dst.parent):
+            return f"Access denied (destination parent): {dst.parent}"
         origin = src.resolve()
         shutil.move(str(src), str(dst))
         push_undo(f"moved {origin.name} to {dst.parent.name}/",
@@ -377,8 +381,12 @@ def copy_file(path: str, name: str = "", destination: str = "") -> str:
 
         if dst.is_dir():
             dst = dst / src.name
+        if dst.exists() or dst.is_symlink():
+            return f"Destination already exists: {dst.name}. Refusing to overwrite it."
 
         dst.parent.mkdir(parents=True, exist_ok=True)
+        if not _is_safe_path(dst.parent):
+            return f"Access denied (destination parent): {dst.parent}"
 
         if src.is_dir():
             shutil.copytree(str(src), str(dst))
@@ -464,16 +472,27 @@ def write_file(path: str, name: str = "", content: str = "",
         # different undo (delete it) from "existed and had this in it".
         previous: str | None = None
         undoable = True
-        if target.exists():
+        existed = target.exists() or target.is_symlink()
+        if existed:
+            if target.is_symlink() or not target.is_file():
+                return "Could not write file: existing target is not a regular file."
             try:
-                if target.stat().st_size > _UNDO_CONTENT_LIMIT:
-                    undoable = False       # too large to hold in memory
-                else:
-                    previous = target.read_text(encoding="utf-8", errors="ignore")
-            except Exception:
-                undoable = False           # binary, locked, unreadable
+                size = target.stat().st_size
+                if not append and size > _UNDO_CONTENT_LIMIT:
+                    return (
+                        "Could not write file: existing target is too large to "
+                        "overwrite safely without a verified rollback copy."
+                    )
+                previous = target.read_text(encoding="utf-8")
+            except Exception as exc:
+                return (
+                    "Could not write file: existing target could not be read safely; "
+                    f"refusing to overwrite it: {exc}"
+                )
 
         mode = "a" if append else "w"
+        if not _is_safe_path(target.parent):
+            return f"Access denied: {target.parent}"
         if target.is_symlink():
             return f"Could not write file: symlink targets are not permitted."
         with open(target, mode, encoding="utf-8") as f:
