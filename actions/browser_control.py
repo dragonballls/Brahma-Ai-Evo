@@ -1,4 +1,5 @@
 import asyncio
+import atexit
 import threading
 import concurrent.futures
 import platform
@@ -533,6 +534,8 @@ class _BrowserThread:
 _bt         = _BrowserThread()
 _bt_started = False
 _bt_lock    = threading.Lock()
+
+atexit.register(shutdown_browser)
 
 
 def shutdown_browser() -> None:
