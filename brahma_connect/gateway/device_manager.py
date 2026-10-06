@@ -76,9 +76,12 @@ class DeviceManager:
                     if not isinstance(item, dict):
                         raise ValueError("device record is not an object")
                     record = DeviceRecord.from_dict(item)
-                    key = str(record.device_id or device_id).strip()
-                    if not key or not str(record.secret_hash or "").strip():
-                        raise ValueError("device record is missing identity or secret data")
+                    stored_key = str(device_id or "").strip()
+                    record_id = str(record.device_id or "").strip()
+                    if not stored_key or not record_id or stored_key != record_id:
+                        raise ValueError("device record key does not match its embedded identity")
+                    if not str(record.secret_hash or "").strip():
+                        raise ValueError("device record is missing secret data")
                 except Exception as exc:
                     try:
                         self._quarantine_corrupt_registry()
@@ -90,11 +93,22 @@ class DeviceManager:
                     raise RuntimeError(
                         "Device registry contains an invalid record; the original was quarantined."
                     ) from exc
-                record.device_id = key
+                key = record_id
                 # A persisted online flag cannot represent a live socket after restart.
                 # Re-establish online state only after successful authentication.
                 record.online = False
                 record.connection_id = ""
+                if key in loaded:
+                    try:
+                        self._quarantine_corrupt_registry()
+                    except OSError as quarantine_exc:
+                        raise RuntimeError(
+                            "Device registry contains duplicate identities and could not be quarantined safely."
+                        ) from quarantine_exc
+                    self._devices = {}
+                    raise RuntimeError(
+                        "Device registry contains duplicate device identities; the original was quarantined."
+                    )
                 loaded[key] = record
             self._devices = loaded
 
