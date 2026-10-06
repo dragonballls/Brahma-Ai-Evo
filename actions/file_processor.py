@@ -673,7 +673,9 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
     if action == "transcribe":
         if not _ffmpeg_available():
             return "ffmpeg not found. Needed for video transcription."
-        tmp_audio = Path(tempfile.mktemp(suffix=".mp3"))
+        tmp_fd, tmp_name = tempfile.mkstemp(suffix=".mp3")
+        os.close(tmp_fd)
+        tmp_audio = Path(tmp_name)
         try:
             subprocess.run(
                 ["ffmpeg", "-i", str(path), "-q:a", "0", "-map", "a",
@@ -720,12 +722,22 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
     import tarfile
     import zipfile
 
+    MAX_ARCHIVE_MEMBERS = 10_000
+    MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024
+
     dest = dest.resolve()
     dest.mkdir(parents=True, exist_ok=True)
 
     if path.suffix.lower() == ".zip":
         with zipfile.ZipFile(path) as archive:
-            for info in archive.infolist():
+            infos = archive.infolist()
+            if len(infos) > MAX_ARCHIVE_MEMBERS:
+                raise ValueError("Archive contains too many members.")
+            total_size = 0
+            for info in infos:
+                total_size += max(0, int(info.file_size))
+                if total_size > MAX_ARCHIVE_BYTES:
+                    raise ValueError("Archive expands beyond the 1 GiB extraction limit.")
                 target = _safe_archive_target(dest, info.filename)
                 mode = (info.external_attr >> 16) & 0o170000
                 if mode == 0o120000:
@@ -740,7 +752,13 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
 
     with tarfile.open(path) as archive:
         members = archive.getmembers()
+        if len(members) > MAX_ARCHIVE_MEMBERS:
+            raise ValueError("Archive contains too many members.")
+        total_size = 0
         for member in members:
+            total_size += max(0, int(member.size))
+            if total_size > MAX_ARCHIVE_BYTES:
+                raise ValueError("Archive expands beyond the 1 GiB extraction limit.")
             target = _safe_archive_target(dest, member.name)
             if member.issym() or member.islnk():
                 raise ValueError("Archive link members are not allowed.")
