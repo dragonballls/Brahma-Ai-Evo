@@ -48,6 +48,8 @@ def _safe_bool(value: object, default: bool) -> bool:
     return default
 
 
+AUTH_HANDSHAKE_TIMEOUT_SECONDS = 30.0
+
 _SENSITIVE_LOG_KEYS = {
     "api_key", "apikey", "authorization", "bearer", "client_secret",
     "device_secret", "pairing_code", "pairing_token", "pin", "password",
@@ -671,9 +673,36 @@ class BrahmaGateway:
                 await websocket.close(code=1013, reason="Gateway connection capacity reached")
                 return
             device_id = ""
+            handshake_deadline = asyncio.get_running_loop().time() + AUTH_HANDSHAKE_TIMEOUT_SECONDS
             try:
                 while True:
-                    raw_message = await websocket.receive_text()
+                    if device_id:
+                        raw_message = await websocket.receive_text()
+                    else:
+                        remaining = handshake_deadline - asyncio.get_running_loop().time()
+                        if remaining <= 0:
+                            await websocket.send_json(
+                                build_message(
+                                    ProtocolTypes.ERROR,
+                                    {"error": "Authentication handshake timed out."},
+                                )
+                            )
+                            await websocket.close(code=1008, reason="Authentication handshake timed out")
+                            break
+                        try:
+                            raw_message = await asyncio.wait_for(
+                                websocket.receive_text(),
+                                timeout=remaining,
+                            )
+                        except asyncio.TimeoutError:
+                            await websocket.send_json(
+                                build_message(
+                                    ProtocolTypes.ERROR,
+                                    {"error": "Authentication handshake timed out."},
+                                )
+                            )
+                            await websocket.close(code=1008, reason="Authentication handshake timed out")
+                            break
                     if len(raw_message.encode("utf-8")) > 2 * 1024 * 1024:
                         await websocket.send_json(
                             build_message(
@@ -699,6 +728,15 @@ class BrahmaGateway:
                     payload = dict(incoming.get("payload") or {})
 
                     if msg_type == ProtocolTypes.PING:
+                        if not device_id:
+                            await websocket.send_json(
+                                build_message(
+                                    ProtocolTypes.ERROR,
+                                    {"error": "Authentication required before keepalive traffic."},
+                                    request_id=request_id,
+                                )
+                            )
+                            continue
                         await websocket.send_json(build_message(ProtocolTypes.PONG, {"status": "ok"}, request_id=request_id))
                         continue
 
