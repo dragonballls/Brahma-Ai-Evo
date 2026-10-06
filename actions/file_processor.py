@@ -742,7 +742,6 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
 
     def preflight(members):
         total_size = 0
-        planned: list[tuple[object, Path]] = []
         seen_types: dict[Path, bool] = {}
         planned: list[tuple[object, Path, bool]] = []
         for member in members:
@@ -775,7 +774,6 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
                     raise ValueError("Archive link members are not allowed.")
                 if not member.isdir() and not member.isfile():
                     raise ValueError("Archive special-file members are not allowed.")
-            planned.append((member, target))
         for _, target, is_dir in planned:
             if is_dir:
                 continue
