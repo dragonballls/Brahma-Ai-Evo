@@ -1283,3 +1283,9 @@ def test_confirmation_gate_does_not_replace_an_existing_pending_action():
     assert pending.key == "first"
 
     confirm.resolve(False)
+
+
+def test_openrouter_and_omniroute_authenticated_posts_disable_redirects():
+    source = Path("or_client.py").read_text(encoding="utf-8")
+    assert source.count("allow_redirects=False") >= 3
+    assert "Authenticated request was redirected; refusing credential forwarding." in source

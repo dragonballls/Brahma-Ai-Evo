@@ -168,7 +168,11 @@ class OpenRouterClient:
                 headers=headers,
                 json=payload,
                 timeout=REQUEST_TIMEOUT,
+                    allow_redirects=False,
             )
+            if 300 <= response.status_code < 400:
+                logger.warning("[OmniRoute] Authenticated request was redirected; refusing credential forwarding.")
+                return None
             if response.status_code != 200:
                 logger.warning(f"[OmniRoute] HTTP {response.status_code}; using direct provider fallback")
                 return None
@@ -234,6 +238,7 @@ class OpenRouterClient:
                     headers=headers,
                     json=payload,
                     timeout=REQUEST_TIMEOUT,
+                    allow_redirects=False,
                 )
 
                 if resp.status_code == 401:
@@ -409,6 +414,7 @@ class OpenRouterClient:
                     headers=headers,
                     json=payload,
                     timeout=REQUEST_TIMEOUT,
+                    allow_redirects=False,
                 )
                 if resp.status_code == 401:
                     raise PermissionError("[OpenRouter] Authentication failed.")
@@ -510,6 +516,7 @@ class OpenRouterClient:
                     headers=headers,
                     json=payload,
                     timeout=REQUEST_TIMEOUT,
+                    allow_redirects=False,
                 )
             except Exception as exc:
                 logger.warning(f"[OmniRoute] tool request failed; using direct provider fallback: {exc}")
