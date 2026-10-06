@@ -249,7 +249,7 @@ fun BrahmaConnectApp(
                             scanError = null
                             storage.saveGatewayHint(offer)
                             AgentStateStore.setPairingOffer(offer)
-                            AgentStateStore.setGateway(GatewayEndpoint(name = "Brahma PC", host = offer.host, port = offer.port))
+                            AgentStateStore.setGateway(GatewayEndpoint(name = "Brahma PC", host = offer.host, port = offer.port, tls = offer.tlsEnabled, tlsCertificateSha256 = offer.tlsCertificateSha256))
                             AgentStateStore.setStatus("Pairing payload loaded")
                             navController.popBackStack()
                         }
