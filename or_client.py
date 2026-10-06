@@ -429,7 +429,19 @@ class OpenRouterClient:
                     return {}
                 if resp.status_code == 200:
                     data = resp.json()
-                    return data if isinstance(data, dict) else {}
+                    if not isinstance(data, dict):
+                        return {}
+                    choices = data.get("choices")
+                    if not isinstance(choices, list) or not choices:
+                        logger.warning("[OpenRouter] tool-capable response had no choices; trying next model")
+                        return {}
+                    message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
+                    content = message.get("content", "") if isinstance(message, dict) else ""
+                    tool_calls = message.get("tool_calls") or [] if isinstance(message, dict) else []
+                    if not str(content or "").strip() and not tool_calls:
+                        logger.warning("[OpenRouter] tool-capable response had no usable content or tool calls; trying next model")
+                        return {}
+                    return data
                 logger.warning(
                     f"[OpenRouter] tool-capable {model} -> HTTP {resp.status_code} "
                     f"(attempt {attempt}/{MAX_RETRIES_PER_MODEL})"
