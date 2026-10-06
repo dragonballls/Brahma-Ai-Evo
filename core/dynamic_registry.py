@@ -39,13 +39,25 @@ class DynamicSkill:
         self.skill_dir = skill_path if skill_path.is_dir() else skill_path.parent
         self.manifest = manifest
         self.module = module
-        self.name: str = manifest.get("name", skill_path.stem)
-        self.description: str = manifest.get("description", "")
-        self.parameters: Dict[str, Any] = manifest.get("parameters", {"type": "OBJECT", "properties": {}})
-        self.triggers: List[str] = manifest.get("triggers", [])
-        self.aliases: List[str] = manifest.get("aliases", [])
-        self.active: bool = manifest.get("active", True)
-        self.version: str = manifest.get("version", "1.0.0")
+        self.name: str = str(manifest.get("name") or skill_path.stem).strip()
+        self.description: str = str(manifest.get("description") or "")
+        raw_parameters = manifest.get("parameters")
+        self.parameters: Dict[str, Any] = (
+            dict(raw_parameters) if isinstance(raw_parameters, dict)
+            else {"type": "OBJECT", "properties": {}}
+        )
+        raw_triggers = manifest.get("triggers")
+        self.triggers: List[str] = (
+            [str(item) for item in raw_triggers if str(item).strip()]
+            if isinstance(raw_triggers, (list, tuple, set)) else []
+        )
+        raw_aliases = manifest.get("aliases")
+        self.aliases: List[str] = (
+            [str(item) for item in raw_aliases if str(item).strip()]
+            if isinstance(raw_aliases, (list, tuple, set)) else []
+        )
+        self.active: bool = bool(manifest.get("active", True))
+        self.version: str = str(manifest.get("version") or "1.0.0")
         self.created_at: float = manifest.get("created_at", time.time())
         self.invocations: int = manifest.get("invocations", 0)
         self.last_error: Optional[str] = manifest.get("last_error", None)
