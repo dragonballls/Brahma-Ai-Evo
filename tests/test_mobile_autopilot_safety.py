@@ -106,3 +106,17 @@ def test_mobile_autopilot_requires_actual_device_dimensions_and_visible_taps():
     assert "Current UI elements on screen (" in source
     assert "len(instruction) > 4_000" in source
     assert "len(reason) > 1_000" in source
+
+
+def test_mobile_autopilot_dimension_validation_is_exercised_at_runtime():
+    import pytest
+    from actions import mobile_autopilot
+
+    with pytest.raises(ValueError, match="missing valid device screen dimensions"):
+        mobile_autopilot._screen_dimensions({"nodes": []})
+
+    assert mobile_autopilot._screen_dimensions({
+        "screen_width": 1080,
+        "screen_height": 2400,
+        "nodes": [],
+    }) == (1080, 2400)
