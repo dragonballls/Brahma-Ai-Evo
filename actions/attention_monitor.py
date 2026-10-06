@@ -789,8 +789,6 @@ class AttentionMonitor:
             if self._on_event:
                 self._on_event(event)
 
-        self._active_window_keys.intersection_update(current_window_keys)
-
     def _poll_windows(self, now: float) -> None:
         current_window_keys: set[str] = set()
         for win in _enum_visible_windows():
@@ -833,3 +831,5 @@ class AttentionMonitor:
             }
             if self._on_event:
                 self._on_event(event)
+
+        self._active_window_keys.intersection_update(current_window_keys)
