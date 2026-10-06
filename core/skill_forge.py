@@ -194,57 +194,6 @@ class SkillForge:
         skills_dir = APPDATA_SKILLS_DIR
         skills_dir.mkdir(parents=True, exist_ok=True)
 
-        # Prepare triggers & aliases
-        triggers = list(manifest.get("triggers", []))
-        if goal and goal.strip() not in triggers:
-            triggers.append(goal.strip())
-
-        clean_goal = re.sub(
-            r"^(?:please\s+|can\s+you\s+|use\s+(?:the\s+)?(?:skill|feature)\s+to\s+|run\s+(?:the\s+)?(?:skill|feature)\s+to\s+|test\s+(?:the\s+)?(?:skill|feature)\s+to\s+)",
-            "",
-            goal.lower().strip(),
-        )
-        if clean_goal and clean_goal not in triggers:
-            triggers.append(clean_goal)
-
-        name_words_trigger = actual_name.replace("_", " ")
-        if name_words_trigger not in triggers:
-            triggers.append(name_words_trigger)
-
-        aliases = list(manifest.get("aliases", []))
-        clean_alias = actual_name.replace("_", "")
-        if clean_alias not in aliases:
-            aliases.append(clean_alias)
-
-        manifest["name"] = actual_name
-        manifest["triggers"] = list(dict.fromkeys(triggers))
-        manifest["aliases"] = list(dict.fromkeys(aliases))
-        manifest["created_at"] = time.time()
-        manifest["version"] = "1.0.0"
-        manifest["author"] = "Project Ultron Autonomous Self-Evolution Engine"
-        manifest["active"] = True
-
-        feature_code = code
-        if "FEATURE_METADATA" not in feature_code:
-            meta_str = repr(manifest)
-            header = (
-                f'"""
-'
-                f'Feature: {actual_name}
-'
-                f'Description: {manifest.get("description", "")}
-'
-                f'Autonomous Evolutionary Capability synthesized by Brahma AI.
-'
-                f'"""
-
-'
-                f'FEATURE_METADATA = {meta_str}
-
-'
-            )
-            feature_code = header + feature_code
-
         target_dir = (skills_dir / actual_name).resolve()
         try:
             target_dir.relative_to(skills_dir.resolve())
@@ -290,7 +239,7 @@ class SkillForge:
                 "manifest": manifest,
             }
         except Exception as e:
-            if not committed or target_dir.exists():
+            if committed and target_dir.exists():
                 try:
                     shutil.rmtree(target_dir)
                 except Exception:
@@ -298,7 +247,7 @@ class SkillForge:
             return {"success": False, "message": f"Failed saving synthesized skill: {e}"}
         finally:
             try:
-                if staging_dir.exists():
+                if staging_dir is not None and staging_dir.exists():
                     shutil.rmtree(staging_dir)
             except Exception:
                 pass
