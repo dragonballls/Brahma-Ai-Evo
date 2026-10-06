@@ -497,10 +497,11 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None, player: Any 
         if not DynamicToolRegistry.has_tool(name):
             return f"No active skill named '{name}'."
         run_res = DynamicToolRegistry.execute_sync(name, p.get("arguments") or p or {})
-        if isinstance(run_res, dict):
-            out_str = str(run_res.get("summary") or run_res.get("output") or run_res.get("text") or run_res).strip()
-        else:
-            out_str = str(run_res).strip()
+        if isinstance(run_res, (dict, list, bool)):
+            if player and hasattr(player, "write_log"):
+                player.write_log(f"Brahma Evo [{name}]:\n{_result_text(run_res)}")
+            return run_res
+        out_str = str(run_res).strip()
         if player and hasattr(player, "write_log"):
             player.write_log(f"Brahma Evo [{name}]:\n{out_str}")
         return out_str
@@ -510,10 +511,11 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None, player: Any 
             from core.dynamic_registry import DynamicToolRegistry
             if DynamicToolRegistry.has_tool(tool):
                 run_res = DynamicToolRegistry.execute_sync(tool, parameters or {})
-                if isinstance(run_res, dict):
-                    out_str = str(run_res.get("summary") or run_res.get("output") or run_res.get("text") or run_res).strip()
-                else:
-                    out_str = str(run_res).strip()
+                if isinstance(run_res, (dict, list, bool)):
+                    if player and hasattr(player, "write_log"):
+                        player.write_log(f"Brahma Evo [{tool}]:\n{_result_text(run_res)}")
+                    return run_res
+                out_str = str(run_res).strip()
                 if player and hasattr(player, "write_log"):
                     player.write_log(f"Brahma Evo [{tool}]:\n{out_str}")
                 return out_str
