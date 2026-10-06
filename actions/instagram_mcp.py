@@ -92,17 +92,37 @@ class BrowserInstagramWorker(threading.Thread):
     def stop(self) -> None:
         self.running = False
         self._stop_event.set()
+        rejection = RuntimeError("Instagram browser worker is stopping.")
+        while True:
+            try:
+                task = self.q.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                if task is not None:
+                    _, _, fut = task
+                    if not fut.done():
+                        fut.set_exception(rejection)
+            finally:
+                self.q.task_done()
         try:
             self.q.put_nowait(None)
         except queue.Full:
             pass
 
     def execute(self, fn, *args, timeout: float = 35.0):
+        if self._stop_event.is_set() or not self.running:
+            raise RuntimeError("Instagram browser worker is stopped.")
         fut = Future()
         try:
             self.q.put((fn, args, fut), timeout=1.0)
         except queue.Full as exc:
             raise RuntimeError("Instagram browser worker is busy.") from exc
+        if self._stop_event.is_set():
+            # Stop may race the enqueue. Resolve the future immediately rather
+            # than leaving callers waiting for a worker that is shutting down.
+            if not fut.done():
+                fut.set_exception(RuntimeError("Instagram browser worker is stopping."))
         return fut.result(timeout=timeout)
 
     def is_browser_logged_in(self, ctx) -> bool:
