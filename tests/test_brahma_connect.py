@@ -1,3 +1,4 @@
+from unittest.mock import patch
 import asyncio
 from pathlib import Path
 
@@ -245,6 +246,39 @@ def test_capability_normalization_tolerates_non_strings():
     assert manager.normalize_many(["camera", 123, None]) == ["123", "camera"]
 
 
+
+
+def test_connection_hub_broadcast_timeout_does_not_block_other_connections():
+    class SlowSocket:
+        async def send_json(self, message):
+            await asyncio.sleep(60)
+
+    class GoodSocket:
+        def __init__(self):
+            self.messages = []
+
+        async def send_json(self, message):
+            self.messages.append(message)
+
+    async def scenario():
+        hub = ConnectionHub()
+        slow = SlowSocket()
+        good = GoodSocket()
+        await hub.register(slow, "slow-device")
+        await hub.register(good, "good-device")
+        with patch(
+            "brahma_connect.gateway.websocket.SOCKET_SEND_TIMEOUT_SECONDS",
+            0.05,
+        ):
+            await asyncio.wait_for(
+                hub.broadcast_chat_message({"type": "CHAT"}),
+                timeout=0.2,
+            )
+        return await hub.get("slow-device"), good.messages
+
+    slow_state, messages = asyncio.run(scenario())
+    assert slow_state is None
+    assert messages == [{"type": "CHAT"}]
 
 
 def test_connection_hub_broadcast_removes_dead_socket():
