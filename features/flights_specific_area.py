@@ -52,13 +52,18 @@ def _validate_remote_host(url: str) -> None:
 
 def _fetch_json(url: str, timeout: float) -> dict:
     _validate_remote_host(url)
-    request = urllib.request.Request(url, headers={"User-Agent": "BrahmaAI-FlightRadar/1.0"})
-    opener = urllib.request.build_opener(_NoRedirectHandler())
-    with opener.open(request, timeout=timeout) as response:
-        raw = response.read(MAX_NETWORK_RESPONSE_BYTES + 1)
-        if len(raw) > MAX_NETWORK_RESPONSE_BYTES:
-            raise ValueError("Flight-radar response exceeds the 4 MiB safety limit.")
-        return json.loads(raw.decode("utf-8"))
+    status, raw = fetch_public_bytes(
+        url,
+        timeout=timeout,
+        max_response_bytes=MAX_NETWORK_RESPONSE_BYTES,
+        headers={"User-Agent": "BrahmaAI-FlightRadar/1.0"},
+    )
+    if status >= 400:
+        raise RuntimeError(f"Flight-radar service returned HTTP {status}.")
+    data = json.loads(raw.decode("utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("Flight-radar service returned an unexpected response shape.")
+    return data
 
 
 def _validate_coordinates(latitude: float, longitude: float) -> tuple[float, float]:
