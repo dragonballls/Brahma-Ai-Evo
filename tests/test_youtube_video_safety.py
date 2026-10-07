@@ -40,3 +40,20 @@ def test_youtube_play_reports_search_open_failure():
         result = youtube_video._handle_play({"query": "demo"}, None)
 
     assert result == "I couldn't open the YouTube search page."
+
+    
+def test_youtube_play_does_not_claim_playback_after_browser_navigation():
+    from actions import youtube_video
+
+    with patch.object(
+        youtube_video,
+        "browser_control",
+        return_value="Opened: https://www.youtube.com/watch?v=abcdefghijk",
+    ):
+        result = youtube_video._handle_play(
+            {"url": "https://www.youtube.com/watch?v=abcdefghijk"},
+            None,
+        )
+
+    assert "playing" not in result.lower()
+    assert "opened" in result.lower()

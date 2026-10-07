@@ -473,7 +473,7 @@ def _handle_play(parameters: dict, player) -> str:
             return f"I couldn't open that YouTube video, sir: {navigation}"
         if player:
             player.write_log(f"[YouTube] Opening URL: {query}")
-        return f"Playing that YouTube video, sir."
+        return "Opened that YouTube video page, sir."
 
     if player:
         player.write_log(f"[YouTube] Searching: {query}")
@@ -486,7 +486,7 @@ def _handle_play(parameters: dict, player) -> str:
         print(f"[YouTube] ▶️ Opening: {video_url}")
         if not _open_url(video_url):
             return "I found a YouTube video, but the browser could not be opened."
-        return f"Playing: {query}"
+        return f"Opened the YouTube video page for: {query}"
 
     print(f"[YouTube] ⚠️ Scrape failed, opening filtered search page")
     fallback_url = (
