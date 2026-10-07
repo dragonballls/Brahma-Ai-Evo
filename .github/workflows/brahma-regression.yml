@@ -101,6 +101,8 @@ jobs:
           tests/test_youtube_video_safety.py
           tests/test_send_message_safety.py
           tests/test_crash_recovery_security.py
+          tests/test_auto_heal_history_atomicity.py
+          tests/test_auto_heal_security.py
 
       - name: Run lifecycle and browser security regressions
         run: python -m pytest -q tests/test_task_queue_lifecycle.py tests/test_browser_control_safety.py
