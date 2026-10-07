@@ -7,6 +7,7 @@ import platform
 import subprocess
 import time
 import urllib.request
+import uuid
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -21,43 +22,83 @@ _CACHE_TTL: float = 1800.0  # 30 minutes
 
 
 def _read_manual_override() -> Optional[str]:
-    """Checks if the user configured a manual city override in app_settings.json."""
-    if _SETTINGS_FILE.exists():
-        try:
-            with open(_SETTINGS_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                override = data.get("location_override") or data.get("city")
-                if override and isinstance(override, str) and override.strip():
-                    return override.strip()
-        except Exception:
-            pass
+    """Read location override through the canonical fail-closed settings loader."""
+    from memory.config_manager import load_settings
+
+    data = load_settings()
+    override = data.get("location_override") or data.get("city")
+    if override and isinstance(override, str) and override.strip():
+        return override.strip()
     return None
 
 
 def _read_disk_cache() -> Optional[Dict[str, Any]]:
-    """Reads cached location from disk if fresh."""
-    if _CACHE_FILE.exists():
+    """Read cached location from disk without treating corruption as a cache miss."""
+    if not _CACHE_FILE.exists():
+        return None
+    if _CACHE_FILE.is_symlink():
+        raise RuntimeError("Device location cache must not be a symlink.")
+    if not _CACHE_FILE.is_file():
+        raise RuntimeError("Device location cache path is not a regular file.")
+
+    try:
+        cached = json.loads(_CACHE_FILE.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise RuntimeError("Device location cache could not be read safely.") from exc
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Device location cache is corrupted; refusing to ignore it.") from exc
+
+    if not isinstance(cached, dict):
+        raise RuntimeError("Device location cache has an invalid root schema.")
+    if cached.get("status") != "success":
+        raise RuntimeError("Device location cache has an invalid status.")
+    cached_time = cached.get("timestamp")
+    if not isinstance(cached_time, (int, float)) or not math.isfinite(float(cached_time)):
+        raise RuntimeError("Device location cache has an invalid timestamp.")
+    city = cached.get("city")
+    if not isinstance(city, str) or not city.strip():
+        raise RuntimeError("Device location cache has an invalid city.")
+    for key, lower, upper in (
+        ("latitude", -90.0, 90.0),
+        ("longitude", -180.0, 180.0),
+    ):
+        value = cached.get(key)
+        if value is None:
+            raise RuntimeError(f"Device location cache is missing {key}.")
         try:
-            with open(_CACHE_FILE, "r", encoding="utf-8") as f:
-                cached = json.load(f)
-                cached_time = cached.get("timestamp", 0)
-                if time.time() - cached_time < _CACHE_TTL:
-                    return cached
-        except Exception:
-            pass
+            numeric = float(value)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"Device location cache has an invalid {key}.") from exc
+        if not math.isfinite(numeric) or not lower <= numeric <= upper:
+            raise RuntimeError(f"Device location cache has an invalid {key}.")
+
+    age = time.time() - float(cached_time)
+    if 0 <= age < _CACHE_TTL:
+        return cached
     return None
 
 
 def _write_disk_cache(data: Dict[str, Any]) -> None:
-    """Writes detected location to disk cache."""
+    """Persist detected location atomically so cache writes cannot corrupt the file."""
+    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    if _CACHE_FILE.is_symlink():
+        raise RuntimeError("Device location cache must not be a symlink.")
+    if _CACHE_FILE.exists() and not _CACHE_FILE.is_file():
+        raise RuntimeError("Device location cache path is not a regular file.")
+
+    data_copy = dict(data)
+    data_copy["timestamp"] = time.time()
+    temp = _CACHE_FILE.with_name(f".{_CACHE_FILE.name}.{uuid.uuid4().hex}.tmp")
     try:
-        _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        data_copy = dict(data)
-        data_copy["timestamp"] = time.time()
-        with open(_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(data_copy, f, indent=2)
-    except Exception:
-        pass
+        temp.write_text(json.dumps(data_copy, indent=2), encoding="utf-8")
+        os.replace(temp, _CACHE_FILE)
+    except Exception as exc:
+        raise RuntimeError("Device location cache could not be persisted safely.") from exc
+    finally:
+        try:
+            temp.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _detect_via_windows_api() -> Optional[Dict[str, Any]]:
@@ -73,12 +114,27 @@ def _detect_via_windows_api() -> Optional[Dict[str, Any]]:
     $pos = $w.Position.Location
     Write-Output "$($pos.Latitude),$($pos.Longitude),$($w.Status)"
     """
+    system_root = os.environ.get("SystemRoot")
+    if not system_root:
+        return None
+    powershell_path = Path(system_root) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    if powershell_path.is_symlink() or not powershell_path.is_file():
+        return None
+
     try:
         proc = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            [
+                str(powershell_path),
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                script,
+            ],
             capture_output=True,
             text=True,
+            stdin=subprocess.DEVNULL,
             timeout=4.5,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         out = proc.stdout.strip()
         parts = out.split(",")
