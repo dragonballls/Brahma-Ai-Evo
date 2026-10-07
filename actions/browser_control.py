@@ -572,6 +572,11 @@ class _BrowserThread:
                 results.append(f"✓ {selector}")
             except Exception as e:
                 results.append(f"✗ {selector}: {e}")
+        if not results:
+            return "Form fill failed: no fields were provided."
+        failures = [item for item in results if item.startswith("✗ ")]
+        if failures:
+            return "Form fill failed: " + ", ".join(failures)
         return "Form filled: " + ", ".join(results)
 
     async def _smart_click(self, description: str) -> str:
