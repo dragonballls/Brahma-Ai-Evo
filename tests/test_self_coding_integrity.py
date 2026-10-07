@@ -74,3 +74,42 @@ def test_self_coding_undo_uses_recoverable_undoing_state():
     assert "main state is ambiguous" in source
     assert "Undo checkpoint persistence failed" in source
     assert "Checkpoint undo commits are not the expected linear chain." in source
+
+
+def test_self_coding_list_checkpoints_does_not_skip_corruption(tmp_path):
+    import json
+    import pytest
+    from core.self_coding import SelfCodingAgent
+
+    agent = object.__new__(SelfCodingAgent)
+    agent.repo = tmp_path
+    agent.checkpoint_dir = tmp_path / ".git" / "brahma-checkpoints"
+    agent.checkpoint_dir.mkdir(parents=True)
+
+    path = agent.checkpoint_dir / "broken.json"
+    path.write_text("{broken", encoding="utf-8")
+
+    with pytest.raises(Exception):
+        agent.list_checkpoints()
+
+
+def test_self_coding_rejects_symlinked_checkpoint_metadata(tmp_path):
+    import os
+    import pytest
+    from core.self_coding import SelfCodingAgent
+
+    agent = object.__new__(SelfCodingAgent)
+    agent.repo = tmp_path
+    agent.checkpoint_dir = tmp_path / ".git" / "brahma-checkpoints"
+    agent.checkpoint_dir.mkdir(parents=True)
+
+    source = tmp_path / "outside.json"
+    source.write_text("{}", encoding="utf-8")
+    link = agent.checkpoint_dir / "checkpoint.json"
+    try:
+        os.symlink(source, link)
+    except (OSError, NotImplementedError):
+        pytest.skip("Symlinks are unavailable in this environment.")
+
+    with pytest.raises(Exception, match="must not be a symlink"):
+        agent._load("checkpoint")
