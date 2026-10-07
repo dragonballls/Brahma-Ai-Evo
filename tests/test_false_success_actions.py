@@ -118,3 +118,69 @@ def test_upload_video_does_not_claim_browser_open_is_verified():
 
     assert "page load was not independently verified" in result
     assert "creator studio is open" not in result.lower()
+
+
+def _load_email_flow_for_test():
+    import ast
+
+    source = (ROOT / "main.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    method = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_handle_email_flow"
+    )
+    namespace = {}
+    exec(compile(ast.Module(body=[method], type_ignores=[]), str(ROOT / "main.py"), "exec"), namespace)
+    return namespace["_handle_email_flow"]
+
+
+def _make_email_flow_test_instance():
+    method = _load_email_flow_for_test()
+
+    class UI:
+        def __init__(self):
+            self.finished = []
+
+        def write_log(self, _message):
+            pass
+
+        def update_task_workspace(self, **_kwargs):
+            pass
+
+        def finish_task_workspace(self, *args):
+            self.finished.append(args)
+
+    instance = type("EmailFlowHarness", (), {})()
+    instance.ui = UI()
+    instance.speak = lambda _message: None
+    instance._email_step = 2
+    instance._email_mode = True
+    instance._email_profiles = {}
+    instance._email_recipient = "test@example.com"
+    instance._email_app = "Gmail"
+    return method, instance
+
+
+def test_email_flow_requires_browser_launch_proof(monkeypatch):
+    import webbrowser
+
+    method, instance = _make_email_flow_test_instance()
+    monkeypatch.setattr(webbrowser, "open", lambda _url: False)
+
+    assert method(instance, "hello") is True
+    assert instance.ui.finished
+    assert instance.ui.finished[-1][1:] == ("Failed", 0)
+    assert "No email was sent or independently verified." in instance.ui.finished[-1][0]
+
+
+def test_email_flow_success_is_launch_request_not_send_proof(monkeypatch):
+    import webbrowser
+
+    method, instance = _make_email_flow_test_instance()
+    monkeypatch.setattr(webbrowser, "open", lambda _url: True)
+
+    assert method(instance, "hello") is True
+    assert instance.ui.finished
+    assert instance.ui.finished[-1][1:] == ("Compose launch requested", 90)
+    assert "not independently verified" in instance.ui.finished[-1][0]
