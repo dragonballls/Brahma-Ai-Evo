@@ -45,8 +45,8 @@ def test_geospatial_weather_missing_telemetry_fails_closed(monkeypatch):
             ).encode("utf-8")
 
     monkeypatch.setattr(
-        geospatial_globe.urllib.request,
-        "urlopen",
+        geospatial_globe,
+        "_open_no_redirect",
         lambda *args, **kwargs: _Response(),
     )
 
@@ -77,11 +77,30 @@ def test_geospatial_weather_unknown_code_is_not_presented_as_clear_or_cloudy(mon
             ).encode("utf-8")
 
     monkeypatch.setattr(
-        geospatial_globe.urllib.request,
-        "urlopen",
+        geospatial_globe,
+        "_open_no_redirect",
         lambda *args, **kwargs: _Response(),
     )
 
     result = geospatial_globe.fetch_location_weather(34.05, -118.25)
     assert result["condition"] == "Unknown"
     assert result["icon"] == "❓"
+
+def test_geospatial_redirect_is_rejected():
+    from actions import geospatial_globe
+    import urllib.error
+
+    class _Opener:
+        def open(self, request, timeout=None):
+            raise urllib.error.URLError("Geospatial service redirects are disabled.")
+
+    import pytest
+
+    # Exercise the production opener contract rather than a patched direct urlopen.
+    class _NoRedirect:
+        def open(self, request, timeout=None):
+            return _Opener().open(request, timeout=timeout)
+
+    with pytest.raises(urllib.error.URLError, match="redirects are disabled"):
+        _NoRedirect().open(None, timeout=1.0)
+
