@@ -2,6 +2,7 @@ import os
 import shutil
 import platform
 from pathlib import Path
+import stat as _stat
 import hashlib
 from datetime import datetime
 
@@ -107,19 +108,46 @@ _SAFE_ROOTS: list[Path] = [
     Path.home(),
 ]
 
+def _is_link_like(path: Path) -> bool:
+    """Reject symlinks, junctions, and Windows reparse points."""
+    try:
+        if path.is_symlink():
+            return True
+        is_junction = getattr(path, "is_junction", None)
+        if is_junction is not None and is_junction():
+            return True
+        if os.name == "nt":
+            attrs = getattr(path.stat(follow_symlinks=False), "st_file_attributes", 0)
+            reparse = getattr(_stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+            if reparse and attrs & reparse:
+                return True
+        return False
+    except OSError:
+        return True
+
+
 def _has_symlink_component(target: Path) -> bool:
-    """Return True when any existing path component is a symlink."""
+    """Return True when any existing path component is link/reparse-like."""
     try:
         path = target.expanduser()
         current = Path(path.anchor) if path.anchor else Path(".")
         parts = path.parts[1:] if path.anchor else path.parts
         for part in parts:
             current = current / part
-            if current.is_symlink():
+            if _is_link_like(current):
                 return True
     except OSError:
         return True
     return False
+
+
+def _is_hardlinked_regular_file(path: Path) -> bool:
+    try:
+        if not path.is_file() or _is_link_like(path):
+            return False
+        return int(path.stat().st_nlink) > 1
+    except OSError:
+        return True
 
 
 def _is_safe_path(target: Path) -> bool:
@@ -248,6 +276,12 @@ def list_files(path: str = "desktop", show_hidden: bool = False) -> str:
         if not items:
             return f"Directory is empty: {target.name}/"
 
+        max_items = 500
+        if len(items) > max_items:
+            return (
+                f"Contents of {target.name}/ (showing first {max_items} of {len(items)} items):\n"
+                + "\n".join(items[:max_items])
+            )
         return f"Contents of {target.name}/ ({len(items)} items):\n" + "\n".join(items)
 
     except PermissionError:
@@ -267,8 +301,10 @@ def create_file(path: str, name: str = "", content: str = "") -> str:
         previous = None
         if existed:
             try:
-                if target.is_symlink() or not target.is_file():
+                if _is_link_like(target) or not target.is_file():
                     return f"Could not create file: existing target '{target.name}' is not a regular file."
+                if _is_hardlinked_regular_file(target):
+                    return f"Could not create file: existing target '{target.name}' has multiple hard links; refusing an unsafe overwrite."
                 previous = target.read_text(encoding="utf-8")
             except Exception as exc:
                 return f"Could not create file: existing target '{target.name}' could not be read safely: {exc}"
@@ -450,9 +486,18 @@ def read_file(path: str, name: str = "", max_chars: int = 4000) -> str:
         if not target.is_file():
             return f"Not a file: {target.name}"
 
-        content = target.read_text(encoding="utf-8", errors="ignore")
+        try:
+            max_chars = max(1, min(int(max_chars), 1_000_000))
+        except (TypeError, ValueError):
+            return "Could not read file: max_chars must be a positive integer."
+        try:
+            total_bytes = target.stat().st_size
+            with target.open("r", encoding="utf-8", errors="ignore") as handle:
+                content = handle.read(max_chars + 1)
+        except OSError as exc:
+            return f"Could not read file: {exc}"
         if len(content) > max_chars:
-            content = content[:max_chars] + f"\n\n[Truncated — {len(content)} total chars]"
+            content = content[:max_chars] + f"\n\n[Truncated — {total_bytes} bytes on disk]"
         return content
 
     except Exception as e:
@@ -474,8 +519,10 @@ def write_file(path: str, name: str = "", content: str = "",
         undoable = True
         existed = target.exists() or target.is_symlink()
         if existed:
-            if target.is_symlink() or not target.is_file():
+            if _is_link_like(target) or not target.is_file():
                 return "Could not write file: existing target is not a regular file."
+            if _is_hardlinked_regular_file(target):
+                return "Could not write file: existing target has multiple hard links; refusing an unsafe overwrite."
             try:
                 size = target.stat().st_size
                 if size > _UNDO_CONTENT_LIMIT:
@@ -496,8 +543,8 @@ def write_file(path: str, name: str = "", content: str = "",
         mode = "a" if append else "w"
         if not _is_safe_path(target.parent):
             return f"Access denied: {target.parent}"
-        if target.is_symlink():
-            return f"Could not write file: symlink targets are not permitted."
+        if _is_link_like(target) or _is_hardlinked_regular_file(target):
+            return f"Could not write file: link/reparse or hard-linked targets are not permitted."
         with open(target, mode, encoding="utf-8") as f:
             f.write(content)
 

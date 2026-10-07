@@ -78,11 +78,15 @@ def _output_path(src: Path, suffix: str, new_ext: str = None) -> Path:
     ext = new_ext or src.suffix
     base = src.parent / f"{src.stem}_{suffix}{ext}"
     if not base.exists():
+        if base.is_symlink():
+            raise RuntimeError(f"Refusing to use symlink output path: {base}")
         return base
     counter = 1
     while True:
         candidate = src.parent / f"{src.stem}_{suffix}_{counter}{ext}"
         if not candidate.exists():
+            if candidate.is_symlink():
+                continue
             return candidate
         counter += 1
 

@@ -88,3 +88,54 @@ def test_move_and_copy_refuse_existing_destinations(tmp_path, monkeypatch):
     copy_result = file_controller.copy_file(str(tmp_path), "source.txt", str(destination))
     assert "Refusing to overwrite it" in copy_result
     assert source.exists()
+
+
+def test_read_file_does_not_load_entire_file_before_truncating(tmp_path, monkeypatch):
+    from actions import file_controller
+
+    target = tmp_path / "large.txt"
+    target.write_text("A" * 100_000, encoding="utf-8")
+    monkeypatch.setattr(file_controller, "_SAFE_ROOTS", [tmp_path])
+
+    class GuardedReader:
+        def __init__(self, raw):
+            self.raw = raw
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            self.raw.close()
+        def read(self, size=-1):
+            assert size <= 101
+            return self.raw.read(size)
+
+    original_open = Path.open
+
+    def guarded_open(self, *args, **kwargs):
+        raw = original_open(self, *args, **kwargs)
+        if self == target:
+            return GuardedReader(raw)
+        return raw
+
+    monkeypatch.setattr(Path, "open", guarded_open)
+    result = file_controller.read_file(str(tmp_path), "large.txt", max_chars=100)
+    assert "[Truncated" in result
+    assert len(result.split("\n\n[Truncated")[0]) == 100
+
+
+def test_file_processor_output_path_skips_existing_symlink(tmp_path):
+    from actions import file_processor
+
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"video")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("keep", encoding="utf-8")
+    link = tmp_path / "video_compressed.mp4"
+
+    try:
+        link.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        return
+
+    output = file_processor._output_path(source, "compressed")
+    assert output != link
+    assert not output.exists()
