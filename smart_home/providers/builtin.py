@@ -244,9 +244,9 @@ class AtombergProvider(SmartHomeProvider):
             detail = f"{device['name']} LED {'enabled' if enabled else 'disabled'}."
 
         if command:
-            client.send_command(device_id, command)
-
-        refreshed = self._refresh_atomberg_state(client, device_id)
+            if client.send_command(device_id, command) is not True:
+                raise RuntimeError("Atomberg API rejected the device command.")
+            refreshed = self._refresh_atomberg_state(client, device_id)
         is_on = bool(refreshed.get("is_on", device.get("is_on")))
         traits = dict(device.get("traits") or {})
         traits.update(refreshed)
