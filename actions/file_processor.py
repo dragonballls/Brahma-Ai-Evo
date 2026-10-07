@@ -571,8 +571,12 @@ def _process_data(path: Path, file_type: str, action: str,
         asc = params.get("ascending", True)
         try:
             sorted_df = df.sort_values(col, ascending=asc)
-            out = _output_path(path, "sorted", path.suffix)
-            sorted_df.to_csv(out, index=False)
+            if file_type == "excel":
+                out = _output_path(path, "sorted", ".xlsx")
+                sorted_df.to_excel(out, index=False)
+            else:
+                out = _output_path(path, "sorted", ".csv")
+                sorted_df.to_csv(out, index=False)
             _verify_output_artifact(out)
             return f"Sorted by '{col}'. Saved: {out.name}"
         except Exception as e:

@@ -342,8 +342,11 @@ def test_video_failed_ffmpeg_output_is_removed(tmp_path, monkeypatch):
     monkeypatch.setattr(file_processor, "_ffmpeg_available", lambda: True, raising=False)
 
     def fake_run(*args, **kwargs):
-        Path(args[0][-1]).write_bytes(b"partial")
-        return __import__("subprocess").CompletedProcess(args[0], 1, "", "simulated ffmpeg failure")
+        command = args[0]
+        if command[:2] == ["ffmpeg", "-version"]:
+            return __import__("subprocess").CompletedProcess(command, 0, "", "")
+        Path(command[-2]).write_bytes(b"partial")
+        return __import__("subprocess").CompletedProcess(command, 1, "", "simulated ffmpeg failure")
 
     monkeypatch.setattr(file_processor.subprocess, "run", fake_run)
     result = file_processor._process_video(source, "extract_audio", {})
@@ -395,3 +398,37 @@ def test_file_processor_rejects_empty_handler_result(tmp_path, monkeypatch):
     monkeypatch.setattr(file_processor, "_process_text_doc", lambda *args, **kwargs: "")
     result = file_processor.file_processor({"file_path": str(source), "action": "summarize"})
     assert result == "Processing failed: action returned no usable result."
+
+
+def test_excel_sort_preserves_xlsx_output_contract(tmp_path, monkeypatch):
+    import sys
+    import types
+    import zipfile
+    from actions import file_processor
+
+    class FakeFrame:
+        columns = ["name"]
+
+        def sort_values(self, _col, ascending=True):
+            return self
+
+        def to_excel(self, target, index=False):
+            with zipfile.ZipFile(target, "w") as archive:
+                archive.writestr("[Content_Types].xml", "<Types/>")
+                archive.writestr("xl/workbook.xml", "<workbook/>")
+
+        def to_csv(self, target, index=False):
+            Path(target).write_text("name\\nalice\\n", encoding="utf-8")
+
+    xlsx = tmp_path / "sample.xlsx"
+    xlsx.write_bytes(b"placeholder")
+    fake_pandas = types.SimpleNamespace(read_excel=lambda _path: FakeFrame())
+    monkeypatch.setitem(sys.modules, "pandas", fake_pandas)
+
+    result = file_processor._process_data(xlsx, "excel", "sort", {"column": "name"})
+    assert result.startswith("Sorted by 'name'. Saved:")
+    output = next(tmp_path.glob("sample_sorted*.xlsx"))
+    assert zipfile.is_zipfile(output)
+    with zipfile.ZipFile(output) as archive:
+        assert "[Content_Types].xml" in archive.namelist()
+        assert "xl/workbook.xml" in archive.namelist()
