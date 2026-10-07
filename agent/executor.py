@@ -270,28 +270,28 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None, player: Any 
 
     elif tool == "open_app":
         from actions.open_app import open_app
-        return open_app(parameters=parameters, player=player) or "Done."
+        return _require_tool_result(tool, open_app(parameters=parameters, player=player))
 
     elif tool == "web_search":
         from actions.web_search import web_search
-        return web_search(parameters=parameters, player=player) or "Done."
+        return _require_tool_result(tool, web_search(parameters=parameters, player=player))
     elif tool == "game_updater":
         from actions.game_updater import game_updater
-        return game_updater(parameters=parameters, player=player, speak=speak) or "Done."
+        return _require_tool_result(tool, game_updater(parameters=parameters, player=player, speak=speak))
     elif tool == "browser_control" or tool.startswith("browser_"):
         from actions.browser_control import browser_control
         p = dict(parameters or {})
         if tool.startswith("browser_"):
             p.setdefault("action", tool.replace("browser_", ""))
-        return browser_control(parameters=p, player=player) or "Done."
+        return _require_tool_result(tool, browser_control(parameters=p, player=player))
 
     elif tool == "file_controller":
         from actions.file_controller import file_controller
-        return file_controller(parameters=parameters, player=player) or "Done."
+        return _require_tool_result(tool, file_controller(parameters=parameters, player=player))
 
     elif tool == "cmd_control":
         from actions.cmd_control import cmd_control
-        return cmd_control(parameters=parameters, player=player) or "Done."
+        return _require_tool_result(tool, cmd_control(parameters=parameters, player=player))
 
     elif tool == "claude_code":
         from actions.claude_code_bridge import run_developer_mode_request
