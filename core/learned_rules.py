@@ -98,7 +98,11 @@ class LearnedRulesEngine:
                     changed = True
                 sanitized.append(current)
             if changed:
-                LearnedRulesEngine._save_raw(sanitized)
+                if not LearnedRulesEngine._save_raw(sanitized):
+                    raise RuntimeError(
+                        "Learned-rules state contained credential-like data but the sanitized "
+                        "state could not be persisted safely."
+                    )
             return sanitized
         except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
             quarantine = RULES_FILE.with_name(
