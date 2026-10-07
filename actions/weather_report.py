@@ -61,29 +61,53 @@ def get_live_weather(city: Optional[str] = None) -> Dict[str, Any]:
             if len(raw) > 64 * 1024:
                 raise ValueError("Weather service response exceeded the safety limit.")
             data = json.loads(raw.decode("utf-8"))
-            current = data.get("current_condition", [{}])[0]
-            nearest = data.get("nearest_area", [{}])[0]
+
+            if not isinstance(data, dict):
+                raise ValueError("Weather service returned an unexpected payload.")
+
+            current_items = data.get("current_condition")
+            if not isinstance(current_items, list) or not current_items:
+                raise ValueError("Weather service omitted current conditions.")
+            current = current_items[0]
+            if not isinstance(current, dict):
+                raise ValueError("Weather service returned invalid current conditions.")
+
+            temp_raw = current.get("temp_C")
+            feels_like_raw = current.get("FeelsLikeC", temp_raw)
+            desc_items = current.get("weatherDesc")
+            if temp_raw is None or not isinstance(desc_items, list) or not desc_items:
+                raise ValueError("Weather service omitted required telemetry fields.")
+
+            desc = desc_items[0] if isinstance(desc_items[0], dict) else {}
+            condition = desc.get("value")
+            humidity_raw = current.get("humidity")
+            wind_raw = current.get("windspeedKmph")
+            if condition in (None, "") or humidity_raw is None or wind_raw is None:
+                raise ValueError("Weather service omitted required telemetry fields.")
+
+            temp_c = int(temp_raw)
+            feels_like = int(feels_like_raw)
+            humidity = f"{humidity_raw}%"
+            wind_speed = f"{wind_raw} km/h"
 
             detected_city = target_city
             if not detected_city:
-                area_names = nearest.get("areaName", [{}])
-                detected_city = area_names[0].get("value") if area_names else "Current Location"
-
-            temp_c = int(current.get("temp_C", 26))
-            desc = current.get("weatherDesc", [{}])[0].get("value", "Clear")
-            humidity = f"{current.get('humidity', '60')}%"
-            wind_speed = f"{current.get('windspeedKmph', '10')} km/h"
-            feels_like = int(current.get("FeelsLikeC", temp_c))
+                nearest_items = data.get("nearest_area")
+                if isinstance(nearest_items, list) and nearest_items and isinstance(nearest_items[0], dict):
+                    area_names = nearest_items[0].get("areaName")
+                    if isinstance(area_names, list) and area_names and isinstance(area_names[0], dict):
+                        detected_city = area_names[0].get("value")
+            detected_city = detected_city or "Current Location"
 
             return {
                 "status": "success",
                 "city": detected_city,
                 "temp_c": temp_c,
-                "condition": desc,
+                "condition": str(condition),
                 "humidity": humidity,
                 "wind": wind_speed,
                 "feels_like": feels_like,
-                "summary": f"{temp_c}°C, {desc} in {detected_city}",
+                "summary": f"{temp_c}°C, {condition} in {detected_city}",
             }
     except Exception as e:
         print(f"[Weather] Live weather fetch notice: {e}")
