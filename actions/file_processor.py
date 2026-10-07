@@ -123,6 +123,52 @@ def _validate_output_format(path: Path) -> None:
                 raise RuntimeError(
                     f"Generated {ext[1:].upper()} output is missing required package parts: {sorted(missing)}"
                 )
+            import xml.etree.ElementTree as ET
+            for member_name in required:
+                try:
+                    ET.fromstring(archive.read(member_name))
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Generated {ext[1:].upper()} output contains malformed XML in {member_name}: {path}"
+                    ) from exc
+        return
+    if ext in {".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac", ".wma", ".opus"}:
+        header = path.read_bytes()[:16]
+        valid = False
+        if ext == ".wav":
+            valid = header[:4] == b"RIFF" and header[8:12] == b"WAVE"
+        elif ext in {".ogg", ".opus"}:
+            valid = header[:4] == b"OggS"
+        elif ext == ".flac":
+            valid = header[:4] == b"fLaC"
+        elif ext == ".m4a":
+            valid = len(header) >= 8 and header[4:8] == b"ftyp"
+        elif ext == ".aac":
+            valid = len(header) >= 2 and header[0] == 0xFF and (header[1] & 0xF6) == 0xF0
+        elif ext == ".mp3":
+            valid = header[:3] == b"ID3" or (
+                len(header) >= 2 and header[0] == 0xFF and (header[1] & 0xE0) == 0xE0
+            )
+        elif ext == ".wma":
+            valid = header[:16] == bytes.fromhex("3026B2758E66CF11A6D900AA0062CE6C")
+        if not valid:
+            raise RuntimeError(f"Generated {ext[1:].upper()} audio output has an invalid signature: {path}")
+        return
+    if ext in {".mp4", ".mov", ".m4v", ".3gp", ".3g2", ".avi", ".mkv", ".webm", ".flv", ".wmv"}:
+        header = path.read_bytes()[:16]
+        valid = False
+        if ext in {".mp4", ".mov", ".m4v", ".3gp", ".3g2"}:
+            valid = len(header) >= 8 and header[4:8] == b"ftyp"
+        elif ext == ".avi":
+            valid = header[:4] == b"RIFF" and header[8:12] == b"AVI "
+        elif ext in {".mkv", ".webm"}:
+            valid = header[:4] == bytes.fromhex("1A45DFA3")
+        elif ext == ".flv":
+            valid = header[:3] == b"FLV"
+        elif ext == ".wmv":
+            valid = header[:16] == bytes.fromhex("3026B2758E66CF11A6D900AA0062CE6C")
+        if not valid:
+            raise RuntimeError(f"Generated {ext[1:].upper()} video output has an invalid signature: {path}")
         return
     if ext == ".pdf":
         header = path.read_bytes()[:5]

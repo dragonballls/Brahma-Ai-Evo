@@ -332,6 +332,50 @@ def test_generated_artifacts_require_basic_format_integrity(tmp_path):
     assert not invalid_image.exists()
 
 
+def test_generated_output_rejects_malformed_ooxml_pdf_and_media(tmp_path):
+    from actions.file_processor import _verify_output_artifact
+
+    valid_specs = {
+        ".docx": ("[Content_Types].xml", "<Types/>", "word/document.xml", "<document/>"),
+        ".xlsx": ("[Content_Types].xml", "<Types/>", "xl/workbook.xml", "<workbook/>"),
+        ".pptx": ("[Content_Types].xml", "<Types/>", "ppt/presentation.xml", "<presentation/>"),
+    }
+    for ext, parts in valid_specs.items():
+        valid = tmp_path / f"valid{ext}"
+        with zipfile.ZipFile(valid, "w") as archive:
+            archive.writestr(parts[0], parts[1])
+            archive.writestr(parts[2], parts[3])
+        assert _verify_output_artifact(valid) == valid
+
+        corrupt = tmp_path / f"corrupt{ext}"
+        with zipfile.ZipFile(corrupt, "w") as archive:
+            archive.writestr(parts[0], parts[1])
+            archive.writestr(parts[2], b"<broken")
+        with pytest.raises(RuntimeError, match="malformed XML"):
+            _verify_output_artifact(corrupt)
+        assert not corrupt.exists()
+
+    valid_pdf = tmp_path / "valid.pdf"
+    valid_pdf.write_bytes(b"%PDF-1.7\n")
+    assert _verify_output_artifact(valid_pdf) == valid_pdf
+
+    bad_pdf = tmp_path / "bad.pdf"
+    bad_pdf.write_bytes(b"not-a-pdf")
+    with pytest.raises(RuntimeError, match="invalid header"):
+        _verify_output_artifact(bad_pdf)
+    assert not bad_pdf.exists()
+
+    valid_mp4 = tmp_path / "valid.mp4"
+    valid_mp4.write_bytes(b"\x00\x00\x00\x18ftypisom")
+    assert _verify_output_artifact(valid_mp4) == valid_mp4
+
+    bad_mp4 = tmp_path / "bad.mp4"
+    bad_mp4.write_bytes(b"partial")
+    with pytest.raises(RuntimeError, match="invalid signature"):
+        _verify_output_artifact(bad_mp4)
+    assert not bad_mp4.exists()
+
+
 def test_video_failed_ffmpeg_output_is_removed(tmp_path, monkeypatch):
     from actions import file_processor
 
