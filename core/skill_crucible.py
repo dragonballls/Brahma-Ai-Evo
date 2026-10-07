@@ -852,7 +852,7 @@ def run_tests():
                 is_err = True
                 err_msg = res
 
-            entry = {"index": i, "success": not is_err, "output": str(res)[:300]}
+            entry = {{"index": i, "success": not is_err, "output": str(res)[:300]}}
             if serialized_result is not None:
                 entry["result_json"] = serialized_result
             if is_err:

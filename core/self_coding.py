@@ -658,9 +658,10 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
                     "Approval publish outcome is ambiguous and the checkpoint branch "
                     "could not be restored; durable promotion metadata remains available for recovery."
                 )
+            detail = pushed.stderr.strip() or "remote did not provide a diagnostic"
             raise SelfCodingError(
-                pushed.stderr.strip()
-                or "Approval publish outcome is ambiguous; checkpoint remains in promoting state for recovery."
+                "Approval publish outcome is ambiguous; checkpoint remains in promoting state for recovery. "
+                f"Push result: {detail}"
             )
         approved = replace(promoting, state="approved")
         try:
@@ -772,9 +773,10 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
                         "Undo publish outcome is ambiguous and the original branch "
                         "could not be restored; durable undo metadata remains available for recovery."
                     )
+                detail = pushed.stderr.strip() or "remote did not provide a diagnostic"
                 raise SelfCodingError(
-                    pushed.stderr.strip()
-                    or "Undo publish outcome is ambiguous; checkpoint remains in undoing state for recovery."
+                    "Undo publish outcome is ambiguous; checkpoint remains in undoing state for recovery. "
+                    f"Push result: {detail}"
                 )
             try:
                 self._save(replace(checkpoint, state="undone", undo_commits=tuple(undo_commits)))

@@ -19,7 +19,13 @@ def _tool_call(name: str, arguments: dict) -> str:
 
 def _agent(tmp_path: Path) -> BrahmaDevAgent:
     agent = BrahmaDevAgent(tmp_path)
-    agent._github_research_preflight = Mock(return_value="research complete")
+
+    def completed_preflight(_instruction: str) -> str:
+        agent.github_research_done = True
+        agent.github_required_sources = 0
+        return "research complete"
+
+    agent._github_research_preflight = Mock(side_effect=completed_preflight)
     agent.tools.file_edit = Mock(return_value="Successfully updated example.py (replaced 1 occurrence(s)).")
     agent.tools.bash = Mock(return_value="pytest passed\n[Exit code: 0]")
     return agent
