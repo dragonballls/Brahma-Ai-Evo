@@ -160,7 +160,7 @@ from core.single_instance import SingleInstance
 from core.voice_guard import VoiceCommandGate, VoiceToolExecutionGate
 from core.duplex_voice import BargeInGate, PlaybackGeneration
 from core.prosody import profile_for_text, profile_prompt_block
-from core.provider_policy import normalize_provider, validate_provider, is_local, is_gemini, is_openrouter
+from core.provider_policy import normalize_provider, validate_provider, require_provider, is_local, is_gemini, is_openrouter
 _smoke_trace("top-level imports complete")
 from config import get_api_key
 
@@ -223,6 +223,11 @@ def _has_gemini_voice_credentials() -> bool:
         return bool(get_api_key("Gemini"))
     except Exception:
         return False
+
+
+def _should_start_gemini_live(provider: object, offline_mode: bool, has_credentials: bool) -> bool:
+    """Start Gemini Live only when Gemini is the explicitly selected online provider."""
+    return not offline_mode and is_gemini(provider) and bool(has_credentials)
 
 def _transcribe_microphone_pcm(
     pcm_bytes: bytes,
@@ -7450,6 +7455,7 @@ class BrahmaLive:
             await self._run_text_voice_fallback_loop(reason=reason)
             return
 
+        require_provider("Gemini", "Gemini Live voice")
         client = genai.Client(
             api_key=_get_api_key(),
             http_options={"api_version": "v1beta"}
@@ -7986,7 +7992,7 @@ def _main_impl():
         # Gemini Live provides the full-duplex native-audio experience when its
         # credential is available. Otherwise keep the microphone useful through
         # the independent text-agent + native-TTS path.
-        if not offline_mode and not is_local(selected_provider) and gemini_voice_ready:
+        if _should_start_gemini_live(selected_provider, offline_mode, gemini_voice_ready):
             try:
                 asyncio.run(brahma_evo.run())
             except KeyboardInterrupt:

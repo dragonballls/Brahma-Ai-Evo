@@ -946,3 +946,26 @@ if __name__ == "__main__":
         self.assertIn("if len(self._device_sessions) > 256:", source)
         self.assertIn("if len(self._login_failures) > 2048:", source)
         self.assertIn("self._prune_auth_state()", source)
+
+
+    def test_gemini_live_requires_explicit_gemini_provider(self):
+        main = self.read("main.py")
+        self.assertIn("def _should_start_gemini_live(", main)
+        tree = ast.parse(main)
+        fn = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "_should_start_gemini_live"
+        )
+        namespace = {}
+        exec(
+            compile(ast.Module(body=[fn], type_ignores=[]), "main.py", "exec"),
+            {"is_gemini": lambda value: str(value).casefold() == "gemini"},
+            namespace,
+        )
+        should_start = namespace["_should_start_gemini_live"]
+
+        self.assertTrue(should_start("Gemini", False, True))
+        self.assertFalse(should_start("OpenRouter", False, True))
+        self.assertFalse(should_start("Gemini", True, True))
+        self.assertFalse(should_start("Gemini", False, False))
+        self.assertIn('require_provider("Gemini", "Gemini Live voice")', main)
