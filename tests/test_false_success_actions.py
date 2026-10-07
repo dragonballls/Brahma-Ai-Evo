@@ -508,3 +508,13 @@ def test_smart_home_device_management_surfaces_persistence_failures():
     assert "Rename failed" in source
     assert "Forget failed" in source
     assert "Restart failed" in source
+
+
+def test_action_result_classifier_rejects_error_dicts_and_accepts_normal_dicts():
+    source = (ROOT / "main.py").read_text(encoding="utf-8")
+    start = source.index("def _action_result_is_failure")
+    end = source.index("\ndef ", start + 5)
+    block = source[start:end]
+    assert 'error = result.get("error")' in block
+    assert 'errors = result.get("errors")' in block
+    assert 'if error not in (None, "")' in block
