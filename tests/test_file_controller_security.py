@@ -339,3 +339,34 @@ def test_secure_unlink_uses_handle_backed_delete(tmp_path, monkeypatch):
     assert captured["path"] == target
     assert captured["expected_identity"] == identity
     monkeypatch.setattr(real_winfs, "unlink", real_unlink)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows safe-write dispatch")
+def test_secure_write_text_dispatches_to_windows_handle_writer(tmp_path, monkeypatch):
+    from actions import file_controller
+
+    calls = {}
+
+    class FakeWinFS:
+        def write_text(self, path, content, *, append=False, expected_identity=None):
+            calls["path"] = path
+            calls["content"] = content
+            calls["append"] = append
+            calls["expected_identity"] = expected_identity
+
+        def unlink(self, *args, **kwargs):
+            raise AssertionError("secure write must not dispatch to Windows unlink")
+
+    monkeypatch.setattr(file_controller, "_WINFS", FakeWinFS())
+    file_controller._secure_write_text(
+        tmp_path / "target.txt",
+        "replacement",
+        append=True,
+        expected_identity=(1, 2, 3),
+    )
+    assert calls == {
+        "path": tmp_path / "target.txt",
+        "content": "replacement",
+        "append": True,
+        "expected_identity": (1, 2, 3),
+    }
