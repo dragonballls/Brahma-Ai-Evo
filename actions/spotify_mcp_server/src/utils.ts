@@ -10,6 +10,45 @@ import open from 'open';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_FILE = process.env.SPOTIFY_CONFIG_PATH || path.join(__dirname, '../spotify-config.json');
 
+const MAX_SPOTIFY_RESPONSE_BYTES = 256 * 1024;
+const MAX_SPOTIFY_ERROR_BYTES = 64 * 1024;
+const SPOTIFY_REQUEST_TIMEOUT_MS = 15000;
+
+
+async function readResponseTextBounded(
+  response: Response,
+  limit: number,
+): Promise<string> {
+  const declared = Number(response.headers.get('content-length') || '');
+  if (Number.isFinite(declared) && declared > limit) {
+    throw new Error('Spotify response exceeded the safety limit.');
+  }
+
+  if (!response.body) return '';
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > limit) {
+        await reader.cancel();
+        throw new Error('Spotify response exceeded the safety limit.');
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const merged = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
+  return merged.toString('utf8');
+}
+
 export interface SpotifyConfig {
   clientId: string;
   clientSecret: string;
@@ -105,19 +144,25 @@ export async function spotifyFetch<T = unknown>(
       ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
     },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    redirect: 'error',
+    signal: AbortSignal.timeout(SPOTIFY_REQUEST_TIMEOUT_MS),
   });
 
   if (!response.ok) {
-    const errBody = await response.text();
+    const errBody = await readResponseTextBounded(response, MAX_SPOTIFY_ERROR_BYTES);
     throw new Error(
       `Spotify API ${method} ${url} failed (${response.status}): ${errBody}`,
     );
   }
 
-  // Some endpoints (DELETE, PUT) return empty body
-  const text = await response.text();
+  // Some endpoints (DELETE, PUT) return empty body.
+  const text = await readResponseTextBounded(response, MAX_SPOTIFY_RESPONSE_BYTES);
   if (!text) return undefined as T;
-  return JSON.parse(text) as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error('Spotify API returned invalid JSON.');
+  }
 }
 
 export async function createSpotifyApi(): Promise<SpotifyApi> {
@@ -214,14 +259,22 @@ async function exchangeCodeForToken(
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body: params,
+    redirect: 'error',
+    signal: AbortSignal.timeout(SPOTIFY_REQUEST_TIMEOUT_MS),
   });
 
   if (!response.ok) {
-    const errorData = await response.text();
+    const errorData = await readResponseTextBounded(response, MAX_SPOTIFY_ERROR_BYTES);
     throw new Error(`Failed to exchange code for token: ${errorData}`);
   }
 
-  const data = await response.json();
+  const data = JSON.parse(
+    await readResponseTextBounded(response, MAX_SPOTIFY_RESPONSE_BYTES),
+  ) as {
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+  };
   return {
     access_token: data.access_token,
     refresh_token: data.refresh_token,
@@ -250,10 +303,12 @@ async function refreshAccessToken(
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body: params,
+    redirect: 'error',
+    signal: AbortSignal.timeout(SPOTIFY_REQUEST_TIMEOUT_MS),
   });
 
   if (!response.ok) {
-    const errorData = await response.text();
+    const errorData = await readResponseTextBounded(response, MAX_SPOTIFY_ERROR_BYTES);
     let errorCode: string | undefined;
     try {
       errorCode = JSON.parse(errorData).error;
@@ -277,7 +332,13 @@ async function refreshAccessToken(
     throw new Error(`Failed to refresh access token: ${errorData}`);
   }
 
-  const data = await response.json();
+  const data = JSON.parse(
+    await readResponseTextBounded(response, MAX_SPOTIFY_RESPONSE_BYTES),
+  ) as {
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+  };
 
   // Spotify may rotate the refresh token on refresh; persist the new one so
   // the caller's saveSpotifyConfig() writes it back.
