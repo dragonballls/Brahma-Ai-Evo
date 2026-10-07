@@ -109,7 +109,8 @@ class LiveVoiceContractTests(unittest.TestCase):
         self.assertIn("asyncio.run(brahma_evo.run_text_voice_fallback())", self.main_text)
         self.assertIn('text_voice_fallback = bool(getattr(self, "_text_voice_fallback", False))', self.main_text)
 
-        self.assertIn("Speech is transcribed through the text command path.", self.main_text)
+        self.assertIn("Text/TTS voice fallback is active;", self.main_text)
+        self.assertIn("speech is transcribed through the text command path.", self.main_text)
     def test_all_non_live_reasoning_paths_include_language_policy(self):
         self.assertIn("from core.language_policy import prompt_block as language_prompt_block", self.main_text)
         self.assertIn("language_directive = language_prompt_block()", self.main_text)
