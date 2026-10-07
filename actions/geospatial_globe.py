@@ -10,6 +10,20 @@ import urllib.parse
 import json
 from typing import Dict, Any, Tuple, Optional, List
 
+_MAX_NETWORK_RESPONSE_BYTES = 64 * 1024
+
+
+def _read_json_response(resp):
+    """Read a bounded JSON response so remote data cannot consume unbounded memory."""
+    raw = resp.read(_MAX_NETWORK_RESPONSE_BYTES + 1)
+    if len(raw) > _MAX_NETWORK_RESPONSE_BYTES:
+        raise ValueError("Geospatial service response exceeded the safety limit.")
+    data = json.loads(raw.decode("utf-8"))
+    if not isinstance(data, (dict, list)):
+        raise ValueError("Geospatial service returned an unexpected payload.")
+    return data
+
+
 # Quick-lookup coordinates for major world cities and airports to provide instant, offline response
 KNOWN_LOCATIONS: Dict[str, Tuple[float, float, str]] = {
     # Major Countries & Continents
@@ -113,8 +127,16 @@ def geocode_location(location_name: str) -> Tuple[float, float, str]:
         try:
             from core.device_location import get_device_location
             loc = get_device_location()
-            lat = float(loc.get("latitude") or 19.24)
-            lon = float(loc.get("longitude") or 73.13)
+            lat_raw = loc.get("latitude")
+            lon_raw = loc.get("longitude")
+            if lat_raw is None or lon_raw is None:
+                raise RuntimeError("Device location coordinates are unavailable.")
+            lat = float(lat_raw)
+            lon = float(lon_raw)
+            if not math.isfinite(lat) or not math.isfinite(lon):
+                raise RuntimeError("Device location coordinates are invalid.")
+            if not -90.0 <= lat <= 90.0 or not -180.0 <= lon <= 180.0:
+                raise RuntimeError("Device location coordinates are out of range.")
             city = loc.get("city") or "Current Location"
             return lat, lon, f"{city} (Device Location)"
         except Exception as exc:
@@ -135,7 +157,7 @@ def geocode_location(location_name: str) -> Tuple[float, float, str]:
         url = f"https://geocoding-api.open-meteo.com/v1/search?name={urllib.parse.quote(location_name)}&count=1"
         req = urllib.request.Request(url, headers={"User-Agent": "BrahmaAI-HoloGlobe/1.0"})
         with urllib.request.urlopen(req, timeout=4) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+            payload = _read_json_response(response)
             results = payload.get("results") or []
             if results:
                 top = results[0]
@@ -232,7 +254,7 @@ def fetch_live_flights_in_bounds(min_lat: float, max_lat: float, min_lon: float,
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "BrahmaAI-FlightRadar/1.0"})
         with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            data = _read_json_response(resp)
             states = data.get("states") or []
             for s in states[:150]:  # Limit to 150 aircraft for optimal 3D frame rates
                 if not s or len(s) < 17:
@@ -275,7 +297,7 @@ def reverse_geocode_area(lat: float, lon: float) -> str:
         url = f"https://api.bigdatacloud.net/data/reverse-geocode-client?latitude={lat:.3f}&longitude={lon:.3f}&localityLanguage=en"
         req = urllib.request.Request(url, headers={"User-Agent": "BrahmaAI-HoloGlobe/1.0"})
         with urllib.request.urlopen(req, timeout=3) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            data = _read_json_response(resp)
             city = data.get("city") or data.get("locality") or ""
             principal = data.get("principalSubdivision") or ""
             country = data.get("countryName") or ""
@@ -310,7 +332,7 @@ def fetch_driving_route(lat1: float, lon1: float, lat2: float, lon2: float) -> D
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "BrahmaAI-Navigator/1.0"})
         with urllib.request.urlopen(req, timeout=6) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            data = _read_json_response(resp)
             if data.get("code") == "Ok" and data.get("routes"):
                 best_route = data["routes"][0]
                 dist_m = best_route.get("distance", 0.0)
@@ -350,7 +372,7 @@ def fetch_live_iss() -> Dict[str, Any]:
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "BrahmaAI-SpaceRadar/1.0"})
         with urllib.request.urlopen(req, timeout=4) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            data = _read_json_response(resp)
             lat = round(float(data["latitude"]), 4)
             lon = round(float(data["longitude"]), 4)
             alt_km = round(float(data["altitude"]), 1)
@@ -377,7 +399,7 @@ def fetch_live_earthquakes(min_magnitude: float = 2.5) -> List[Dict[str, Any]]:
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "BrahmaAI-Seismic/1.0"})
         with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            data = _read_json_response(resp)
             features = data.get("features", [])
             results = []
             for f in features:
@@ -452,7 +474,7 @@ def fetch_nearby_places(query_or_category: str, center_lat: Optional[float] = No
                 headers={"User-Agent": "BrahmaAI-GeospatialPOI/1.0"}
             )
             with urllib.request.urlopen(req, timeout=8) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
+                data = _read_json_response(resp)
                 elements = data.get("elements", [])
                 places = []
                 seen_names = set()
@@ -503,7 +525,7 @@ def fetch_nearby_places(query_or_category: str, center_lat: Optional[float] = No
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "BrahmaAI-GeospatialPOI/1.0"})
         with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            data = _read_json_response(resp)
             places = []
             for item in data:
                 p_lat = float(item["lat"])
@@ -551,13 +573,23 @@ def fetch_location_weather(lat: float, lon: float) -> Dict[str, Any]:
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "BrahmaAI-Weather/1.0"})
         with urllib.request.urlopen(req, timeout=4) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            curr = data.get("current", {})
-            temp_c = curr.get("temperature_2m", 25.0)
-            hum = curr.get("relative_humidity_2m", 50)
-            wind = curr.get("wind_speed_10m", 10.0)
-            wcode = curr.get("weather_code", 0)
-            cond_desc, icon = code_map.get(wcode, ("Partly Cloudy", "⛅"))
+            data = _read_json_response(resp)
+            curr = data.get("current")
+            if not isinstance(curr, dict):
+                raise ValueError("Weather service omitted current telemetry.")
+            temp_c = curr.get("temperature_2m")
+            hum = curr.get("relative_humidity_2m")
+            wind = curr.get("wind_speed_10m")
+            wcode = curr.get("weather_code")
+            if temp_c is None or hum is None or wind is None or wcode is None:
+                raise ValueError("Weather service omitted required telemetry fields.")
+            temp_c = float(temp_c)
+            hum = float(hum)
+            wind = float(wind)
+            wcode = int(wcode)
+            if not all(math.isfinite(value) for value in (temp_c, hum, wind)):
+                raise ValueError("Weather service returned non-finite telemetry.")
+            cond_desc, icon = code_map.get(wcode, ("Unknown", "❓"))
             return {
                 "temperature_c": round(temp_c, 1),
                 "temperature_f": round(temp_c * 9.0 / 5.0 + 32.0, 1),
@@ -576,7 +608,7 @@ def fetch_radar_timestamp() -> Optional[int]:
         url = "https://api.rainviewer.com/public/weather-maps.json"
         req = urllib.request.Request(url, headers={"User-Agent": "BrahmaAI-WeatherRadar/1.0"})
         with urllib.request.urlopen(req, timeout=4) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            data = _read_json_response(resp)
             past = data.get("radar", {}).get("past", [])
             if past:
                 return past[-1].get("time")
