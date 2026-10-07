@@ -470,3 +470,9 @@ def test_smart_home_page_uses_provider_metadata_and_does_not_claim_fake_local_st
     assert "traits.get('ip', 'N/A')" in source
     assert "Device action failed" in source
     assert "Device connection failed" in source
+
+
+def test_self_coding_max_iteration_path_never_claims_completion():
+    source = (ROOT / "actions" / "brahma_dev_agent.py").read_text(encoding="utf-8")
+    assert "Developer task incomplete: the iteration limit was reached before the agent" in source
+    assert 'Completed developer task after max iterations.' not in source
