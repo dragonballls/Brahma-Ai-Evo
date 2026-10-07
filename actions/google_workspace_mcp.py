@@ -391,7 +391,7 @@ class GmailEngine:
                 refused = server.sendmail(addr, [to], msg.as_string())
                 if refused:
                     return f"Failed to send email: SMTP refused recipient(s): {', '.join(sorted(refused))}"
-                return f"Email successfully sent to {to} with subject '{subject}'."
+                return f"Email accepted by the SMTP server for recipient {to} with subject '{subject}'; end-to-end delivery is not verified."
             finally:
                 if server is not None:
                     try:
@@ -488,7 +488,7 @@ class GoogleDriveEngine:
         try:
             import shutil
             shutil.copy2(p, dest)
-            return f"File '{p.name}' uploaded to Brahma Workspace storage."
+            return f"File '{p.name}' was copied to local Brahma Workspace staging; it was not uploaded to Google Drive."
         except Exception as e:
             return f"Upload error: {e}"
 
