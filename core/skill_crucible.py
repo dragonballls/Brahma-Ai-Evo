@@ -352,7 +352,10 @@ class SkillCrucible:
                             imported_dangerous_names.add(alias.asname or alias.name)
 
         for node in ast.walk(tree):
-            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            if isinstance(node, ast.Attribute):
+                if node.attr in dangerous_dunder_attributes:
+                    return False, f"Security Violation: prohibited attribute access '{node.attr}'."
+                if isinstance(node.value, ast.Name):
                 owner = module_aliases.get(node.value.id, node.value.id)
                 if (owner, node.attr) in banned_attributes:
                     return False, f"Security Violation: prohibited attribute '{owner}.{node.attr}'."

@@ -84,10 +84,13 @@ class SmartHomeService:
 
     def _require_available_provider(self, provider_key: str) -> SmartHomeProvider:
         provider = self._registry.get(provider_key)
-        if not provider.available:
-            if provider.coming_soon:
-                raise RuntimeError(f"{provider.name} integration is not available yet.")
-            raise RuntimeError(f"{provider.name} integration is unavailable.")
+        available = getattr(provider, "available", True)
+        coming_soon = getattr(provider, "coming_soon", False)
+        provider_name = getattr(provider, "name", provider_key)
+        if not available:
+            if coming_soon:
+                raise RuntimeError(f"{provider_name} integration is not available yet.")
+            raise RuntimeError(f"{provider_name} integration is unavailable.")
         return provider
 
     def preview_discovery(self, provider_key: str, credentials: dict[str, Any]) -> dict[str, Any]:

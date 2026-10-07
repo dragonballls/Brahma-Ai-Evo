@@ -198,6 +198,8 @@ def _raise_for_failed_tool_result(result: Any, tool: str | None = None) -> None:
     )
     if lowered.startswith(failure_prefixes):
         raise RuntimeError(text_result)
+    if re.search(r"\b(?:failed|failure)\b[.!:]?$", lowered):
+        raise RuntimeError(text_result)
     if tool == "send_message" and (
         lowered.startswith("attempted to send")
         or "message not sent" in lowered
@@ -806,6 +808,19 @@ class AgentExecutor:
                     success      = False
 
                 if not success:
+                    if (
+                        failed_step
+                        and isinstance(failed_step, dict)
+                        and failed_step.get("tool") in _NON_IDEMPOTENT_RETRY_TOOLS
+                        and str(failed_error or "").startswith("Outcome of non-idempotent tool '")
+                    ):
+                        msg = (
+                            f"Task failed safely: {failed_error}"
+                            " Automatic replanning was blocked because the external outcome was ambiguous."
+                        )
+                        if speak:
+                            speak(msg)
+                        return msg
                     break
 
             if success:

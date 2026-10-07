@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from core.user_paths import get_user_data_dir
+from core.skill_crucible import SkillCrucible
 
 logger = logging.getLogger("DynamicToolRegistry")
 

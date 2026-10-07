@@ -550,7 +550,7 @@ def test_pair_approval_tool_result_never_contains_device_secret():
         result = await gateway.approve_pending_request("pending-1")
         item = gateway._pending_requests
         assert "device_secret" not in result
-        assert result["message"] == "Device approved and credentials delivered directly to the paired device."
+        assert result["message"] == "Device approved and credentials sent to the paired connection; receipt was not independently verified."
         assert item == {}
 
     asyncio.run(scenario())
