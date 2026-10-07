@@ -58,6 +58,7 @@ def run(request: str, *, context: str = "", max_repair_attempts: int = 2) -> dic
                     "skill": skill_name,
                     "result": _result_text(result),
                     "raw": result,
+                    "error": str(result.get("error") or result.get("message") or "Dynamic skill reported failure."),
                     "message": str(result.get("error") or result.get("message") or "Dynamic skill reported failure."),
                 }
             return {
@@ -72,7 +73,8 @@ def run(request: str, *, context: str = "", max_repair_attempts: int = 2) -> dic
                 "success": False,
                 "status": "existing-skill-failed",
                 "skill": skill_name,
-                "message": str(exc),
+                "error": str(exc),
+            "message": str(exc),
             }
 
     # No matching capability: synthesize it with Project Ultron.
@@ -97,6 +99,7 @@ def run(request: str, *, context: str = "", max_repair_attempts: int = 2) -> dic
         return {
             "success": False,
             "status": "synthesis-failed",
+            "error": str(forged.get("message") or forged.get("error") or "Capability synthesis failed."),
             "message": str(forged.get("message") or forged.get("error") or "Capability synthesis failed."),
             "forge": forged,
         }
@@ -128,6 +131,7 @@ def run(request: str, *, context: str = "", max_repair_attempts: int = 2) -> dic
                 "skill": name,
                 "result": _result_text(result),
                 "raw": result,
+                "error": str(result.get("error") or result.get("message") or "Generated skill reported failure."),
                 "message": str(result.get("error") or result.get("message") or "Generated skill reported failure."),
                 "forge": forged,
             }
