@@ -493,3 +493,18 @@ def test_smart_home_connect_rejects_unavailable_provider_before_discovery():
         assert "not available" in str(exc).casefold()
     else:
         raise AssertionError("Unavailable provider reached connect/discovery path")
+
+
+def test_smart_home_voice_control_changes_persisted_ptt_mode_instead_of_fake_states():
+    source = (ROOT / "smart_home_page_new.py").read_text(encoding="utf-8")
+    assert "get_push_to_talk_enabled()" in source
+    assert "set_push_to_talk_enabled(enabled)" in source
+    assert 'states = ["Idle", "Listening", "Thinking", "Executing", "Completed"]' not in source
+    assert 'self._voice_state = "Push-to-Talk" if enabled else "Hands-Free"' in source
+
+
+def test_smart_home_device_management_surfaces_persistence_failures():
+    source = (ROOT / "smart_home_page_new.py").read_text(encoding="utf-8")
+    assert "Rename failed" in source
+    assert "Forget failed" in source
+    assert "Restart failed" in source
