@@ -252,7 +252,7 @@ class AtombergProvider(SmartHomeProvider):
         traits.update(refreshed)
         if "power" in refreshed:
             traits["power"] = refreshed["power"]
-        return {"is_on": is_on, "traits": traits, "detail": detail}
+        return {"success": True, "is_on": is_on, "traits": traits, "detail": detail}
 
     def _refresh_atomberg_state(self, client: AtombergCloudClient, device_id: str) -> dict[str, Any]:
         states = client.device_state()
@@ -359,12 +359,14 @@ class KasaProvider(SmartHomeProvider):
 
         try:
             await kasa_device.update()
-        except Exception:
-            pass
+        except Exception as exc:
+            raise RuntimeError(
+                f"Kasa command was issued but final device state could not be verified: {exc}"
+            ) from exc
         refreshed = self._to_record(kasa_device, device.get("provider_credentials") or {})
         traits = dict(device.get("traits") or {})
         traits.update(refreshed.get("traits", {}))
-        return {"is_on": refreshed.get("is_on", bool(device.get("is_on"))), "traits": traits, "detail": detail}
+        return {"success": True, "is_on": refreshed.get("is_on", bool(device.get("is_on"))), "traits": traits, "detail": detail}
 
     def _to_record(self, kasa_device: Any, credentials: dict[str, Any]) -> dict[str, Any]:
         alias = _clean_text(getattr(kasa_device, "alias", None)) or _clean_text(getattr(kasa_device, "model", None), "Kasa Device")
