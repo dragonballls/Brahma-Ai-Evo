@@ -38,3 +38,30 @@ def test_crash_recovery_corrupt_persistent_json_fails_closed(tmp_path, monkeypat
         crash_recovery._load_state()
     with pytest.raises(RuntimeError, match="unreadable or corrupted"):
         crash_recovery._load_history()
+
+
+def test_crash_recovery_temp_writes_are_exclusive(tmp_path):
+    from core import crash_recovery
+    target = tmp_path / "state.json"
+    temp = tmp_path / ".state.tmp"
+    crash_recovery._write_exclusive_text(temp, '{"safe": true}')
+    assert temp.read_text(encoding="utf-8") == '{"safe": true}'
+    assert target.exists() is False
+
+
+def test_crash_recovery_copy_helper_uses_exclusive_destination(tmp_path):
+    from core import crash_recovery
+    source = tmp_path / "source.py"
+    destination = tmp_path / "copy.tmp"
+    source.write_text("print('ok')", encoding="utf-8")
+    crash_recovery._copy_file_exclusive(source, destination)
+    assert destination.read_text(encoding="utf-8") == "print('ok')"
+
+
+def test_boot_sentry_rollback_uses_exclusive_temp_creation_and_valid_uuid_call():
+    source = (ROOT / "core" / "boot_sentry.py").read_text(encoding="utf-8")
+    assert "def _write_exclusive_text" in source
+    assert "def _copy_file_exclusive" in source
+    assert "os.O_EXCL" in source
+    assert "uuid.uuid4().hex" in source
+    assert "uuid4().hex" not in source
