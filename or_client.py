@@ -174,6 +174,7 @@ class OpenRouterClient:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
         response_format: Optional[dict] = None,
+        provider: Optional[str] = None,
     ) -> Optional[str]:
         if not self._omniroute_enabled() or not self._omniroute.ensure_ready():
             return None
@@ -190,6 +191,8 @@ class OpenRouterClient:
         omni_key = os.environ.get("BRAHMA_OMNIROUTE_API_KEY", "").strip()
         if omni_key:
             headers["Authorization"] = f"Bearer {omni_key}"
+        if provider:
+            headers["X-OmniRoute-Provider"] = str(provider).strip().lower()
 
         response = None
         try:
@@ -535,6 +538,7 @@ class OpenRouterClient:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
         max_rounds: int = 6,
+        provider: Optional[str] = None,
     ) -> Optional[str]:
         """Run tool calling through the local OmniRoute gateway before direct fallback."""
         if not self._omniroute_enabled() or not self._omniroute.ensure_ready():
@@ -555,6 +559,8 @@ class OpenRouterClient:
         omni_key = os.environ.get("BRAHMA_OMNIROUTE_API_KEY", "").strip()
         if omni_key:
             headers["Authorization"] = f"Bearer {omni_key}"
+        if provider:
+            headers["X-OmniRoute-Provider"] = str(provider).strip().lower()
 
         for round_index in range(max(1, int(max_rounds))):
             payload = {
@@ -678,6 +684,7 @@ class OpenRouterClient:
         temperature: float = DEFAULT_TEMPERATURE,
         max_rounds: int = 6,
         allow_direct_fallback: bool = True,
+        provider: Optional[str] = None,
     ) -> str:
         """Run a bounded OmniRoute-first tool-calling conversation with direct fallback."""
         omni_result = self._call_omniroute_tool_capable(
@@ -688,6 +695,7 @@ class OpenRouterClient:
             max_tokens=max_tokens,
             temperature=temperature,
             max_rounds=max_rounds,
+            provider=provider,
         )
         if omni_result:
             return omni_result
@@ -807,6 +815,7 @@ class OpenRouterClient:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
         allow_direct_fallback: bool = True,
+        provider: Optional[str] = None,
     ) -> str:
         messages = [{"role": "system", "content": system}]
         if history:
@@ -818,6 +827,7 @@ class OpenRouterClient:
             model=model or "auto",
             max_tokens=max_tokens,
             temperature=temperature,
+            provider=provider,
         )
         if omni_result:
             return omni_result
@@ -839,6 +849,7 @@ class OpenRouterClient:
         model: Optional[str] = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         allow_direct_fallback: bool = True,
+        provider: Optional[str] = None,
     ) -> dict:
         messages = [
             {"role": "system", "content": system},
@@ -850,6 +861,7 @@ class OpenRouterClient:
             max_tokens=max_tokens,
             temperature=0.2,
             response_format={"type": "json_object"},
+            provider=provider,
         )
         if not raw:
             if not allow_direct_fallback:
@@ -886,6 +898,7 @@ class OpenRouterClient:
         model: Optional[str] = None,
         max_tokens: int = 1024,
         allow_direct_fallback: bool = True,
+        provider: Optional[str] = None,
     ) -> str:
         messages = [
             {"role": "system", "content": system},
@@ -907,6 +920,7 @@ class OpenRouterClient:
             model=model or "auto",
             max_tokens=max_tokens,
             temperature=0.2,
+            provider=provider,
         )
         if omni_result:
             return omni_result
@@ -948,6 +962,7 @@ class OpenRouterClient:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
         allow_direct_fallback: bool = True,
+        provider: Optional[str] = None,
     ) -> str:
     
         omni_result = self._call_omniroute(
@@ -955,6 +970,7 @@ class OpenRouterClient:
             model=model or "auto",
             max_tokens=max_tokens,
             temperature=temperature,
+            provider=provider,
         )
         if omni_result:
             return omni_result
