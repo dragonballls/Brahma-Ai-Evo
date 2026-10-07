@@ -45,3 +45,24 @@ def test_learned_rules_use_exclusive_temp_and_final_state_verification(tmp_path,
     assert learned_rules.LearnedRulesEngine._save_raw([{"id": "1"}]) is True
     assert target.read_text(encoding="utf-8")
     assert not list(tmp_path.glob(".learned_rules.json.*.tmp"))
+
+
+def test_learned_rules_fail_closed_when_secret_redaction_cannot_be_persisted(tmp_path, monkeypatch):
+    from core import learned_rules
+
+    path = tmp_path / "learned_rules.json"
+    path.write_text(
+        '[{"id": "1", "rule": "api_key: leaked-value", "active": true}]',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(learned_rules, "RULES_FILE", path)
+    monkeypatch.setattr(learned_rules, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(
+        learned_rules.LearnedRulesEngine,
+        "_save_raw",
+        staticmethod(lambda _rules: False),
+    )
+
+    import pytest
+    with pytest.raises(RuntimeError, match="sanitized"):
+        learned_rules.LearnedRulesEngine._load_raw()
