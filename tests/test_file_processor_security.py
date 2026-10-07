@@ -259,3 +259,36 @@ def test_archive_runtime_rejects_member_emitting_more_bytes_than_declared():
             monkeypatch.undo()
 
         assert not (base / "out" / "small.txt").exists()
+
+
+def test_secure_text_output_rejects_race_created_symlink(tmp_path, monkeypatch):
+    from actions import file_processor
+
+    target = tmp_path / "result.txt"
+    outside = tmp_path / "outside.txt"
+    outside.write_text("keep", encoding="utf-8")
+
+    real_open = file_processor.os.open
+    swapped = {"done": False}
+
+    def race_open(path_value, flags, mode=0o777, *, dir_fd=None):
+        if (
+            dir_fd is not None
+            and path_value == target.name
+            and flags & getattr(os, "O_EXCL", 0)
+            and not swapped["done"]
+        ):
+            swapped["done"] = True
+            try:
+                target.symlink_to(outside)
+            except OSError:
+                pass
+        return real_open(path_value, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(file_processor.os, "open", race_open)
+    with pytest.raises(OSError):
+        file_processor._secure_write_new_text(target, "attacker")
+
+    assert outside.read_text(encoding="utf-8") == "keep"
+    if target.exists():
+        assert target.is_symlink()
