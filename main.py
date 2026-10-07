@@ -4326,7 +4326,7 @@ class BrahmaLive:
             if not receiver:
                 self.ui.write_log("ERR: Could not determine recipient for reply.")
                 try:
-                    self.ui.finish_task_workspace("Reply failed: recipient not found.", "Reply failed", 100)
+                    self.ui.finish_task_workspace("Reply failed: recipient not found.", "Reply failed", 0)
                 except Exception:
                     pass
                 return
@@ -4340,15 +4340,32 @@ class BrahmaLive:
             )
             self._reply_mode = False
             self.ui.write_log(f"SYS: {result}")
+            if _action_result_is_failure(result):
+                try:
+                    self.ui.finish_task_workspace(str(result), "Reply failed", 0)
+                except Exception:
+                    pass
+                return
+            verified = "delivery verified" in str(result).casefold()
             try:
-                self.ui.finish_task_workspace(reply_text, "Reply delivered.", 100)
+                self.ui.finish_task_workspace(
+                    reply_text if verified else (
+                        f"{reply_text}
+
+Delivery was not independently verified: {result}"
+                    ),
+                    "Reply delivered." if verified else "Reply submitted",
+                    100 if verified else 90,
+                )
             except Exception:
                 pass
+            if not verified:
+                self.speak("The reply was submitted, but delivery was not independently verified.")
         except Exception as e:
             self._reply_mode = False
             self.ui.write_log(f"ERR: Reply failed: {e}")
             try:
-                self.ui.finish_task_workspace(f"Reply failed: {e}", "Reply failed", 100)
+                self.ui.finish_task_workspace(f"Reply failed: {e}", "Reply failed", 0)
             except Exception:
                 pass
         finally:
