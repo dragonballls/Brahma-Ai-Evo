@@ -182,7 +182,7 @@ def _launch_macos(app_name: str) -> bool:
         time.sleep(0.8)
         pyautogui.press("enter")
         time.sleep(1.5)
-        return False
+        return bool(_PSUTIL and _is_running(app_name))
     except Exception as e:
         print(f"[open_app] ⚠️ macOS Spotlight failed: {e}")
         return False

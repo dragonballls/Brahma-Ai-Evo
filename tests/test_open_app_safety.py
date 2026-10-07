@@ -42,7 +42,7 @@ def test_open_app_fallbacks_do_not_assume_launch_success():
     linux_start = source.index("def _launch_linux")
     mac = source[mac_start:linux_start]
     linux = source[linux_start:source.index("_OS_LAUNCHERS", linux_start)]
-    assert "return False" in mac[mac.rfind("pyautogui.hotkey"):mac.rfind("except Exception")]
+    assert "return bool(_PSUTIL and _is_running(app_name))" in mac
     assert "return result.returncode == 0" in linux
 
 
