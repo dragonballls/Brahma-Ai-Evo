@@ -251,6 +251,9 @@ class AddDeviceDialog(QDialog):
             """)
             
             # Setup lambda for click
+            card.setEnabled(platform.available)
+            if not platform.available:
+                p_sub.setText("Integration not available yet.")
             card.clicked.connect(lambda key=platform.key, label=platform.name: self._choose_provider(key, label))
             self._platform_buttons.append(card)
             grid.addWidget(card, idx // 2, idx % 2)
@@ -320,18 +323,26 @@ class AddDeviceDialog(QDialog):
         return page
 
     def _platforms(self) -> list[PlatformRow]:
-        return [
-            PlatformRow("atomberg", "Atomberg Home", True, [("api_key", "API Key", "Atomberg developer API key", False), ("refresh_token", "Refresh Token", "Atomberg refresh token", True)]),
-            PlatformRow("kasa", "TP-Link Kasa", True, [("host", "Device IP / Host", "Optional - leave empty to scan the network", False), ("username", "Username", "Optional cloud username", False), ("password", "Password", "Optional cloud password", True)]),
-            PlatformRow("hue", "Philips Hue", True, [("bridge_ip", "Bridge IP Address", "Optional - bridge IP address", False), ("api_key", "API Key / Token", "Optional developer API key", False)]),
-            PlatformRow("lg", "LG ThinQ", True, [("username", "Email / Username", "LG ThinQ account email", False), ("password", "Password", "LG ThinQ password", True)]),
-            PlatformRow("daikin", "Daikin Smart AC", True, [("ip", "AC IP Address", "Optional local IP of AC unit", False), ("username", "Daikin Username", "Optional cloud account username", False), ("password", "Password", "Optional cloud password", True)]),
-            PlatformRow("tuya", "Tuya / Smart Life", True, [("access_id", "Access ID / Client ID", "Tuya IoT platform developer ID", False), ("secret", "Access Secret / Client Secret", "Tuya IoT access secret key", True)]),
-            PlatformRow("nest", "Nest / Google Home", True, [("project_id", "Project ID", "Nest device access project ID", False), ("client_secret", "Client Secret", "Nest OAuth client secret", True)]),
-            PlatformRow("smartthings", "Samsung SmartThings", True, [("token", "Access Token", "SmartThings personal access token", True)]),
-        ]
+        rows: list[PlatformRow] = []
+        for info in self._service.list_platforms():
+            rows.append(
+                PlatformRow(
+                    info.key,
+                    info.name,
+                    info.available,
+                    [
+                        (field.key, field.label, field.placeholder, field.secret)
+                        for field in info.auth_fields
+                    ],
+                )
+            )
+        return rows
 
     def _choose_provider(self, key: str, label: str):
+        platform = next((p for p in self._platforms() if p.key == key), None)
+        if platform is None or not platform.available:
+            self._auth_desc.setText(f"{label} is not available yet.")
+            return
         self._provider_key = key
         self._provider_label = label
         for card in self._platform_buttons:
@@ -1131,7 +1142,7 @@ class BrahmaHomePage(QWidget):
             <div style='line-height: 140%;'>
                 <span style='color: rgba(255,255,255,0.45); font-size: 10pt;'>Manufacturer:</span> <span style='color: #ffffff; font-weight: bold; font-size: 10pt;'>{device.get('manufacturer', '')}</span><br>
                 <span style='color: rgba(255,255,255,0.45); font-size: 10pt;'>Room:</span> <span style='color: #ffffff; font-weight: bold; font-size: 10pt;'>{device.get('room', '')}</span><br>
-                <span style='color: rgba(255,255,255,0.45); font-size: 10pt;'>Connection:</span> <span style='color: #35ff75; font-weight: bold; font-size: 10pt;'>Local</span><br>
+                <span style='color: rgba(255,255,255,0.45); font-size: 10pt;'>Provider:</span> <span style='color: #ffffff; font-weight: bold; font-size: 10pt;'>{str(device.get('provider_key') or 'local').replace('_', ' ').title()}</span><br>
                 <span style='color: rgba(255,255,255,0.45); font-size: 10pt;'>Last Updated:</span> <span style='color: rgba(255,255,255,0.7); font-size: 10pt;'>now</span>
             </div>
         """)
@@ -1147,9 +1158,9 @@ class BrahmaHomePage(QWidget):
         
         self._drawer_info.setText(f"""
             <div style='line-height: 140%;'>
-                <span style='color: rgba(255,255,255,0.45); font-size: 10pt;'>Firmware:</span> <span style='color: #ffffff; font-weight: bold; font-size: 10pt;'>{traits.get('firmware', 'Current')}</span><br>
-                <span style='color: rgba(255,255,255,0.45); font-size: 10pt;'>MAC:</span> <span style='color: #ffffff; font-weight: bold; font-size: 10pt;'>{traits.get('mac', 'Local')}</span><br>
-                <span style='color: rgba(255,255,255,0.45); font-size: 10pt;'>IP:</span> <span style='color: #ffffff; font-weight: bold; font-size: 10pt;'>{traits.get('ip', 'Local')}</span><br>
+                <span style='color: rgba(255,255,255,0.45); font-size: 10pt;'>Firmware:</span> <span style='color: #ffffff; font-weight: bold; font-size: 10pt;'>{traits.get('firmware', 'N/A')}</span><br>
+                <span style='color: rgba(255,255,255,0.45); font-size: 10pt;'>MAC:</span> <span style='color: #ffffff; font-weight: bold; font-size: 10pt;'>{traits.get('mac', 'N/A')}</span><br>
+                <span style='color: rgba(255,255,255,0.45); font-size: 10pt;'>IP:</span> <span style='color: #ffffff; font-weight: bold; font-size: 10pt;'>{traits.get('ip', 'N/A')}</span><br>
                 <span style='color: rgba(255,255,255,0.45); font-size: 10pt;'>Battery:</span> <span style='color: #ffffff; font-weight: bold; font-size: 10pt;'>{traits.get('battery', 'N/A')}</span><br>
                 <span style='color: rgba(255,255,255,0.45); font-size: 10pt;'>Power Consumption:</span> <span style='color: #ffffff; font-weight: bold; font-size: 10pt;'>{traits.get('energy_usage', traits.get('power_usage', 'N/A'))}</span>
             </div>
@@ -1200,9 +1211,17 @@ class BrahmaHomePage(QWidget):
             self._refresh()
 
     def _restart_selected(self):
-        if self._selected_device_id:
-            self._service.restart_device(self._selected_device_id)
-            self._refresh()
+        if not self._selected_device_id:
+            return
+        try:
+            result = self._service.restart_device(self._selected_device_id)
+        except Exception:
+            self._status_chip.setText("<div style='line-height: 1.3;'><span style='color: #ffcc00;'>●</span> <span style='color: #ffffff;'>Restart failed</span></div>")
+            return
+        if not isinstance(result, dict) or result.get("success") is not True:
+            self._status_chip.setText("<div style='line-height: 1.3;'><span style='color: #ffcc00;'>●</span> <span style='color: #ffffff;'>Restart failed</span></div>")
+            return
+        self._refresh()
 
     def _forget_selected(self):
         if self._selected_device_id:
@@ -1221,7 +1240,7 @@ class BrahmaHomePage(QWidget):
                 "<div style='line-height: 1.3;'>"
                 "<span style='color: rgba(255,255,255,0.4); font-size: 10px; font-weight: bold;'>SYSTEM</span><br/>"
                 "<span style='color: #35ff75; font-size: 12px; font-weight: bold;'>●</span> "
-                "<span style='color: #ffffff; font-size: 11px; font-weight: bold;'>Connected</span>"
+                "<span style='color: #ffffff; font-size: 11px; font-weight: bold;'>Configured</span>"
                 "</div>"
             )
         else:
@@ -1339,8 +1358,12 @@ class BrahmaHomePage(QWidget):
 
     def _on_device_action(self, device_id: str, action: str, payload: dict):
         try:
-            self._service.execute_device_action(device_id, action, payload)
+            result = self._service.execute_device_action(device_id, action, payload)
         except Exception:
+            self._status_chip.setText("<div style='line-height: 1.3;'><span style='color: #ffcc00;'>●</span> <span style='color: #ffffff;'>Device action failed</span></div>")
+            return
+        if not isinstance(result, dict) or result.get("success") is not True:
+            self._status_chip.setText("<div style='line-height: 1.3;'><span style='color: #ffcc00;'>●</span> <span style='color: #ffffff;'>Device action failed</span></div>")
             return
         self._refresh()
         device = self._service.get_device(device_id)
@@ -1394,5 +1417,6 @@ class BrahmaHomePage(QWidget):
         try:
             self._service.connect_devices(provider_key, label, creds, selected)
         except Exception:
+            self._status_chip.setText("<div style='line-height: 1.3;'><span style='color: #ffcc00;'>●</span> <span style='color: #ffffff;'>Device connection failed</span></div>")
             return
         self._refresh()
