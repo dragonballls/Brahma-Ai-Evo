@@ -60,3 +60,13 @@ def test_dev_agent_confines_path_like_run_arguments_to_project_root():
     assert "command arguments may not access paths outside the generated project" in block
     assert "Path(value).is_absolute()" in block
     assert '".." in Path(normalized).parts' in block
+
+
+def test_dev_agent_vscode_launcher_checks_child_liveness():
+    source = (ROOT / "actions" / "dev_agent.py").read_text(encoding="utf-8")
+    start = source.index("def _open_vscode")
+    end = source.index("def _validate_run_arguments", start)
+    block = source[start:end]
+    assert "proc = subprocess.Popen" in block
+    assert "if proc.poll() is not None:" in block
+    assert "return True" in block
