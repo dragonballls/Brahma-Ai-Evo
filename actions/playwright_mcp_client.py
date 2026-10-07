@@ -431,26 +431,36 @@ class PlaywrightMCPClient:
             "raw": result_obj,
         }
 
+    @staticmethod
+    def _authoritative_result(res: dict, action: str) -> str:
+        text = str(res.get("text") or "").strip()
+        if text:
+            return text
+        error = str(res.get("error") or "").strip()
+        if error:
+            return error
+        return f"Error: Playwright MCP returned no authoritative completion result for '{action}'."
+
     # ── High-Level Convenience Methods for All 24 MCP Tools ─────────────────────
 
     def navigate(self, url: str) -> str:
         url = validate_browser_url(url)
         res = self.call_tool("browser_navigate", {"url": url}, timeout=60)
-        return res.get("text") or res.get("error") or f"Navigated to {url}"
+        return self._authoritative_result(res, "navigate")
 
     def navigate_back(self) -> str:
         res = self.call_tool("browser_navigate_back", {})
-        return res.get("text") or res.get("error") or "Navigated back."
+        return self._authoritative_result(res, "navigate_back")
 
     def snapshot(self) -> str:
         """Returns clean accessibility tree snapshot of the current page."""
         res = self.call_tool("browser_snapshot", {})
-        return res.get("text") or res.get("error") or "Snapshot unavailable."
+        return self._authoritative_result(res, "snapshot")
 
     def find(self, text: str) -> str:
         """Searches the accessibility snapshot for text or regex."""
         res = self.call_tool("browser_find", {"text": text})
-        return res.get("text") or res.get("error") or f"No matches found for '{text}'"
+        return self._authoritative_result(res, "find")
 
     def click(self, target: Optional[str] = None, element: Optional[str] = None, selector: Optional[str] = None) -> str:
         tgt = target or selector or element or "body"
@@ -458,7 +468,7 @@ class PlaywrightMCPClient:
         if element:
             args["element"] = element
         res = self.call_tool("browser_click", args)
-        return res.get("text") or res.get("error") or "Clicked."
+        return self._authoritative_result(res, "click")
 
     def hover(self, target: Optional[str] = None, element: Optional[str] = None, selector: Optional[str] = None) -> str:
         tgt = target or selector or element or "body"
@@ -466,7 +476,7 @@ class PlaywrightMCPClient:
         if element:
             args["element"] = element
         res = self.call_tool("browser_hover", args)
-        return res.get("text") or res.get("error") or "Hovered."
+        return self._authoritative_result(res, "hover")
 
     def type_text(self, text: str, target: Optional[str] = None, element: Optional[str] = None, selector: Optional[str] = None, submit: bool = False) -> str:
         tgt = target or selector or element or ":focus"
@@ -474,16 +484,16 @@ class PlaywrightMCPClient:
         if element:
             args["element"] = element
         res = self.call_tool("browser_type", args)
-        return res.get("text") or res.get("error") or "Typed text."
+        return self._authoritative_result(res, "type_text")
 
     def press_key(self, key: str) -> str:
         res = self.call_tool("browser_press_key", {"key": key})
-        return res.get("text") or res.get("error") or f"Pressed '{key}'"
+        return self._authoritative_result(res, "press_key")
 
     def scroll(self, direction: str = "down", amount: int = 500) -> str:
         delta_y = amount if direction == "down" else -amount
         res = self.call_tool("browser_mouse_wheel", {"deltaX": 0, "deltaY": delta_y})
-        return res.get("text") or res.get("error") or f"Scrolled {direction}."
+        return self._authoritative_result(res, "scroll")
 
     def fill_form(self, fields: Any) -> str:
         """Fills multiple form fields simultaneously using target element refs or selectors."""
@@ -499,7 +509,7 @@ class PlaywrightMCPClient:
                     if t:
                         flist.append({"target": str(t), "value": str(v)})
         res = self.call_tool("browser_fill_form", {"fields": flist})
-        return res.get("text") or res.get("error") or "Form filled."
+        return self._authoritative_result(res, "fill_form")
 
     def select_option(self, values: List[str], target: Optional[str] = None, element: Optional[str] = None, selector: Optional[str] = None) -> str:
         tgt = target or selector or element or "select"
@@ -507,11 +517,11 @@ class PlaywrightMCPClient:
         if element:
             args["element"] = element
         res = self.call_tool("browser_select_option", args)
-        return res.get("text") or res.get("error") or "Option selected."
+        return self._authoritative_result(res, "select_option")
 
     def drag(self, source: str, target: str) -> str:
         res = self.call_tool("browser_drag", {"startTarget": source, "endTarget": target})
-        return res.get("text") or res.get("error") or "Dragged element."
+        return self._authoritative_result(res, "drag")
 
     def evaluate(self, expression: str) -> str:
         """Evaluates JavaScript in page context."""
@@ -519,12 +529,12 @@ class PlaywrightMCPClient:
         if not fn.startswith("() =>") and not fn.startswith("function") and not fn.startswith("(element) =>"):
             fn = f"() => {{ return {fn}; }}"
         res = self.call_tool("browser_evaluate", {"function": fn})
-        return res.get("text") or res.get("error") or "Evaluated."
+        return self._authoritative_result(res, "evaluate")
 
     def run_code_unsafe(self, code: str) -> str:
         """Executes a Playwright code snippet."""
         res = self.call_tool("browser_run_code_unsafe", {"code": code})
-        return res.get("text") or res.get("error") or "Executed snippet."
+        return self._authoritative_result(res, "run_code_unsafe")
 
     def take_screenshot(self, output_path: Optional[str] = None, full_page: bool = False) -> str:
         """Takes a screenshot of the current page."""
@@ -551,14 +561,14 @@ class PlaywrightMCPClient:
                             shutil.copy2(src_f, out_p)
                         except Exception:
                             pass
-        return text or res.get("error") or "Screenshot captured."
+        return text or self._authoritative_result(res, "take_screenshot")
 
     def save_pdf(self, filename: Optional[str] = None) -> str:
         args: Dict[str, Any] = {}
         if filename:
             args["filename"] = filename
         res = self.call_tool("browser_pdf_save", args)
-        return res.get("text") or res.get("error") or "PDF saved."
+        return self._authoritative_result(res, "save_pdf")
 
     def tabs(self, action: str = "list", index: Optional[int] = None, url: Optional[str] = None) -> str:
         args: Dict[str, Any] = {"action": action}
@@ -567,7 +577,7 @@ class PlaywrightMCPClient:
         if url:
             args["url"] = url
         res = self.call_tool("browser_tabs", args)
-        return res.get("text") or res.get("error") or f"Tabs: {action}"
+        return self._authoritative_result(res, f"tabs:{action}")
 
     def wait_for(self, text: Optional[str] = None, time_ms: Optional[int] = None) -> str:
         args: Dict[str, Any] = {}
@@ -576,14 +586,14 @@ class PlaywrightMCPClient:
         if time_ms:
             args["time"] = time_ms
         res = self.call_tool("browser_wait_for", args)
-        return res.get("text") or res.get("error") or "Waited."
+        return self._authoritative_result(res, "wait_for")
 
     def handle_dialog(self, accept: bool = True, prompt_text: Optional[str] = None) -> str:
         args: Dict[str, Any] = {"accept": accept}
         if prompt_text:
             args["promptText"] = prompt_text
         res = self.call_tool("browser_handle_dialog", args)
-        return res.get("text") or res.get("error") or "Dialog handled."
+        return self._authoritative_result(res, "handle_dialog")
 
     def file_upload(
         self,
@@ -597,19 +607,19 @@ class PlaywrightMCPClient:
         if selector:
             args["selector"] = selector
         res = self.call_tool("browser_file_upload", args)
-        return res.get("text") or res.get("error") or "File uploaded."
+        return self._authoritative_result(res, "file_upload")
 
     def console_messages(self, level: str = "info") -> str:
         res = self.call_tool("browser_console_messages", {"level": level})
-        return res.get("text") or res.get("error") or "No console messages."
+        return self._authoritative_result(res, "console_messages")
 
     def network_requests(self, static: bool = False) -> str:
         res = self.call_tool("browser_network_requests", {"static": static})
-        return res.get("text") or res.get("error") or "No network requests recorded."
+        return self._authoritative_result(res, "network_requests")
 
     def resize(self, width: int, height: int) -> str:
         res = self.call_tool("browser_resize", {"width": width, "height": height})
-        return res.get("text") or res.get("error") or f"Resized to {width}x{height}."
+        return self._authoritative_result(res, "resize")
 
     def close(self) -> str:
         """Shuts down browser and MCP server cleanly."""
@@ -621,14 +631,18 @@ class PlaywrightMCPClient:
                 pass
             self._running = False
             if self._proc:
+                proc = self._proc
                 try:
-                    self._proc.terminate()
-                    self._proc.wait(timeout=3)
+                    proc.terminate()
+                    proc.wait(timeout=3)
                 except Exception:
                     try:
-                        self._proc.kill()
+                        proc.kill()
+                        proc.wait(timeout=3)
                     except Exception:
                         pass
+                if proc.poll() is None:
+                    return "Error: Playwright MCP server did not terminate cleanly."
                 self._proc = None
             self._is_ready.clear()
             return "Browser closed."
