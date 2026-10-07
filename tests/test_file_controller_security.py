@@ -232,3 +232,33 @@ def test_write_file_rejects_hardlink_replacement_before_secure_write(tmp_path, m
     result = file_controller.write_file(str(tmp_path), target.name, "malicious")
     assert "could not write file" in result.lower()
     assert outside.read_text(encoding="utf-8") == "keep"
+
+
+def test_read_file_rejects_symlink_replacement_before_secure_open(tmp_path, monkeypatch):
+    from actions import file_controller
+
+    target = tmp_path / "victim.txt"
+    outside = tmp_path / "outside.txt"
+    backup = tmp_path / "original.txt"
+    target.write_text("safe", encoding="utf-8")
+    outside.write_text("secret", encoding="utf-8")
+    monkeypatch.setattr(file_controller, "_SAFE_ROOTS", [tmp_path])
+    real_open = file_controller.os.open
+    swapped = {"done": False}
+
+    def race_open(path_value, flags, mode=0o777, *, dir_fd=None):
+        if (
+            dir_fd is not None
+            and path_value == target.name
+            and flags & getattr(os, "O_NOFOLLOW", 0)
+            and not swapped["done"]
+        ):
+            swapped["done"] = True
+            target.replace(backup)
+            target.symlink_to(outside)
+        return real_open(path_value, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(file_controller.os, "open", race_open)
+    result = file_controller.read_file(str(tmp_path), target.name)
+    assert "could not read file" in result.lower()
+    assert "secret" not in result
