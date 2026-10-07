@@ -27,7 +27,6 @@ class DeviceCommandHandler(private val context: Context) {
             "open_url" -> openUrl(parameters)
             "volume_get" -> volumeGet()
             "volume_set" -> volumeSet(parameters)
-            "unlock_phone" -> unlockPhone(parameters)
             "file_list" -> fileList(parameters)
             "file_read" -> fileRead(parameters)
             "file_write" -> fileWrite(parameters)
@@ -206,66 +205,6 @@ class DeviceCommandHandler(private val context: Context) {
         val level = ((clamped / 100f) * max).toInt().coerceIn(0, max)
         audio.setStreamVolume(AudioManager.STREAM_MUSIC, level, 0)
         return CommandResult(true, data = mapOf("stream" to "music", "percentage" to clamped, "current" to level, "max" to max))
-    }
-
-    private fun unlockPhone(parameters: Map<String, Any?>): CommandResult {
-        if (parameters["pin"]?.toString().isNullOrBlank()) {
-            return CommandResult(false, errorCode = "MISSING_PIN", error = "PIN is required to unlock phone.")
-        }
-        return CommandResult(
-            false,
-            errorCode = "UNSUPPORTED_FEATURE",
-            error = "Remote PIN unlock is not implemented; no unlock operation was performed.",
-        )
-    }
-
-    private fun resolveFileTarget(path: String?): java.io.File {
-        val storage = android.os.Environment.getExternalStorageDirectory().canonicalFile
-        if (path.isNullOrBlank() || path.equals("home", ignoreCase = true)) {
-            return storage
-        }
-        val normalized = path.trim().replace('\\', '/')
-        if (normalized.startsWith("/") || Regex("^[A-Za-z]:").containsMatchIn(normalized)) {
-            throw IllegalArgumentException("Absolute file paths are not allowed.")
-        }
-        val parts = normalized.split('/').filter { it.isNotEmpty() }
-        if (parts.any { it == ".." }) {
-            throw IllegalArgumentException("Path traversal is not allowed.")
-        }
-        val lower = parts.firstOrNull()?.lowercase().orEmpty()
-        val baseDir = when (lower) {
-            "downloads" -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS).canonicalFile
-            "documents" -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS).canonicalFile
-            "pictures" -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_PICTURES).canonicalFile
-            "music" -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC).canonicalFile
-            "movies", "videos" -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MOVIES).canonicalFile
-            else -> storage
-        }
-        val relative = if (lower in setOf("downloads", "documents", "pictures", "music", "movies", "videos")) {
-            parts.drop(1)
-        } else {
-            parts
-        }
-        val target = java.io.File(baseDir, relative.joinToString("/")).canonicalFile
-        if (target != baseDir && !target.path.startsWith(baseDir.path + java.io.File.separator)) {
-            throw IllegalArgumentException("Resolved path escaped the allowed storage directory.")
-        }
-        return target
-    }
-
-    private fun rejectProtectedStorageRoot(file: java.io.File): CommandResult? {
-        val storage = android.os.Environment.getExternalStorageDirectory().canonicalFile
-        val protectedRoots = setOf(
-            storage.path,
-            android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS).canonicalPath,
-            android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS).canonicalPath,
-            android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_PICTURES).canonicalPath,
-            android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC).canonicalPath,
-            android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MOVIES).canonicalPath,
-        )
-        return if (file.canonicalPath in protectedRoots) {
-            CommandResult(false, errorCode = "PROTECTED_PATH", error = "Deleting a storage root is not allowed.")
-        } else null
     }
 
     private fun fileList(parameters: Map<String, Any?>): CommandResult {

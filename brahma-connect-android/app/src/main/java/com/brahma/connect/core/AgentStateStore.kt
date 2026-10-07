@@ -76,7 +76,6 @@ object BrahmaConnectCapabilities {
     const val VOLUME_CONTROL = "volume_control"
     const val APP_LAUNCH = "app_launch"
     const val OPEN_URL = "open_url"
-    const val UNLOCK_PHONE = "unlock_phone"
     const val FILES = "files"
     const val UI_CONTROL = "ui_control"
 
@@ -87,7 +86,6 @@ object BrahmaConnectCapabilities {
         VOLUME_CONTROL,
         APP_LAUNCH,
         OPEN_URL,
-        UNLOCK_PHONE,
         FILES,
         UI_CONTROL,
     )
