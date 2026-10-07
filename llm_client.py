@@ -1,4 +1,4 @@
-from core.provider_policy import GEMINI, normalize_provider, is_local, is_gemini
+from core.provider_policy import GEMINI, OPENROUTER, normalize_provider, validate_provider, is_local, is_gemini
 from core.local_brain import DEFAULT_ENDPOINT as LOCAL_DEFAULT_ENDPOINT, DEFAULT_MODEL as LOCAL_DEFAULT_MODEL
 from core.local_endpoint import validate_local_endpoint
 import json
@@ -79,7 +79,7 @@ class UnifiedAIClient:
         try:
             from memory.config_manager import load_settings
             data = load_settings()
-            self._provider = normalize_provider(
+            self._provider = validate_provider(
                 data.get("default_ai_provider", GEMINI),
                 GEMINI,
             )
@@ -97,7 +97,8 @@ class UnifiedAIClient:
                 or LOCAL_DEFAULT_MODEL
             ).strip() or LOCAL_DEFAULT_MODEL
         except Exception as e:
-            logger.error(f"[LLM Client] Failed to load settings: {e}")
+            logger.error(f"[LLM Client] Failed to load settings safely: {e}")
+            raise RuntimeError("AI provider/settings state could not be loaded safely.") from e
 
     def _local_chat_completion(self, messages: list[dict], temperature: float = 0.7, response_format: Optional[dict] = None) -> Optional[str]:
         payload = {
@@ -294,9 +295,15 @@ class UnifiedAIClient:
 
         if self._is_local_provider():
             return self.vision(prompt, image_b64, mime, system, model, max_tokens)
-        if normalize_provider(self._provider) == GEMINI:
-            return self._gemini_vision(prompt, image_b64, mime, system, max_tokens=max_tokens)
-        return openrouter_client.vision(prompt, image_b64, mime, system, model, max_tokens)
+        return self.vision(
+            prompt,
+            image_b64,
+            mime,
+            system,
+            model,
+            max_tokens,
+            provider=self._provider,
+        )
 
     def multi_turn(self, messages: list[dict], model: Optional[str] = None, max_tokens: int = 4096, temperature: float = 0.7, provider: Optional[str] = None) -> str:
         self.reload_settings()
