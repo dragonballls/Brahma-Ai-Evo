@@ -196,3 +196,19 @@ def test_archive_runtime_enforces_compression_ratio_and_rolls_back_partial_failu
                 _safe_extract_archive(archive_path, out)
         assert not (out / "first.txt").exists()
         assert not (out / "second.txt").exists()
+
+
+def test_archive_runtime_rejects_tar_gz_compression_bomb():
+    from actions.file_processor import _safe_extract_archive
+
+    with _home_tempdir() as root:
+        base = Path(root)
+        archive_path = base / "bomb.tar.gz"
+        payload = b"0" * (8 * 1024 * 1024)
+        with tarfile.open(archive_path, "w:gz", compresslevel=9) as tf:
+            info = tarfile.TarInfo("bomb.bin")
+            info.size = len(payload)
+            tf.addfile(info, io.BytesIO(payload))
+
+        with pytest.raises(ValueError, match="compression ratio"):
+            _safe_extract_archive(archive_path, base / "out")
