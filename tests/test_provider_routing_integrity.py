@@ -74,6 +74,20 @@ def test_provider_preserving_tool_calls_refuse_direct_openrouter_fallback(monkey
     direct.assert_not_called()
 
 
+def test_canonical_gemini_runtime_requires_selected_gemini_before_client_creation(monkeypatch):
+    from core import provider_policy
+    from core.gemini_runtime import GeminiModelAdapter
+
+    monkeypatch.setattr(
+        provider_policy,
+        "require_provider",
+        Mock(side_effect=RuntimeError("Gemini text generation requires the Google Gemini provider")),
+    )
+
+    with pytest.raises(RuntimeError, match="requires the Google Gemini provider"):
+        GeminiModelAdapter("gemini-3.8-flash").generate_content("hello")
+
+
 def test_omniroute_request_pins_explicit_provider(monkeypatch):
     client = object.__new__(OpenRouterClient)
     client._omniroute = Mock()
