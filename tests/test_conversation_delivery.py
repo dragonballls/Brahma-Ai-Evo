@@ -28,7 +28,7 @@ class ConversationDeliveryTests(unittest.TestCase):
         omni.assert_called_once()
         self.assertEqual(calls, [])
 
-    def test_tool_call_uses_direct_openrouter_when_omniroute_unavailable(self):
+    def test_tool_call_uses_direct_openrouter_when_openrouter_provider_is_selected(self):
         client = UnifiedAIClient()
         client._provider = "OpenRouter"
         responses = [{
@@ -43,7 +43,8 @@ class ConversationDeliveryTests(unittest.TestCase):
         def fake_call(*args, **kwargs):
             return responses.pop(0)
 
-        with patch("llm_client.openrouter_client._call_omniroute_tool_capable", return_value=None), \
+        with patch.object(client, "reload_settings", return_value=None), \
+             patch("llm_client.openrouter_client._call_omniroute_tool_capable", return_value=None), \
              patch("llm_client.openrouter_client._call_tool_capable", side_effect=fake_call):
             result = client.chat_with_tools(
                 messages=[{"role": "user", "content": "Hello."}],
