@@ -75,6 +75,82 @@ def test_approve_push_failure_preserves_promoting_state_for_recovery():
     assert saved[-1].commits == checkpoint.commits
 
 
+def test_undo_metadata_failure_after_publish_preserves_recovery_state():
+    promoted = "c" * 40
+    undo_tip = "d" * 40
+    checkpoint = _checkpoint(state="approved", promoted_sha=promoted)
+    saved = []
+    calls = []
+    agent = object.__new__(SelfCodingAgent)
+    agent._load = lambda _checkpoint_id: checkpoint
+    agent._validate_checkpoint = lambda _checkpoint, _checkpoint_id=None: None
+    agent.validate_repo = lambda: None
+    agent._branch = lambda: "agent/checkpoint/original"
+
+    def fake_save(value):
+        calls.append(("save", value.state, value.undo_commits))
+        if value.state == "undone":
+            raise OSError("metadata disk failure")
+        saved.append(value)
+
+    agent._save = fake_save
+
+    def fake_git(*args, **kwargs):
+        calls.append(args)
+        if args == ("fetch", "origin", "main"):
+            return _result(args)
+        if args == ("rev-parse", "refs/remotes/origin/main"):
+            return _result(args, stdout=promoted)
+        if args == ("rev-parse", "refs/heads/main"):
+            return _result(args, stdout=promoted)
+        if args == ("switch", "main"):
+            return _result(args)
+        if args == ("revert", "--no-edit", checkpoint.commits[0]):
+            return _result(args)
+        if args == ("rev-parse", "HEAD"):
+            return _result(args, stdout=undo_tip)
+        if args == ("status", "--porcelain"):
+            return _result(args, stdout="")
+        if args == ("push", "origin", "main"):
+            return _result(args)
+        if args == ("switch", "agent/checkpoint/original"):
+            return _result(args)
+        raise AssertionError(f"unexpected git call: {args}")
+
+    agent._git = fake_git
+
+    try:
+        agent._undo_unlocked(checkpoint.checkpoint_id)
+    except SelfCodingError as exc:
+        assert "metadata" in str(exc).casefold()
+        assert "published" in str(exc).casefold()
+    else:
+        raise AssertionError("post-publish metadata failure must not be reported as success")
+
+    assert saved[-1].state == "undoing"
+    assert saved[-1].undo_commits == (undo_tip,)
+    assert ("reset", "--hard", promoted) not in calls
+
+    durable = saved[-1]
+    agent._load = lambda _checkpoint_id: durable
+
+    def recovery_git(*args, **kwargs):
+        calls.append(("recovery",) + args)
+        if args == ("fetch", "origin", "main"):
+            return _result(args)
+        if args == ("rev-parse", "refs/remotes/origin/main"):
+            return _result(args, stdout=undo_tip)
+        if args == ("rev-parse", "refs/heads/main"):
+            return _result(args, stdout=undo_tip)
+        raise AssertionError(f"unexpected recovery git call: {args}")
+
+    agent._git = recovery_git
+    agent._save = lambda value: saved.append(value)
+
+    assert agent._recover_undoing(durable) == "undone"
+    assert saved[-1].state == "undone"
+
+
 def test_recover_undoing_push_failure_is_explicitly_ambiguous():
     promoted = "c" * 40
     undo_tip = "d" * 40
