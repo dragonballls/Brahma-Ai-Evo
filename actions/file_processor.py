@@ -763,6 +763,7 @@ def _safe_archive_target(root: Path, member_name: str) -> Path:
 
 
 def _safe_extract_archive(path: Path, dest: Path) -> None:
+    import os
     import tarfile
     import zipfile
 
@@ -770,13 +771,14 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
     MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024
     MAX_ARCHIVE_COMPRESSION_RATIO = 1000
 
-    dest = dest.resolve()
-    if dest.exists() and not dest.is_dir():
-        raise ValueError("Archive extraction destination is not a directory.")
-    if not dest.exists():
-        dest.mkdir(parents=True, exist_ok=False)
-    if dest.is_symlink():
-        raise ValueError("Archive extraction destination may not be a symlink.")
+    dest = Path(dest).absolute()
+    home = Path.home().resolve()
+    try:
+        dest.relative_to(home)
+    except ValueError as exc:
+        raise ValueError("Archive extraction destination must stay inside the user's home directory.") from exc
+    if dest.exists() and (dest.is_symlink() or not dest.is_dir()):
+        raise ValueError("Archive extraction destination must be a real directory.")
 
     created_files: list[tuple[Path, tuple[int, int] | None]] = []
     created_dirs: list[Path] = []
@@ -788,71 +790,79 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
         except OSError:
             return None
 
-    def _open_output(root: Path, target: Path):
-        """Open an archive output without following a raced leaf/parent on POSIX."""
-        import os
-        relative = target.relative_to(root)
-        parts = relative.parts
-        if not parts:
-            raise ValueError("Archive member resolved to its extraction root.")
+    def _open_directory(root: Path, target: Path):
+        """Open/create a directory chain without following symlinks on POSIX."""
+        root = Path(root).absolute()
+        target = Path(target).absolute()
+        try:
+            relative = target.relative_to(root)
+        except ValueError as exc:
+            raise ValueError("Archive extraction path escaped its safe root.") from exc
+        if root.is_symlink() or not root.is_dir():
+            raise ValueError("Archive extraction root must be a real directory.")
         if os.name != "nt" and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY"):
             flags_dir = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-            root_fd = os.open(str(root), flags_dir)
+            fd = os.open(str(root), flags_dir)
+            current = root
             try:
-                dir_fd = root_fd
-                opened = [root_fd]
-                for part in parts[:-1]:
+                for part in relative.parts:
+                    current = current / part
                     try:
-                        os.mkdir(part, mode=0o755, dir_fd=dir_fd)
-                        created_dirs.append((root / Path(*parts[:parts.index(part) + 1])).resolve())
+                        os.mkdir(part, mode=0o755, dir_fd=fd)
+                        created_dirs.append(current)
                     except FileExistsError:
                         pass
-                    next_fd = os.open(part, flags_dir, dir_fd=dir_fd)
-                    opened.append(next_fd)
-                    if dir_fd != root_fd:
-                        os.close(dir_fd)
-                    dir_fd = next_fd
-                leaf_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
-                fd = os.open(parts[-1], leaf_flags, 0o600, dir_fd=dir_fd)
-                if dir_fd != root_fd:
-                    os.close(dir_fd)
-                os.close(root_fd)
-                handle = os.fdopen(fd, "wb")
-                created_files.append((target, _fingerprint(target)))
-                return handle
+                    next_fd = os.open(part, flags_dir, dir_fd=fd)
+                    os.close(fd)
+                    fd = next_fd
+                return fd
             except Exception:
-                for fd in opened[1:]:
-                    try:
-                        os.close(fd)
-                    except OSError:
-                        pass
                 try:
-                    os.close(root_fd)
+                    os.close(fd)
                 except OSError:
                     pass
                 raise
 
-        # Windows fallback: exclusive leaf creation plus immediate reparse checks.
-        current = Path(root.anchor) if root.anchor else Path(".")
-        for part in root.parts[1:] if root.anchor else root.parts:
+        current = root
+        for part in relative.parts:
             current = current / part
             is_junction = getattr(current, "is_junction", None)
             if current.is_symlink() or (is_junction is not None and is_junction()):
-                raise ValueError("Archive extraction destination contains a link/reparse component.")
-        current = root
-        for part in parts[:-1]:
-            current = current / part
-            if current.exists():
-                is_junction = getattr(current, "is_junction", None)
-                if current.is_symlink() or (is_junction is not None and is_junction()):
-                    raise ValueError("Archive extraction path contains a link/reparse component.")
-            else:
+                raise ValueError("Archive extraction path contains a link/reparse component.")
+            if not current.exists():
                 current.mkdir()
                 created_dirs.append(current)
-        parent = current
-        is_junction = getattr(parent, "is_junction", None)
-        if parent.is_symlink() or (is_junction is not None and is_junction()):
-            raise ValueError("Archive extraction parent contains a link/reparse component.")
+            elif not current.is_dir():
+                raise ValueError("Archive extraction path contains a non-directory component.")
+        return None
+
+    if not dest.exists():
+        _open_directory(home, dest)
+    if dest.is_symlink() or not dest.is_dir():
+        raise ValueError("Archive extraction destination must be a real directory.")
+
+    def _open_output(root: Path, target: Path):
+        """Open an archive output exclusively beneath a race-resistant directory chain."""
+        relative = target.relative_to(root)
+        parts = relative.parts
+        if not parts:
+            raise ValueError("Archive member resolved to its extraction root.")
+        parent_fd = None
+        if os.name != "nt" and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY"):
+            parent_fd = _open_directory(root, target.parent)
+            try:
+                flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+                fd = os.open(parts[-1], flags, 0o600, dir_fd=parent_fd)
+                handle = os.fdopen(fd, "wb")
+                created_files.append((target, _fingerprint(target)))
+                return handle
+            finally:
+                if parent_fd is not None:
+                    os.close(parent_fd)
+
+        _open_directory(root, target.parent)
+        if target.is_symlink():
+            raise ValueError("Archive extraction target became a symlink.")
         handle = target.open("xb")
         created_files.append((target, _fingerprint(target)))
         return handle
@@ -900,7 +910,7 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
         return [(member, target, is_dir) for member, target, is_dir in planned]
 
     try:
-        if path.suffix.lower() == ".zip":
+        if zipfile.is_zipfile(path):
             with zipfile.ZipFile(path) as archive:
                 infos = archive.infolist()
                 if len(infos) > MAX_ARCHIVE_MEMBERS:
@@ -908,7 +918,7 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
                 planned = preflight(infos)
                 for info, target, is_dir in planned:
                     if is_dir:
-                        target.mkdir(parents=True, exist_ok=True)
+                        _open_directory(dest, target)
                         continue
                     with archive.open(info, "r") as source, _open_output(dest, target) as output:
                         shutil.copyfileobj(source, output)
@@ -921,7 +931,7 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
             planned = preflight(members)
             for member, target, is_dir in planned:
                 if is_dir:
-                    target.mkdir(parents=True, exist_ok=True)
+                    _open_directory(dest, target)
                     continue
                 source = archive.extractfile(member)
                 if source is None:
