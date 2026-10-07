@@ -298,6 +298,7 @@ class _BrowserThread:
         if self._context is None:
             self._context = await self._browser.new_context(
                 viewport=None,
+                service_workers="block",
                 user_agent=(
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -396,6 +397,7 @@ class _BrowserThread:
         if self._context is None:
             self._context = await self._browser.new_context(
                 viewport=None,
+                service_workers="block",
                 user_agent=(
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) "
