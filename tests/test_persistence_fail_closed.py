@@ -287,3 +287,38 @@ def test_memory_safe_read_refuses_symlink_without_following_it(tmp_path, monkeyp
     with pytest.raises(RuntimeError, match="symlink"):
         mm.load_memory()
     assert real.read_text(encoding="utf-8") == '{"identity":{"name":{"value":"keep"}}}'
+
+
+def test_selected_capability_state_refuses_symlink_read(tmp_path):
+    import os
+    from core.selected_capabilities import _json_load
+
+    real = tmp_path / "real.json"
+    real.write_text('{"events":[]}', encoding="utf-8")
+    link = tmp_path / "state.json"
+    try:
+        os.symlink(real, link)
+    except (OSError, NotImplementedError):
+        pytest.skip("Symlink support unavailable")
+
+    with pytest.raises(RuntimeError, match="symlink"):
+        _json_load(link, {"events": []})
+    assert real.read_text(encoding="utf-8") == '{"events":[]}'
+
+
+def test_model_performance_state_refuses_symlink_read(tmp_path, monkeypatch):
+    import os
+    import core.model_performance as mp
+
+    real = tmp_path / "real.json"
+    real.write_text('{"schema_version":1,"models":{}}', encoding="utf-8")
+    link = tmp_path / "model_performance.json"
+    try:
+        os.symlink(real, link)
+    except (OSError, NotImplementedError):
+        pytest.skip("Symlink support unavailable")
+
+    monkeypatch.setattr(mp, "_PATH", link)
+    with pytest.raises((RuntimeError, OSError)):
+        mp._load()
+    assert real.read_text(encoding="utf-8") == '{"schema_version":1,"models":{}}'
