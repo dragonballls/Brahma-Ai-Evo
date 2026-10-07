@@ -4,9 +4,11 @@ from core.user_paths import get_user_data_dir
 import json
 import os
 import platform
+import math
 import subprocess
 import time
 import urllib.request
+import urllib.error
 import uuid
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -19,6 +21,16 @@ _SETTINGS_FILE = _CONFIG_DIR / "app_settings.json"
 _MEMORY_CACHE: Optional[Dict[str, Any]] = None
 _MEMORY_CACHE_TIME: float = 0
 _CACHE_TTL: float = 1800.0  # 30 minutes
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.URLError("Location service redirects are disabled.")
+
+
+def _open_no_redirect(req, timeout: float):
+    opener = urllib.request.build_opener(_NoRedirectHandler())
+    return opener.open(req, timeout=timeout)
 
 
 def _read_manual_override() -> Optional[str]:
@@ -161,7 +173,7 @@ def _reverse_geocode_osm(lat: float, lon: float) -> Optional[str]:
     try:
         url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}"
         req = urllib.request.Request(url, headers={"User-Agent": "BrahmaAI-LocationEngine/1.0"})
-        with urllib.request.urlopen(req, timeout=3.0) as resp:
+        with _open_no_redirect(req, timeout=3.0) as resp:
             raw = resp.read(64 * 1024 + 1)
             if len(raw) > 64 * 1024:
                 raise ValueError("Location service response exceeded the safety limit.")
@@ -189,7 +201,7 @@ def _detect_via_ip_services() -> Optional[Dict[str, Any]]:
     for name, url, city_k, lat_k, lon_k, reg_k in endpoints:
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "curl/7.68.0"})
-            with urllib.request.urlopen(req, timeout=2.5) as resp:
+            with _open_no_redirect(req, timeout=2.5) as resp:
                 raw = resp.read(64 * 1024 + 1)
                 if len(raw) > 64 * 1024:
                     raise ValueError("Location service response exceeded the safety limit.")
