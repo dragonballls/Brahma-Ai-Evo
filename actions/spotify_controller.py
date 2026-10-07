@@ -94,18 +94,24 @@ def _get_spotify_app_path() -> str | None:
 
 
 def _open_url_in_chrome(url: str) -> bool:
-    """Launches URL in Google Chrome."""
+    """Launch a browser and report success only when the launch request is accepted."""
     chrome_exe = _get_chrome_path()
     if chrome_exe:
         try:
-            subprocess.Popen([chrome_exe, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return True
+            process = subprocess.Popen(
+                [chrome_exe, url],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=hidden_creationflags(),
+            )
+            if process.poll() is None:
+                return True
         except Exception as e:
             print(f"[Music] Error launching Chrome: {e}")
 
     try:
         import webbrowser
-        return bool(webbrowser.open(url))
+        return webbrowser.open(url) is True
     except Exception:
         return False
 
@@ -258,39 +264,50 @@ def spotify_controller(
     spotify_app = _get_spotify_app_path()
 
     if action in ("play", "pause", "toggle", "playpause", "resume"):
-        _press_media_key("playpause")
-        return "Toggled playback."
+        if _press_media_key("playpause"):
+            return "Playback control request sent."
+        return "Playback control failed."
 
     elif action in ("next", "skip", "next_track"):
-        _press_media_key("nexttrack")
-        return "Skipped to next song."
+        if _press_media_key("nexttrack"):
+            return "Next-track control request sent."
+        return "Next-track control failed."
 
     elif action in ("previous", "prev", "previous_track", "back"):
-        _press_media_key("prevtrack")
-        return "Playing previous song."
+        if _press_media_key("prevtrack"):
+            return "Previous-track control request sent."
+        return "Previous-track control failed."
 
     elif action in ("volume_up", "vol_up"):
-        for _ in range(6):
-            _press_media_key("volumeup")
-            time.sleep(0.03)
-        return "Increased volume."
+        success = all(_press_media_key("volumeup") for _ in range(6))
+        return "Volume-up control request sent." if success else "Volume-up control failed."
 
     elif action in ("volume_down", "vol_down"):
-        for _ in range(6):
-            _press_media_key("volumedown")
-            time.sleep(0.03)
-        return "Decreased volume."
+        success = all(_press_media_key("volumedown") for _ in range(6))
+        return "Volume-down control request sent." if success else "Volume-down control failed."
 
     elif action in ("mute", "unmute"):
-        _press_media_key("volumemute")
-        return "Muted/unmuted audio."
+        if _press_media_key("volumemute"):
+            return "Mute control request sent."
+        return "Mute control failed."
 
     elif action in ("open", "open_spotify", "launch"):
         if spotify_app:
-            subprocess.Popen([spotify_app], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return "Opened Spotify desktop app."
-        _open_url_in_chrome("https://open.spotify.com")
-        return "Opened Spotify in Google Chrome."
+            try:
+                process = subprocess.Popen(
+                    [spotify_app],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=hidden_creationflags(),
+                )
+                if process.poll() is None:
+                    return "Opened Spotify desktop app."
+            except OSError:
+                pass
+            return "Spotify desktop app could not be opened."
+        if _open_url_in_chrome("https://open.spotify.com"):
+            return "Opened Spotify in Google Chrome."
+        return "Spotify could not be opened in Google Chrome."
 
     elif action in ("search_play", "play_song", "search", "play_playlist", "play_music"):
         if not query:
@@ -302,34 +319,32 @@ def spotify_controller(
         # If Desktop Spotify App exists, launch it
         if spotify_app:
             try:
-                os.startfile(f"spotify:search:{encoded}")
-                time.sleep(1.2)
-                _press_media_key("playpause")
-                return f"Playing '{query}' on Spotify."
-            except Exception:
+                process = subprocess.Popen(
+                    [spotify_app, f"spotify:search:{encoded}"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=hidden_creationflags(),
+                )
+                if process.poll() is None:
+                    time.sleep(1.2)
+                    if _press_media_key("playpause"):
+                        return f"Playback control request sent for '{query}' on Spotify."
+                    return f"Opened Spotify search for '{query}', but playback control failed."
+            except OSError:
                 pass
 
-        # Guaranteed instant audio playback in Chrome
+        # Browser navigation is not playback verification.
         direct_url = _scrape_direct_playable_url(query)
         if direct_url:
-            print(f"[Music] ▶️ Starting instant direct playback: {direct_url}")
-            _open_url_in_chrome(direct_url)
-            if player:
-                try:
-                    player.write_log(f"Brahma Evo: Playing '{query}' in Google Chrome")
-                except Exception:
-                    pass
-            return f"Playing '{query}' in Google Chrome."
+            if _open_url_in_chrome(direct_url):
+                return f"Opened a YouTube result for '{query}' in Google Chrome; playback was not verified."
+            return f"Could not open the YouTube result for '{query}'."
 
-        # Fallback to Spotify Web
+        # Fallback to Spotify Web.
         spotify_web_url = f"https://open.spotify.com/search/{encoded}"
-        _open_url_in_chrome(spotify_web_url)
-        threading.Thread(
-            target=lambda: [time.sleep(2.5), _find_and_click_spotify_play_button()],
-            daemon=True
-        ).start()
-
-        return f"Opened and playing '{query}' in Google Chrome."
+        if _open_url_in_chrome(spotify_web_url):
+            return f"Opened Spotify search for '{query}' in Google Chrome; playback was not verified."
+        return "Could not open Spotify in Google Chrome."
 
     else:
         if query:
