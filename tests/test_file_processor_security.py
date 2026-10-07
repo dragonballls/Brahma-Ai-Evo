@@ -305,3 +305,70 @@ def test_secure_text_output_rejects_race_created_symlink(tmp_path, monkeypatch):
     assert outside.read_text(encoding="utf-8") == "keep"
     if target.exists():
         assert target.is_symlink()
+
+
+def test_generated_artifacts_require_basic_format_integrity(tmp_path):
+    from actions.file_processor import _verify_output_artifact
+
+    valid_json = tmp_path / "valid.json"
+    valid_json.write_text("{\"ok\": true}", encoding="utf-8")
+    assert _verify_output_artifact(valid_json) == valid_json
+
+    invalid_json = tmp_path / "invalid.json"
+    invalid_json.write_text("{", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="format validation|Invalid"):
+        _verify_output_artifact(invalid_json)
+    assert not invalid_json.exists()
+
+    valid_image = tmp_path / "valid.png"
+    from PIL import Image
+    Image.new("RGB", (4, 4), "white").save(valid_image)
+    assert _verify_output_artifact(valid_image) == valid_image
+
+    invalid_image = tmp_path / "invalid.png"
+    invalid_image.write_bytes(b"not-an-image")
+    with pytest.raises(Exception):
+        _verify_output_artifact(invalid_image)
+    assert not invalid_image.exists()
+
+
+def test_video_failed_ffmpeg_output_is_removed(tmp_path, monkeypatch):
+    from actions import file_processor
+
+    source = tmp_path / "sample.mp4"
+    source.write_bytes(b"placeholder")
+    output = tmp_path / "sample_extract_audio.mp3"
+
+    monkeypatch.setattr(file_processor, "_ffmpeg_available", lambda: True, raising=False)
+
+    def fake_run(*args, **kwargs):
+        Path(args[0][-1]).write_bytes(b"partial")
+        return __import__("subprocess").CompletedProcess(args[0], 1, "", "simulated ffmpeg failure")
+
+    monkeypatch.setattr(file_processor.subprocess, "run", fake_run)
+    result = file_processor._process_video(source, "extract_audio", {})
+    assert result.startswith("Extract audio failed:")
+    assert not output.exists()
+
+
+def test_image_operations_report_success_only_after_valid_artifact(tmp_path):
+    from actions.file_processor import _process_image
+    from PIL import Image
+
+    source = tmp_path / "sample.png"
+    Image.new("RGB", (32, 24), "white").save(source)
+
+    assert "Saved:" in _process_image(source, "resize", {"width": 16})
+    resized = next(tmp_path.glob("sample_resized_16x12*.png"))
+    with Image.open(resized) as image:
+        image.verify()
+
+    assert "Saved:" in _process_image(source, "convert", {"format": "jpg"})
+    converted = next(tmp_path.glob("sample_converted*.jpg"))
+    with Image.open(converted) as image:
+        image.verify()
+
+    assert "Saved:" in _process_image(source, "compress", {"quality": 70})
+    compressed = next(tmp_path.glob("sample_compressed_q70*.jpg"))
+    with Image.open(compressed) as image:
+        image.verify()

@@ -89,20 +89,62 @@ def _cleanup_generated_artifact(path: Path | None) -> None:
         pass
 
 
+def _validate_output_format(path: Path) -> None:
+    """Validate lightweight structural invariants without requiring network access."""
+    ext = path.suffix.casefold()
+    if ext in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".ico"}:
+        from PIL import Image
+        with Image.open(path) as image:
+            image.verify()
+        return
+    if ext == ".json":
+        text = path.read_text(encoding="utf-8")
+        json.loads(text)
+        return
+    if ext in {".docx", ".xlsx", ".pptx"}:
+        import zipfile
+        required = {
+            ".docx": {"[Content_Types].xml", "word/document.xml"},
+            ".xlsx": {"[Content_Types].xml", "xl/workbook.xml"},
+            ".pptx": {"[Content_Types].xml", "ppt/presentation.xml"},
+        }[ext]
+        if not zipfile.is_zipfile(path):
+            raise RuntimeError(f"Generated {ext[1:].upper()} output is not a valid OOXML package: {path}")
+        with zipfile.ZipFile(path, "r") as archive:
+            if archive.testzip() is not None:
+                raise RuntimeError(f"Generated {ext[1:].upper()} output contains a corrupt archive member: {path}")
+            names = set(archive.namelist())
+            missing = required - names
+            if missing:
+                raise RuntimeError(
+                    f"Generated {ext[1:].upper()} output is missing required package parts: {sorted(missing)}"
+                )
+        return
+    if ext == ".pdf":
+        header = path.read_bytes()[:5]
+        if header != b"%PDF-":
+            raise RuntimeError(f"Generated PDF output has an invalid header: {path}")
+        return
+
+
 def _verify_output_artifact(path: Path) -> Path:
-    """Fail closed unless a newly generated file really exists and is non-empty."""
+    """Fail closed unless a newly generated file exists and has basic structural validity."""
     path = Path(path)
     try:
         if path.is_symlink() or not path.is_file():
             raise RuntimeError(f"Generated output is not a regular file: {path}")
         if path.stat().st_size <= 0:
             raise RuntimeError(f"Generated output is empty: {path}")
+        _validate_output_format(path)
     except OSError as exc:
         _cleanup_generated_artifact(path)
         raise RuntimeError(f"Generated output could not be verified: {path}") from exc
     except RuntimeError:
         _cleanup_generated_artifact(path)
         raise
+    except Exception as exc:
+        _cleanup_generated_artifact(path)
+        raise RuntimeError(f"Generated output format validation failed: {path}") from exc
     return path
 
 def _output_path(src: Path, suffix: str, new_ext: str = None) -> Path:
