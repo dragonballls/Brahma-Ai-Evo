@@ -12,7 +12,9 @@ import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, quote_plus, urljoin, urlparse
+from urllib.parse import parse_qs, quote_plus, urlencode, urljoin, urlparse
+
+from core.network_safety import fetch_public_bytes
 
 import requests
 
@@ -74,30 +76,35 @@ def _validate_remote_fetch_url(url: str) -> str:
 
 
 def _safe_get(url: str, **kwargs):
+    """Fetch a validated public template resource with one DNS resolution and no redirects."""
     safe_url = _validate_remote_fetch_url(url)
-    kwargs["allow_redirects"] = False
-    kwargs["stream"] = True
-    response = requests.get(safe_url, **kwargs)
-    try:
-        content_length = response.headers.get("Content-Length")
-        if content_length and int(content_length) > MAX_HTTP_RESPONSE_BYTES:
-            raise ValueError("Remote template response exceeds the 25 MiB safety limit.")
-        chunks = []
-        total = 0
-        for chunk in response.iter_content(chunk_size=1024 * 64):
-            if not chunk:
-                continue
-            total += len(chunk)
-            if total > MAX_HTTP_RESPONSE_BYTES:
-                raise ValueError("Remote template response exceeds the 25 MiB safety limit.")
-            chunks.append(chunk)
-        response._content = b"".join(chunks)
-        response._content_consumed = True
-        return response
-    except Exception:
-        response.close()
-        raise
+    params = kwargs.pop("params", None)
+    headers = dict(kwargs.pop("headers", {}) or {})
+    timeout = float(kwargs.pop("timeout", 10))
+    kwargs.pop("stream", None)
+    kwargs.pop("allow_redirects", None)
+    if kwargs:
+        raise TypeError(f"Unsupported safe template request options: {sorted(kwargs)}")
 
+    if params:
+        encoded = urlencode(params, doseq=True)
+        safe_url = f"{safe_url}{'&' if '?' in safe_url else '?'}{encoded}"
+
+    status, body = fetch_public_bytes(
+        safe_url,
+        timeout=timeout,
+        max_response_bytes=MAX_HTTP_RESPONSE_BYTES,
+        headers=headers,
+    )
+    response = requests.Response()
+    response.status_code = int(status)
+    response.url = safe_url
+    response.headers["Content-Length"] = str(len(body))
+    response._content = body
+    response._content_consumed = True
+    if 300 <= response.status_code < 400:
+        raise ValueError("Remote template response was redirected; redirects are disabled.")
+    return response
 
 TRUSTED_TEMPLATE_HINTS = (
     "slidesgo",
