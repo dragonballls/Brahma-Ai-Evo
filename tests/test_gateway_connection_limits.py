@@ -121,3 +121,29 @@ def test_gateway_rejects_reauthentication_on_an_already_authenticated_socket():
     source = (ROOT / "brahma_connect" / "gateway" / "server.py").read_text(encoding="utf-8")
     assert "This WebSocket is already authenticated; reconnect to change devices." in source
     assert "if device_id:" in source
+
+
+def test_connection_hub_invalidate_device_revokes_before_socket_close():
+    import asyncio
+    from brahma_connect.gateway.websocket import ConnectionHub
+
+    class Socket:
+        def __init__(self):
+            self.closed = False
+            self.close_calls = 0
+
+        async def close(self, **kwargs):
+            self.close_calls += 1
+            self.closed = True
+            raise RuntimeError("socket close failed")
+
+    async def scenario():
+        hub = ConnectionHub()
+        socket = Socket()
+        await hub.register(socket, "dev-1")
+        result = await hub.invalidate_device("dev-1")
+        assert result == {"found": True, "closed": False}
+        assert await hub.get("dev-1") is None
+        assert socket.close_calls == 1
+
+    asyncio.run(scenario())

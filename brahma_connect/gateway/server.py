@@ -729,9 +729,22 @@ class BrahmaGateway:
                 return JSONResponse({"ok": False, "error": "Local management endpoint."}, status_code=403)
             if not self.device_manager.revoke(device_id):
                 return JSONResponse({"ok": False, "error": "Device not found."}, status_code=404)
-            await self.hub.close_device(device_id, reason="Device revoked")
-            self._append_log("DEVICE_REVOKED", device_id=device_id)
-            return {"ok": True}
+            connection_state = await self.hub.invalidate_device(
+                device_id,
+                reason="Device revoked",
+            )
+            self._append_log(
+                "DEVICE_REVOKED",
+                device_id=device_id,
+                connection_found=connection_state["found"],
+                connection_closed=connection_state["closed"],
+            )
+            return {
+                "ok": True,
+                "revoked": True,
+                "connection_found": connection_state["found"],
+                "connection_closed": connection_state["closed"],
+            }
 
         @app.post("/gateway/devices/{device_id}/forget")
         async def forget_device(device_id: str, req: Request):

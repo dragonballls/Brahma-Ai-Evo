@@ -235,6 +235,31 @@ class ConnectionHub:
                 future.set_exception(RuntimeError(reason))
         return device_ids
 
+    async def invalidate_device(self, device_id: str, code: int = 1000, reason: str = "Device revoked") -> dict[str, bool]:
+        """Invalidate an authenticated device immediately, then best-effort close its socket."""
+        key = str(device_id)
+        pending: list[asyncio.Future] = []
+        state = None
+        async with self._lock:
+            state = self._connections.pop(key, None)
+            if state is None:
+                return {"found": False, "closed": False}
+            state.authenticated = False
+            self._socket_index.pop(id(state.websocket), None)
+            pending = list(state.pending.values())
+            state.pending.clear()
+
+        for future in pending:
+            if not future.done():
+                future.set_exception(RuntimeError(reason or "Device connection revoked."))
+
+        closed = True
+        try:
+            await state.websocket.close(code=code, reason=reason)
+        except Exception:
+            closed = False
+        return {"found": True, "closed": closed}
+
     async def close_device(self, device_id: str, code: int = 1000, reason: str = "") -> bool:
         key = str(device_id)
         async with self._lock:
