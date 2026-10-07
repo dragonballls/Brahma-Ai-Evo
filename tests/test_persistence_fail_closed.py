@@ -212,3 +212,38 @@ def test_workspace_database_rejects_hard_linked_shm(tmp_path):
 
     with pytest.raises(RuntimeError, match="multiple hard links"):
         workspace_store._validate_store_path(db)
+
+
+def test_memory_atomic_writer_uses_exclusive_temp_creation(monkeypatch, tmp_path):
+    from memory import memory_manager as mm
+    seen = {}
+    real_open = mm.os.open
+
+    def checked_open(path, flags, mode=0o666):
+        seen["flags"] = flags
+        return real_open(path, flags, mode)
+
+    target = tmp_path / "memory.json"
+    monkeypatch.setattr(mm, "MEMORY_PATH", target)
+    monkeypatch.setattr(mm.os, "open", checked_open)
+    mm._atomic_write_json(target, {"ok": True})
+    assert seen["flags"] & mm.os.O_EXCL
+    assert target.read_text(encoding="utf-8").strip() == '{"ok": true}'
+
+
+def test_config_atomic_writer_uses_exclusive_temp_creation(monkeypatch, tmp_path):
+    from memory import config_manager as cm
+    seen = {}
+    real_open = cm.os.open
+
+    def checked_open(path, flags, mode=0o666):
+        seen["flags"] = flags
+        return real_open(path, flags, mode)
+
+    target = tmp_path / "settings.json"
+    monkeypatch.setattr(cm, "SETTINGS_FILE", target)
+    monkeypatch.setattr(cm.os, "open", checked_open)
+    monkeypatch.setattr(cm, "_SETTINGS_CACHE", None)
+    cm.save_settings({"race_test": "ok"})
+    assert seen["flags"] & cm.os.O_EXCL
+    assert target.exists()
