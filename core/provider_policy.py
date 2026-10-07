@@ -35,6 +35,14 @@ def normalize_provider(value: object, default: str = GEMINI) -> str:
     return GEMINI
 
 
+def validate_provider(value: object, default: str = GEMINI) -> str:
+    """Return a supported canonical provider or fail explicitly."""
+    normalized = normalize_provider(value, default=default)
+    if normalized not in SUPPORTED_PROVIDERS:
+        raise ValueError(f"Unsupported AI provider: {value!r}")
+    return normalized
+
+
 def is_local(value: object) -> bool:
     return normalize_provider(value) == LOCAL
 
