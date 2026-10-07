@@ -144,21 +144,30 @@ def brightness_get() -> int | None:
 
 
 def brightness_set(value: int) -> None:
-    """Set brightness to an absolute percentage. Only used to restore a value
-    captured before a change, so it is undo's counterpart to the up/down pair."""
+    """Set brightness and verify the observable final value before returning."""
     value = max(0, min(100, int(value)))
     if _OS == "Windows":
-        subprocess.run(
+        result = subprocess.run(
             ["powershell", "-Command",
              "(Get-WmiObject -Namespace root/wmi -Class WmiMonitorBrightnessMethods)"
              f".WmiSetBrightness(1, {value})"],
             capture_output=True, timeout=5, **_WIN_HIDE
         )
     elif _OS == "Linux":
-        subprocess.run(["brightnessctl", "set", f"{value}%"], capture_output=True)
+        result = subprocess.run(["brightnessctl", "set", f"{value}%"], capture_output=True)
+    else:
+        result = None
+    if result is not None and result.returncode != 0:
+        raise RuntimeError(f"Brightness command failed (exit {result.returncode}).")
+    observed = brightness_get()
+    if observed is None:
+        raise RuntimeError("Brightness changed but its final state could not be verified.")
+    if abs(observed - value) > 1:
+        raise RuntimeError(f"Brightness final state mismatch: requested {value}%, observed {observed}%.")
 
 
 def volume_set(value: int):
+    """Set master volume and verify the observable final value before returning."""
     value = max(0, min(100, int(value)))
     if _OS == "Windows":
         try:
@@ -171,19 +180,28 @@ def volume_set(value: int):
             vol       = cast(interface, POINTER(IAudioEndpointVolume))
             vol_db    = -65.25 if value == 0 else max(-65.25, 20 * math.log10(value / 100))
             vol.SetMasterVolumeLevel(vol_db, None)
-            return
         except Exception as e:
-            print(f"[Settings] pycaw failed, using keypress fallback: {e}")
-            pyautogui.press("volumemute")
-            pyautogui.press("volumemute")
+            raise RuntimeError(f"Unable to set volume on Windows: {e}") from e
     elif _OS == "Darwin":
-        subprocess.run(["osascript", "-e", f"set volume output volume {value}"],
-            capture_output=True)
-        return
+        result = subprocess.run(
+            ["osascript", "-e", f"set volume output volume {value}"],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Volume command failed (exit {result.returncode}).")
     else:
-        subprocess.run(["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{value}%"],
-            capture_output=True)
-        return
+        result = subprocess.run(
+            ["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{value}%"],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Volume command failed (exit {result.returncode}).")
+
+    observed = volume_get()
+    if observed is None:
+        raise RuntimeError("Volume changed but its final state could not be verified.")
+    if abs(observed - value) > 1:
+        raise RuntimeError(f"Volume final state mismatch: requested {value}%, observed {observed}%.")
 
 def brightness_up():
     if _OS == "Darwin":
