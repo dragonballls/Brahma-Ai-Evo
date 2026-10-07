@@ -94,3 +94,8 @@ def test_self_model_concurrent_saves_leave_valid_json(tmp_path, monkeypatch):
     persisted = json.loads(path.read_text(encoding="utf-8"))
     assert persisted["schema_version"] == SelfAwareness.SCHEMA_VERSION
     assert not list(path.parent.glob(f".{path.name}.*.tmp"))
+
+
+def test_self_model_missing_target_is_not_misclassified_as_link(tmp_path):
+    missing = tmp_path / "new-self-awareness.json"
+    assert self_model._is_link_like(missing) is False
