@@ -19,6 +19,41 @@ def test_office_builder_implicit_outputs_avoid_collisions():
 
 
 
+def test_real_presentation_is_structurally_readable_after_save(tmp_path):
+    from actions import office_builder as office
+
+    output = tmp_path / "deck.pptx"
+    office.create_presentation({
+        "title": "Structural Verification",
+        "slides": [{"title": "Test", "bullets": ["Body"]}],
+        "output_path": str(output),
+        "auto_open": False,
+    })
+    Presentation, *_ = office._import_pptx()
+    reopened = Presentation(output)
+    assert len(reopened.slides) == 2
+
+
+def test_real_spreadsheet_is_structurally_readable_after_save(tmp_path):
+    from actions import office_builder as office
+    from openpyxl import load_workbook
+
+    output = tmp_path / "sheet.xlsx"
+    office.create_spreadsheet({
+        "title": "Structural Verification",
+        "sheets": [{"name": "Sheet1", "headers": ["Item", "Value"], "rows": [["A", 1]]}],
+        "output_path": str(output),
+        "auto_open": False,
+    })
+    workbook = load_workbook(output, read_only=True, data_only=False)
+    try:
+        assert workbook.sheetnames == ["Sheet1"]
+        assert workbook["Sheet1"]["A2"].value == "A"
+        assert workbook["Sheet1"]["B2"].value == 1
+    finally:
+        workbook.close()
+
+
 def test_presentation_save_failure_cannot_claim_created(monkeypatch, tmp_path):
     from actions import office_builder as office
 
