@@ -392,6 +392,55 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
         self.assertIn("if not self.ensure_ready():", source)
         self.assertIn('"message": "OmniRoute is not ready"', source)
 
+    def test_openrouter_explicit_model_never_falls_back_to_another_model(self):
+        from unittest.mock import patch
+        import or_client
+
+        client = or_client.OpenRouterClient()
+        client.api_key = "test-key"
+        calls = []
+
+        def fake_call(model, *_args, **_kwargs):
+            calls.append(model)
+            return None
+
+        with patch.object(client, "_call", side_effect=fake_call):
+            with self.assertRaisesRegex(RuntimeError, "automatic fallback is disabled"):
+                client._call_with_fallback(
+                    ["pool/model-a", "pool/model-b"],
+                    [{"role": "user", "content": "ping"}],
+                    model="explicit/model",
+                    max_tokens=16,
+                    temperature=0.1,
+                )
+
+        self.assertEqual(calls, ["explicit/model"])
+
+    def test_openrouter_tool_calls_keep_explicit_model_strict(self):
+        import or_client
+
+        client = or_client.OpenRouterClient()
+        seen = []
+
+        client._call_omniroute_tool_capable = lambda **_kwargs: None
+
+        def fake_tool_call(model, *_args, **_kwargs):
+            seen.append(model)
+            return {}
+
+        client._call_tool_capable = fake_tool_call
+        with self.assertRaisesRegex(RuntimeError, "No tool-capable model"):
+            client.chat_with_tools(
+                [{"role": "user", "content": "ping"}],
+                [{"type": "function", "function": {"name": "ping", "parameters": {"type": "OBJECT", "properties": {}}}}],
+                lambda *_args, **_kwargs: "ok",
+                model="explicit/model",
+                max_tokens=16,
+                temperature=0.1,
+            )
+
+        self.assertEqual(seen, ["explicit/model"])
+
     def test_openrouter_failed_model_backoff_contract(self):
         source = Path(ROOT / "or_client.py").read_text(encoding="utf-8")
         self.assertIn("FAILED_MODEL_COOLDOWN = 30", source)

@@ -356,17 +356,22 @@ class OpenRouterClient:
         # OmniRoute routing aliases are local-gateway names, not valid direct
         # OpenRouter model IDs. Never send them to the direct fallback pool.
         direct_model = model if model and not model.startswith("auto") else None
-        if direct_model and not self._is_rate_limited(direct_model):
+        if direct_model:
+            if self._is_rate_limited(direct_model) or self._is_temporarily_failed(direct_model):
+                raise RuntimeError(
+                    f"[OpenRouter] Explicit model '{direct_model}' is unavailable; "
+                    "automatic fallback is disabled for explicitly selected models."
+                )
             try:
                 result = self._call(direct_model, messages, max_tokens, temperature, response_format)
                 if result:
                     return result
-                logger.info(
-                    f"[OpenRouter] Requested model failed, "
-                    f"falling back to pool: {direct_model}"
-                )
             except PermissionError:
                 raise
+            raise RuntimeError(
+                f"[OpenRouter] Explicit model '{direct_model}' failed; "
+                "automatic fallback is disabled for explicitly selected models."
+            )
 
         for m in pool:
             if self._is_rate_limited(m) or self._is_temporarily_failed(m):
@@ -693,10 +698,10 @@ class OpenRouterClient:
             for item in normalized_tools
         }
         declared_names.discard("")
-        candidates = []
         if model and not model.startswith("auto"):
-            candidates.append(model)
-        candidates.extend(TEXT_MODELS)
+            candidates = [model]
+        else:
+            candidates = list(TEXT_MODELS)
         seen = set()
         candidates = [m for m in candidates if m and not (m in seen or seen.add(m))]
 
