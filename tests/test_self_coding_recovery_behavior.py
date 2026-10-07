@@ -74,6 +74,37 @@ def test_approve_push_failure_preserves_promoting_state_for_recovery():
     assert saved[-1].commits == checkpoint.commits
 
 
+def test_recover_undoing_push_failure_is_explicitly_ambiguous():
+    promoted = "c" * 40
+    undo_tip = "d" * 40
+    checkpoint = _checkpoint(state="undoing", promoted_sha=promoted, undo_commits=(undo_tip,))
+    agent = object.__new__(SelfCodingAgent)
+    agent._load = lambda _checkpoint_id: checkpoint
+    agent._validate_checkpoint = lambda _checkpoint: None
+    agent.validate_repo = lambda: None
+    agent._save = lambda _value: None
+
+    def fake_git(*args, **kwargs):
+        if args == ("fetch", "origin", "main"):
+            return _result(args)
+        if args == ("rev-parse", "refs/remotes/origin/main"):
+            return _result(args, stdout=promoted)
+        if args == ("rev-parse", "refs/heads/main"):
+            return _result(args, stdout=undo_tip)
+        if args == ("push", "origin", "main"):
+            return _result(args, returncode=1, stderr="connection lost after remote update")
+        raise AssertionError(f"unexpected git call: {args}")
+
+    agent._git = fake_git
+    try:
+        agent._recover_undoing(checkpoint)
+    except SelfCodingError as exc:
+        assert "ambiguous" in str(exc).casefold()
+        assert "connection lost after remote update" in str(exc)
+    else:
+        raise AssertionError("recovery must not report an ambiguous push as success")
+
+
 def test_undo_push_failure_preserves_undoing_state_for_recovery():
     promoted = "c" * 40
     undo_tip = "d" * 40

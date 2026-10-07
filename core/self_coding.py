@@ -581,7 +581,11 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
             raise SelfCodingError("Undo recovery found unrelated remote main changes; refusing further mutation.")
         pushed = self._git("push", "origin", "main", timeout=300)
         if pushed.returncode != 0:
-            raise SelfCodingError(pushed.stderr.strip() or "Unable to publish the pending checkpoint undo.")
+            detail = pushed.stderr.strip() or "remote did not provide a diagnostic"
+            raise SelfCodingError(
+                "Undo recovery publish outcome is ambiguous; checkpoint remains in undoing state for recovery. "
+                f"Push result: {detail}"
+            )
         self._save(replace(checkpoint, state="undone"))
         return "undone"
 
