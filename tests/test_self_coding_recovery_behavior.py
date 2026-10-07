@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+from dataclasses import replace
 
 from core.self_coding import Checkpoint, SelfCodingAgent, SelfCodingError
 
@@ -109,6 +110,7 @@ def test_undo_push_failure_preserves_undoing_state_for_recovery():
     promoted = "c" * 40
     undo_tip = "d" * 40
     checkpoint = _checkpoint(state="approved", promoted_sha=promoted)
+    checkpoint = replace(checkpoint, commits=("a" * 40, "b" * 40))
     saved = []
     calls = []
 
