@@ -470,6 +470,8 @@ def word_document(parameters: dict, player=None, speak=None) -> str:
                 out = _resolve_output_path(output_path_str, title=source_path.stem, ext=".txt", fallback_name=source_path.stem, overwrite=overwrite)
                 out = out.with_suffix(".txt")
                 out.write_text(result, encoding="utf-8")
+                if not out.is_file() or out.stat().st_size <= 0:
+                    raise RuntimeError(f"Analysis save could not be verified at {out}.")
                 return f"{result[:400]}...\n\nFull result saved: {out}"
             return result
         except Exception as e:
@@ -567,6 +569,8 @@ def word_document(parameters: dict, player=None, speak=None) -> str:
                     _append_numbered(doc, numbered)
 
         doc.save(target_path)
+        if not target_path.is_file() or target_path.stat().st_size <= 0:
+            raise RuntimeError(f"Word document save could not be verified at {target_path}.")
         if params.get("open_after", True):
             _open_file(target_path)
         return f"Word document created: {target_path}"
