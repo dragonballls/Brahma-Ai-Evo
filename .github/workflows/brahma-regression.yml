@@ -99,6 +99,7 @@ jobs:
           tests/test_self_awareness.py
           tests/test_device_location_network_safety.py
           tests/test_geospatial_network_safety.py
+          tests/test_command_safety.py
           tests/test_youtube_video_safety.py
           tests/test_send_message_safety.py
           tests/test_crash_recovery_security.py
