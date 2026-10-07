@@ -251,7 +251,7 @@ def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
             img.save(out, "JPEG", quality=quality, optimize=True)
             before = _file_size_str(path)
             after  = _file_size_str(out)
-        _verify_output_artifact(out)
+            _verify_output_artifact(out)
             return f"Compressed: {before} → {after}. Saved: {out.name}"
         except Exception as e:
             return f"Compress failed: {e}"
