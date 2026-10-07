@@ -26,6 +26,35 @@ def get_base_dir() -> Path:
 
 BASE_DIR        = get_base_dir()
 
+# These operations can change external state. When an acknowledgement is uncertain,
+# retrying can duplicate the real-world action, so automatic retry is fail-closed.
+_NON_IDEMPOTENT_RETRY_TOOLS = frozenset({
+    "send_message",
+    "workspace_gmail",
+    "workspace_calendar",
+    "workspace_drive",
+    "google_workspace",
+    "calendar_scheduler",
+    "calendar",
+    "schedule",
+    "reminder",
+    "computer_control",
+    "desktop_control",
+    "mobile_autopilot",
+    "android_autopilot",
+    "spotify_controller",
+    "spotify",
+    "music",
+    "upload_video",
+    "connect_execute",
+    "skill_forge",
+    "dynamic_skill",
+    "universal_task",
+    "auto_heal",
+    "rollback",
+    "shutdown_brahma",
+})
+
 def _get_api_key() -> str:
     """Compatibility helper retained for legacy callers; credentials are provider-managed."""
     from config import get_api_key
@@ -702,6 +731,18 @@ class AgentExecutor:
                             speak(user_msg)
 
                         if decision == ErrorDecision.RETRY:
+                            if tool in _NON_IDEMPOTENT_RETRY_TOOLS:
+                                failed_step = step
+                                failed_error = (
+                                    f"Outcome of non-idempotent tool '{tool}' could not be verified; "
+                                    "automatic retry was blocked to prevent duplicate side effects."
+                                )
+                                success = False
+                                if speak:
+                                    speak(
+                                        f"I could not verify step {step_num}; I will not retry it automatically, sir."
+                                    )
+                                break
                             attempt += 1
                             import time; time.sleep(2)
                             continue

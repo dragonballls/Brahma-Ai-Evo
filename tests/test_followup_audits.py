@@ -1532,3 +1532,41 @@ def test_executor_rejects_explicit_plain_text_failures_and_unverified_send_resul
 def test_send_message_does_not_log_failures_with_success_checkmark():
     source = Path("actions/send_message.py").read_text(encoding="utf-8")
     assert 'print(f"[SendMessage] ✅ {result}")' not in source
+
+
+def test_executor_does_not_retry_non_idempotent_action_after_ambiguous_failure(monkeypatch):
+    import agent.executor as executor
+    from agent.error_handler import ErrorDecision
+
+    attempts = []
+    monkeypatch.setattr(
+        executor,
+        "create_plan",
+        lambda _goal: {
+            "steps": [{
+                "step": 1,
+                "tool": "send_message",
+                "description": "Send message",
+                "parameters": {"receiver": "Alice", "message_text": "hello"},
+            }]
+        },
+    )
+    monkeypatch.setattr(
+        executor,
+        "_call_tool",
+        lambda *_args, **_kwargs: (attempts.append(True), (_ for _ in ()).throw(RuntimeError("delivery acknowledgement timed out")))[1],
+    )
+    monkeypatch.setattr(
+        executor,
+        "analyze_error",
+        lambda *_args, **_kwargs: {
+            "decision": ErrorDecision.RETRY,
+            "reason": "timeout after dispatch",
+            "user_message": "The delivery acknowledgement timed out.",
+        },
+    )
+
+    result = executor.AgentExecutor().execute("send the message")
+    assert len(attempts) == 1
+    assert "could not be verified" in result.lower()
+    assert "retry" in result.lower()
