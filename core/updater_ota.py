@@ -7,22 +7,23 @@ asset digest published by GitHub (or a SHA256SUMS sidecar in the same release).
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import sys
-import urllib.error
-import urllib.request
 from pathlib import Path
 import subprocess
 import threading
 import uuid
 
+from core.network_safety import download_public_to_file, fetch_public_bytes
 from core.runtime_paths import GITHUB_OWNER, GITHUB_REPOSITORY
 
 GITHUB_REPO = f"{GITHUB_OWNER}/{GITHUB_REPOSITORY}"
 GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPO}"
 _MAX_INSTALLER_BYTES = 1024 * 1024 * 1024
 _OTA_APPLY_LOCK = threading.Lock()
+_GITHUB_ASSET_REDIRECT_HOSTS = frozenset({"github.com", "api.github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"})
 
 
 def get_current_version() -> str:
@@ -47,12 +48,15 @@ def parse_semver(ver: str) -> tuple[int, ...]:
 
 
 def _get_release() -> dict | None:
-    req = urllib.request.Request(
+    status, raw = fetch_public_bytes(
         f"{GITHUB_API}/releases/latest",
+        timeout=10,
+        max_response_bytes=2 * 1024 * 1024,
         headers={"User-Agent": "BrahmaEvo-OTA", "Accept": "application/vnd.github+json"},
     )
-    with urllib.request.urlopen(req, timeout=10) as response:
-        data = json.loads(response.read().decode("utf-8"))
+    if status != 200:
+        raise RuntimeError(f"GitHub release API returned HTTP {status}.")
+    data = json.loads(raw.decode("utf-8"))
     return data if isinstance(data, dict) else None
 
 
@@ -75,9 +79,16 @@ def _asset_digest(release: dict, asset: dict) -> str | None:
         if not url:
             continue
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "BrahmaEvo-OTA"})
-            with urllib.request.urlopen(req, timeout=10) as response:
-                manifest = response.read().decode("utf-8", errors="replace")
+            buffer = io.BytesIO()
+            download_public_to_file(
+                url,
+                buffer,
+                timeout=10,
+                max_response_bytes=64 * 1024,
+                headers={"User-Agent": "BrahmaEvo-OTA"},
+                allowed_redirect_hosts=_GITHUB_ASSET_REDIRECT_HOSTS,
+            )
+            manifest = buffer.getvalue().decode("utf-8", errors="replace")
             for line in manifest.splitlines():
                 fields = line.strip().replace("*", " ").split()
                 if len(fields) >= 2 and fields[1].strip() == target_name:
@@ -177,7 +188,6 @@ def download_and_apply_update(
 
         update_dir = __import__("core.user_paths", fromlist=["get_user_data_dir"]).get_user_data_dir() / "updates"
         update_dir.mkdir(parents=True, exist_ok=True)
-        setup_path = update_dir / "BrahmaEvo_Setup_Update.exe"
 
         with _OTA_APPLY_LOCK:
             import tempfile
@@ -189,23 +199,26 @@ def download_and_apply_update(
             os.close(fd)
             temp_path = Path(temp_name)
 
-            req = urllib.request.Request(url, headers={"User-Agent": "BrahmaEvo-OTA"})
-            with urllib.request.urlopen(req, timeout=30) as response, temp_path.open("wb") as output:
-                total_size = int(response.info().get("Content-Length", 0) or 0)
-                if total_size > _MAX_INSTALLER_BYTES:
-                    raise RuntimeError("OTA installer exceeds the 1 GiB safety limit.")
-
+            with temp_path.open("wb") as output:
+                total_size = expected_size
                 downloaded = 0
-                while True:
-                    chunk = response.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    downloaded += len(chunk)
-                    if downloaded > _MAX_INSTALLER_BYTES:
-                        raise RuntimeError("OTA installer is unexpectedly large.")
-                    output.write(chunk)
-                    if ui_callback and total_size > 0:
-                        ui_callback(min(100, int(downloaded / total_size * 100)))
+
+                class _ProgressWriter:
+                    def write(self, chunk):
+                        nonlocal downloaded
+                        downloaded += len(chunk)
+                        if ui_callback and total_size > 0:
+                            ui_callback(min(100, int(downloaded / total_size * 100)))
+                        return output.write(chunk)
+
+                download_public_to_file(
+                    url,
+                    _ProgressWriter(),
+                    timeout=30,
+                    max_response_bytes=_MAX_INSTALLER_BYTES,
+                    headers={"User-Agent": "BrahmaEvo-OTA"},
+                    allowed_redirect_hosts=_GITHUB_ASSET_REDIRECT_HOSTS,
+                )
 
             if expected_size and temp_path.stat().st_size != expected_size:
                 raise RuntimeError("OTA installer size does not match the release asset.")
@@ -214,13 +227,13 @@ def download_and_apply_update(
             if actual != digest:
                 raise RuntimeError("OTA installer SHA-256 verification failed; download was not executed.")
 
-            temp_path.replace(setup_path)
-            temp_path = None
+            launch_path = temp_path
+        temp_path = None
 
         DETACHED_PROCESS = int(getattr(subprocess, "DETACHED_PROCESS", 0x00000008))
         CREATE_NO_WINDOW = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
         subprocess.Popen(
-            [str(setup_path), "--silent"],
+            [str(launch_path), "--silent"],
             creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS,
         )
         raise SystemExit(0)
