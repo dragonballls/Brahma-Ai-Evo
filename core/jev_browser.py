@@ -14,15 +14,18 @@ class JevBrowserUnavailable(RuntimeError):
 
 
 def available() -> bool:
-    return (
-        os.getenv("BRAHMA_JEV_BROWSER_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
-        and bool(os.getenv("TYPESAFE_API_KEY", "").strip())
-    )
+    # The current Jev Ultrafast API does not expose a Brahma-controlled
+    # request interception/redirect policy. Keep the integration discoverable
+    # but fail closed rather than running an unguarded browser session.
+    return False
 
 
 def run_goal(url: str, goal: str, *, max_steps: int = 60) -> dict[str, Any]:
     if not available():
-        raise JevBrowserUnavailable("Jev browser layer is disabled or has no TYPESAFE_API_KEY")
+        raise JevBrowserUnavailable(
+            "Jev browser layer is disabled because its current API cannot enforce Brahma's "
+            "request-level network and redirect policy."
+        )
 
     from actions.playwright_mcp_client import validate_browser_url
     validated_url = validate_browser_url(url)
