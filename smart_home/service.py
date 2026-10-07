@@ -135,8 +135,8 @@ class SmartHomeService:
         result = provider.execute(runtime_device, action, payload)
         if not isinstance(result, dict):
             raise RuntimeError("Smart-home provider returned an invalid action result.")
-        if result.get("success") is False:
-            detail = str(result.get("error") or result.get("detail") or "Smart-home provider rejected the action.")
+        if result.get("success") is not True:
+            detail = str(result.get("error") or result.get("detail") or "Smart-home provider did not provide authoritative success verification.")
             self._storage.log_activity(device["name"], f"Action failed: {detail}")
             return {"success": False, "device": device, "detail": detail, "error": detail}
         self._storage.update_device(device_id, is_on=result.get("is_on"), traits=result.get("traits"))
@@ -168,7 +168,7 @@ class SmartHomeService:
         runtime_device["provider_credentials"] = (account or {}).get("credentials", {})
         try:
             result = provider.execute(runtime_device, "restart", {})
-            if not isinstance(result, dict) or result.get("success") is False:
+            if not isinstance(result, dict) or result.get("success") is not True:
                 detail = str((result or {}).get("error") if isinstance(result, dict) else "Smart-home provider returned an invalid restart result.")
                 self._storage.log_activity(device["name"], f"Restart command failed: {detail}")
                 return {"success": False, "error": detail, "device": device}
