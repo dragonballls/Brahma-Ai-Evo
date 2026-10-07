@@ -191,6 +191,18 @@ def test_auto_heal_does_not_bypass_selected_provider_with_direct_openrouter_fall
     direct.assert_not_called()
 
 
+def test_specialized_gemini_generation_modules_refuse_selected_openrouter(monkeypatch):
+    from core import provider_policy
+    monkeypatch.setattr(provider_policy, "selected_provider", lambda: OPENROUTER)
+
+    from actions import docx_tools, pdf_tools
+    with pytest.raises(RuntimeError, match="requires the Google Gemini provider"):
+        docx_tools._gemini_client()
+
+    monkeypatch.setattr(pdf_tools, "_get_api_key", lambda: pytest.fail("PDF path must not fetch a Gemini key before provider validation"))
+    assert pdf_tools.synthesize_deep_report("research", "Test") == ""
+
+
 def test_intelligence_orchestrator_is_provider_preserving_by_default():
     source = IntelligenceOrchestrator._call.__kwdefaults__
     # The public orchestrator helper intentionally defaults to no direct provider switch.

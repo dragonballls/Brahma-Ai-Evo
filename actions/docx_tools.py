@@ -103,6 +103,8 @@ def _get_api_key() -> str:
 
 
 def _gemini_client():
+    from core.provider_policy import require_provider
+    require_provider("Gemini", "DOCX AI analysis")
     from core.gemini_runtime import create_model
     return create_model("gemini-3.8-flash")
 

@@ -241,6 +241,8 @@ class _LiveSession:
             self._thread = None
 
     async def _main(self):
+        from core.provider_policy import require_provider
+        require_provider("Gemini", "Screen vision Live")
         self._out_queue = asyncio.Queue(maxsize=30)
         self._audio_in  = asyncio.Queue(maxsize=48)
         self._send_lock = asyncio.Lock()

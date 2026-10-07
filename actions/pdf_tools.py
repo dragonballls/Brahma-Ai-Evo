@@ -423,6 +423,8 @@ def synthesize_deep_report(goal_or_topic: str, title: str, research_notes: str =
     using high-speed Gemini-3.1-flash-lite in two cohesive passes.
     """
     try:
+        from core.provider_policy import require_provider
+        require_provider("Gemini", "PDF deep-report synthesis")
         from core.gemini_runtime import create_model
         model = create_model("gemini-3.8-flash")
     except Exception as exc:
