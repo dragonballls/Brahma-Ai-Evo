@@ -25,6 +25,10 @@ import tempfile
 from pathlib import Path
 from datetime import datetime
 
+_WINFS = None
+if os.name == "nt":
+    from core import windows_file_safety as _WINFS
+
 from core.gemini_runtime import create_model, get_api_key
 
 MAX_INPUT_BYTES = 128 * 1024 * 1024
@@ -780,7 +784,7 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
     if dest.exists() and (dest.is_symlink() or not dest.is_dir()):
         raise ValueError("Archive extraction destination must be a real directory.")
 
-    created_files: list[tuple[Path, tuple[int, int] | None]] = []
+    created_files: list[tuple[Path, tuple[int, int] | None, tuple[int, int, int] | None]] = []
     created_dirs: list[Path] = []
 
     def _fingerprint(target: Path) -> tuple[int, int] | None:
@@ -863,8 +867,21 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
         _open_directory(root, target.parent)
         if target.is_symlink():
             raise ValueError("Archive extraction target became a symlink.")
+        if os.name == "nt" and _WINFS is not None:
+            fd, _final, info = _WINFS.open_safe_file(
+                target,
+                write=True,
+                create_new=True,
+            )
+            identity = (
+                int(info.dwVolumeSerialNumber),
+                int(info.nFileIndexHigh),
+                int(info.nFileIndexLow),
+            )
+            created_files.append((target, _fingerprint(target), identity))
+            return os.fdopen(fd, "wb", closefd=True)
         handle = target.open("xb")
-        created_files.append((target, _fingerprint(target)))
+        created_files.append((target, _fingerprint(target), None))
         return handle
 
     def preflight(members):
@@ -909,6 +926,8 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
                 raise ValueError(f"Archive contains a file/directory path conflict under {target.name}.")
         return [(member, target, is_dir) for member, target, is_dir in planned]
 
+    total_written = 0
+
     try:
         if zipfile.is_zipfile(path):
             with zipfile.ZipFile(path) as archive:
@@ -921,7 +940,18 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
                         _open_directory(dest, target)
                         continue
                     with archive.open(info, "r") as source, _open_output(dest, target) as output:
-                        shutil.copyfileobj(source, output)
+                        written = 0
+                        while True:
+                            chunk = source.read(1024 * 1024)
+                            if not chunk:
+                                break
+                            written += len(chunk)
+                            if written > int(info.file_size) or total_written + written > MAX_ARCHIVE_BYTES:
+                                raise ValueError("Archive emitted more data than its declared or allowed extraction size.")
+                            output.write(chunk)
+                        total_written += written
+                        if written != int(info.file_size):
+                            raise ValueError("Archive member size did not match its declared size.")
             return
 
         with tarfile.open(path) as archive:
@@ -945,12 +975,26 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
                 if source is None:
                     raise ValueError("Archive member could not be read safely.")
                 with source, _open_output(dest, target) as output:
-                    shutil.copyfileobj(source, output)
+                    written = 0
+                    while True:
+                        chunk = source.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        written += len(chunk)
+                        if written > int(member.file_size) or total_written + written > MAX_ARCHIVE_BYTES:
+                            raise ValueError("Archive emitted more data than its declared or allowed extraction size.")
+                        output.write(chunk)
+                    total_written += written
+                    if written != int(member.file_size):
+                        raise ValueError("Archive member size did not match its declared size.")
     except Exception:
-        for target, fingerprint in reversed(created_files):
+        for target, fingerprint, identity in reversed(created_files):
             try:
                 if fingerprint is not None and _fingerprint(target) == fingerprint:
-                    target.unlink(missing_ok=True)
+                    if os.name == "nt" and _WINFS is not None and identity is not None:
+                        _WINFS.unlink(target, expected_identity=identity)
+                    else:
+                        target.unlink(missing_ok=True)
             except OSError:
                 pass
         for directory in reversed(created_dirs):
