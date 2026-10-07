@@ -51,6 +51,15 @@ def run(request: str, *, context: str = "", max_repair_attempts: int = 2) -> dic
         args.setdefault("query", request)
         try:
             result = _execute_skill(skill_name, args)
+            if isinstance(result, dict) and result.get("success") is False:
+                return {
+                    "success": False,
+                    "status": "existing-skill-failed",
+                    "skill": skill_name,
+                    "result": _result_text(result),
+                    "raw": result,
+                    "message": str(result.get("error") or result.get("message") or "Dynamic skill reported failure."),
+                }
             return {
                 "success": True,
                 "status": "executed-existing-skill",
@@ -112,6 +121,16 @@ def run(request: str, *, context: str = "", max_repair_attempts: int = 2) -> dic
     }
     try:
         result = _execute_skill(name, args)
+        if isinstance(result, dict) and result.get("success") is False:
+            return {
+                "success": False,
+                "status": "synthesized-but-execution-failed",
+                "skill": name,
+                "result": _result_text(result),
+                "raw": result,
+                "message": str(result.get("error") or result.get("message") or "Generated skill reported failure."),
+                "forge": forged,
+            }
         return {
             "success": True,
             "status": "synthesized-and-executed",
