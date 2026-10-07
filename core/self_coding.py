@@ -379,29 +379,38 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
                 )
 
     def _rollback(self, baseline: str, branch: str, base_branch: str) -> None:
+        current = self._branch()
+        if current != branch:
+            raise SelfCodingError(
+                "Rollback refused because the current branch is not the checkpoint branch; "
+                "refusing destructive reset."
+            )
+
+        status = self._git("status", "--porcelain")
+        if status.returncode != 0:
+            raise SelfCodingError(
+                status.stderr.strip() or "Unable to inspect checkpoint branch before rollback."
+            )
+        if status.stdout.strip():
+            raise SelfCodingError(
+                "Rollback refused because the checkpoint branch has uncommitted changes; "
+                "refusing destructive reset."
+            )
+
         reset = self._git("reset", "--hard", baseline)
         if reset.returncode != 0:
             raise SelfCodingError(reset.stderr.strip() or "Unable to restore the checkpoint baseline.")
-        current = self._branch()
-        if current == branch:
-            switched = self._git("switch", base_branch)
-            if switched.returncode != 0:
-                raise SelfCodingError(
-                    switched.stderr.strip() or "Unable to return to the original branch during rollback."
-                )
+
+        switched = self._git("switch", base_branch)
+        if switched.returncode != 0:
+            raise SelfCodingError(
+                switched.stderr.strip() or "Unable to return to the original branch during rollback."
+            )
+
         deleted = self._git("branch", "-D", branch)
         if deleted.returncode != 0:
             raise SelfCodingError(
                 deleted.stderr.strip() or "Unable to remove the failed checkpoint branch."
-            )
-        status = self._git("status", "--porcelain")
-        if status.stdout.strip():
-            # Never run git clean here: untracked files may have been created by
-            # another process while self-coding was in progress. Preserve them
-            # rather than risking unrelated user data loss.
-            raise SelfCodingError(
-                "Rollback preserved untracked or working-tree changes; "
-                "manual cleanup is required before another self-coding run."
             )
 
     def preview(self, goal: str, *, max_passes: int = 1, return_to_base: bool = False) -> dict[str, Any]:
