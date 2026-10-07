@@ -46,6 +46,32 @@ PROTECTED_CORE_FILES = {
 }
 
 
+def _write_exclusive_text(path: Path, text: str, *, mode: int = 0o600) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = -1
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def _copy_file_exclusive(source: Path, destination: Path, *, mode: int = 0o600) -> None:
+    fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+    try:
+        with source.open("rb") as src, os.fdopen(fd, "wb") as dst:
+            fd = -1
+            shutil.copyfileobj(src, dst, length=1024 * 1024)
+            dst.flush()
+            os.fsync(dst.fileno())
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 # ── 1. Traceback Analyzer ───────────────────────────────────────────────────
 
 class TracebackAnalyzer:
@@ -145,7 +171,7 @@ class SafetySandbox:
         backup_path = BACKUPS_DIR / backup_name
         temp_path = BACKUPS_DIR / f".{backup_name}.tmp"
         try:
-            shutil.copy2(file_path, temp_path)
+            _copy_file_exclusive(file_path, temp_path)
             os.replace(temp_path, backup_path)
         finally:
             try:
@@ -160,7 +186,7 @@ class SafetySandbox:
             f".{target.name}.restore-{os.getpid()}-{uuid.uuid4().hex}.tmp"
         )
         try:
-            shutil.copy2(backup, temp)
+            _copy_file_exclusive(backup, temp)
             os.replace(temp, target)
         finally:
             try:
@@ -254,9 +280,9 @@ class SafetySandbox:
                     f".{PATCH_HISTORY_FILE.name}.{os.getpid()}-{uuid.uuid4().hex}.tmp"
                 )
                 try:
-                    temp.write_text(
+                    _write_exclusive_text(
+                        temp,
                         json.dumps(history, indent=4, ensure_ascii=False),
-                        encoding="utf-8",
                     )
                     os.replace(temp, PATCH_HISTORY_FILE)
                 finally:
@@ -395,7 +421,7 @@ class AutoHealEngine:
             f".{target_path.name}.autopatch-{os.getpid()}-{uuid.uuid4().hex}.tmp"
         )
         try:
-            target_tmp.write_text(staged_source, encoding="utf-8")
+            _write_exclusive_text(target_tmp, staged_source)
             os.replace(target_tmp, target_path)
         except Exception as e:
             return {"success": False, "message": f"Atomic file replacement failed; original source preserved: {e}"}
