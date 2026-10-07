@@ -87,3 +87,20 @@ def test_globe_window_lifecycle_events():
     from core.globe_window import GlobeWindow
     assert hasattr(GlobeWindow, "showEvent")
     assert hasattr(GlobeWindow, "hideEvent")
+
+
+def test_globe_radar_enable_requires_live_timestamp(monkeypatch):
+    from core import globe_window
+    monkeypatch.setattr(globe_window, "fetch_radar_timestamp", lambda: None)
+    bridge = object.__new__(globe_window.GlobeWindow)
+    with pytest.raises(RuntimeError, match="radar was not enabled"):
+        bridge.toggle_weather_radar(True)
+
+
+def test_globe_radar_web_state_does_not_claim_active_on_fetch_failure():
+    base_dir = Path(__file__).resolve().parent.parent
+    content = (base_dir / "assets" / "globe" / "index.html").read_text(encoding="utf-8")
+    assert "const desired = desiredState === null ? !isRadarActive : Boolean(desiredState);" in content
+    assert "isRadarActive = true;" in content
+    assert "isRadarActive = false;" in content
+    assert "return false;" in content
