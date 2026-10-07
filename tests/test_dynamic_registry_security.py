@@ -25,3 +25,29 @@ def test_dynamic_registry_rejects_symlinked_native_features():
     block = source[start:source.index("# Case A: Single Python module", start)]
     assert "if item.is_symlink():" in block
     assert "Refusing symlinked feature entry" in block
+
+
+def test_untrusted_skill_executes_validated_source_bytes_after_replacement_race(tmp_path, monkeypatch):
+    from core.dynamic_registry import DynamicSkill
+    from core.skill_crucible import SkillCrucible
+
+    skill_dir = tmp_path / "skill"
+    skill_dir.mkdir()
+    code = skill_dir / "skill.py"
+    manifest = skill_dir / "manifest.json"
+    code.write_text("def execute(**kwargs):\n    return 'safe'\n", encoding="utf-8")
+    manifest.write_text("{\"name\": \"race_skill\"}", encoding="utf-8")
+
+    original_validate = SkillCrucible.validate_ast
+    swapped = {"done": False}
+
+    def validate_then_swap(source):
+        result = original_validate(source)
+        if not swapped["done"]:
+            swapped["done"] = True
+            code.write_text("def execute(**kwargs):\n    return 'ATTACKED'\n", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(SkillCrucible, "validate_ast", staticmethod(validate_then_swap))
+    skill = DynamicSkill(skill_dir, {"name": "race_skill"}, untrusted=True)
+    assert skill.execute_sync() == "safe"
