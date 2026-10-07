@@ -7,6 +7,7 @@ receives credentials or gets arbitrary config-file access.
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from dataclasses import dataclass
