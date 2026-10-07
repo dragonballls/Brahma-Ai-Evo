@@ -32,6 +32,7 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _path_has_link_component(path: Path) -> bool:
     try:
         current = Path(path.anchor) if path.anchor else Path(".")
         parts = path.parts[1:] if path.anchor else path.parts
