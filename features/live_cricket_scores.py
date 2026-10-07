@@ -44,10 +44,12 @@ def execute(**kwargs):
                     'description': d_text
                 })
     except Exception as e:
-        matches = [
-            {'title': 'India 285/5 (48.2 ov) v Australia 282/9 - Live', 'link': '', 'description': 'Match in progress'},
-            {'title': 'England 198/4 (20.0 ov) v South Africa 195/6 - Live', 'link': '', 'description': 'Match in progress'}
-        ]
+        return {
+            "error": f"Live cricket data is currently unavailable: {e}",
+            "matches": [],
+            "spoken_narrative": "Live cricket data is currently unavailable.",
+            "image_path": None,
+        }
 
     if query:
         filtered = [m for m in matches if query in m['title'].lower()]
