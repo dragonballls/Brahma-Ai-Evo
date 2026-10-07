@@ -469,6 +469,10 @@ class KasaProvider(SmartHomeProvider):
 
 
 class HueProvider(SmartHomeProvider):
+    # The current implementation contains only placeholder discovery/control.
+    # Keep it out of the executable provider surface until a real integration exists.
+    available = False
+    coming_soon = True
     key = "hue"
     name = "Philips Hue"
     manufacturer = "Philips Hue"
@@ -511,6 +515,10 @@ class HueProvider(SmartHomeProvider):
 
 
 class LgProvider(SmartHomeProvider):
+    # The current implementation contains only placeholder discovery/control.
+    # Keep it out of the executable provider surface until a real integration exists.
+    available = False
+    coming_soon = True
     key = "lg"
     name = "LG ThinQ"
     manufacturer = "LG"
@@ -552,6 +560,10 @@ class LgProvider(SmartHomeProvider):
 
 
 class DaikinProvider(SmartHomeProvider):
+    # The current implementation contains only placeholder discovery/control.
+    # Keep it out of the executable provider surface until a real integration exists.
+    available = False
+    coming_soon = True
     key = "daikin"
     name = "Daikin Smart AC"
     manufacturer = "Daikin"
@@ -595,6 +607,10 @@ class DaikinProvider(SmartHomeProvider):
 
 
 class TuyaProvider(SmartHomeProvider):
+    # The current implementation contains only placeholder discovery/control.
+    # Keep it out of the executable provider surface until a real integration exists.
+    available = False
+    coming_soon = True
     key = "tuya"
     name = "Tuya / Smart Life"
     manufacturer = "Tuya"
@@ -634,6 +650,10 @@ class TuyaProvider(SmartHomeProvider):
 
 
 class NestProvider(SmartHomeProvider):
+    # The current implementation contains only placeholder discovery/control.
+    # Keep it out of the executable provider surface until a real integration exists.
+    available = False
+    coming_soon = True
     key = "nest"
     name = "Nest / Google Home"
     manufacturer = "Google Nest"
@@ -676,6 +696,10 @@ class NestProvider(SmartHomeProvider):
 
 
 class SmartThingsProvider(SmartHomeProvider):
+    # The current implementation contains only placeholder discovery/control.
+    # Keep it out of the executable provider surface until a real integration exists.
+    available = False
+    coming_soon = True
     key = "smartthings"
     name = "Samsung SmartThings"
     manufacturer = "Samsung SmartThings"
