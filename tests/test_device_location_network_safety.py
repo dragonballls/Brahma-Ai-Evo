@@ -9,8 +9,8 @@ def test_device_location_uses_https_only_for_external_geolocation():
     assert "http://ip-api.com/json" not in source
     assert '"https://ipwho.is/"' in source
     assert '"https://freeipapi.com/api/json"' in source
-    assert "resp.read(64 * 1024 + 1)" in source
-    assert "Location service response exceeded the safety limit." in source
+    assert "fetch_public_bytes(" in source
+    assert "max_response_bytes=64 * 1024" in source
 
 def test_device_location_settings_corruption_propagates_from_canonical_loader(tmp_path, monkeypatch):
     import core.device_location as device_location
@@ -104,24 +104,23 @@ def test_device_location_accepts_valid_cached_coordinates_after_math_validation(
     assert result["city"] == "Test City"
 
 
-def test_external_location_redirect_is_rejected(monkeypatch):
+def test_external_location_uses_pinned_transport_and_rejects_redirects(monkeypatch):
     import core.device_location as device_location
     import pytest
-    import urllib.error
 
-    class _Opener:
-        def open(self, request, timeout=None):
-            raise urllib.error.URLError("Location service redirects are disabled.")
+    captured = {}
 
-    monkeypatch.setattr(
-        device_location.urllib.request,
-        "build_opener",
-        lambda *_handlers: _Opener(),
-    )
+    def fake_fetch(url, *, timeout, max_response_bytes, headers):
+        captured["url"] = url
+        captured["timeout"] = timeout
+        captured["max_response_bytes"] = max_response_bytes
+        captured["headers"] = headers
+        return 302, b"redirect"
 
-    with pytest.raises(urllib.error.URLError, match="redirects are disabled"):
-        device_location._open_no_redirect(
-            device_location.urllib.request.Request("https://nominatim.openstreetmap.org/"),
-            timeout=1.0,
-        )
+    monkeypatch.setattr(device_location, "fetch_public_bytes", fake_fetch)
+
+    assert device_location._reverse_geocode_osm(34.05, -118.25) is None
+    assert captured["timeout"] == 3.0
+    assert captured["max_response_bytes"] == 64 * 1024
+    assert captured["headers"]["User-Agent"].startswith("BrahmaAI-LocationEngine")
 
