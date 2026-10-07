@@ -212,14 +212,25 @@ def download_and_apply_update(
         update_dir.mkdir(parents=True, exist_ok=True)
 
         with _OTA_APPLY_LOCK:
-            import tempfile
-            fd, temp_name = tempfile.mkstemp(
-                prefix=f"BrahmaEvo_Update_{uuid.uuid4().hex}.",
-                suffix=".exe.download",
-                dir=str(update_dir),
-            )
-            temp_path = Path(temp_name)
-            installer_handle = os.fdopen(fd, "w+b", buffering=0)
+            if os.name == "nt":
+                from core import windows_file_safety as _WINFS
+                temp_path = update_dir / f"BrahmaEvo_Update_{uuid.uuid4().hex}.exe.download"
+                fd, _final, _info = _WINFS.open_safe_file(
+                    temp_path,
+                    write=True,
+                    create_new=True,
+                    exclusive=True,
+                )
+                installer_handle = os.fdopen(fd, "w+b", buffering=0)
+            else:
+                import tempfile
+                fd, temp_name = tempfile.mkstemp(
+                    prefix=f"BrahmaEvo_Update_{uuid.uuid4().hex}.",
+                    suffix=".exe.download",
+                    dir=str(update_dir),
+                )
+                temp_path = Path(temp_name)
+                installer_handle = os.fdopen(fd, "w+b", buffering=0)
 
             try:
                 downloaded = 0
