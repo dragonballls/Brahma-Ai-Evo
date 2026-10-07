@@ -328,13 +328,15 @@ def _open_vscode(project_dir: Path) -> bool:
     for cmd in vscode_candidates:
         try:
             executable = shutil.which(cmd) or cmd
-            subprocess.Popen(
+            proc = subprocess.Popen(
                 [executable, str(project_dir)],
                 shell=False,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
             time.sleep(1.5)
+            if proc.poll() is not None:
+                continue
             print(f"[DevAgent] 💻 VSCode opened: {project_dir}")
             return True
         except Exception:
