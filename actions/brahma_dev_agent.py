@@ -606,6 +606,7 @@ class BrahmaDevAgent:
         self.github_inspected_repos: set[str] = set()
         self.github_candidate_repos: set[str] = set()
         self.github_required_sources = 0
+        self.verification_evidence = []
 
     def _on_action(self, msg: str):
         if self.speak:
@@ -619,6 +620,21 @@ class BrahmaDevAgent:
         value = str(repository or "").strip().lower()
         if value:
             self.github_inspected_repos.add(value)
+
+    @staticmethod
+    def _is_verification_command(name: str, args: dict[str, Any]) -> bool:
+        if str(name or "").strip().lower() != "bash" or not isinstance(args, dict):
+            return False
+        command = str(args.get("command") or "").strip().casefold()
+        patterns = (
+            r"(^|\s)python(?:3)?\s+-m\s+(pytest|unittest|compileall)(\s|$)",
+            r"(^|\s)pytest(\s|$)",
+            r"(^|\s)npm\s+(test|run\s+(build|lint|typecheck|test))(\s|$)",
+            r"(^|\s)cargo\s+test(\s|$)",
+            r"(^|\s)go\s+test(\s|$)",
+            r"(^|\s)(gradlew|gradle)\s+(test|check)(\s|$)",
+        )
+        return any(re.search(pattern, command) for pattern in patterns)
 
     def _execute_tool(self, name: str, args: dict[str, Any]) -> str:
         key = name.lower().strip()
@@ -647,7 +663,10 @@ class BrahmaDevAgent:
         if not func:
             return f"Error: Tool '{name}' is not recognized. Available: Bash, FileRead, FileWrite, FileEdit, Glob, Grep, GitHubSearch, GitHubRead, GitHubRepo."
         try:
-            return func(args)
+            result = func(args)
+            if self._is_verification_command(name, args) and not str(result).lstrip().casefold().startswith("error:"):
+                self.verification_evidence.append(str(args.get("command") or "").strip())
+            return result
         except Exception as e:
             return f"Error executing {name}: {e}"
 
@@ -725,6 +744,7 @@ class BrahmaDevAgent:
         self.github_inspected_repos.clear()
         self.github_candidate_repos.clear()
         self.github_required_sources = 0
+        self.verification_evidence.clear()
         self.history = [
             {"role": "system", "content": BRAHMA_DEV_SYSTEM_PROMPT + system_info},
             {"role": "user", "content": user_instruction},
@@ -751,6 +771,8 @@ class BrahmaDevAgent:
                 # Clean any <thinking> blocks out for user display
                 clean_reply = re.sub(r"<thinking>.*?</thinking>", "", reply, flags=re.DOTALL).strip()
                 final_response = clean_reply if clean_reply else reply
+                if not self.verification_evidence:
+                    return "Error: Developer task incomplete: no independent build/test verification was recorded after the requested changes."
                 break
 
             # Execute tool calls
@@ -767,7 +789,7 @@ class BrahmaDevAgent:
 
         if not final_response:
             final_response = (
-                "Developer task incomplete: the iteration limit was reached before the agent "
+                "Error: Developer task incomplete: the iteration limit was reached before the agent "
                 "produced a verified final result. Review the workspace and rerun the task."
             )
         return final_response
