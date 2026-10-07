@@ -5871,8 +5871,16 @@ class BrahmaLive:
                         result = f"Successfully took over the chat with @{username}. The backend will now automatically reply to them."
                     else:
                         self.ui.write_log(f"SYS: Sending manual reply to @{username}.")
-                        send_direct_reply(thread_id, reply_text)
-                        result = f"Successfully sent manual reply to @{username} and opened thread in browser."
+                        send_result = send_direct_reply(thread_id, reply_text)
+                        if isinstance(send_result, dict) and send_result.get("delivery_verified") is True:
+                            result = f"Successfully sent manual reply to @{username}; delivery was independently verified."
+                        elif isinstance(send_result, dict) and send_result.get("submitted") is True:
+                            result = (
+                                f"Reply to @{username} was accepted for sending, but delivery was not independently verified."
+                            )
+                        else:
+                            error = send_result.get("error", "Instagram reply failed.") if isinstance(send_result, dict) else str(send_result)
+                            result = f"Failed to send reply to @{username}: {error}"
                         
                     self._ig_reply_mode = False
                     self._ig_pending_thread = None
@@ -5895,7 +5903,15 @@ class BrahmaLive:
                             result = f"Successfully took over the chat with @{recipient}. Brahma Evo will now automatically reply."
                         else:
                             res = InstagramService.instance().send_dm(recipient, reply_text, open_in_browser=True)
-                            result = f"Sent reply to @{recipient}: '{reply_text}'. Thread opened in browser."
+                            if isinstance(res, dict) and res.get("delivery_verified") is True:
+                                result = f"Sent reply to @{recipient}; delivery was independently verified."
+                            elif isinstance(res, dict) and res.get("submitted") is True:
+                                result = (
+                                    f"Reply to @{recipient} was accepted for sending, but delivery was not independently verified."
+                                )
+                            else:
+                                error = res.get("error", "Instagram reply failed.") if isinstance(res, dict) else str(res)
+                                result = f"Failed to send reply to @{recipient}: {error}"
                         self._ig_reply_mode = False
                     else:
                         result = "Could not find a recent conversation to reply to. Please specify who you want to message."

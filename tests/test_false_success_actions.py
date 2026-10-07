@@ -518,3 +518,16 @@ def test_action_result_classifier_rejects_error_dicts_and_accepts_normal_dicts()
     assert 'error = result.get("error")' in block
     assert 'errors = result.get("errors")' in block
     assert 'if error not in (None, "")' in block
+
+
+def test_instagram_reply_handler_does_not_claim_success_for_unverified_send():
+    from pathlib import Path
+
+    source = Path(ROOT / "main.py").read_text(encoding="utf-8")
+    start = source.index('            elif name == "instagram_reply"')
+    end = source.index('            elif name == "system_manager"', start)
+    block = source[start:end]
+
+    assert "delivery was not independently verified" in block
+    assert "Successfully sent manual reply" not in block
+    assert "if isinstance(send_result, dict) and send_result.get("delivery_verified") is True" in block
