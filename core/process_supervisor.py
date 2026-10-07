@@ -197,6 +197,16 @@ def supervise(base_dir: Path | None = None, *, max_cycles: int | None = None) ->
                 _log(f"Unable to start Brahma: {exc}")
 
             if exit_code == 0:
+                if test_mode:
+                    try:
+                        ready = marker.exists() and marker.stat().st_mtime >= (child_start - 2.0)
+                    except OSError:
+                        ready = False
+                    if not ready:
+                        _log("Packaged smoke test child exited cleanly without startup-ready marker.")
+                        return 1
+                    _log("Brahma reached startup-ready marker and exited cleanly.")
+                    return 0
                 _log("Brahma exited cleanly; supervisor stopping.")
                 return 0
 
