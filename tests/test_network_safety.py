@@ -1,3 +1,4 @@
+import pytest
 
 
 @pytest.fixture
@@ -9,7 +10,6 @@ def safe_address(monkeypatch):
             lambda *a, **k: [(2, 1, 6, "", (raw, 80))],
         )
     return set_address
-import pytest
 
 def test_fixed_https_network_helper_rejects_non_global_resolution(monkeypatch):
     from core import network_safety
