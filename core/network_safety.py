@@ -188,6 +188,8 @@ def download_public_to_file(
         if parsed.username or parsed.password:
             raise ValueError("Public download URL may not contain embedded credentials.")
         port = parsed.port or (443 if scheme == "https" else 80)
+        if require_https and port != 443:
+            raise ValueError("Public HTTPS download must use TCP port 443.")
 
         ip_address = pins.get(host)
         if ip_address is None:
@@ -235,10 +237,11 @@ def download_public_to_file(
                 if not next_host or next_host not in redirect_hosts:
                     raise ValueError("Public download redirect destination is outside the approved host policy.")
                 next_scheme = urllib.parse.urlsplit(next_url).scheme.lower()
-                if require_https and next_scheme != "https":
-                    raise ValueError("Public download redirect downgraded transport below HTTPS.")
+                next_port = urllib.parse.urlsplit(next_url).port or (443 if next_scheme == "https" else 80)
+                if require_https and (next_scheme != "https" or next_port != 443):
+                    raise ValueError("Public download redirect downgraded or changed the approved HTTPS transport.")
 
-                if next_host != host or next_scheme != scheme:
+                if next_host != host or next_scheme != scheme or next_port != port:
                     request_headers.pop("Authorization", None)
                     request_headers.pop("Proxy-Authorization", None)
                 current = next_url
