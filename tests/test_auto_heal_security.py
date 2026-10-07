@@ -32,3 +32,69 @@ def test_auto_heal_source_publish_uses_exclusive_temp_writer():
     assert "def _write_exclusive_text" in source
     assert "def _copy_file_exclusive" in source
     assert "_write_exclusive_text(target_tmp, staged_source)" in source
+
+
+def test_auto_heal_copy_rejects_hardlinked_source(tmp_path):
+    import os
+    import pytest
+    from actions.auto_heal_engine import _copy_file_exclusive
+
+    source = tmp_path / "source.py"
+    outside = tmp_path / "outside.py"
+    destination = tmp_path / "copy.tmp"
+    source.write_text("print('secret')", encoding="utf-8")
+    try:
+        os.link(source, outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("Hard-link support unavailable")
+
+    with pytest.raises(OSError, match="hard-linked"):
+        _copy_file_exclusive(source, destination)
+
+
+def test_auto_heal_refuses_concurrent_target_change_before_publish(tmp_path, monkeypatch):
+    import actions.auto_heal_engine as auto_heal
+
+    target = tmp_path / "repair_target.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+    monkeypatch.setattr(auto_heal, "BASE_DIR", tmp_path)
+    monkeypatch.setattr(auto_heal, "BACKUPS_DIR", tmp_path / "backups")
+    monkeypatch.setattr(auto_heal, "PATCH_HISTORY_FILE", tmp_path / "history.json")
+    monkeypatch.setattr(
+        auto_heal.TracebackAnalyzer,
+        "parse",
+        staticmethod(lambda _tb: {
+            "success": True,
+            "target_file": str(target),
+            "line_number": 1,
+            "function_name": "<module>",
+            "exception_type": "ValueError",
+            "exception_message": "test",
+        }),
+    )
+    monkeypatch.setattr(
+        auto_heal.AutoHealEngine,
+        "_synthesize_patch_code",
+        classmethod(lambda cls, **_kwargs: {
+            "success": True,
+            "target_chunk": "value = 1",
+            "replacement_chunk": "value = 2",
+            "explanation": "test repair",
+        }),
+    )
+    real_backup = auto_heal.SafetySandbox.create_backup
+    def backup_then_change(path):
+        backup = real_backup(path)
+        path.write_text("value = 99\n", encoding="utf-8")
+        return backup
+    monkeypatch.setattr(auto_heal.SafetySandbox, "create_backup", staticmethod(backup_then_change))
+    monkeypatch.setattr(auto_heal.SafetySandbox, "validate_code", staticmethod(lambda code, file_name="<staging>": (True, None)))
+    monkeypatch.setattr(
+        "core.repository_sync.publish_verified_repair",
+        lambda *args, **kwargs: {"published": False, "reason": "test"},
+    )
+
+    result = auto_heal.AutoHealEngine.heal_traceback("traceback")
+    assert result["success"] is False
+    assert "changed after backup creation" in result["message"]
+    assert target.read_text(encoding="utf-8") == "value = 99\n"
