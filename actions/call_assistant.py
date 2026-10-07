@@ -473,6 +473,8 @@ class CallAssistant:
     def _transcribe_audio(self, wav_bytes: bytes) -> str:
         """Transcribe call audio through the canonical Gemini runtime adapter."""
         try:
+            from core.provider_policy import require_provider
+            require_provider("Gemini", "Call audio transcription")
             from core.gemini_runtime import create_model
             model = create_model("gemini-2.5-flash-lite")
             response = model.generate_content([

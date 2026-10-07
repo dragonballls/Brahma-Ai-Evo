@@ -191,6 +191,40 @@ def test_auto_heal_does_not_bypass_selected_provider_with_direct_openrouter_fall
     direct.assert_not_called()
 
 
+def test_call_audio_transcription_refuses_selected_openrouter(monkeypatch):
+    from actions.call_assistant import CallAssistant
+
+    calls = {"create_model": 0}
+
+    def reject(_provider, _capability):
+        raise RuntimeError("Call audio transcription requires the Google Gemini provider")
+
+    monkeypatch.setattr("core.provider_policy.require_provider", reject)
+
+    def forbidden(*_args, **_kwargs):
+        calls["create_model"] += 1
+        raise AssertionError("Call transcription must stop before Gemini client creation")
+
+    monkeypatch.setattr("core.gemini_runtime.create_model", forbidden)
+
+    assistant = object.__new__(CallAssistant)
+    assert assistant._transcribe_audio(b"wav") == ""
+    assert calls["create_model"] == 0
+
+
+def test_screen_live_vision_refuses_selected_openrouter(monkeypatch):
+    import asyncio
+    from actions.screen_processor import _LiveSession
+
+    def reject(_provider, _capability):
+        raise RuntimeError("Screen vision Live requires the Google Gemini provider")
+
+    monkeypatch.setattr("core.provider_policy.require_provider", reject)
+    session = _LiveSession()
+    with pytest.raises(RuntimeError, match="Screen vision Live requires"):
+        asyncio.run(session._main())
+
+
 def test_specialized_gemini_generation_modules_refuse_selected_openrouter(monkeypatch):
     from core import provider_policy
     monkeypatch.setattr(provider_policy, "selected_provider", lambda: OPENROUTER)
