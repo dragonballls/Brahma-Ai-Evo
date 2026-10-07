@@ -12,7 +12,7 @@ from typing import Optional, Dict, Any, List
 # Efficient GPU/WebGL configuration for the on-demand globe view.
 os.environ.setdefault(
     "QTWEBENGINE_CHROMIUM_FLAGS",
-    "--enable-gpu-rasterization --enable-zero-copy --enable-accelerated-2d-canvas --enable-webgl --ignore-gpu-blocklist --disable-frame-rate-limit --disable-gpu-vsync --use-angle=d3d11 --num-raster-threads=2"
+    "--enable-gpu-rasterization --enable-zero-copy --enable-accelerated-2d-canvas --enable-webgl --ignore-gpu-blocklist --use-angle=d3d11 --num-raster-threads=2"
 )
 
 from PyQt6.QtCore import Qt, QUrl, pyqtSlot, QObject, pyqtSignal, QTimer, QPoint, QCoreApplication
