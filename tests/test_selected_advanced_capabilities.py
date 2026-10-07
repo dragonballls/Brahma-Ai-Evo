@@ -106,7 +106,8 @@ class SelectedCapabilitiesTests(unittest.TestCase):
         opener = _FakeOpener()
         with patch("core.selected_capabilities.urlrequest.build_opener", return_value=opener):
             rows = provider.locations()
-        call = opener        self.assertEqual(len(rows), 1)
+        call = opener
+        self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["label"], "Alice")
         self.assertEqual(rows[0]["source"], "life360")
         req = call.calls[1]
