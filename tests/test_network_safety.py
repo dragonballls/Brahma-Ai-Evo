@@ -172,3 +172,22 @@ def test_crypto_live_price_uses_bounded_fixed_https_transport(monkeypatch):
 def assert_limit(limit):
     assert limit == 128 * 1024
     return None
+
+
+def test_market_analysis_rejects_unsafe_symbol_and_unbounded_limit():
+    from features import market_analysis
+    assert market_analysis.execute(symbol="BTCUSDT&redirect=https://evil.example")["error"] == "Invalid trading pair symbol."
+    assert "between 1 and 1000" in market_analysis.execute(symbol="BTCUSDT", limit=1001)["error"]
+
+
+def test_market_analysis_accepts_binance_monthly_interval():
+    source = (ROOT / "features" / "market_analysis.py").read_text(encoding="utf-8")
+    assert 'interval = raw_interval if raw_interval == "1M" else raw_interval.lower()' in source
+
+
+def test_iss_tracking_uses_fixed_host_bounded_transport():
+    source = (ROOT / "features" / "tracks_international_space_station.py").read_text(encoding="utf-8")
+    assert "open_fixed_https(" in source
+    assert 'allowed_hosts={"api.wheretheiss.at"}' in source
+    assert "read_bounded(response, 128 * 1024)" in source
+    assert "requests.get(" not in source
