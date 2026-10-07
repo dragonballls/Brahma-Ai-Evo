@@ -59,6 +59,22 @@ class UnifiedAIClient:
         # replace it with a direct OpenRouter request when the gateway fails.
         return not is_gemini(self._provider)
 
+    @staticmethod
+    def _provider_id(provider: object) -> str:
+        normalized = normalize_provider(provider)
+        if is_gemini(normalized):
+            return "gemini"
+        if normalized == "OpenRouter":
+            return "openrouter"
+        return str(normalized).strip().casefold()
+
+    def _omniroute_provider(self, provider: object | None = None) -> str:
+        return self._provider_id(self._provider if provider is None else provider)
+
+    def _allow_direct_cloud_fallback_for(self, provider: object | None = None) -> bool:
+        selected = self._provider if provider is None else normalize_provider(provider)
+        return not is_gemini(selected)
+
     def reload_settings(self):
         try:
             from memory.config_manager import load_settings
@@ -131,6 +147,7 @@ class UnifiedAIClient:
         return openrouter_client.chat(
             prompt, system=system, model="auto", max_tokens=max_tokens, temperature=temperature,
             allow_direct_fallback=False,
+            provider="gemini",
         )
 
     def _gemini_json(
@@ -144,6 +161,7 @@ class UnifiedAIClient:
         return openrouter_client.chat_json(
             prompt, system=system, model="auto", max_tokens=max_tokens,
             allow_direct_fallback=False,
+            provider="gemini",
         )
 
     def _gemini_vision(
@@ -159,9 +177,10 @@ class UnifiedAIClient:
         return openrouter_client.vision(
             prompt, image_b64, mime=mime, system=system, model="auto", max_tokens=max_tokens,
             allow_direct_fallback=False,
+            provider="gemini",
         )
 
-    def chat(self, prompt: str, system: str = "You are a helpful assistant.", history: Optional[list[dict]] = None, model: Optional[str] = None, max_tokens: int = 4096, temperature: float = 0.7) -> str:
+    def chat(self, prompt: str, system: str = "You are a helpful assistant.", history: Optional[list[dict]] = None, model: Optional[str] = None, max_tokens: int = 4096, temperature: float = 0.7, provider: Optional[str] = None) -> str:
         self.reload_settings()
         if self._is_local_provider():
             messages = [{"role": "system", "content": system}]
@@ -178,7 +197,8 @@ class UnifiedAIClient:
         return openrouter_client.chat(
             prompt, system=system, history=history, model=model or "auto",
             max_tokens=max_tokens, temperature=temperature,
-            allow_direct_fallback=self._allow_direct_cloud_fallback(),
+            allow_direct_fallback=self._allow_direct_cloud_fallback_for(provider),
+            provider=self._omniroute_provider(provider),
         )
 
     def chat_with_tools(
@@ -190,6 +210,7 @@ class UnifiedAIClient:
         max_tokens: int = 8192,
         temperature: float = 0.35,
         max_rounds: int = 6,
+        provider: Optional[str] = None,
     ) -> str:
         """Run cloud tool calls through OmniRoute; local mode stays local."""
         self.reload_settings()
@@ -199,10 +220,11 @@ class UnifiedAIClient:
             messages=messages, tools=tools, tool_executor=tool_executor,
             model=model or "auto", max_tokens=max_tokens, temperature=temperature,
             max_rounds=max_rounds,
-            allow_direct_fallback=self._allow_direct_cloud_fallback(),
+            allow_direct_fallback=self._allow_direct_cloud_fallback_for(provider),
+            provider=self._omniroute_provider(provider),
         )
 
-    def chat_json(self, prompt: str, system: str = "Return ONLY valid JSON.", model: Optional[str] = None, max_tokens: int = 4096) -> dict:
+    def chat_json(self, prompt: str, system: str = "Return ONLY valid JSON.", model: Optional[str] = None, max_tokens: int = 4096, provider: Optional[str] = None) -> dict:
         self.reload_settings()
         if self._is_local_provider():
             messages = [
@@ -228,10 +250,11 @@ class UnifiedAIClient:
             return parsed
         return openrouter_client.chat_json(
             prompt, system, model or "auto", max_tokens,
-            allow_direct_fallback=self._allow_direct_cloud_fallback(),
+            allow_direct_fallback=self._allow_direct_cloud_fallback_for(provider),
+            provider=self._omniroute_provider(provider),
         )
 
-    def vision(self, prompt: str, image_b64: str, mime: str = "image/png", system: str = "Analyze the image.", model: Optional[str] = None, max_tokens: int = 1024) -> str:
+    def vision(self, prompt: str, image_b64: str, mime: str = "image/png", system: str = "Analyze the image.", model: Optional[str] = None, max_tokens: int = 1024, provider: Optional[str] = None) -> str:
         self.reload_settings()
         if self._is_local_provider():
             messages = [
@@ -250,7 +273,8 @@ class UnifiedAIClient:
             raise RuntimeError("Local AI vision request failed.")
         return openrouter_client.vision(
             prompt, image_b64, mime, system, model or "auto", max_tokens,
-            allow_direct_fallback=self._allow_direct_cloud_fallback(),
+            allow_direct_fallback=self._allow_direct_cloud_fallback_for(provider),
+            provider=self._omniroute_provider(provider),
         )
 
     def vision_from_file(self, prompt: str, image_path: str, system: str = "Analyze the image.", model: Optional[str] = None, max_tokens: int = 1024) -> str:
@@ -274,7 +298,7 @@ class UnifiedAIClient:
             return self._gemini_vision(prompt, image_b64, mime, system, max_tokens=max_tokens)
         return openrouter_client.vision(prompt, image_b64, mime, system, model, max_tokens)
 
-    def multi_turn(self, messages: list[dict], model: Optional[str] = None, max_tokens: int = 4096, temperature: float = 0.7) -> str:
+    def multi_turn(self, messages: list[dict], model: Optional[str] = None, max_tokens: int = 4096, temperature: float = 0.7, provider: Optional[str] = None) -> str:
         self.reload_settings()
         if self._is_local_provider():
             result = self._local_chat_completion(messages, temperature)
@@ -283,7 +307,8 @@ class UnifiedAIClient:
             raise RuntimeError("Local AI request failed.")
         return openrouter_client.multi_turn(
             messages, model or "auto", max_tokens, temperature,
-            allow_direct_fallback=self._allow_direct_cloud_fallback(),
+            allow_direct_fallback=self._allow_direct_cloud_fallback_for(provider),
+            provider=self._omniroute_provider(provider),
         )
 
 
