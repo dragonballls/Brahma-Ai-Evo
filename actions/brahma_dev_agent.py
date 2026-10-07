@@ -59,6 +59,7 @@ _EXECUTION_ENV_OVERRIDES = {
 _RESPONSE_FILE_CAPABLE_PROGRAMS = {
     "javac", "gcc", "g++", "clang", "clang++", "rustc", "msbuild",
 }
+_EXPLICIT_EXECUTABLE_RE = re.compile(r"^(?:\.{1,2}[\\\\/]|[A-Za-z]:[\\\\/]|[\\\\/]{2})")
 
 class NativeTools:
     def __init__(self, workspace_dir: Path, on_action: Optional[Callable[[str], None]] = None):
@@ -96,6 +97,9 @@ class NativeTools:
         if any(token in raw for token in (";", "&&", "||", "|", ">", "<", "\n", "\r")):
             return "Error: shell control operators and redirection are not permitted."
 
+        raw_executable = raw.split(None, 1)[0].strip().strip(""'")
+        if _EXPLICIT_EXECUTABLE_RE.match(raw_executable):
+            return "Error: executable paths are not permitted."
         try:
             parts = shlex.split(raw, posix=not sys.platform.startswith("win"))
         except ValueError as exc:
@@ -116,8 +120,6 @@ class NativeTools:
             return f"Error: unsupported development executable: {executable}"
 
         lowered = [str(part).casefold() for part in parts[1:]]
-        if any(flag in _BLOCKED_EVAL_FLAGS for flag in lowered):
-            return "Error: interpreter evaluation flags are not permitted."
         if executable in {"git"} and any(
             part.casefold().startswith(
                 ("--git-dir=", "--work-tree=")
@@ -134,6 +136,9 @@ class NativeTools:
             for part in parts[1:]
         ):
             return "Error: Git execution/configuration overrides are not permitted."
+
+        if any(flag in _BLOCKED_EVAL_FLAGS for flag in lowered):
+            return "Error: interpreter evaluation flags are not permitted."
 
         if executable in _RESPONSE_FILE_CAPABLE_PROGRAMS and any(
             str(part).startswith("@") for part in parts[1:]
