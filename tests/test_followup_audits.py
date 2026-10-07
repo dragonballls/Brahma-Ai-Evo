@@ -1520,6 +1520,7 @@ def test_executor_rejects_explicit_plain_text_failures_and_unverified_send_resul
         "Browser error: navigation failed",
         "Could not open WhatsApp.",
         "Playback control failed.",
+        "Back error: history unavailable",
         "Attempted to send to Alice via WhatsApp; the desktop UI provided no delivery acknowledgement.",
     ]
     for result in failure_results[:3]:

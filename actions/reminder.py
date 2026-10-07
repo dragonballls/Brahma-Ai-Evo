@@ -157,6 +157,31 @@ except Exception:
                 pass
             return "I couldn't schedule the reminder due to a system error."
 
+        verification = subprocess.run(
+            ["schtasks", "/Query", "/TN", task_name, "/FO", "LIST"],
+            shell=False,
+            capture_output=True,
+            text=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if verification.returncode != 0:
+            verify_err = verification.stderr.strip() or verification.stdout.strip()
+            print(f"[Reminder] ❌ scheduled task verification failed: {verify_err}")
+            cleanup = subprocess.run(
+                ["schtasks", "/Delete", "/TN", task_name, "/F"],
+                shell=False,
+                capture_output=True,
+                text=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if cleanup.returncode != 0:
+                print(f"[Reminder] ⚠️ unable to remove unverified scheduled task: {cleanup.stderr.strip() or cleanup.stdout.strip()}")
+            try:
+                os.remove(notify_script)
+            except Exception:
+                pass
+            return "I couldn't verify that the reminder was registered in Windows Task Scheduler."
+
         if player:
             player.write_log(f"[reminder] set for {date_str} {time_str}")
 

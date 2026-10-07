@@ -198,6 +198,10 @@ def _raise_for_failed_tool_result(result: Any, tool: str | None = None) -> None:
     )
     if lowered.startswith(failure_prefixes):
         raise RuntimeError(text_result)
+    if re.match(r"^[a-z][a-z0-9 _-]{0,80}\s+error:", lowered):
+        raise RuntimeError(text_result)
+    if lowered.startswith(("blocked:", "navigation blocked:", "screenshot blocked:")):
+        raise RuntimeError(text_result)
     if re.search(r"\b(?:failed|failure)\b[.!:]?$", lowered):
         raise RuntimeError(text_result)
     if tool == "send_message" and (
