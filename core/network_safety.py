@@ -162,6 +162,106 @@ def fetch_public_bytes(
         conn.close()
 
 
+def download_public_to_file(
+    url: str,
+    output,
+    *,
+    timeout: float = 30.0,
+    max_response_bytes: int = 64 * 1024,
+    headers: dict[str, str] | None = None,
+    allowed_redirect_hosts: Iterable[str] | None = None,
+    max_redirects: int = 3,
+) -> int:
+    """Stream a pinned HTTP(S) response into a caller-owned file object."""
+    current = str(url or "").strip()
+    redirect_hosts = {str(item).rstrip(".").lower() for item in (allowed_redirect_hosts or ())}
+    request_headers = dict(headers or {})
+    pins: dict[str, str] = {}
+
+    for redirect_count in range(max_redirects + 1):
+        parsed = urllib.parse.urlsplit(current)
+        scheme = parsed.scheme.lower()
+        host = (parsed.hostname or "").rstrip(".").lower()
+        if scheme not in {"http", "https"} or not host:
+            raise ValueError("Public download URL must be an absolute HTTP(S) URL.")
+        if parsed.username or parsed.password:
+            raise ValueError("Public download URL may not contain embedded credentials.")
+        port = parsed.port or (443 if scheme == "https" else 80)
+
+        ip_address = pins.get(host)
+        if ip_address is None:
+            try:
+                entries = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+            except OSError as exc:
+                raise ValueError("Public download host could not be resolved safely.") from exc
+            candidates = []
+            for entry in entries:
+                address = ipaddress.ip_address(entry[4][0])
+                if not address.is_global:
+                    raise ValueError("Public download host resolved to a non-global address.")
+                if entry[4][0] not in candidates:
+                    candidates.append(entry[4][0])
+            if not candidates:
+                raise ValueError("Public download host did not resolve to a global address.")
+            ip_address = candidates[0]
+            pins[host] = ip_address
+
+        request_path = parsed.path or "/"
+        if parsed.query:
+            request_path += "?" + parsed.query
+        if scheme == "https":
+            conn = _PinnedHTTPSConnection(host, port, ip_address, timeout)
+        else:
+            import http.client
+            conn = http.client.HTTPConnection(host, port=port, timeout=timeout)
+            def _pinned_connect() -> None:
+                conn.sock = socket.create_connection((ip_address, port), timeout=timeout)
+            conn.connect = _pinned_connect
+
+        response = None
+        try:
+            conn.request("GET", request_path, headers=request_headers)
+            response = conn.getresponse()
+            status = int(response.status)
+            if 300 <= status < 400:
+                if redirect_count >= max_redirects:
+                    raise ValueError("Public download exceeded the redirect limit.")
+                location = response.getheader("Location")
+                if not location:
+                    raise ValueError("Public download redirect omitted a destination.")
+                next_url = urllib.parse.urljoin(current, location)
+                next_host = (urllib.parse.urlsplit(next_url).hostname or "").rstrip(".").lower()
+                if not next_host or next_host not in redirect_hosts:
+                    raise ValueError("Public download redirect destination is outside the approved host policy.")
+                if next_host != host:
+                    request_headers.pop("Authorization", None)
+                    request_headers.pop("Proxy-Authorization", None)
+                current = next_url
+                continue
+            if status >= 400:
+                raise RuntimeError(f"Public download returned HTTP {status}.")
+            declared = response.getheader("Content-Length")
+            if declared and int(declared) > max_response_bytes:
+                raise ValueError(f"Public download exceeded the {max_response_bytes} byte safety limit.")
+            total = 0
+            while True:
+                chunk = response.read(min(1024 * 1024, max_response_bytes - total + 1))
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_response_bytes:
+                    raise ValueError(f"Public download exceeded the {max_response_bytes} byte safety limit.")
+                output.write(chunk)
+            return total
+        finally:
+            if response is not None:
+                try:
+                    response.close()
+                except Exception:
+                    pass
+            conn.close()
+
+
 def fetch_public_url_status(
     url: str,
     *,
