@@ -150,6 +150,7 @@ def test_invalid_provider_setting_cannot_retain_stale_client_provider(monkeypatc
     monkeypatch.setattr("memory.config_manager.load_settings", broken_settings)
     with pytest.raises(ValueError, match="Unsupported AI provider"):
         client.reload_settings()
+    assert not hasattr(client, "_provider") or client._provider != "NotAProvider"
 
 
 def test_non_boolean_offline_setting_is_not_treated_as_true():

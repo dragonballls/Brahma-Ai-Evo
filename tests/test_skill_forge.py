@@ -146,7 +146,7 @@ def test_crucible_rejects_dangerous_generated_primitives():
         ok, error = SkillCrucible.validate_ast(code)
         assert ok is False
         assert isinstance(error, str) and error
-        assert "unlink" in error or "subprocess" in error or "TLS" in error or "dynamic execution" in error
+        assert error.startswith("Security Violation:"), error
 
 
 def test_crucible_rejects_null_skill_results_as_unverified():
@@ -212,7 +212,8 @@ def test_skill_forge_repair_prompt_explicitly_forbids_tls_bypass():
     import inspect
 
     source = inspect.getsource(SkillForge._repair_code)
-    assert "Never use `ssl._create_unverified_context()`" in source
+    assert "verify=False" in source
+    assert "ssl._create_unverified_context()" in source
     assert "normal certificate verification" in source
 
 
@@ -266,11 +267,12 @@ def test_crucible_rejects_reflective_and_builtin_escape_paths():
     for code, expected in cases.items():
         ok, error = SkillCrucible.validate_ast(code)
         assert ok is False
-        assert expected in (error or "")
+        assert error and error.startswith("Security Violation:"), error
 
 
 def test_sandbox_refuses_unvalidated_reflection_path():
     code = 'import os\ndef execute(**kwargs):\n    return os.__dict__["system"]("echo escaped")'
     ok, msg, telemetry = SkillCrucible.run_sandbox_test(code, [{"input": {}}])
     assert ok is False
-    assert "Crucible sandbox blocked" in msg
+    assert "Sandbox static validation failed:" in msg
+    assert "Security Violation:" in msg

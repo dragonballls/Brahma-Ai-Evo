@@ -224,7 +224,7 @@ def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
                 return "Please specify width, height, or scale."
             out = _output_path(path, f"resized_{new_size[0]}x{new_size[1]}")
             img.resize(new_size, Image.LANCZOS).save(out)
-        _verify_output_artifact(out)
+            _verify_output_artifact(out)
             return f"Resized from {w}x{h} to {new_size[0]}x{new_size[1]}. Saved: {out.name}"
         except Exception as e:
             return f"Resize failed: {e}"
@@ -238,7 +238,7 @@ def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
             img = Image.open(path).convert("RGB") if fmt == "jpg" else Image.open(path)
             out = _output_path(path, "converted", f".{fmt}")
             img.save(out, pil_fmt)
-        _verify_output_artifact(out)
+            _verify_output_artifact(out)
             return f"Converted to {fmt.upper()}. Saved: {out.name}"
         except Exception as e:
             return f"Convert failed: {e}"

@@ -81,26 +81,36 @@ class UnifiedAIClient:
         try:
             from memory.config_manager import load_settings
             data = load_settings()
-            self._provider = validate_provider(
-                data.get("default_ai_provider", GEMINI),
-                GEMINI,
-            )
-            configured_local_url = str(
-                data.get("local_ai_url", LOCAL_DEFAULT_ENDPOINT)
-                or LOCAL_DEFAULT_ENDPOINT
-            ).rstrip("/")
-            try:
-                self._local_url = validate_local_endpoint(configured_local_url)
-            except ValueError as exc:
-                logger.warning("[LLM Client] Invalid Local AI endpoint; using safe local default: %s", exc)
-                self._local_url = LOCAL_DEFAULT_ENDPOINT
-            self._local_model = str(
-                data.get("local_ai_model", LOCAL_DEFAULT_MODEL)
-                or LOCAL_DEFAULT_MODEL
-            ).strip() or LOCAL_DEFAULT_MODEL
         except Exception as e:
             logger.error(f"[LLM Client] Failed to load settings safely: {e}")
             raise RuntimeError("AI provider/settings state could not be loaded safely.") from e
+
+        # Provider validation is deliberately outside the generic settings-load
+        # wrapper: invalid persisted providers must fail with the canonical
+        # ValueError and must not leave a stale prior provider active.
+        selected_provider = validate_provider(
+            data.get("default_ai_provider", GEMINI),
+            GEMINI,
+        )
+
+        configured_local_url = str(
+            data.get("local_ai_url", LOCAL_DEFAULT_ENDPOINT)
+            or LOCAL_DEFAULT_ENDPOINT
+        ).rstrip("/")
+        try:
+            local_url = validate_local_endpoint(configured_local_url)
+        except ValueError as exc:
+            logger.warning("[LLM Client] Invalid Local AI endpoint; using safe local default: %s", exc)
+            local_url = LOCAL_DEFAULT_ENDPOINT
+
+        local_model = str(
+            data.get("local_ai_model", LOCAL_DEFAULT_MODEL)
+            or LOCAL_DEFAULT_MODEL
+        ).strip() or LOCAL_DEFAULT_MODEL
+
+        self._provider = selected_provider
+        self._local_url = local_url
+        self._local_model = local_model
 
     def _local_chat_completion(self, messages: list[dict], temperature: float = 0.7, response_format: Optional[dict] = None) -> Optional[str]:
         payload = {
