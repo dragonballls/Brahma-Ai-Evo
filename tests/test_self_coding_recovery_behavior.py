@@ -231,6 +231,8 @@ def test_partial_undo_failure_restores_approved_state(tmp_path):
             return _result(args)
         if args == ("revert", "--no-edit", checkpoint.commits[-1]):
             return _result(args)
+        if args == ("status", "--porcelain"):
+            return _result(args, stdout="")
         if args == ("rev-parse", "HEAD"):
             return _result(args, stdout=first_undo)
         if args == ("reset", "--hard", promoted):

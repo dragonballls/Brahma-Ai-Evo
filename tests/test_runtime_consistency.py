@@ -15,11 +15,28 @@ class RuntimeConsistencyTests(unittest.TestCase):
         return (ROOT / rel).read_text(encoding="utf-8")
 
     def test_settings_load_uses_file_signature_cache(self):
-        source = self.read("memory/config_manager.py")
-        self.assertIn("_SETTINGS_CACHE:", source)
-        self.assertIn("def _settings_signature()", source)
-        self.assertIn("_SETTINGS_CACHE[0] == signature", source)
-        self.assertIn("_SETTINGS_CACHE = (_settings_signature(), dict(current))", source)
+        import json
+        import tempfile
+        import memory.config_manager as config_manager
+
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "settings.json"
+            old_path = config_manager.SETTINGS_FILE
+            old_cache = config_manager._SETTINGS_CACHE
+            try:
+                config_manager.SETTINGS_FILE = path
+                config_manager._SETTINGS_CACHE = None
+                config_manager.save_settings({"flag": False, "version": 1})
+                self.assertFalse(config_manager.load_settings()["flag"])
+
+                path.write_text(
+                    json.dumps({"flag": True, "version": 2}),
+                    encoding="utf-8",
+                )
+                self.assertTrue(config_manager.load_settings()["flag"])
+            finally:
+                config_manager.SETTINGS_FILE = old_path
+                config_manager._SETTINGS_CACHE = old_cache
 
     def test_runtime_paths_are_shared(self):
         from core.runtime_paths import (
