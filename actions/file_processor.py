@@ -830,6 +830,14 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
         current = root
         for part in relative.parts:
             current = current / part
+            if os.name == "nt" and _WINFS is not None:
+                try:
+                    created = _WINFS.ensure_directory(current)
+                except OSError as exc:
+                    raise ValueError("Archive extraction path contains an unsafe Windows directory component.") from exc
+                if created:
+                    created_dirs.append(current)
+                continue
             is_junction = getattr(current, "is_junction", None)
             if current.is_symlink() or (is_junction is not None and is_junction()):
                 raise ValueError("Archive extraction path contains a link/reparse component.")
@@ -872,6 +880,7 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
                 target,
                 write=True,
                 create_new=True,
+                exclusive=True,
             )
             identity = (
                 int(info.dwVolumeSerialNumber),
