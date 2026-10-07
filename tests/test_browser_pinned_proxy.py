@@ -1,10 +1,11 @@
 import http.client
+import socketserver
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from core.browser_pinned_proxy import PinnedBrowserProxy, _PinnedResolver
+from core.browser_pinned_proxy import PinnedBrowserProxy, _Handler, _PinnedResolver
 
 
 def test_pinned_resolver_retains_first_safe_ip_against_rebinding(monkeypatch):
