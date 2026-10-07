@@ -5,6 +5,7 @@ import json
 import os
 import sqlite3
 import threading
+import stat as _stat
 import time
 import uuid
 from pathlib import Path
@@ -29,6 +30,56 @@ def _ensure_dir() -> None:
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+    try:
+        current = Path(path.anchor) if path.anchor else Path(".")
+        parts = path.parts[1:] if path.anchor else path.parts
+        for part in parts:
+            current = current / part
+            if current.is_symlink():
+                return True
+            is_junction = getattr(current, "is_junction", None)
+            if is_junction is not None and is_junction():
+                return True
+            if os.name == "nt":
+                attrs = getattr(current.stat(follow_symlinks=False), "st_file_attributes", 0)
+                reparse = getattr(_stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+                if reparse and attrs & reparse:
+                    return True
+        return False
+    except OSError:
+        return True
+
+
+def _validate_db_path(path: Path) -> None:
+    path = Path(path)
+    if _path_has_link_component(path.parent):
+        raise RuntimeError("Smart-home database parent contains a symlink/junction/reparse component.")
+    if path.is_symlink() or getattr(path, "is_junction", lambda: False)():
+        raise RuntimeError("Smart-home database path must not be a symlink/junction.")
+    if path.exists():
+        if not path.is_file():
+            raise RuntimeError("Smart-home database path is not a regular file.")
+        try:
+            if int(path.stat(follow_symlinks=False).st_nlink) > 1:
+                raise RuntimeError("Smart-home database path has multiple hard links.")
+        except OSError as exc:
+            raise RuntimeError("Smart-home database path could not be inspected safely.") from exc
+    for suffix in ("-wal", "-shm"):
+        sidecar = Path(f"{path}{suffix}")
+        if _path_has_link_component(sidecar.parent):
+            raise RuntimeError(f"Smart-home database sidecar {sidecar.name} parent is unsafe.")
+        if sidecar.is_symlink() or getattr(sidecar, "is_junction", lambda: False)():
+            raise RuntimeError(f"Smart-home database sidecar {sidecar.name} must not be a symlink/junction.")
+        if sidecar.exists() and not sidecar.is_file():
+            raise RuntimeError(f"Smart-home database sidecar {sidecar.name} is not a regular file.")
+        if sidecar.exists():
+            try:
+                if int(sidecar.stat(follow_symlinks=False).st_nlink) > 1:
+                    raise RuntimeError(f"Smart-home database sidecar {sidecar.name} has multiple hard links.")
+            except OSError as exc:
+                raise RuntimeError(f"Smart-home database sidecar {sidecar.name} could not be inspected safely.") from exc
 
 
 class CredentialVault:
@@ -99,11 +150,13 @@ class SmartHomeStorage:
     def __init__(self, db_path: Path | None = None):
         _ensure_dir()
         self._db_path = Path(db_path or DB_FILE)
+        _validate_db_path(self._db_path)
         self._lock = threading.RLock()
         self._vault = CredentialVault()
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
+        _validate_db_path(self._db_path)
         conn = sqlite3.connect(self._db_path, timeout=10, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL;")
