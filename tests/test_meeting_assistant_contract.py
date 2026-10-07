@@ -22,19 +22,24 @@ def _meeting_module():
     fake_google = ModuleType("google")
     fake_google.__path__ = []
     fake_genai = ModuleType("google.genai")
-    fake_genai.Client = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unexpected Gemini client"))
+    fake_genai.Client = lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("unexpected Gemini client")
+    )
     fake_genai_types = ModuleType("google.genai.types")
     fake_genai.types = fake_genai_types
     fake_google.genai = fake_genai
     try:
-        with patch.dict(sys.modules, {
-            "mss": fake_mss,
-            "mss.tools": fake_mss_tools,
-            "sounddevice": fake_sd,
-            "google": fake_google,
-            "google.genai": fake_genai,
-            "google.genai.types": fake_genai_types,
-        }):
+        with patch.dict(
+            sys.modules,
+            {
+                "mss": fake_mss,
+                "mss.tools": fake_mss_tools,
+                "sounddevice": fake_sd,
+                "google": fake_google,
+                "google.genai": fake_genai,
+                "google.genai.types": fake_genai_types,
+            },
+        ):
             yield importlib.import_module("actions.meeting_assistant")
     finally:
         sys.modules.pop("actions.meeting_assistant", None)
@@ -43,13 +48,13 @@ def _meeting_module():
 
 
 def test_meeting_empty_gemini_analysis_is_not_reported_as_live(monkeypatch):
+    with _meeting_module() as meeting_assistant:
+        assistant = object.__new__(meeting_assistant.MeetingAssistant)
         updates = []
-        assistant = object.__new__(MeetingAssistant)
         assistant._on_update = updates.append
         assistant._on_state = None
         assistant._interval = 4.0
         assistant._running = True
-        import threading
         assistant._stop_event = threading.Event()
         assistant._audio_stop = threading.Event()
         assistant._last_hash = ""
@@ -57,24 +62,26 @@ def test_meeting_empty_gemini_analysis_is_not_reported_as_live(monkeypatch):
         assistant._last_answer = ""
         assistant._title = "Meeting mode"
         assistant._context = ""
+
         monkeypatch.setattr(
             provider_policy,
             "require_provider",
             lambda provider, capability: provider_policy.GEMINI,
         )
         monkeypatch.setattr(
-            "actions.meeting_assistant._capture_screen",
+            meeting_assistant,
+            "_capture_screen",
             lambda: b"screen",
         )
-        fake_models = SimpleNamespace(
-            generate_content=lambda **kwargs: object()
-        )
+        fake_models = SimpleNamespace(generate_content=lambda **kwargs: object())
         monkeypatch.setattr(
-            "actions.meeting_assistant.genai.Client",
+            meeting_assistant.genai,
+            "Client",
             lambda **kwargs: SimpleNamespace(models=fake_models),
         )
         monkeypatch.setattr(
-            "actions.meeting_assistant.time.sleep",
+            meeting_assistant.time,
+            "sleep",
             lambda _seconds: assistant._stop_event.set(),
         )
 
@@ -86,12 +93,10 @@ def test_meeting_empty_gemini_analysis_is_not_reported_as_live(monkeypatch):
         assert "empty" in updates[0]["answer"].casefold()
 
 
-
 def test_meeting_audio_loop_normalizes_and_emits_transcription(monkeypatch):
-        with _meeting_module() as meeting_assistant:
-            MeetingAssistant = meeting_assistant.MeetingAssistant
-            updates = []
-            assistant = object.__new__(MeetingAssistant)
+    with _meeting_module() as meeting_assistant:
+        assistant = object.__new__(meeting_assistant.MeetingAssistant)
+        updates = []
         assistant._on_update = updates.append
         assistant._on_state = None
         assistant._audio_stop = threading.Event()
@@ -128,7 +133,12 @@ def test_meeting_audio_loop_normalizes_and_emits_transcription(monkeypatch):
 
         class FakeInputStream:
             def __init__(self, **kwargs):
-                kwargs["callback"](SimpleNamespace(tobytes=lambda: b"\\x00" * 80000), 40000, None, None)
+                kwargs["callback"](
+                    SimpleNamespace(tobytes=lambda: b"\x00" * 80000),
+                    40000,
+                    None,
+                    None,
+                )
 
             def __enter__(self):
                 return self
@@ -137,7 +147,11 @@ def test_meeting_audio_loop_normalizes_and_emits_transcription(monkeypatch):
                 return False
 
         monkeypatch.setattr(meeting_assistant.sd, "InputStream", FakeInputStream)
-        monkeypatch.setattr(meeting_assistant.time, "sleep", lambda _seconds: assistant._audio_stop.set())
+        monkeypatch.setattr(
+            meeting_assistant.time,
+            "sleep",
+            lambda _seconds: assistant._audio_stop.set(),
+        )
         monkeypatch.setattr(meeting_assistant.time, "time", lambda: 100.0)
 
         assistant._audio_loop()
