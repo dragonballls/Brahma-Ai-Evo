@@ -55,3 +55,30 @@ def test_executor_preserves_falsy_action_failure_results():
             assert result is False
             with pytest.raises(RuntimeError):
                 executor._raise_for_failed_tool_result(result)
+
+
+def test_call_screening_control_rejects_inactive_operations():
+    import agent.executor as executor
+    with (
+        patch("actions.call_assistant.take_over_active_call", return_value=False),
+        patch("actions.call_assistant.hang_up_active_call", return_value=False),
+    ):
+        with pytest.raises(RuntimeError):
+            executor._call_tool("call_screening", {"action": "take_over"}, None)
+        with pytest.raises(RuntimeError):
+            executor._call_tool("call_screening", {"action": "hang_up"}, None)
+
+
+def test_call_assistant_does_not_activate_when_answer_is_unconfirmed():
+    from actions.call_assistant import CallAssistant
+
+    CallAssistant._active_instance = None
+    assistant = CallAssistant({"title": "Caller", "app": "TestApp"})
+    with patch(
+        "actions.attention_monitor.handle_call_action",
+        return_value="I found the call on TestApp, but could not confirm the answer button.",
+    ):
+        assert assistant.start() is False
+
+    assert assistant.is_active is False
+    assert CallAssistant.get_active() is None
