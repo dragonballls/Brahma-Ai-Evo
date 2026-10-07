@@ -144,7 +144,7 @@ def _validate_output_format(path: Path) -> None:
         elif ext == ".m4a":
             valid = len(header) >= 8 and header[4:8] == b"ftyp"
         elif ext == ".aac":
-            valid = len(header) >= 2 and header[0] == 0xFF and (header[1] & 0xF6) == 0xF0
+            valid = len(header) >= 2 and header[0] == 0xFF and (header[1] & 0xF0) == 0xF0
         elif ext == ".mp3":
             valid = header[:3] == b"ID3" or (
                 len(header) >= 2 and header[0] == 0xFF and (header[1] & 0xE0) == 0xE0
