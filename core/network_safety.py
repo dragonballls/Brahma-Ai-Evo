@@ -235,6 +235,7 @@ def download_public_to_file(
                     raise ValueError("Public download redirect destination is outside the approved host policy.")
                 next_scheme = urllib.parse.urlsplit(next_url).scheme.lower()
                 if next_host != host or next_scheme != scheme:
+                    request_headers.pop("Authorization", None)
                     request_headers.pop("Proxy-Authorization", None)
                 current = next_url
                 continue
