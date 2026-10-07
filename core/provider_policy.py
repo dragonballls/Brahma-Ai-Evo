@@ -37,6 +37,9 @@ def normalize_provider(value: object, default: str = GEMINI) -> str:
 
 def validate_provider(value: object, default: str = GEMINI) -> str:
     """Return a supported canonical provider or fail explicitly."""
+    raw = str(value or "").strip().casefold()
+    if raw and raw not in ALIASES:
+        raise ValueError(f"Unsupported AI provider: {value!r}")
     normalized = normalize_provider(value, default=default)
     if normalized not in SUPPORTED_PROVIDERS:
         raise ValueError(f"Unsupported AI provider: {value!r}")
