@@ -277,6 +277,14 @@ class SkillCrucible:
             ("builtins", "exec"),
             ("builtins", "compile"),
         }
+        dangerous_dunder_attributes = {
+            "__class__", "__base__", "__bases__", "__mro__", "__subclasses__",
+            "__globals__", "__builtins__", "__code__", "__closure__", "__func__",
+            "__self__", "__getattribute__", "__getattr__", "__setattr__", "__delattr__",
+            "__reduce__", "__reduce_ex__", "f_globals", "f_builtins", "f_locals",
+            "f_code", "gi_code", "gi_frame", "cr_code", "cr_frame",
+        }
+
         dangerous_names = {
             "system", "popen", "remove", "unlink", "rmdir", "removedirs",
             "replace", "rename", "startfile", "_create_unverified_context",
@@ -377,6 +385,17 @@ class SkillCrucible:
                             return False, "Security Violation: ProcessPoolExecutor is prohibited."
             elif isinstance(node, ast.Call):
                 func = node.func
+                if isinstance(func, ast.Name) and func.id == "getattr":
+                    if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant):
+                        attr_name = str(node.args[1].value)
+                        if (
+                            attr_name in dangerous_dunder_attributes
+                            or attr_name.startswith("__")
+                            or attr_name.endswith("__")
+                        ):
+                            return False, f"Security Violation: prohibited dynamic attribute access '{attr_name}'."
+                    elif len(node.args) >= 2:
+                        return False, "Security Violation: dynamic getattr targets are not permitted."
                 if isinstance(func, ast.Name) and func.id in {
                     "eval", "exec", "__import__", "globals", "locals", "vars"
                 }:
@@ -397,6 +416,8 @@ class SkillCrucible:
                         }:
                             return False, f"Security Violation: prohibited dynamic access 'pathlib.Path.{attr_name}'."
                 if isinstance(func, ast.Attribute):
+                    if func.attr in dangerous_dunder_attributes:
+                        return False, f"Security Violation: prohibited attribute access '{func.attr}'."
                     def _expression_symbol(expr: ast.AST) -> str:
                         if isinstance(expr, ast.Name):
                             return symbol_aliases.get(
