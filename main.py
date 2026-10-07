@@ -6886,6 +6886,9 @@ class BrahmaLive:
         # recognizer only.
         app_cfg = config_manager.load_settings()
         text_voice_fallback = bool(getattr(self, "_text_voice_fallback", False))
+        allow_cloud_transcription = bool(
+            app_cfg.get("allow_cloud_transcription", False)
+        )
         local_voice_mode = (
             text_voice_fallback
             or is_local(app_cfg.get("default_ai_provider"))
@@ -6936,15 +6939,27 @@ class BrahmaLive:
                                             audio_data = sr.AudioData(pcm_bytes, SEND_SAMPLE_RATE, 2)
                                             text_cmd = ""
                                             try:
-                                                # Offline mode must never send microphone audio to a network recognizer.
+                                                # Keep local-provider voice local unless cloud transcription
+                                                # has been explicitly enabled by the user.
                                                 text_cmd = recognizer.recognize_sphinx(audio_data)
                                             except Exception as local_exc:
-                                                if bool(app_cfg.get("offline_mode_enabled", False)):
+                                                if (
+                                                    bool(app_cfg.get("offline_mode_enabled", False))
+                                                    or not allow_cloud_transcription
+                                                ):
                                                     self.ui.write_log(
-                                                        f"ERR: Offline speech recognition unavailable: {local_exc}. "
-                                                        "Use text input or install the bundled PocketSphinx dependency."
+                                                        f"ERR: Local speech recognition unavailable: {local_exc}. "
+                                                        + (
+                                                            "Cloud transcription is disabled; enable it explicitly "
+                                                            "if network transcription is desired."
+                                                            if not allow_cloud_transcription
+                                                            else "Use text input or install the bundled PocketSphinx dependency."
+                                                        )
                                                     )
                                                     return
+                                                self.ui.write_log(
+                                                    "SYS: Local speech recognition failed; using explicitly enabled cloud transcription."
+                                                )
                                                 text_cmd = recognizer.recognize_google(audio_data)
                                             if text_cmd and len(text_cmd.strip()) > 1:
                                                 print(f"[Local AI Voice] 🎙️ Heard: {text_cmd}")
