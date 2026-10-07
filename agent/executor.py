@@ -577,6 +577,7 @@ class AgentExecutor:
             success      = True
             failed_step  = None
             failed_error = ""
+            skipped_steps = []
 
             for step in steps:
                 if cancel_flag and cancel_flag.is_set():
@@ -673,6 +674,9 @@ class AgentExecutor:
                                 f"SKIPPED after failure: {desc or f'Step {step_num}'}"
                             )
                             completed_steps.append(skipped_step)
+                            skipped_steps.append(
+                                {"step": step_num, "tool": tool, "description": desc, "error": error_msg}
+                            )
                             step_ok = True
                             break
 
@@ -715,6 +719,15 @@ class AgentExecutor:
                     break
 
             if success:
+                if skipped_steps:
+                    skipped = "; ".join(
+                        f"step {item['step']} ({item['tool']}): {item['error']}"
+                        for item in skipped_steps
+                    )
+                    msg = f"Task partially completed, but one or more steps failed and were skipped: {skipped}"
+                    if speak:
+                        speak(msg)
+                    return msg
                 summary = self._summarize(goal, completed_steps, speak)
                 if player and hasattr(player, "show_hud_deliverable"):
                     import re

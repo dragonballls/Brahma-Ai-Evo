@@ -1470,3 +1470,44 @@ def test_connection_hub_close_failure_keeps_current_connection_tracked():
         assert await hub.is_current(socket, "device-1") is True
 
     asyncio.run(scenario())
+
+
+def test_executor_skipped_step_cannot_be_reported_as_full_success(monkeypatch):
+    import agent.executor as executor
+    from agent.error_handler import ErrorDecision
+
+    monkeypatch.setattr(
+        executor,
+        "create_plan",
+        lambda _goal: {
+            "steps": [{
+                "step": 1,
+                "tool": "test_action",
+                "description": "Perform required action",
+                "parameters": {},
+            }]
+        },
+    )
+    monkeypatch.setattr(
+        executor,
+        "_call_tool",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("action unavailable")),
+    )
+    monkeypatch.setattr(
+        executor,
+        "analyze_error",
+        lambda *_args, **_kwargs: {
+            "decision": ErrorDecision.SKIP,
+            "user_message": "Skipping unavailable action.",
+        },
+    )
+    monkeypatch.setattr(
+        executor.AgentExecutor,
+        "_summarize",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("skipped task must not enter success summary")),
+    )
+
+    result = executor.AgentExecutor().execute("do required action")
+    assert "partially completed" in result.lower()
+    assert "step 1" in result.lower()
+    assert "action unavailable" in result.lower()
