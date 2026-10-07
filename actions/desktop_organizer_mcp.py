@@ -188,24 +188,28 @@ class SmartOrganizerEngine:
     def _load_history(self) -> List[Dict[str, Any]]:
         if not self.history_file.exists():
             return []
+        raw_text = None
         try:
-            with open(self.history_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            raw_text = self.history_file.read_text(encoding="utf-8")
+            data = json.loads(raw_text)
             if not isinstance(data, list):
                 raise ValueError("Organizer history root must be a JSON list.")
             return [item for item in data if isinstance(item, dict)]
         except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
-            quarantine = self.history_file.with_name(
-                f"{self.history_file.name}.corrupt-{time.time_ns()}-{uuid.uuid4().hex[:8]}"
-            )
-            try:
-                self.history_file.replace(quarantine)
-                logger.warning("Quarantined corrupt organizer history as %s", quarantine.name)
-            except OSError as quarantine_error:
-                raise RuntimeError(
-                    f"Unable to quarantine corrupt organizer history: {quarantine_error}"
-                ) from exc
-            return []
+            if isinstance(raw_text, str):
+                quarantine = self.history_file.with_name(
+                    f"{self.history_file.name}.corrupt-{time.time_ns()}-{uuid.uuid4().hex[:8]}"
+                )
+                try:
+                    quarantine.write_text(raw_text, encoding="utf-8")
+                    logger.warning("Preserved corrupt organizer history as %s", quarantine.name)
+                except OSError as quarantine_error:
+                    raise RuntimeError(
+                        f"Unable to preserve corrupt organizer history: {quarantine_error}"
+                    ) from exc
+            raise RuntimeError(
+                "Organizer history is corrupted; refusing to substitute an empty history."
+            ) from exc
         except OSError as exc:
             raise RuntimeError("Unable to read persistent organizer history.") from exc
 
