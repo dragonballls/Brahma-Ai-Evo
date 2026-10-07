@@ -55,12 +55,15 @@ class _PinnedResolver:
             except OSError as exc:
                 raise ValueError("Proxy destination could not be resolved safely.") from exc
             addresses = []
+            local_only = allow_loopback
             for entry in entries:
                 try:
                     address = ipaddress.ip_address(entry[4][0])
                 except ValueError:
                     continue
-                if allow_loopback and address.is_loopback:
+                if local_only:
+                    if not address.is_loopback:
+                        raise ValueError("Proxy local destination resolved outside loopback.")
                     addresses.append(str(address))
                 elif not address.is_global:
                     raise ValueError("Proxy destination resolved to a non-global address.")
