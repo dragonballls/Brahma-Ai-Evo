@@ -8,7 +8,7 @@ def test_pdf_explicit_output_paths_are_home_confined_and_non_overwriting_by_defa
     assert "PDF output path must remain inside the user's home directory." in source
     assert "PDF output path may not contain symlinked components." in source
     assert "Refusing to overwrite existing PDF without overwrite=True" in source
-    assert "overwrite=bool(parameters.get("overwrite", False))" in source
+    assert 'overwrite=bool(parameters.get("overwrite", False))' in source
 
 
 def test_pdf_implicit_output_collisions_get_unique_names():
