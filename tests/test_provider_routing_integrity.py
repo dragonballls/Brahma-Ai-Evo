@@ -83,7 +83,7 @@ def test_unified_client_only_allows_direct_cloud_fallback_for_openrouter(monkeyp
 
 
 def test_intelligence_orchestrator_is_provider_preserving_by_default():
-    source = IntelligenceOrchestrator._call.__defaults__
+    source = IntelligenceOrchestrator._call.__kwdefaults__
     # The public orchestrator helper intentionally defaults to no direct provider switch.
     assert source is not None
-    assert source[-1] is False
+    assert source["allow_direct_fallback"] is False
