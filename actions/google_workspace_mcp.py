@@ -159,26 +159,88 @@ def _decode_header_str(val: Any) -> str:
 
 # ── Gmail Engine (IMAP & SMTP) ──────────────────────────────────────────────
 
+
+def _validate_imap_query(query: Any) -> str:
+    value = str(query or "ALL").strip()
+    if not value:
+        return "ALL"
+    if len(value) > GmailEngine.MAX_EMAIL_QUERY_LENGTH:
+        raise ValueError("Gmail search query is too long.")
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value):
+        raise ValueError("Gmail search query contains control characters.")
+    return value
+
+
+def _validate_message_id(msg_id: Any) -> str:
+    value = str(msg_id or "").strip()
+    if not re.fullmatch(r"\d{1,20}", value):
+        raise ValueError("Gmail message ID must be a numeric IMAP message ID.")
+    return value
+
+
+def _validate_mail_header(value: Any, field_name: str, max_bytes: int) -> str:
+    text_value = str(value or "")
+    if not text_value or len(text_value.encode("utf-8")) > max_bytes:
+        raise ValueError(f"{field_name} is missing or exceeds the safety limit.")
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in text_value):
+        if "\r" in text_value or "\n" in text_value:
+            raise ValueError(f"{field_name} contains forbidden header characters.")
+    return text_value
+
+
+def _fetch_rfc822_size(mail: Any, msg_id: str) -> int:
+    status, size_data = mail.fetch(msg_id.encode("ascii"), "(RFC822.SIZE)")
+    if status != "OK" or not size_data:
+        raise RuntimeError(f"Unable to determine size for Gmail message {msg_id}.")
+    raw = b"".join(
+        item if isinstance(item, bytes) else item[1]
+        for item in size_data
+        if isinstance(item, bytes) or (isinstance(item, tuple) and len(item) > 1 and isinstance(item[1], bytes))
+    )
+    match = re.search(rb"RFC822\.SIZE\s+(\d+)", raw, flags=re.IGNORECASE)
+    if not match:
+        raise RuntimeError(f"Gmail did not return a valid message size for {msg_id}.")
+    size = int(match.group(1))
+    if size > GmailEngine.MAX_EMAIL_MESSAGE_BYTES:
+        raise ValueError(
+            f"Gmail message {msg_id} exceeds the {GmailEngine.MAX_EMAIL_MESSAGE_BYTES // (1024 * 1024)} MiB safety limit."
+        )
+    return size
+
+
 class GmailEngine:
     IMAP_HOST = "imap.gmail.com"
     IMAP_PORT = 993
     SMTP_HOST = "smtp.gmail.com"
     SMTP_PORT = 587
+    IMAP_TIMEOUT_SECONDS = 15.0
+    SMTP_TIMEOUT_SECONDS = 15.0
+    MAX_EMAIL_MESSAGE_BYTES = 4 * 1024 * 1024
+    MAX_EMAIL_QUERY_LENGTH = 200
+    MAX_EMAIL_BODY_BYTES = 1 * 1024 * 1024
 
     @classmethod
     def test_connection(cls) -> Dict[str, Any]:
         addr, pw = get_stored_gmail_credentials()
         if not addr or not pw:
             return {"success": False, "message": "No Gmail credentials configured."}
+        mail = None
         try:
-            mail = imaplib.IMAP4_SSL(cls.IMAP_HOST, cls.IMAP_PORT)
+            mail = imaplib.IMAP4_SSL(cls.IMAP_HOST, cls.IMAP_PORT, timeout=cls.IMAP_TIMEOUT_SECONDS)
             mail.login(addr, pw)
             status, counts = mail.select("INBOX")
-            total = counts[0].decode() if counts else "0"
-            mail.logout()
+            if status != "OK":
+                return {"success": False, "message": "Gmail inbox selection failed."}
+            total = counts[0].decode(errors="replace") if counts else "0"
             return {"success": True, "message": f"Connected to {addr} (Total inbox messages: {total})"}
         except Exception as e:
             return {"success": False, "message": f"Gmail login failed: {e}"}
+        finally:
+            if mail is not None:
+                try:
+                    mail.logout()
+                except Exception:
+                    pass
 
     @classmethod
     def list_messages(cls, query: str = "ALL", max_results: int = 5) -> str:
@@ -186,14 +248,18 @@ class GmailEngine:
         if not addr or not pw:
             return "Gmail credentials not configured. Please add your Gmail & App Password in Settings."
 
+        query = _validate_imap_query(query)
+        max_results = max(1, min(int(max_results), 20))
+        mail = None
         try:
-            mail = imaplib.IMAP4_SSL(cls.IMAP_HOST, cls.IMAP_PORT)
+            mail = imaplib.IMAP4_SSL(cls.IMAP_HOST, cls.IMAP_PORT, timeout=cls.IMAP_TIMEOUT_SECONDS)
             mail.login(addr, pw)
-            mail.select("INBOX", readonly=True)
+            select_status, _ = mail.select("INBOX", readonly=True)
+            if select_status != "OK":
+                return "Could not open the Gmail inbox."
 
             status, data = mail.search(None, query)
             if status != "OK" or not data or not data[0]:
-                mail.logout()
                 return f"No messages found matching query '{query}'."
 
             ids = data[0].split()
@@ -202,20 +268,33 @@ class GmailEngine:
 
             messages = []
             for i, mid in enumerate(recent_ids, 1):
-                res, msg_data = mail.fetch(mid, "(RFC822.HEADER)")
-                if res != "OK":
+                try:
+                    msg_id = _validate_message_id(mid.decode("ascii", errors="strict"))
+                    _fetch_rfc822_size(mail, msg_id)
+                    res, msg_data = mail.fetch(mid, "(RFC822.HEADER)")
+                    if res != "OK" or not msg_data or not msg_data[0]:
+                        continue
+                    raw_headers = msg_data[0][1] if isinstance(msg_data[0], tuple) else msg_data[0]
+                    if not isinstance(raw_headers, bytes):
+                        continue
+                    parsed = email.message_from_bytes(raw_headers)
+                    subject = _decode_header_str(parsed.get("Subject", "No Subject"))
+                    sender = _decode_header_str(parsed.get("From", "Unknown Sender"))
+                    date_str = parsed.get("Date", "")
+                    messages.append(f"{i}. [{msg_id}] From: {sender}\n   Subject: {subject}\n   Date: {date_str}")
+                except ValueError as exc:
+                    logger.warning("[Workspace] Skipping oversized/invalid Gmail message %s: %s", mid, exc)
                     continue
-                raw_headers = msg_data[0][1]
-                parsed = email.message_from_bytes(raw_headers)
-                subject = _decode_header_str(parsed.get("Subject", "No Subject"))
-                sender = _decode_header_str(parsed.get("From", "Unknown Sender"))
-                date_str = parsed.get("Date", "")
-                messages.append(f"{i}. [{mid.decode()}] From: {sender}\n   Subject: {subject}\n   Date: {date_str}")
 
-            mail.logout()
             return "\n\n".join(messages) if messages else "No readable messages found."
         except Exception as e:
             return f"Error accessing Gmail: {e}"
+        finally:
+            if mail is not None:
+                try:
+                    mail.logout()
+                except Exception:
+                    pass
 
     @classmethod
     def read_message(cls, msg_id: str) -> str:
@@ -224,16 +303,27 @@ class GmailEngine:
             return "Gmail credentials not configured."
 
         try:
-            mail = imaplib.IMAP4_SSL(cls.IMAP_HOST, cls.IMAP_PORT)
-            mail.login(addr, pw)
-            mail.select("INBOX", readonly=True)
+            msg_id = _validate_message_id(msg_id)
+        except ValueError as exc:
+            return f"Invalid Gmail message ID: {exc}"
 
-            res, msg_data = mail.fetch(msg_id.encode(), "(RFC822)")
+        mail = None
+        try:
+            mail = imaplib.IMAP4_SSL(cls.IMAP_HOST, cls.IMAP_PORT, timeout=cls.IMAP_TIMEOUT_SECONDS)
+            mail.login(addr, pw)
+            select_status, _ = mail.select("INBOX", readonly=True)
+            if select_status != "OK":
+                return f"Could not open the Gmail inbox."
+            _fetch_rfc822_size(mail, msg_id)
+
+            res, msg_data = mail.fetch(msg_id.encode("ascii"), "(RFC822)")
             if res != "OK" or not msg_data or not msg_data[0]:
-                mail.logout()
                 return f"Could not find message ID {msg_id}."
 
-            raw_email = msg_data[0][1]
+            raw_email = msg_data[0][1] if isinstance(msg_data[0], tuple) else msg_data[0]
+            if not isinstance(raw_email, bytes):
+                return f"Could not read message ID {msg_id}."
+
             parsed = email.message_from_bytes(raw_email)
             subject = _decode_header_str(parsed.get("Subject", "No Subject"))
             sender = _decode_header_str(parsed.get("From", "Unknown Sender"))
@@ -259,11 +349,16 @@ class GmailEngine:
                 if payload:
                     body = payload.decode(errors="replace")
 
-            mail.logout()
             clean_body = re.sub(r"\s+", " ", body).strip()[:3000]
             return f"From: {sender}\nSubject: {subject}\nDate: {date_str}\n\nContent:\n{clean_body}"
         except Exception as e:
             return f"Error reading email {msg_id}: {e}"
+        finally:
+            if mail is not None:
+                try:
+                    mail.logout()
+                except Exception:
+                    pass
 
     @classmethod
     def send_message(cls, to: str, subject: str, body: str) -> str:
@@ -272,21 +367,40 @@ class GmailEngine:
             return "Gmail credentials not configured."
 
         try:
+            to = _validate_mail_header(to, "Recipient", 320)
+            subject = _validate_mail_header(subject, "Subject", 998)
+            body = str(body or "")
+            if len(body.encode("utf-8")) > cls.MAX_EMAIL_BODY_BYTES:
+                return "Failed to send email: message body exceeds the 1 MiB safety limit."
+            if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in body):
+                # Newlines are valid in the message body, so reject only non-newline controls.
+                if any(ord(ch) < 0x20 and ch not in {"\r", "\n", "\t"} for ch in body):
+                    return "Failed to send email: message body contains unsupported control characters."
+
             msg = MIMEMultipart()
             msg["From"] = addr
             msg["To"] = to
             msg["Subject"] = subject
             msg.attach(MIMEText(body, "plain", "utf-8"))
 
-            server = smtplib.SMTP(cls.SMTP_HOST, cls.SMTP_PORT)
-            server.starttls()
-            server.login(addr, pw)
-            server.sendmail(addr, [to], msg.as_string())
-            server.quit()
-
-            return f"Email successfully sent to {to} with subject '{subject}'."
+            server = None
+            try:
+                server = smtplib.SMTP(cls.SMTP_HOST, cls.SMTP_PORT, timeout=cls.SMTP_TIMEOUT_SECONDS)
+                server.starttls()
+                server.login(addr, pw)
+                refused = server.sendmail(addr, [to], msg.as_string())
+                if refused:
+                    return f"Failed to send email: SMTP refused recipient(s): {', '.join(sorted(refused))}"
+                return f"Email successfully sent to {to} with subject '{subject}'."
+            finally:
+                if server is not None:
+                    try:
+                        server.quit()
+                    except Exception:
+                        pass
         except Exception as e:
             return f"Failed to send email: {e}"
+
 
 
 # ── Google Calendar & Drive Engine ──────────────────────────────────────────
@@ -530,7 +644,7 @@ def _email_poll_cycle():
         return
 
     try:
-        mail = imaplib.IMAP4_SSL(GmailEngine.IMAP_HOST, GmailEngine.IMAP_PORT)
+        mail = imaplib.IMAP4_SSL(GmailEngine.IMAP_HOST, GmailEngine.IMAP_PORT, timeout=GmailEngine.IMAP_TIMEOUT_SECONDS)
         mail.login(addr, pw)
         mail.select("INBOX", readonly=True)
 
@@ -553,7 +667,8 @@ def _email_poll_cycle():
         for mid in new_ids:
             _email_last_seen_ids.add(mid)
             try:
-                res, msg_data = mail.fetch(mid.encode(), "(RFC822.HEADER)")
+                _fetch_rfc822_size(mail, mid)
+                res, msg_data = mail.fetch(mid.encode("ascii"), "(RFC822.HEADER)")
                 if res != "OK" or not msg_data or not msg_data[0]:
                     continue
                 parsed = email.message_from_bytes(msg_data[0][1])

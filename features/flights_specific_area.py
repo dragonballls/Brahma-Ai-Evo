@@ -1,3 +1,4 @@
+
 """
 Feature: flights_specific_area
 Description: Real-time flight radar tracking. Detects and displays active aircraft, callsigns, speed, altitude, and flight paths in a specific area, district, city, or over the user's local region with a live visual radar map. Call whenever the user asks about flights, planes in the sky, airlines, or air traffic.
@@ -6,59 +7,120 @@ Description: Real-time flight radar tracking. Detects and displays active aircra
 FEATURE_METADATA = {
     "name": "flights_specific_area",
     "description": "Real-time flight radar tracking. Detects and displays active aircraft, callsigns, speed, altitude, and flight paths in a specific area, district, city, or over the user's local region with a live visual radar map. Call whenever the user asks about flights, planes in the sky, airlines, or air traffic.",
-    "parameters": {"type": "OBJECT", "properties": {"area": {"type": "STRING", "description": "City, district, region, or area name (e.g. 'Kalyan', 'Mumbai', 'London', or 'my area'). Defaults to current device location."}}, "required": []},
-    "version": "1.0.0",
+    "parameters": {"type": "OBJECT", "properties": {"area": {"type": "STRING", "description": "City, district, region, or area name (e.g. 'Kalyan', 'Mumbai', 'London', or 'my area'). Uses current device location for local requests."}}, "required": []},
+    "version": "1.1.0",
     "active": True
 }
 
-import urllib.request
-import urllib.parse
+import ipaddress
 import json
+import math
 import os
+import socket
+import urllib.error
+import urllib.parse
+import urllib.request
+
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
+MAX_NETWORK_RESPONSE_BYTES = 4 * 1024 * 1024
+_ALLOWED_REMOTE_HOSTS = frozenset({
+    "geocoding-api.open-meteo.com",
+    "opensky-network.org",
+})
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.URLError("Redirects are disabled for flight-radar requests")
+
+
+def _validate_remote_host(url: str) -> None:
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme != "https" or parsed.hostname not in _ALLOWED_REMOTE_HOSTS:
+        raise ValueError("Flight-radar remote host is not allowed.")
+    addresses = socket.getaddrinfo(parsed.hostname, 443, type=socket.SOCK_STREAM)
+    if not addresses:
+        raise ValueError("Flight-radar remote host did not resolve.")
+    for entry in addresses:
+        ip = ipaddress.ip_address(entry[4][0])
+        if not ip.is_global:
+            raise ValueError("Flight-radar remote host resolved to a non-global address.")
+
+
+def _fetch_json(url: str, timeout: float) -> dict:
+    _validate_remote_host(url)
+    request = urllib.request.Request(url, headers={"User-Agent": "BrahmaAI-FlightRadar/1.0"})
+    opener = urllib.request.build_opener(_NoRedirectHandler())
+    with opener.open(request, timeout=timeout) as response:
+        raw = response.read(MAX_NETWORK_RESPONSE_BYTES + 1)
+        if len(raw) > MAX_NETWORK_RESPONSE_BYTES:
+            raise ValueError("Flight-radar response exceeds the 4 MiB safety limit.")
+        return json.loads(raw.decode("utf-8"))
+
+
+def _validate_coordinates(latitude: float, longitude: float) -> tuple[float, float]:
+    lat = float(latitude)
+    lon = float(longitude)
+    if not math.isfinite(lat) or not math.isfinite(lon):
+        raise ValueError("Flight-radar coordinates must be finite.")
+    if not -90.0 <= lat <= 90.0 or not -180.0 <= lon <= 180.0:
+        raise ValueError("Flight-radar coordinates are out of range.")
+    return lat, lon
+
+
 def _geocode_location(area_name: str):
-    if not area_name or area_name.lower().strip() in ('my area', 'local', 'here', 'current', 'device', 'current location'):
+    lowered = str(area_name or "").lower().strip()
+    if lowered in {'my area', 'local', 'here', 'current', 'device', 'current location'}:
         try:
             from core.device_location import get_device_location
             loc = get_device_location()
-            if loc.get('latitude') and loc.get('longitude'):
-                return float(loc['latitude']), float(loc['longitude']), loc.get('city') or 'Local Area'
-        except Exception:
-            pass
-        return 19.23, 73.12, 'Kalyan'
+            if loc:
+                lat, lon = _validate_coordinates(loc.get('latitude'), loc.get('longitude'))
+                return lat, lon, loc.get('city') or 'Local Area'
+        except Exception as exc:
+            raise RuntimeError("Current device location is unavailable or invalid.") from exc
+        raise RuntimeError("Current device location is unavailable.")
 
-    clean_area = area_name.lower().replace('district', '').replace('area', '').strip()
-    if 'kalyan' in clean_area or 'dombiv' in clean_area:
-        return 19.23, 73.12, 'Kalyan'
-    elif 'mumbai' in clean_area or 'bombay' in clean_area:
-        return 19.07, 72.87, 'Mumbai'
-    elif 'delhi' in clean_area:
-        return 28.61, 77.20, 'Delhi'
-    elif 'bangalore' in clean_area or 'bengaluru' in clean_area:
-        return 12.97, 77.59, 'Bengaluru'
+    clean_area = lowered.replace('district', '').replace('area', '').strip()
+    if not clean_area:
+        raise RuntimeError("A flight-radar area is required.")
 
+    known_areas = {
+        "kalyan": (19.23, 73.12, "Kalyan"),
+        "dombiv": (19.23, 73.12, "Kalyan"),
+        "mumbai": (19.07, 72.87, "Mumbai"),
+        "bombay": (19.07, 72.87, "Mumbai"),
+        "delhi": (28.61, 77.20, "Delhi"),
+        "bangalore": (12.97, 77.59, "Bengaluru"),
+        "bengaluru": (12.97, 77.59, "Bengaluru"),
+    }
+    for key, value in known_areas.items():
+        if key in clean_area:
+            return value
+
+    url = f"https://geocoding-api.open-meteo.com/v1/search?name={urllib.parse.quote(clean_area)}&count=1"
     try:
-        url = f"https://geocoding-api.open-meteo.com/v1/search?name={urllib.parse.quote(clean_area)}&count=1"
-        req = urllib.request.Request(url, headers={'User-Agent': 'BrahmaAI-FlightRadar/1.0'})
-        with urllib.request.urlopen(req, timeout=5) as r:
-            data = json.loads(r.read().decode('utf-8'))
-            results = data.get('results', [])
-            if results:
-                lat = float(results[0]['latitude'])
-                lon = float(results[0]['longitude'])
-                name = results[0].get('name', clean_area.title())
-                return lat, lon, name
-    except Exception:
-        pass
+        data = _fetch_json(url, timeout=5)
+        results = data.get('results', []) if isinstance(data, dict) else []
+        if results:
+            lat, lon = _validate_coordinates(results[0]['latitude'], results[0]['longitude'])
+            name = str(results[0].get('name') or clean_area.title())[:200]
+            return lat, lon, name
+    except Exception as exc:
+        raise RuntimeError(f"Could not resolve flight-radar area: {exc}") from exc
 
-    return 19.23, 73.12, area_name.title()
+    raise RuntimeError(f"Could not resolve flight-radar area '{area_name}'.")
+
 
 def execute(**kwargs):
     area_input = kwargs.get('area') or kwargs.get('location') or kwargs.get('city') or 'local'
-    center_lat, center_lon, area_name = _geocode_location(str(area_input))
+    try:
+        center_lat, center_lon, area_name = _geocode_location(str(area_input))
+    except Exception as exc:
+        return {'error': str(exc)}
 
     delta = 0.6
     min_latitude = round(center_lat - delta, 3)
@@ -70,29 +132,33 @@ def execute(**kwargs):
            f"lamin={min_latitude}&lomin={min_longitude}&"
            f"lamax={max_latitude}&lomax={max_longitude}")
 
-    headers = {'User-Agent': 'BrahmaAI-Skill/1.0'}
     flights = []
     try:
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=8) as response:
-            data = json.loads(response.read().decode('utf-8'))
-
-        if data and 'states' in data and data['states']:
-            for s in data['states']:
+        data = _fetch_json(url, timeout=8)
+        states = data.get('states') if isinstance(data, dict) else None
+        if states is not None and not isinstance(states, list):
+            raise ValueError("OpenSky returned malformed flight-state data.")
+        if states:
+            for s in states:
+                if not isinstance(s, list) or len(s) < 11:
+                    continue
                 if s[6] is not None and s[5] is not None:
-                    callsign = s[1].strip() if s[1] else 'UNKNOWN'
-                    alt_m = round(s[7], 1) if s[7] is not None else None
-                    alt_ft = round(s[7] * 3.28084) if s[7] is not None else None
-                    vel_kmh = round(s[9] * 3.6) if s[9] is not None else None
+                    lat, lon = _validate_coordinates(s[6], s[5])
+                    callsign = str(s[1]).strip()[:32] if s[1] else 'UNKNOWN'
+                    alt_m = s[7]
+                    vel_mps = s[9]
+                    heading = s[10]
+                    alt_ft = round(float(alt_m) * 3.28084) if alt_m is not None else None
+                    vel_kmh = round(float(vel_mps) * 3.6) if vel_mps is not None else None
                     flights.append({
-                        'icao24': s[0],
+                        'icao24': str(s[0])[:32],
                         'callsign': callsign,
-                        'origin_country': s[2],
-                        'latitude': s[6],
-                        'longitude': s[5],
+                        'origin_country': str(s[2])[:100] if s[2] else 'Unknown',
+                        'latitude': lat,
+                        'longitude': lon,
                         'altitude_ft': alt_ft,
                         'speed_kmh': vel_kmh,
-                        'heading_deg': round(s[10], 1) if s[10] is not None else None,
+                        'heading_deg': round(float(heading), 1) if heading is not None else None,
                         'on_ground': bool(s[8])
                     })
     except Exception as e:
