@@ -82,8 +82,16 @@ class SmartHomeService:
     def auth_fields_for(self, provider_key: str) -> list[ProviderField]:
         return self._registry.get(provider_key).auth_fields()
 
-    def preview_discovery(self, provider_key: str, credentials: dict[str, Any]) -> dict[str, Any]:
+    def _require_available_provider(self, provider_key: str) -> SmartHomeProvider:
         provider = self._registry.get(provider_key)
+        if not provider.available:
+            if provider.coming_soon:
+                raise RuntimeError(f"{provider.name} integration is not available yet.")
+            raise RuntimeError(f"{provider.name} integration is unavailable.")
+        return provider
+
+    def preview_discovery(self, provider_key: str, credentials: dict[str, Any]) -> dict[str, Any]:
+        provider = self._require_available_provider(provider_key)
         auth = provider.authenticate(credentials)
         devices = provider.discover_devices(auth["credentials"])
         return {"account_label": auth["account_label"], "credentials": auth["credentials"], "devices": devices}
@@ -117,7 +125,7 @@ class SmartHomeService:
         device = self._storage.get_device(device_id)
         if not device:
             raise ValueError("Device not found.")
-        provider = self._registry.get(device["provider_key"])
+        provider = self._require_available_provider(device["provider_key"])
         account = self._storage.get_provider_account(device["provider_account_id"])
         runtime_device = dict(device)
         runtime_device["provider_credentials"] = (account or {}).get("credentials", {})
@@ -151,7 +159,7 @@ class SmartHomeService:
         device = self._storage.get_device(device_id)
         if not device:
             raise ValueError("Device not found.")
-        provider = self._registry.get(device["provider_key"])
+        provider = self._require_available_provider(device["provider_key"])
         account = self._storage.get_provider_account(device["provider_account_id"])
         runtime_device = dict(device)
         runtime_device["provider_credentials"] = (account or {}).get("credentials", {})
