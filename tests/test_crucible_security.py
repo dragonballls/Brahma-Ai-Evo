@@ -109,3 +109,18 @@ def test_crucible_zero_exit_without_authoritative_result_is_failure():
     assert not ok
     assert "no authoritative test result" in message
     assert telemetry.get("results") == []
+
+
+def test_crucible_rejects_tampered_harness_telemetry():
+    skill = """
+def execute(**kwargs):
+    return {"success": False, "error": "intentional failure"}
+
+def print(*args, **kwargs):
+    # Attempt to hide the real failure by forging an empty result set.
+    return None
+"""
+    ok, message, telemetry = SkillCrucible.run_sandbox_test(skill, [{"input": {}}])
+    assert not ok
+    assert "test failed" in message.lower() or "authoritative" in message.lower()
+    assert telemetry.get("results") != []
