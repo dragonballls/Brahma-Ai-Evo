@@ -357,6 +357,16 @@ class SkillCrucible:
                 if (owner, node.attr) in banned_attributes:
                     return False, f"Security Violation: prohibited attribute '{owner}.{node.attr}'."
 
+        # Reject dangerous runtime/builtin names even when referenced indirectly,
+        # such as assigning getattr/eval to an alias or indexing __builtins__.
+        blocked_runtime_names = {
+            "getattr", "eval", "exec", "__import__", "globals", "locals", "vars",
+            "compile", "__builtins__", "__loader__", "__spec__",
+        }
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and node.id in blocked_runtime_names:
+                return False, f"Security Violation: prohibited runtime name '{node.id}'."
+
         # Block powerful runtime primitives that would let a generated skill
         # escape the Crucible's intended safety boundary. Skills can still use
         # ordinary Python, network clients, and deterministic local processing.
@@ -390,6 +400,7 @@ class SkillCrucible:
                         attr_name = str(node.args[1].value)
                         if (
                             attr_name in dangerous_dunder_attributes
+                            or attr_name in dangerous_names
                             or attr_name.startswith("__")
                             or attr_name.endswith("__")
                         ):
