@@ -1,7 +1,9 @@
+import ipaddress
 import json
 import logging
 import os
 import platform
+import socket
 import shutil
 import subprocess
 import sys
@@ -16,14 +18,95 @@ logger.setLevel(logging.INFO)
 
 _ALLOWED_BROWSER_URL_SCHEMES = frozenset({"http", "https"})
 _ALLOWED_BROWSER_ABOUT_URLS = frozenset({"about:blank"})
+_LOCAL_BROWSER_HOSTS = frozenset({"localhost", "localhost.localdomain"})
+_PRIVATE_BROWSER_IPS = frozenset({
+    "unspecified",
+    "loopback",
+    "private",
+    "link_local",
+    "multicast",
+    "reserved",
+})
+_REDIRECT_BLOCK_ENV = "BRAHMA_BROWSER_BLOCKED_HOSTS"
+_REDIRECT_ALLOW_ENV = "BRAHMA_BROWSER_ALLOWED_HOSTS"
+
+
+def _split_host_policy(value: str) -> list[str]:
+    return [
+        item.strip().rstrip(".").lower()
+        for item in str(value or "").replace(";", ",").split(",")
+        if item.strip()
+    ]
+
+
+def _host_matches_policy(hostname: str, patterns: list[str]) -> bool:
+    host = hostname.rstrip(".").lower()
+    for pattern in patterns:
+        if pattern == "*":
+            return True
+        if pattern.startswith("*.") and host.endswith(pattern[1:]):
+            return True
+        if host == pattern:
+            return True
+    return False
+
+
+def _is_local_browser_host(hostname: str) -> bool:
+    host = hostname.rstrip(".").lower()
+    if host in _LOCAL_BROWSER_HOSTS or host.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _validate_browser_hostname(hostname: str, *, scheme: str) -> str:
+    host = hostname.rstrip(".").lower()
+    if not host:
+        raise ValueError("Browser URL must include a host.")
+
+    blocked = _split_host_policy(os.environ.get(_REDIRECT_BLOCK_ENV, ""))
+    allowed = _split_host_policy(os.environ.get(_REDIRECT_ALLOW_ENV, ""))
+    if blocked and _host_matches_policy(host, blocked):
+        raise ValueError(f"Browser navigation to host '{host}' is blocked by policy.")
+    if allowed and not _host_matches_policy(host, allowed):
+        raise ValueError(f"Browser navigation to host '{host}' is outside the configured allowlist.")
+
+    local_host = _is_local_browser_host(host)
+    if scheme == "http" and not local_host:
+        raise ValueError("Plain HTTP browser navigation is limited to explicit local/loopback hosts.")
+
+    try:
+        addresses = [ipaddress.ip_address(host)]
+    except ValueError:
+        if local_host:
+            return host
+        try:
+            addresses = [
+                ipaddress.ip_address(info[4][0])
+                for info in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+            ]
+        except OSError as exc:
+            raise ValueError(f"Browser hostname '{host}' could not be resolved safely.") from exc
+        if not addresses:
+            raise ValueError(f"Browser hostname '{host}' did not resolve to any address.")
+
+    for address in addresses:
+        if any(getattr(address, attr) for attr in _PRIVATE_BROWSER_IPS):
+            raise ValueError(
+                f"Browser navigation to host '{host}' resolves to a private/reserved network address."
+            )
+    return host
 
 
 def validate_browser_url(url: str) -> str:
-    """Normalize and validate public browser navigation URLs.
+    """Normalize and validate a browser navigation URL before any network request.
 
-    Browser automation may expose page contents back to the assistant, so local-file
-    and script/data URL schemes are intentionally not reachable through navigation.
-    Local HTTP(S) services, including loopback development servers, remain allowed.
+    Brahma rejects script/file schemes, embedded credentials, non-loopback private
+    network targets, and remote plain HTTP. Hostname DNS resolution is performed
+    before navigation. Loopback HTTP remains available for local Brahma services.
+    Redirects are separately blocked by the native browser request guard.
     """
     raw = str(url or "").strip()
     if not raw:
@@ -57,8 +140,12 @@ def validate_browser_url(url: str) -> str:
     scheme = parsed.scheme.lower()
     if scheme not in _ALLOWED_BROWSER_URL_SCHEMES:
         raise ValueError(f"Browser navigation to '{scheme}:' URLs is blocked.")
-    if not parsed.hostname:
+    if parsed.username or parsed.password:
+        raise ValueError("Browser URLs may not contain embedded credentials.")
+    hostname = parsed.hostname
+    if not hostname:
         raise ValueError("Browser URL must include a host.")
+    _validate_browser_hostname(hostname, scheme=scheme)
     return candidate
 
 
