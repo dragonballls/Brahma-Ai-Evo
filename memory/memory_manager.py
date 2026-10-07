@@ -1,6 +1,7 @@
 from __future__ import annotations
 from core.user_paths import get_user_data_dir
 
+import copy
 import json
 import os
 import re
@@ -218,9 +219,10 @@ def save_memory(memory: dict) -> None:
         raise ValueError("Credential-like values cannot be persisted in long-term memory.")
 
     with _lock:
-        memory = _trim_to_limit(memory)
+        working = copy.deepcopy(memory)
+        working = _trim_to_limit(working)
         MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _atomic_write_json(MEMORY_PATH, memory)
+        _atomic_write_json(MEMORY_PATH, working)
 
 
 def _truncate_value(val: str) -> str:
