@@ -65,3 +65,22 @@ def test_windows_handle_file_rejects_identity_mismatch(tmp_path):
     with pytest.raises(OSError, match="identity"):
         winfs.write_text(target, "blocked", expected_identity=wrong)
     assert target.read_text(encoding="utf-8") == "original"
+
+
+def test_windows_exclusive_handle_blocks_write_and_delete_sharing(tmp_path):
+    from core import windows_file_safety as winfs
+
+    target = tmp_path / "exclusive.txt"
+    target.write_text("protected", encoding="utf-8")
+
+    fd, _final, _info = winfs.open_safe_file(target, write=True, exclusive=True)
+    try:
+        with pytest.raises(OSError):
+            second_fd, _final2, _info2 = winfs.open_safe_file(target, write=True)
+            os.close(second_fd)
+        read_fd, _final3, _info3 = winfs.open_safe_file(target, write=False, exclusive=False)
+        os.close(read_fd)
+    finally:
+        os.close(fd)
+
+    assert target.read_text(encoding="utf-8") == "protected"
