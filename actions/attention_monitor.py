@@ -334,6 +334,20 @@ _speech_sink: Callable[[str], None] | None = None
 
 
 _current_speech_proc: subprocess.Popen | None = None
+_speech_generation = 0
+_speech_generation_lock = threading.Lock()
+
+
+def _next_speech_generation() -> int:
+    global _speech_generation
+    with _speech_generation_lock:
+        _speech_generation += 1
+        return _speech_generation
+
+
+def _current_speech_generation() -> int:
+    with _speech_generation_lock:
+        return _speech_generation
 
 
 def _cleanup_current_audio() -> None:
@@ -420,11 +434,16 @@ def _speak_edge_native(
     rate: str = "+0%",
     pitch: str = "+0Hz",
     sapi_rate: int = 0,
+    generation: int | None = None,
 ) -> None:
     """Speak with lightweight, caller-selected fallback prosody."""
     global _current_player_alias, _current_audio_path
     text = (text or "").strip()
     if not text:
+        return
+    if generation is None:
+        generation = _current_speech_generation()
+    if generation != _current_speech_generation():
         return
 
     rate = str(rate or "+0%")
@@ -468,6 +487,8 @@ def _speak_edge_native(
             )
             communicator.save_sync(audio_path)
         except Exception as exc:
+            if generation != _current_speech_generation():
+                return
             print(f"[AttentionMonitor] Edge TTS generation failed: {exc}. Falling back to offline male voice.")
             _cleanup_current_audio()
             _speak_sapi_male(text, rate=sapi_rate)
@@ -498,9 +519,13 @@ def _speak_edge_native(
             _current_speech_proc = subprocess.Popen(cmd, creationflags=flags)
             return_code = _current_speech_proc.wait()
             _current_speech_proc = None
+            if generation != _current_speech_generation():
+                return
             if return_code != 0:
                 raise RuntimeError(f"MediaPlayer exited with code {return_code}.")
         except Exception as exc:
+            if generation != _current_speech_generation():
+                return
             print(f"[AttentionMonitor] MediaPlayer playback failed: {exc}. Falling back to offline male voice.")
             _speak_sapi_male(text, rate=sapi_rate)
         finally:
@@ -518,16 +543,19 @@ def speak_native(text: str, force_edge: bool = False) -> None:
     text = (text or "").strip()
     if not text:
         return
+    generation = _next_speech_generation()
+    stop_native_speech()
     if _speech_sink is not None:
         try:
             _speech_sink(text)
         except Exception:
-            _speak_edge_native(text, force_edge=force_edge)
+            _speak_edge_native(text, force_edge=force_edge, generation=generation)
     else:
-        _speak_edge_native(text, force_edge=force_edge)
+        _speak_edge_native(text, force_edge=force_edge, generation=generation)
 
 
 def stop_native_speech() -> None:
+    _next_speech_generation()
     _cleanup_current_audio()
 
 
