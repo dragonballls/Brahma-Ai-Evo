@@ -36,3 +36,23 @@ def test_calendar_title_is_bounded_and_export_is_atomic():
     assert 'title = str(p.get("title", "") or "").strip()[:_MAX_TEXT]' in source
     assert 'temp_ics = desktop_ics.with_name' in source
     assert 'temp_ics.replace(desktop_ics)' in source
+
+
+def test_calendar_rejects_malformed_date_and_time(monkeypatch, tmp_path):
+    import actions.calendar_scheduler as calendar
+
+    monkeypatch.setattr(calendar, "EVENTS_FILE", tmp_path / "calendar_events.json")
+
+    assert "Invalid calendar date" in calendar.calendar_scheduler(
+        {"action": "add_event", "title": "Test", "date": "not-a-date", "time": "12:00"}
+    )
+    assert "Invalid calendar time" in calendar.calendar_scheduler(
+        {"action": "add_event", "title": "Test", "date": "2035-01-02", "time": "25:99"}
+    )
+
+
+def test_calendar_rejects_non_mapping_parameters_without_crashing():
+    import actions.calendar_scheduler as calendar
+
+    result = calendar.calendar_scheduler(["not", "a", "mapping"])
+    assert result == "You have no upcoming events on your calendar."

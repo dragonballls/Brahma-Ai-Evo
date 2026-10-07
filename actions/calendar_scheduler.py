@@ -129,21 +129,21 @@ def _parse_date(date_str: str | None) -> str:
         except ValueError:
             pass
 
-    return now.strftime("%Y-%m-%d")
+    raise ValueError(f"Invalid calendar date: {date_str!r}")
 
 
 def _parse_time(time_str: str | None) -> str:
-    """Normalizes time string to HH:MM."""
+    """Normalizes time string to HH:MM and rejects malformed input."""
     if not time_str:
         return datetime.now().strftime("%H:%M")
 
-    t = time_str.strip().upper()
+    t = str(time_str).strip().upper()
     for fmt in ("%H:%M", "%I:%M %p", "%I:%M%p", "%I %p", "%H.%M"):
         try:
             return datetime.strptime(t, fmt).strftime("%H:%M")
         except ValueError:
             pass
-    return time_str
+    raise ValueError(f"Invalid calendar time: {time_str!r}")
 
 
 def calendar_scheduler(
@@ -156,11 +156,15 @@ def calendar_scheduler(
     """
     Main entry point for calendar operations.
     """
-    p = parameters or {}
-    action = p.get("action", "list_events").lower().strip()
+    p = parameters if isinstance(parameters, dict) else {}
+    action_raw = p.get("action", "list_events")
+    action = str(action_raw or "list_events").strip().lower()
     title = str(p.get("title", "") or "").strip()[:_MAX_TEXT]
-    date_str = _parse_date(p.get("date"))
-    time_str = _parse_time(p.get("time"))
+    try:
+        date_str = _parse_date(p.get("date"))
+        time_str = _parse_time(p.get("time"))
+    except ValueError as exc:
+        return str(exc)
     try:
         duration = int(p.get("duration_minutes") or 30)
     except (TypeError, ValueError):
@@ -169,7 +173,7 @@ def calendar_scheduler(
         return "Duration must be between 1 minute and 7 days."
     location = str(p.get("location", "") or "").strip()[:_MAX_TEXT]
     desc = str(p.get("description", "") or "").strip()[:_MAX_TEXT]
-    event_id = p.get("event_id", "").strip()
+    event_id = str(p.get("event_id", "") or "").strip()
 
     events = _load_events()
 
