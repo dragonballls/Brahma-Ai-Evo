@@ -1,3 +1,4 @@
+import ast
 from pathlib import Path
 
 
@@ -14,9 +15,18 @@ def test_tool_execution_initializes_result_and_shutdown_result():
 
 def test_tool_completion_detects_explicit_failure_results():
     source = (ROOT / "main.py").read_text(encoding="utf-8")
-    assert 'result.get("success") is False' in source
-    assert 'result.get("ok") is False' in source
-    assert 'startswith(\n                ("error:", "failed:", "failure:", "unable to ", "could not ")' in source
+    tree = ast.parse(source)
+    fn = next(node for node in ast.walk(tree)
+              if isinstance(node, ast.FunctionDef) and node.name == "_action_result_is_failure")
+    namespace = {}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), "main.py", "exec"), namespace)
+    checker = namespace["_action_result_is_failure"]
+
+    assert checker({"success": False}) is True
+    assert checker({"ok": False}) is True
+    assert checker("failed to launch") is True
+    assert checker("Unable to connect") is True
+    assert checker({"success": True, "message": "zero results found"}) is False
 
 def test_main_execute_tool_has_strict_runtime_result_gate():
     source = (ROOT / "main.py").read_text(encoding="utf-8")

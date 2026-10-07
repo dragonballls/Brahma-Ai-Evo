@@ -284,7 +284,7 @@ class RuntimeConsistencyTests(unittest.TestCase):
 
     def test_provider_auto_switch_setting_is_consumed(self):
         source = self.read("main.py")
-        self.assertIn('auto_provider_switch = bool(app_settings.get("auto_provider_switch", True))', source)
+        self.assertIn('auto_provider_switch = config_manager.get_boolean_setting("auto_provider_switch", True)', source)
         self.assertIn("if not reply and not is_offline_mode and auto_provider_switch:", source)
         self.assertIn('primary_provider = "OpenRouter" if (', source)
 
