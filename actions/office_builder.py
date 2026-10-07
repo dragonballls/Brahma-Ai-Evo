@@ -538,6 +538,16 @@ def create_presentation(parameters: dict, player=None) -> str:
     prs.save(output_path)
     if not output_path.is_file() or output_path.stat().st_size <= 0:
         raise RuntimeError(f"Presentation save could not be verified at {output_path}.")
+    try:
+        reopened = Presentation(output_path)
+        if len(reopened.slides) != len(prs.slides):
+            raise RuntimeError(
+                f"Presentation save could not be structurally verified at {output_path}."
+            )
+    except Exception as exc:
+        raise RuntimeError(
+            f"Presentation save could not be structurally verified at {output_path}: {exc}"
+        ) from exc
     if auto_open:
         _open_file(output_path)
     return f"Presentation created: {output_path}"
@@ -667,6 +677,20 @@ def create_spreadsheet(parameters: dict, player=None) -> str:
     wb.save(output_path)
     if not output_path.is_file() or output_path.stat().st_size <= 0:
         raise RuntimeError(f"Spreadsheet save could not be verified at {output_path}.")
+    try:
+        from openpyxl import load_workbook
+        reopened = load_workbook(output_path, read_only=True, data_only=False)
+        try:
+            if list(reopened.sheetnames) != list(wb.sheetnames):
+                raise RuntimeError(
+                    f"Spreadsheet save could not be structurally verified at {output_path}."
+                )
+        finally:
+            reopened.close()
+    except Exception as exc:
+        raise RuntimeError(
+            f"Spreadsheet save could not be structurally verified at {output_path}: {exc}"
+        ) from exc
     if auto_open:
         _open_file(output_path)
     return f"Spreadsheet created: {output_path}"
