@@ -219,18 +219,107 @@ class NativeTools:
         except Exception as e:
             return f"Error running command: {e}"
 
+    def _secure_workspace_parent_fd(self, parent: Path):
+        parent = Path(parent).absolute()
+        try:
+            relative = parent.relative_to(self.workspace_dir)
+        except ValueError as exc:
+            raise ValueError("Path escapes the configured developer workspace.") from exc
+        if os.name == "nt" or not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+            return None
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        fd = os.open(str(self.workspace_dir), flags)
+        try:
+            for part in relative.parts:
+                try:
+                    next_fd = os.open(part, flags, dir_fd=fd)
+                except Exception:
+                    os.close(fd)
+                    raise
+                os.close(fd)
+                fd = next_fd
+            return fd
+        except Exception:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise
+
+    def _secure_workspace_read(self, path: Path, max_bytes: int = 8 * 1024 * 1024) -> tuple[str, tuple[int, int]]:
+        stat = path.stat(follow_symlinks=False)
+        expected = (int(stat.st_dev), int(stat.st_ino))
+        if os.name != "nt" and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY"):
+            parent_fd = self._secure_workspace_parent_fd(path.parent)
+            if parent_fd is None:
+                raise RuntimeError("Unable to open secure workspace parent.")
+            fd = -1
+            try:
+                fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent_fd)
+                opened = os.fstat(fd)
+                actual = (int(opened.st_dev), int(opened.st_ino))
+                if actual != expected:
+                    raise RuntimeError("File changed identity before secure read.")
+                with os.fdopen(fd, "rb") as handle:
+                    fd = -1
+                    raw = handle.read(max_bytes + 1)
+                if len(raw) > max_bytes:
+                    raise ValueError("File exceeds the developer-tool read limit.")
+                return raw.decode("utf-8", errors="replace"), actual
+            finally:
+                if fd >= 0:
+                    os.close(fd)
+                os.close(parent_fd)
+
+        if path.is_symlink() or not path.is_file():
+            raise RuntimeError("Workspace file is not a regular file.")
+        raw = path.read_bytes()
+        if len(raw) > max_bytes:
+            raise ValueError("File exceeds the developer-tool read limit.")
+        return raw.decode("utf-8", errors="replace"), expected
+
+    def _secure_workspace_write(self, path: Path, content: str, expected: tuple[int, int] | None = None) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if os.name != "nt" and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY"):
+            parent_fd = self._secure_workspace_parent_fd(path.parent)
+            if parent_fd is None:
+                raise RuntimeError("Unable to open secure workspace parent.")
+            fd = -1
+            try:
+                flags = os.O_WRONLY | os.O_NOFOLLOW
+                if expected is None:
+                    flags |= os.O_CREAT | os.O_EXCL
+                else:
+                    flags |= os.O_TRUNC
+                fd = os.open(path.name, flags, 0o600, dir_fd=parent_fd)
+                if expected is not None:
+                    opened = os.fstat(fd)
+                    actual = (int(opened.st_dev), int(opened.st_ino))
+                    if actual != tuple(expected):
+                        raise RuntimeError("File changed identity before secure write.")
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    fd = -1
+                    handle.write(content)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            finally:
+                if fd >= 0:
+                    os.close(fd)
+                os.close(parent_fd)
+            return
+
+        if path.is_symlink():
+            raise RuntimeError("Workspace destination may not be a symlink.")
+        with path.open("w", encoding="utf-8") as handle:
+            handle.write(content)
+
     def file_read(self, file_path: str, offset: int = 1, limit: int = 2000) -> str:
         """Reads a file with line numbers starting at offset up to limit lines."""
         path = self._workspace_path(file_path)
         self._notify(f"📖 Reading file: {path.name}")
-        if not path.exists():
-            return f"Error: File does not exist: {path}"
-        if path.is_dir():
-            return f"Error: Path is a directory, not a file: {path}"
         try:
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                lines = f.readlines()
-            
+            content, _ = self._secure_workspace_read(path)
+            lines = content.splitlines()
             total_lines = len(lines)
             start_idx = max(0, offset - 1)
             end_idx = min(total_lines, start_idx + limit)
@@ -249,9 +338,11 @@ class NativeTools:
         path = self._workspace_path(file_path)
         self._notify(f"📝 Writing file: {path.name}")
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(content)
+            expected = None
+            if path.exists() and not path.is_symlink():
+                st = path.stat(follow_symlinks=False)
+                expected = (int(st.st_dev), int(st.st_ino))
+            self._secure_workspace_write(path, content, expected=expected)
             return f"Successfully wrote {len(content)} characters to {path}."
         except Exception as e:
             return f"Error writing file {path}: {e}"
@@ -260,11 +351,8 @@ class NativeTools:
         """Surgically edits a file by replacing old_string with new_string."""
         path = self._workspace_path(file_path)
         self._notify(f"✏️ Editing file: {path.name}")
-        if not path.exists():
-            return f"Error: File does not exist: {path}"
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
+            content, expected = self._secure_workspace_read(path)
 
             count = content.count(old_string)
             if count == 0:
@@ -283,8 +371,7 @@ class NativeTools:
             else:
                 new_content = content.replace(old_string, new_string, 1)
 
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(new_content)
+            self._secure_workspace_write(path, new_content, expected=expected)
 
             return f"Successfully updated {path.name} (replaced {count if replace_all else 1} occurrence(s))."
         except Exception as e:
