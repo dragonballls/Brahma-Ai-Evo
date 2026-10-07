@@ -389,6 +389,9 @@ def _secure_read_text(target: Path, max_chars: int, *, expected_identity=None) -
 def _secure_unlink(target: Path, *, expected_identity=None) -> None:
     """Remove only the named leaf under a validated parent directory."""
     target = Path(target).absolute()
+    if os.name == "nt" and _WINFS is not None:
+        _WINFS.unlink(target, expected_identity=expected_identity)
+        return
     if os.name != "nt" and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY"):
         parent_fd = _secure_parent_fd(target.parent)
         if parent_fd is None:
