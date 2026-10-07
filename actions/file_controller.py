@@ -46,9 +46,28 @@ def _fingerprint(path: Path):
         return None
 
 
+
+def _expected_identity(path: Path, *, write: bool = False):
+    """Capture an exact file identity; Windows uses the handle-backed primitive."""
+    path = Path(path)
+    if os.name == "nt" and _WINFS is not None:
+        fd, _final, info = _WINFS.open_safe_file(path, write=write)
+        try:
+            return (
+                int(info.dwVolumeSerialNumber),
+                int(info.nFileIndexHigh),
+                int(info.nFileIndexLow),
+            )
+        finally:
+            os.close(fd)
+    stat = path.stat(follow_symlinks=False)
+    return (int(stat.st_dev), int(stat.st_ino))
+
+
 def _undo_move(src: Path, dst: Path):
     """Reverse a move only when the original source is still absent and the moved object is unchanged."""
     expected = _fingerprint(dst)
+    expected_identity = _expected_identity(dst)
     def _fn():
         if src.exists():
             return f"Cannot restore '{src.name}' because another file now occupies the original path."
@@ -56,7 +75,10 @@ def _undo_move(src: Path, dst: Path):
             return f"Cannot restore '{src.name}' because the moved item changed or disappeared after the original move."
         try:
             src.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(dst), str(src))
+            if os.name == "nt" and _WINFS is not None:
+                _WINFS.rename(dst, src, source_identity=expected_identity)
+            else:
+                shutil.move(str(dst), str(src))
         except Exception as exc:
             raise RuntimeError(f"Unable to restore '{src.name}': {exc}") from exc
         return f"'{src.name}' is back in {src.parent.name}/."
@@ -66,6 +88,7 @@ def _undo_move(src: Path, dst: Path):
 def _undo_create(target: Path):
     """Reverse a create only when the object still matches the post-create identity."""
     expected = _fingerprint(target)
+    expected_identity = _expected_identity(target) if target.is_file() else None
 
     def _fn():
         if _fingerprint(target) != expected:
@@ -83,22 +106,23 @@ def _undo_create(target: Path):
             else:
                 target.rmdir()
         else:
-            _secure_unlink(target)
+            _secure_unlink(target, expected_identity=expected_identity)
         return f"Removed '{target.name}'."
     return _fn
 
 
 def _undo_write(target: Path, previous: str | None, expected_after):
     """Restore prior text only when the target still matches Brahma's own write."""
+    expected_identity = _expected_identity(target, write=True)
+
     def _fn():
         if _fingerprint(target) != expected_after:
             return f"'{target.name}' changed after the original write — leaving it alone."
         if previous is None:
             if target.exists():
-                _secure_unlink(target)
+                _secure_unlink(target, expected_identity=expected_identity)
                 return f"Removed '{target.name}' — it did not exist before."
             return f"'{target.name}' is already gone."
-        expected_identity = tuple(expected_after[1:3]) if expected_after and len(expected_after) >= 3 else None
         _secure_write_text(target, previous, append=False, expected_identity=expected_identity)
         return f"Restored the previous contents of '{target.name}'."
     return _fn
@@ -272,6 +296,9 @@ def _secure_write_text(target: Path, content: str, *, append: bool = False, expe
     if not leaf:
         raise ValueError("A file name is required.")
 
+    if os.name == "nt" and _WINFS is not None:
+        _WINFS.unlink(target, expected_identity=expected_identity)
+        return
     if os.name != "nt" and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY"):
         parent_fd = _secure_parent_fd(parent)
         if parent_fd is None:
@@ -363,7 +390,7 @@ def _secure_read_text(target: Path, max_chars: int, *, expected_identity=None) -
     return target.read_text(encoding="utf-8", errors="ignore")[:max_chars + 1], int(target.stat().st_size)
 
 
-def _secure_unlink(target: Path) -> None:
+def _secure_unlink(target: Path, *, expected_identity=None) -> None:
     """Remove only the named leaf under a validated parent directory."""
     target = Path(target).absolute()
     if os.name != "nt" and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY"):
@@ -651,8 +678,7 @@ def read_file(path: str, name: str = "", max_chars: int = 4000) -> str:
         except (TypeError, ValueError):
             return "Could not read file: max_chars must be a positive integer."
         try:
-            stat_result = target.stat(follow_symlinks=False)
-            expected_identity = (int(stat_result.st_dev), int(stat_result.st_ino))
+            expected_identity = _expected_identity(target, write=False)
             content, total_bytes = _secure_read_text(
                 target,
                 max_chars,
@@ -699,8 +725,7 @@ def write_file(path: str, name: str = "", content: str = "",
                     undoable = False
                 else:
                     previous = target.read_text(encoding="utf-8")
-                    stat = target.stat(follow_symlinks=False)
-                    expected_identity = (int(stat.st_dev), int(stat.st_ino))
+                    expected_identity = _expected_identity(target, write=True)
             except Exception as exc:
                 return (
                     "Could not write file: existing target could not be read safely; "
