@@ -323,16 +323,36 @@ class _Handler(socketserver.BaseRequestHandler):
     def _header_values(headers: list[tuple[str, str]], name: str) -> list[str]:
         return [value for key, value in headers if key.lower() == name.lower()]
 
+    @staticmethod
+    def _validate_request_framing(headers: list[tuple[str, str]]) -> None:
+        content_lengths = _Handler._header_values(headers, "Content-Length")
+        transfer_encodings = _Handler._header_values(headers, "Transfer-Encoding")
+        if content_lengths and transfer_encodings:
+            raise _ProxyRequestError(
+                400,
+                "Content-Length and Transfer-Encoding may not be combined.",
+            )
+        for value in content_lengths:
+            if not value.isdigit():
+                raise _ProxyRequestError(400, "Content-Length header is malformed.")
+        if transfer_encodings:
+            tokens = [item.strip().lower() for item in transfer_encodings[0].split(",") if item.strip()]
+            if tokens != ["chunked"]:
+                raise _ProxyRequestError(
+                    400,
+                    "Only a single chunked Transfer-Encoding is supported.",
+                )
+
     def _resolve_destination(self, host: str, port: int, *, scheme: str) -> tuple[str, int, str]:
         host = _normalize_host(host)
         port = _validate_port(port)
         loopback = _is_loopback_host(host)
+        if scheme == "http" and not loopback:
+            raise _ProxyRequestError(400, "Proxy allows plain HTTP only to loopback destinations.")
         try:
             ip = self.server.owner._resolver.resolve(host, port, allow_loopback=loopback)
         except ValueError as exc:
             raise _ProxyRequestError(400, str(exc)) from exc
-        if scheme == "http" and not loopback:
-            raise _ProxyRequestError(400, "Proxy allows plain HTTP only to loopback destinations.")
         return host, port, ip
 
     def _parse_connect_target(self, target: str, headers: list[tuple[str, str]]) -> tuple[str, int, str]:
@@ -434,6 +454,7 @@ class _Handler(socketserver.BaseRequestHandler):
         except ValueError as exc:
             raise _ProxyRequestError(400, "Request target is malformed.") from exc
 
+        self._validate_request_framing(headers)
         host, port, ip = self._resolve_destination(target_host, target_port, scheme="http")
 
         connection_tokens = _split_connection_tokens(headers)
