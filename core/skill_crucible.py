@@ -801,10 +801,19 @@ try:
 except Exception:
     pass
 
+# Capture verification primitives before executing untrusted skill code so the
+# skill cannot monkeypatch the harness' own result parser/telemetry output.
+_TRUSTED_JSON_LOADS = json.loads
+_TRUSTED_JSON_DUMPS = json.dumps
+_TRUSTED_ISCOROUTINEFUNCTION = inspect.iscoroutinefunction
+_TRUSTED_ASYNCIO_RUN = asyncio.run
+_TRUSTED_TRACEBACK_FORMAT_EXC = traceback.format_exc
+_TRUSTED_PRINT = print
+
 {skill_code}
 
 def run_tests():
-    test_cases = json.loads({json.dumps(json.dumps(test_cases))})
+    test_cases = _TRUSTED_JSON_LOADS({json.dumps(json.dumps(test_cases))})
     results = []
     
     if not test_cases:
@@ -813,8 +822,8 @@ def run_tests():
     for i, tc in enumerate(test_cases):
         args = tc.get("input", {{}})
         try:
-            if inspect.iscoroutinefunction(execute):
-                res = asyncio.run(execute(**args))
+            if _TRUSTED_ISCOROUTINEFUNCTION(execute):
+                res = _TRUSTED_ASYNCIO_RUN(execute(**args))
             else:
                 res = execute(**args)
                 
@@ -850,10 +859,10 @@ def run_tests():
                 entry["error"] = err_msg
             results.append(entry)
         except BaseException as exc:
-            tb = traceback.format_exc()
+            tb = _TRUSTED_TRACEBACK_FORMAT_EXC()
             results.append({{"index": i, "success": False, "error": str(exc), "traceback": tb}})
             
-    print(json.dumps(results))
+    _TRUSTED_PRINT(_TRUSTED_JSON_DUMPS(results))
 
 if __name__ == '__main__':
     run_tests()
@@ -902,16 +911,47 @@ if __name__ == '__main__':
                     "completion cannot be inferred from a zero exit code."
                 ), {"results": [], "elapsed_s": elapsed}
 
+            # Every requested case must produce exactly one authoritative,
+            # well-formed result. This prevents a skill from hiding failures by
+            # printing an empty list, omitting cases, or returning non-dict telemetry.
+            expected_count = max(1, len(test_cases))
+            if len(test_results) != expected_count:
+                return False, (
+                    "Sandbox execution returned an incomplete authoritative test result set; "
+                    f"expected {expected_count}, received {len(test_results)}."
+                ), {"results": [], "elapsed_s": elapsed}
+
             safe_results = []
+            seen_indices = set()
             for item in test_results:
-                if isinstance(item, dict):
-                    safe_results.append({
-                        key: (_redact_text(value) if isinstance(value, str) else value)
-                        for key, value in item.items()
-                    })
-                else:
-                    safe_results.append(_redact_text(item))
-            all_passed = all(t.get("success", False) for t in safe_results if isinstance(t, dict))
+                if not isinstance(item, dict):
+                    return False, (
+                        "Sandbox execution returned malformed authoritative test telemetry."
+                    ), {"results": [], "elapsed_s": elapsed}
+                index = item.get("index")
+                success = item.get("success")
+                if (
+                    not isinstance(index, int)
+                    or index < 0
+                    or index >= expected_count
+                    or index in seen_indices
+                    or not isinstance(success, bool)
+                ):
+                    return False, (
+                        "Sandbox execution returned invalid authoritative test metadata."
+                    ), {"results": [], "elapsed_s": elapsed}
+                seen_indices.add(index)
+                safe_results.append({
+                    key: (_redact_text(value) if isinstance(value, str) else value)
+                    for key, value in item.items()
+                })
+
+            if seen_indices != set(range(expected_count)):
+                return False, (
+                    "Sandbox execution returned non-authoritative or incomplete test indices."
+                ), {"results": [], "elapsed_s": elapsed}
+
+            all_passed = all(t["success"] is True for t in safe_results)
             if not all_passed:
                 first_err = _redact_text(next(
                     (t.get("error", "Unknown test failure") for t in safe_results
