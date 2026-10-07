@@ -50,6 +50,34 @@ HEADERS = {
 }
 
 _YT_VIDEO_FILTER = "EgIQAQ%3D%3D"
+_MAX_YOUTUBE_RESPONSE_BYTES = 4 * 1024 * 1024
+
+
+def _get_youtube_text(url: str, timeout: float) -> str:
+    if not _REQUESTS_OK:
+        raise RuntimeError("Requests is unavailable.")
+    response = requests.get(
+        url,
+        headers=HEADERS,
+        timeout=timeout,
+        allow_redirects=False,
+        stream=True,
+    )
+    if 300 <= response.status_code < 400:
+        raise RuntimeError("YouTube redirected the request; refusing an alternate host.")
+    response.raise_for_status()
+
+    chunks = []
+    total = 0
+    for chunk in response.iter_content(chunk_size=8192):
+        if not chunk:
+            continue
+        total += len(chunk)
+        if total > _MAX_YOUTUBE_RESPONSE_BYTES:
+            raise RuntimeError("YouTube response exceeded the safety limit.")
+        chunks.append(chunk)
+    encoding = response.encoding or "utf-8"
+    return b"".join(chunks).decode(encoding, errors="replace")
 
 def _open_url(url: str) -> bool:
     try:
@@ -70,8 +98,7 @@ def _scrape_first_video_url(query: str) -> str | None:
     )
 
     try:
-        r    = requests.get(search_url, headers=HEADERS, timeout=10)
-        html = r.text
+        html = _get_youtube_text(search_url, timeout=10)
 
         video_ids = re.findall(r'"videoId":"([A-Za-z0-9_-]{11})"', html)
 
@@ -211,8 +238,7 @@ def _scrape_video_info(video_id: str) -> dict:
         return {}
     url = f"https://www.youtube.com/watch?v={video_id}"
     try:
-        r    = requests.get(url, headers=HEADERS, timeout=12)
-        html = r.text
+        html = _get_youtube_text(url, timeout=12)
         info = {}
 
         for key, pattern in [
@@ -244,8 +270,7 @@ def _scrape_trending(region: str = "TR", max_results: int = 8) -> list[dict]:
         return []
     url = f"https://www.youtube.com/feed/trending?gl={region.upper()}"
     try:
-        r    = requests.get(url, headers=HEADERS, timeout=12)
-        html = r.text
+        html = _get_youtube_text(url, timeout=12)
 
         titles   = re.findall(r'"title":\{"runs":\[\{"text":"([^"]+)"\}\]', html)
         channels = re.findall(r'"ownerText":\{"runs":\[\{"text":"([^"]+)"', html)
@@ -273,8 +298,8 @@ def _scrape_first_playlist_url(query: str) -> str | None:
         f"?search_query={quote_plus(query)}&sp=EgIQAw%3D%3D"
     )
     try:
-        r = requests.get(search_url, headers=HEADERS, timeout=10)
-        ids = re.findall(r'"playlistId":"([A-Za-z0-9_-]+)"', r.text)
+        html = _get_youtube_text(search_url, timeout=10)
+        ids = re.findall(r'"playlistId":"([A-Za-z0-9_-]+)"', html)
         seen = set()
         for playlist_id in ids:
             if playlist_id in seen:
