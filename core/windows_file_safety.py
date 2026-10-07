@@ -182,6 +182,8 @@ def open_safe_file(
         _reject_reparse(handle, info)
         if info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY:
             raise OSError("Refusing to operate on a directory as a regular file")
+        if int(info.nNumberOfLinks) > 1:
+            raise OSError("Refusing to operate on a hard-linked file")
 
         import msvcrt
         fd = msvcrt.open_osfhandle(int(handle), os.O_BINARY | (os.O_RDWR if write else os.O_RDONLY))
@@ -191,6 +193,11 @@ def open_safe_file(
         return fd, final, info
     except Exception:
         if handle not in (None, INVALID_HANDLE_VALUE):
+            if create_new:
+                try:
+                    _mark_delete(handle)
+                except OSError:
+                    pass
             kernel32.CloseHandle(ctypes.c_void_p(handle))
         raise
 
