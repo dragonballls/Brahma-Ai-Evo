@@ -18,7 +18,6 @@ ACTION_CAPABILITIES: dict[str, tuple[str, ...]] = {
     "open_url": ("open_url",),
     "volume_get": ("volume_control",),
     "volume_set": ("volume_control",),
-    "unlock_phone": ("unlock_phone",),
     "file_list": ("files",),
     "file_read": ("files",),
     "file_write": ("files",),

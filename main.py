@@ -1539,7 +1539,7 @@ TOOL_DECLARATIONS = [
             "Routes a Brahma Connect command to a paired device through the gateway. "
             "Use for actions such as launch_app, open_url, get_battery, capture_screen, take_photo, "
             "clipboard_get, clipboard_set, send_file, receive_file, media_play, media_pause, volume_set, "
-            "notification_list, get_device_info, close_app, mouse_move, keyboard_type, unlock_phone, file_list, file_read, file_write, file_delete."
+            "notification_list, get_device_info, close_app, mouse_move, keyboard_type, file_list, file_read, file_write, file_delete."
             "Do not execute device operations directly anywhere else."
         ),
         "parameters": {
@@ -1554,17 +1554,6 @@ TOOL_DECLARATIONS = [
                 "parameters": {"type": "OBJECT", "description": "Action parameters"},
             },
             "required": ["device", "action"]
-        }
-    },
-    {
-        "name": "unlock_device",
-        "description": "Unlocks a paired Android device using its saved PIN.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "target": {"type": "STRING", "description": "Device name or ID to unlock"}
-            },
-            "required": ["target"]
         }
     },
     {
@@ -6640,10 +6629,6 @@ class BrahmaLive:
             elif name in ("daily_briefing", "briefing"):
                 from actions.daily_briefing import daily_briefing
                 r = await loop.run_in_executor(None, lambda: daily_briefing(parameters=args, player=self.ui, speak=self.speak))
-                result = _require_runtime_result(r)
-            elif name == "unlock_device":
-                from actions.unlock_device import unlock_device
-                r = await loop.run_in_executor(None, lambda: unlock_device(parameters=args, player=self.ui))
                 result = _require_runtime_result(r)
             elif name in ("auto_heal", "self_patch", "rollback"):
                 from actions.auto_heal_engine import auto_heal

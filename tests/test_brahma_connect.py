@@ -563,7 +563,7 @@ def test_command_router_enforces_canonical_sensitive_capabilities():
     assert ACTION_CAPABILITIES["file_write"] == ("files",)
     assert ACTION_CAPABILITIES["file_delete"] == ("files",)
     assert ACTION_CAPABILITIES["ui_type"] == ("ui_control",)
-    assert ACTION_CAPABILITIES["unlock_phone"] == ("unlock_phone",)
+    assert "unlock_phone" not in ACTION_CAPABILITIES
 
 
 def test_android_remote_file_boundary_is_canonical_and_protected():
