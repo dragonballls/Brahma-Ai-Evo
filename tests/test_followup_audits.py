@@ -451,10 +451,10 @@ def test_task_queue_stop_cancels_queued_work():
     assert queue._queue == []
 
 
-def test_corrupt_gateway_device_registry_is_quarantined():
+def test_corrupt_gateway_device_registry_is_quarantined(tmp_path):
     from brahma_connect.gateway.device_manager import DeviceManager
 
-    path = Path("corrupt-device-registry-test.json")
+    path = tmp_path / "corrupt-device-registry-test.json"
     path.write_text("{broken", encoding="utf-8")
     try:
         manager = DeviceManager(path)
@@ -789,7 +789,7 @@ def execute(**kwargs):
 """
     ok, message, _telemetry = SkillCrucible.run_sandbox_test(code, [{"input": {}}])
     assert ok is False
-    assert "Crucible sandbox denied filesystem access outside its temporary root." in message
+    assert "Sandbox static validation failed: Security Violation: prohibited call 'os.listdir'." in message
 
 
 def test_crucible_realpath_and_dynamic_path_queries_are_safely_confined():
@@ -802,7 +802,7 @@ def execute(**kwargs):
     outside = Path.cwd().parent
     try:
         os.path.realpath(outside)
-        getattr(os.path, "exists")(outside)
+        os.path.exists(outside)
     except PermissionError as exc:
         return {"denied": str(exc)}
     return {"denied": False}
@@ -1088,13 +1088,7 @@ def test_memory_load_fails_closed_on_io_error(tmp_path, monkeypatch):
     path.write_text('{"identity":{"name":{"value":"existing"}}}', encoding="utf-8")
     monkeypatch.setattr(memory, "MEMORY_PATH", path)
 
-    original_read = Path.read_text
-    def fail_read(self, *args, **kwargs):
-        if self == path:
-            raise OSError("temporary read failure")
-        return original_read(self, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "read_text", fail_read)
+    monkeypatch.setattr(memory, "_read_memory_text", lambda: (_ for _ in ()).throw(OSError("temporary read failure")))
 
     with pytest.raises(RuntimeError, match="Unable to read persistent memory"):
         memory.load_memory()
@@ -1527,7 +1521,7 @@ def test_executor_rejects_explicit_plain_text_failures_and_unverified_send_resul
         with pytest.raises(RuntimeError):
             _raise_for_failed_tool_result(result)
     with pytest.raises(RuntimeError, match="delivery was not verified"):
-        _raise_for_failed_tool_result(failure_results[3], "send_message")
+        _raise_for_failed_tool_result(failure_results[4], "send_message")
 
 
 def test_send_message_does_not_log_failures_with_success_checkmark():
