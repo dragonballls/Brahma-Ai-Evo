@@ -33,3 +33,29 @@ def test_corrupt_model_performance_state_is_quarantined_and_not_reset(tmp_path, 
 
     assert not path.exists()
     assert len(list(tmp_path.glob("models.json.corrupt-*"))) == 1
+
+
+def test_model_performance_rejects_nonfinite_samples(tmp_path, monkeypatch):
+    from core import model_performance as perf
+    import math
+    import pytest
+
+    monkeypatch.setattr(perf, "_PATH", tmp_path / "models.json")
+    with pytest.raises(ValueError, match="finite"):
+        perf.record(provider="x", model="x/test", profile="smart", score=math.nan)
+    with pytest.raises(ValueError, match="finite"):
+        perf.record(provider="x", model="x/test", profile="smart", score=50, latency_ms=math.inf)
+
+
+def test_model_performance_ignores_poisoned_persisted_numeric_state(tmp_path, monkeypatch):
+    from core import model_performance as perf
+
+    path = tmp_path / "models.json"
+    path.write_text(
+        '{"schema_version":1,"models":{"x|x/test|smart":'
+        '{"provider":"x","model":"x/test","profile":"smart","samples":1,'
+        '"mean_score":NaN,"mean_latency_ms":0}}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(perf, "_PATH", path)
+    assert perf.routing_bonus(provider="x", model="x/test", profile="smart") == 0.0
