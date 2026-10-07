@@ -80,3 +80,48 @@ def test_windows_location_uses_pinned_system_powershell_without_console(tmp_path
     )
     assert captured["kwargs"]["stdin"] is device_location.subprocess.DEVNULL
 
+def test_device_location_accepts_valid_cached_coordinates_after_math_validation(tmp_path, monkeypatch):
+    import core.device_location as device_location
+    import json
+    import time
+
+    cache = tmp_path / "device_location_cache.json"
+    cache.write_text(
+        json.dumps(
+            {
+                "status": "success",
+                "city": "Test City",
+                "latitude": 34.05,
+                "longitude": -118.25,
+                "timestamp": time.time(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(device_location, "_CACHE_FILE", cache)
+
+    result = device_location._read_disk_cache()
+    assert result["city"] == "Test City"
+
+
+def test_external_location_redirect_is_rejected(monkeypatch):
+    import core.device_location as device_location
+    import pytest
+    import urllib.error
+
+    class _Opener:
+        def open(self, request, timeout=None):
+            raise urllib.error.URLError("Location service redirects are disabled.")
+
+    monkeypatch.setattr(
+        device_location.urllib.request,
+        "build_opener",
+        lambda *_handlers: _Opener(),
+    )
+
+    with pytest.raises(urllib.error.URLError, match="redirects are disabled"):
+        device_location._open_no_redirect(
+            device_location.urllib.request.Request("https://nominatim.openstreetmap.org/"),
+            timeout=1.0,
+        )
+
