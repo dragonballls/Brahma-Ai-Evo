@@ -123,5 +123,10 @@ jobs:
           $commands = @'
           ${{ matrix.commands }}
           '@
-          & ([scriptblock]::Create($commands))
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($command in ($commands -split "\r?\n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+            & ([scriptblock]::Create($command))
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -ne 0) {
+              throw "Regression command failed (exit $exitCode): $command"
+            }
+          }
