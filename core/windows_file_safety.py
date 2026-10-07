@@ -148,6 +148,59 @@ def _identity(info: BY_HANDLE_FILE_INFORMATION) -> tuple[int, int, int]:
     )
 
 
+def _mark_delete(handle: int) -> None:
+    disposition = FILE_DISPOSITION_INFO_STRUCT(1)
+    if not kernel32.SetFileInformationByHandle(
+        ctypes.c_void_p(handle),
+        FileDispositionInfo,
+        ctypes.byref(disposition),
+        ctypes.sizeof(disposition),
+    ):
+        raise OSError(ctypes.get_last_error(), "SetFileInformationByHandle(delete) failed")
+
+
+def ensure_directory(path: Path | str) -> bool:
+    """Create one directory and prove the resulting handle is safe."""
+    target = Path(path)
+    created = False
+    if not kernel32.CreateDirectoryW(_win_path(target), None):
+        error = ctypes.get_last_error()
+        if error != 183:  # ERROR_ALREADY_EXISTS
+            raise OSError(error, f"CreateDirectoryW failed for {target}")
+    else:
+        created = True
+
+    handle = kernel32.CreateFileW(
+        _win_path(target),
+        FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        None,
+        OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
+        None,
+    )
+    if handle in (None, INVALID_HANDLE_VALUE):
+        raise OSError(ctypes.get_last_error(), f"CreateFileW failed for directory {target}")
+    try:
+        final = _final_path(handle)
+        info = _handle_info(handle)
+        _reject_reparse(handle, info)
+        if not (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY):
+            raise OSError("Directory safety check failed: target is not a directory")
+        if not _is_under_home(final):
+            raise OSError("Directory resolves outside the user home directory")
+        return created
+    except Exception:
+        if created:
+            try:
+                _mark_delete(handle)
+            except OSError:
+                pass
+        raise
+    finally:
+        kernel32.CloseHandle(ctypes.c_void_p(handle))
+
+
 def open_safe_file(
     path: Path | str,
     *,
