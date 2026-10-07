@@ -496,7 +496,7 @@ def test_gateway_disconnect_does_not_report_success_when_socket_close_fails(tmp_
     assert result["success"] is False
     assert result["error_code"] == "DISCONNECT_FAILED"
     assert result["disconnected"] is False
-    assert manager.offline is True
+    assert manager.offline is False
     assert events[-1][0] == ("DEVICE_DISCONNECT_FAILED",)
 
 
@@ -722,3 +722,70 @@ def test_connect_execute_rejects_non_object_command_parameters():
     }))
     assert result["success"] is False
     assert result["error_code"] == "MALFORMED_PARAMETERS"
+
+
+def test_connection_hub_broadcast_reports_actual_delivery_count():
+    class Socket:
+        def __init__(self, fail=False):
+            self.fail = fail
+            self.messages = []
+
+        async def send_json(self, message):
+            if self.fail:
+                raise RuntimeError("send failed")
+            self.messages.append(message)
+
+    async def scenario():
+        hub = ConnectionHub()
+        good = Socket()
+        bad = Socket(fail=True)
+        await hub.register(good, "good")
+        await hub.register(bad, "bad")
+        delivered = await hub.broadcast_chat_message({"type": "CHAT"})
+        return delivered, good.messages, await hub.get("bad")
+
+    delivered, messages, bad_state = asyncio.run(scenario())
+    assert delivered == 1
+    assert messages == [{"type": "CHAT"}]
+    assert bad_state is None
+
+
+def test_connection_hub_broadcast_reports_zero_when_no_authenticated_devices():
+    async def scenario():
+        hub = ConnectionHub()
+        return await hub.broadcast_chat_message({"type": "CHAT"})
+
+    assert asyncio.run(scenario()) == 0
+
+
+def test_device_registry_hardlink_is_rejected(tmp_path: Path):
+    import os
+    import pytest
+
+    real = tmp_path / "real.json"
+    registry = tmp_path / "devices.json"
+    real.write_text('{"devices": {}}', encoding="utf-8")
+    try:
+        os.link(real, registry)
+    except (OSError, NotImplementedError):
+        pytest.skip("Hard-link support unavailable")
+
+    with pytest.raises(OSError, match="hard links"):
+        DeviceManager(registry)
+
+
+def test_gateway_config_hardlink_is_rejected(tmp_path: Path):
+    import os
+    import pytest
+    from brahma_connect.gateway.server import BrahmaGatewayConfig
+
+    real = tmp_path / "real.json"
+    config = tmp_path / "config.json"
+    real.write_text('{"enabled": true}', encoding="utf-8")
+    try:
+        os.link(real, config)
+    except (OSError, NotImplementedError):
+        pytest.skip("Hard-link support unavailable")
+
+    with pytest.raises(OSError, match="hard links"):
+        BrahmaGatewayConfig.load(tmp_path)
