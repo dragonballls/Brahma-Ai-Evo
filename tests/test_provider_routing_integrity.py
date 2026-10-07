@@ -63,7 +63,7 @@ def test_provider_preserving_tool_calls_refuse_direct_openrouter_fallback(monkey
     with pytest.raises(RuntimeError, match="automatic direct-provider fallback is disabled"):
         client.chat_with_tools(
             [{"role": "user", "content": "do it"}],
-            [{"name": "safe", "description": "safe", "parameters": {"type": "object", "properties": {}}},
+            [{"name": "safe", "description": "safe", "parameters": {"type": "object", "properties": {}}}],
             Mock(),
             allow_direct_fallback=False,
         )
