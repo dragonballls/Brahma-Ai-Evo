@@ -46,32 +46,15 @@ MAX_HTTP_RESPONSE_BYTES = 25 * 1024 * 1024
 
 
 def _validate_remote_fetch_url(url: str) -> str:
+    """Validate URL policy without a second DNS lookup before the pinned fetch."""
     parsed = urlparse(str(url or "").strip())
     if parsed.scheme != "https" or not parsed.hostname:
-        raise ValueError("Remote template URL must use http or https.")
+        raise ValueError("Remote template URL must use HTTPS.")
     if parsed.username or parsed.password:
         raise ValueError("Remote template URLs may not include embedded credentials.")
     hostname = parsed.hostname.rstrip(".").lower()
     if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(".localhost") or hostname.endswith(".local"):
         raise ValueError("Local hostnames are not permitted for remote template downloads.")
-    try:
-        literal = ipaddress.ip_address(hostname)
-        addresses = [literal]
-    except ValueError:
-        try:
-            addresses = [ipaddress.ip_address(info[4][0]) for info in socket.getaddrinfo(hostname, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)]
-        except OSError as exc:
-            raise ValueError("Remote template hostname could not be resolved safely.") from exc
-    for address in addresses:
-        if (
-            address.is_private
-            or address.is_loopback
-            or address.is_link_local
-            or address.is_reserved
-            or address.is_multicast
-            or address.is_unspecified
-        ):
-            raise ValueError("Remote template URL resolves to a non-public network address.")
     return parsed.geturl()
 
 
