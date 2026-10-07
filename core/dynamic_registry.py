@@ -93,7 +93,11 @@ class DynamicSkill:
                     raise ImportError(f"Unable to load skill module: {code_path}")
                 module = importlib.util.module_from_spec(spec)
                 sys.modules[spec.name] = module
-                spec.loader.exec_module(module)
+                try:
+                    spec.loader.exec_module(module)
+                except Exception:
+                    sys.modules.pop(spec.name, None)
+                    raise
                 self.module = module
             return self.module
 
@@ -195,6 +199,9 @@ class DynamicToolRegistry:
 
                     manifest_path = item.with_suffix("") / "manifest.json"
                     if manifest_path.exists():
+                        if manifest_path.is_symlink():
+                            logger.warning("[Registry] Refusing symlinked native feature manifest '%s'.", item.name)
+                            continue
                         with open(manifest_path, "r", encoding="utf-8") as f:
                             package_manifest = json.load(f)
                         meta = {**meta, **package_manifest}
@@ -215,6 +222,9 @@ class DynamicToolRegistry:
                 manifest_file = item / "manifest.json"
                 code_file = item / "skill.py"
                 if manifest_file.exists() and code_file.exists():
+                    if manifest_file.is_symlink() or code_file.is_symlink():
+                        logger.warning("[Registry] Refusing symlinked feature package '%s'.", item.name)
+                        continue
                     try:
                         with open(manifest_file, "r", encoding="utf-8") as f:
                             manifest = json.load(f)
