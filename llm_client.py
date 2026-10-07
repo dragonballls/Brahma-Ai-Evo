@@ -69,6 +69,8 @@ class UnifiedAIClient:
         return str(normalized).strip().casefold()
 
     def _omniroute_provider(self, provider: object | None = None) -> str:
+        if provider is not None and not str(provider).strip():
+            return ""
         return self._provider_id(self._provider if provider is None else provider)
 
     def _allow_direct_cloud_fallback_for(self, provider: object | None = None) -> bool:
