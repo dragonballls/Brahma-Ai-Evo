@@ -111,3 +111,36 @@ class IntelligenceOrchestratorTests(unittest.TestCase):
 
 if __name__=="__main__":
     unittest.main()
+
+
+def test_structured_orchestrator_rejects_non_object_json_and_uses_fail_safe_fallback(monkeypatch):
+    from core import intelligence_orchestrator
+
+    cfg = {
+        "enabled": True,
+        "profiles": {
+            "smart": {
+                "model": "auto/smart",
+                "specialists": 0,
+                "max_tokens": 100,
+                "temperature": 0.1,
+            }
+        },
+        "parallel_workers": 1,
+        "max_specialists": 1,
+    }
+    monkeypatch.setattr(intelligence_orchestrator, "load_config", lambda: cfg)
+    monkeypatch.setattr(intelligence_orchestrator, "allowed", lambda: True)
+    monkeypatch.setattr(
+        intelligence_orchestrator.cloud_client,
+        "chat",
+        lambda *a, **k: "[]",
+    )
+    monkeypatch.setattr(
+        intelligence_orchestrator.cloud_client,
+        "chat_json",
+        lambda *a, **k: {"success": True},
+    )
+
+    result = intelligence_orchestrator.IntelligenceOrchestrator().respond_json("return an object")
+    assert result == {"success": True}

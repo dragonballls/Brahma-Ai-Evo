@@ -50,3 +50,19 @@ def test_local_llm_redirects_are_not_accepted(monkeypatch):
     assert calls["allow_redirects"] is False
     assert calls["stream"] is True
     assert response.closed
+
+
+def test_local_chat_complete_rejects_non_object_json(monkeypatch):
+    from core import local_brain
+
+    class Response:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return None
+        def read(self):
+            return b"[]"
+
+    monkeypatch.setattr(local_brain.urllib.request, "urlopen", lambda *a, **k: Response())
+    with pytest.raises(ValueError, match="JSON object"):
+        local_brain.LocalBrain().chat_complete([{"role": "user", "content": "x"}])
