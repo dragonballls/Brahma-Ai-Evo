@@ -55,12 +55,12 @@ class DeviceManager:
         self._devices: dict[str, DeviceRecord] = {}
         self.load()
 
-    def _quarantine_corrupt_registry(self) -> Path:
-        """Move a malformed registry aside without overwriting the original data."""
+    def _preserve_corrupt_registry(self, raw_text: str) -> Path:
+        """Preserve the bytes already read without renaming the live pathname."""
         backup = self.registry_path.with_name(
             f"{self.registry_path.name}.corrupt-{int(time.time())}-{uuid.uuid4().hex[:8]}"
         )
-        self.registry_path.replace(backup)
+        backup.write_text(raw_text, encoding="utf-8")
         return backup
 
     def load(self) -> None:
@@ -69,8 +69,10 @@ class DeviceManager:
             if not self.registry_path.exists():
                 self._devices = {}
                 return
+            raw_text = None
             try:
-                raw = json.loads(self.registry_path.read_text(encoding="utf-8"))
+                raw_text = self.registry_path.read_text(encoding="utf-8")
+                raw = json.loads(raw_text)
             except (UnicodeError, json.JSONDecodeError) as exc:
                 try:
                     self._preserve_corrupt_registry(raw_text)
@@ -90,7 +92,7 @@ class DeviceManager:
                     self._preserve_corrupt_registry(raw_text)
                 except OSError as quarantine_exc:
                     raise RuntimeError(
-                        "Device registry has an invalid schema and could not be quarantined safely."
+                        "Device registry has an invalid schema and could not be preserved safely."
                     ) from quarantine_exc
                 raise RuntimeError(
                     "Device registry has an invalid root schema; refusing to substitute or rename it."
