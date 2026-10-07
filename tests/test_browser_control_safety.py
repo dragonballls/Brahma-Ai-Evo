@@ -1,4 +1,6 @@
+import asyncio
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -65,7 +67,8 @@ def test_browser_navigation_rejects_local_and_script_url_schemes():
         with pytest.raises(ValueError):
             validate_browser_url(unsafe)
 
-    assert validate_browser_url("https://example.com") == "https://example.com"
+    with patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("93.184.216.34", 443))]):
+        assert validate_browser_url("https://example.com") == "https://example.com"
     assert validate_browser_url("http://127.0.0.1:8080/health") == "http://127.0.0.1:8080/health"
     assert validate_browser_url("localhost:8765") == "https://localhost:8765"
     assert validate_browser_url("about:blank") == "about:blank"
@@ -98,3 +101,91 @@ def test_playwright_mcp_server_disconnect_wakes_pending_requests():
     source = (ROOT / "actions" / "playwright_mcp_client.py").read_text(encoding="utf-8")
     assert "Playwright MCP server connection closed." in source
     assert "event.set()" in source[source.index("Playwright MCP server connection closed.")-250:source.index("Playwright MCP server connection closed.")+250]
+
+
+def test_browser_url_rejects_private_ipv4_ipv6_credentials_and_remote_http():
+    from actions.playwright_mcp_client import validate_browser_url
+
+    unsafe = (
+        "http://192.168.1.1/",
+        "https://10.0.0.8/",
+        "https://[::1]/",
+        "https://[fc00::1]/",
+        "https://[fe80::1]/",
+        "https://[ff02::1]/",
+        "https://[::]/",
+        "https://user:password@example.com/",
+    )
+    for url in unsafe:
+        with pytest.raises(ValueError):
+            validate_browser_url(url)
+
+    with patch("socket.getaddrinfo", return_value=[
+        (2, 1, 6, "", ("93.184.216.34", 443)),
+        (10, 1, 6, "", ("2606:2800:220:1:248:1893:25c8:1946", 443)),
+    ]):
+        assert validate_browser_url("https://example.com/") == "https://example.com/"
+
+def test_browser_request_guard_blocks_cross_host_redirects_before_continue():
+    from actions.browser_control import _BrowserThread
+
+    class Request:
+        def __init__(self, url, redirected_from=None):
+            self.url = url
+            self.resource_type = "document"
+            self.redirected_from = redirected_from
+
+    class Route:
+        def __init__(self):
+            self.aborted = None
+            self.continued = False
+
+        async def abort(self, reason):
+            self.aborted = reason
+
+        async def continue_(self):
+            self.continued = True
+
+    previous = Request("https://example.com/start")
+    redirected = Request("https://example.net/landing", redirected_from=previous)
+    route = Route()
+    with patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("93.184.216.34", 443))]):
+        asyncio.run(_BrowserThread()._guard_request(route, redirected))
+    assert route.aborted == "blockedbyclient"
+    assert route.continued is False
+
+def test_browser_request_guard_allows_same_host_navigation_only_after_policy_validation():
+    from actions.browser_control import _BrowserThread
+
+    class Request:
+        def __init__(self, url, redirected_from=None):
+            self.url = url
+            self.resource_type = "document"
+            self.redirected_from = redirected_from
+
+    class Route:
+        def __init__(self):
+            self.aborted = None
+            self.continued = False
+
+        async def abort(self, reason):
+            self.aborted = reason
+
+        async def continue_(self):
+            self.continued = True
+
+    previous = Request("https://example.com/start")
+    redirected = Request("https://example.com/next", redirected_from=previous)
+    route = Route()
+    with patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("93.184.216.34", 443))]):
+        asyncio.run(_BrowserThread()._guard_request(route, redirected))
+    assert route.aborted is None
+    assert route.continued is True
+
+def test_public_browser_control_uses_guarded_native_backend_instead_of_mcp_navigation():
+    source = (ROOT / "actions" / "browser_control.py").read_text(encoding="utf-8")
+    public = source[source.index("def browser_control"):source.index("def browser_evaluate_internal")]
+    assert "get_playwright_mcp_client()" not in public
+    assert "_bt._go_to" in public
+    assert "_bt._back" in public
+    assert "_bt._forward" in public
