@@ -313,7 +313,7 @@ def send_message(
     else:
         result = _send_generic(platform, receiver, message_text)
 
-    print(f"[SendMessage] ✅ {result}")
+    print(f"[SendMessage] Result: {result}")
     if player:
         player.write_log(f"[msg] {result}")
 

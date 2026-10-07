@@ -92,7 +92,7 @@ def _run_skill_forge(
         if player and hasattr(player, "write_log"):
             player.write_log(f"▶️ [Evolution] Running newly registered skill '{name}'...")
         run_result = DynamicToolRegistry.execute_sync(name, exec_args)
-        _raise_for_failed_tool_result(run_result)
+        _raise_for_failed_tool_result(run_result, "skill_forge")
         if isinstance(run_result, dict):
             execution_output = str(
                 run_result.get("summary")
@@ -121,8 +121,8 @@ def _run_skill_forge(
     return full_result
 
 
-def _raise_for_failed_tool_result(result: Any) -> None:
-    """Turn structured tool failures into executor errors so recovery can run."""
+def _raise_for_failed_tool_result(result: Any, tool: str | None = None) -> None:
+    """Reject structured or explicit plain-text failures at the executor boundary."""
     if result is None:
         raise RuntimeError("Tool returned no result.")
     if isinstance(result, bool):
@@ -136,6 +136,46 @@ def _raise_for_failed_tool_result(result: Any) -> None:
     text_result = str(result).strip()
     if not text_result:
         raise RuntimeError("Tool returned an empty result.")
+
+    lowered = text_result.casefold()
+    failure_prefixes = (
+        "error:",
+        "browser error:",
+        "could not ",
+        "failed:",
+        "failure:",
+        "unable to ",
+        "access denied:",
+        "permission denied:",
+        "not found:",
+        "invalid ",
+        "unsupported ",
+        "timed out",
+        "timeout:",
+        "cancelled",
+        "task aborted",
+        "task failed",
+        "processing failed:",
+        "convert failed:",
+        "navigation error:",
+        "click error:",
+        "type error:",
+        "scroll error:",
+        "key error:",
+        "wait error:",
+        "find error:",
+        "hover error:",
+        "select option error:",
+    )
+    if lowered.startswith(failure_prefixes):
+        raise RuntimeError(text_result)
+    if tool == "send_message" and (
+        lowered.startswith("attempted to send")
+        or "message not sent" in lowered
+        or "compose email" in lowered
+    ):
+        raise RuntimeError("Message delivery was not verified: " + text_result)
+
     if text_result.startswith(("{", "[")):
         try:
             parsed = json.loads(text_result)
@@ -617,7 +657,7 @@ class AgentExecutor:
                         break
                     try:
                         result = _call_tool(tool, params, speak, player=player)
-                        _raise_for_failed_tool_result(result)
+                        _raise_for_failed_tool_result(result, tool)
                         step_results[step_num] = result
                         completed_steps.append(step)
                         print(f"[Executor] ✅ Step {step_num} done: {str(result)[:100]}")
@@ -697,7 +737,7 @@ class AgentExecutor:
                                         speak,
                                         player=player
                                     )
-                                    _raise_for_failed_tool_result(res)
+                                    _raise_for_failed_tool_result(res, fixed_step["tool"])
                                     step_results[step_num] = res
                                     completed_steps.append(fixed_step)
                                     step_ok = True

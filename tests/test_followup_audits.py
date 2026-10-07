@@ -1511,3 +1511,24 @@ def test_executor_skipped_step_cannot_be_reported_as_full_success(monkeypatch):
     assert "partially completed" in result.lower()
     assert "step 1" in result.lower()
     assert "action unavailable" in result.lower()
+
+
+def test_executor_rejects_explicit_plain_text_failures_and_unverified_send_results():
+    from agent.executor import _raise_for_failed_tool_result
+
+    failure_results = [
+        "Browser error: navigation failed",
+        "Could not open WhatsApp.",
+        "Playback control failed.",
+        "Attempted to send to Alice via WhatsApp; the desktop UI provided no delivery acknowledgement.",
+    ]
+    for result in failure_results[:3]:
+        with pytest.raises(RuntimeError):
+            _raise_for_failed_tool_result(result)
+    with pytest.raises(RuntimeError, match="delivery was not verified"):
+        _raise_for_failed_tool_result(failure_results[3], "send_message")
+
+
+def test_send_message_does_not_log_failures_with_success_checkmark():
+    source = Path("actions/send_message.py").read_text(encoding="utf-8")
+    assert 'print(f"[SendMessage] ✅ {result}")' not in source
