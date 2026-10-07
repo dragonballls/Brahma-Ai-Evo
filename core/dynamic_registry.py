@@ -54,7 +54,7 @@ APPDATA_SKILLS_DIR = get_user_data_dir() / "skills"
 class DynamicSkill:
     """Represents a loaded, runnable feature or synthetic skill in Brahma AI."""
 
-    def __init__(self, skill_path: Path, manifest: Dict[str, Any], module: Any = None):
+    def __init__(self, skill_path: Path, manifest: Dict[str, Any], module: Any = None, *, untrusted: bool = False):
         self.skill_path = skill_path
         self.skill_dir = skill_path if skill_path.is_dir() else skill_path.parent
         self.manifest = manifest
@@ -82,21 +82,33 @@ class DynamicSkill:
         self.created_at: float = manifest.get("created_at", time.time())
         self.invocations: int = manifest.get("invocations", 0)
         self.last_error: Optional[str] = manifest.get("last_error", None)
+        self.untrusted = bool(untrusted)
 
     def _load_module(self) -> Any:
         with self._state_lock:
             if self.module is None:
                 code_path = self.skill_path / "skill.py" if self.skill_path.is_dir() else self.skill_path
-                module_name = f"brahma_skill_{self.name}_{abs(hash(str(code_path.resolve())))}"
-                spec = importlib.util.spec_from_file_location(module_name, str(code_path))
-                if not spec or not spec.loader:
-                    raise ImportError(f"Unable to load skill module: {code_path}")
-                module = importlib.util.module_from_spec(spec)
-                sys.modules[spec.name] = module
+                code_path = code_path.resolve(strict=True)
+                if code_path.is_symlink():
+                    raise RuntimeError(f"Refusing to load symlinked skill code: {code_path}")
+                if self.skill_dir.is_symlink():
+                    raise RuntimeError(f"Refusing to load skill from a symlinked directory: {self.skill_dir}")
+                source = code_path.read_text(encoding="utf-8")
+                if self.untrusted:
+                    from core.skill_crucible import SkillCrucible
+                    safe, reason = SkillCrucible.validate_ast(source)
+                    if not safe:
+                        raise RuntimeError(f"Persisted skill failed runtime validation: {_redact_text(reason)}")
+                module_name = f"brahma_skill_{self.name}_{abs(hash(str(code_path)))}"
+                module = type(sys)(module_name)
+                module.__file__ = str(code_path)
+                module.__package__ = module_name.rpartition(".")[0]
+                sys.modules[module_name] = module
                 try:
-                    spec.loader.exec_module(module)
+                    code = compile(source, str(code_path), "exec", dont_inherit=True)
+                    exec(code, module.__dict__)
                 except Exception:
-                    sys.modules.pop(spec.name, None)
+                    sys.modules.pop(module_name, None)
                     raise
                 self.module = module
             return self.module
@@ -265,7 +277,7 @@ class DynamicToolRegistry:
                         continue
                     with manifest_file.open("r", encoding="utf-8") as f:
                         manifest = json.load(f)
-                    skill = DynamicSkill(skill_root, manifest)
+                    skill = DynamicSkill(skill_root, manifest, untrusted=True)
                     cls._skills[skill.name] = skill
                     for alias in skill.aliases:
                         if alias not in cls._skills:
