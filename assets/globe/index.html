@@ -1769,40 +1769,63 @@
             } catch (e) {}
         }
 
-        async function toggleRadar() {
-            isRadarActive = !isRadarActive;
-            const btn = document.getElementById('btn-layer-radar');
-            if (btn) btn.classList.toggle('active', isRadarActive);
+        async function toggleRadar(desiredState = null, providedTimestamp = null) {
+            const desired = desiredState === null ? !isRadarActive : Boolean(desiredState);
             if (!map2D) init2DMap();
-            if (isRadarActive) {
-                if (currentMode === "3D") switchMode("STREET");
-                try {
-                    const resp = await fetch('https://api.rainviewer.com/public/weather-maps.json');
-                    const data = await resp.json();
-                    const past = data.radar && data.radar.past ? data.radar.past : [];
-                    if (past.length > 0) {
-                        const ts = past[past.length - 1].time;
-                        if (radarLayer && map2D.hasLayer(radarLayer)) map2D.removeLayer(radarLayer);
-                        radarLayer = L.tileLayer(`https://tilecache.rainviewer.com/v2/radar/${ts}/256/{z}/{x}/{y}/2/1_1.png`, {
-                            opacity: 0.65,
-                            zIndex: 15
-                        }).addTo(map2D);
-                    }
-                } catch (e) {
-                    console.warn("RainViewer fetch error", e);
-                }
-            } else {
+
+            if (!desired) {
                 if (radarLayer && map2D && map2D.hasLayer(radarLayer)) {
                     map2D.removeLayer(radarLayer);
                 }
+                isRadarActive = false;
+                const btn = document.getElementById('btn-layer-radar');
+                if (btn) btn.classList.remove('active');
+                return false;
+            }
+
+            try {
+                let ts = providedTimestamp;
+                if (!ts) {
+                    const resp = await fetch('https://api.rainviewer.com/public/weather-maps.json');
+                    if (!resp.ok) throw new Error(`RainViewer HTTP ${resp.status}`);
+                    const data = await resp.json();
+                    const past = data.radar && data.radar.past ? data.radar.past : [];
+                    if (!past.length || !past[past.length - 1].time) {
+                        throw new Error("RainViewer returned no radar frame.");
+                    }
+                    ts = past[past.length - 1].time;
+                }
+                if (!ts) throw new Error("RainViewer radar timestamp is unavailable.");
+
+                if (radarLayer && map2D.hasLayer(radarLayer)) map2D.removeLayer(radarLayer);
+                const nextLayer = L.tileLayer(`https://tilecache.rainviewer.com/v2/radar/${ts}/256/{z}/{x}/{y}/2/1_1.png`, {
+                    opacity: 0.65,
+                    zIndex: 15
+                });
+                nextLayer.addTo(map2D);
+                radarLayer = nextLayer;
+                isRadarActive = true;
+                const btn = document.getElementById('btn-layer-radar');
+                if (btn) btn.classList.add('active');
+                if (currentMode === "3D") switchMode("STREET");
+                return true;
+            } catch (e) {
+                console.warn("RainViewer fetch error", e);
+                isRadarActive = false;
+                const btn = document.getElementById('btn-layer-radar');
+                if (btn) btn.classList.remove('active');
+                if (radarLayer && map2D && map2D.hasLayer(radarLayer)) {
+                    map2D.removeLayer(radarLayer);
+                }
+                radarLayer = null;
+                return false;
             }
         }
 
         function toggleWeatherRadar(data) {
-            if (data && data.enable !== undefined) {
-                isRadarActive = !data.enable;
-            }
-            toggleRadar();
+            const desired = data && data.enable !== undefined ? Boolean(data.enable) : null;
+            const timestamp = data && data.timestamp ? data.timestamp : null;
+            return toggleRadar(desired, timestamp);
         }
 
         // --- ISS Satellite Tracker ---

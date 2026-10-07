@@ -752,13 +752,18 @@ class GlobeWindow(QWidget):
 
     def toggle_weather_radar(self, enable: bool = True) -> bool:
         """Toggle live RainViewer Doppler precipitation radar tiles."""
-        ts = fetch_radar_timestamp()
-        data = {"enable": enable, "timestamp": ts}
+        if not enable:
+            data = {"enable": False, "timestamp": None}
+        else:
+            ts = fetch_radar_timestamp()
+            if not ts:
+                raise RuntimeError("Live weather radar is unavailable; radar was not enabled.")
+            data = {"enable": True, "timestamp": ts}
         if threading.current_thread() is threading.main_thread():
             self._do_weather_radar(data)
         else:
             self._cmd_sig.emit({"action": "weather_radar", "data": data})
-        return enable
+        return bool(enable)
 
     def show_weather(self, location_name: str) -> Dict[str, Any]:
         """Fetch and present live weather conditions for a location."""
