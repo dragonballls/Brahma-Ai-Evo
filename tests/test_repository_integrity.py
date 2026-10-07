@@ -491,3 +491,22 @@ class RepositoryIntegrityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_quality_matrix_checks_each_regression_command_exit_code():
+    source = (ROOT / ".github" / "workflows" / "quality.yml").read_text(encoding="utf-8")
+    assert 'foreach ($command in ($commands -split "\\r?\\n"' in source
+    assert 'if ($exitCode -ne 0)' in source
+    assert 'Regression command failed (exit $exitCode)' in source
+
+
+def test_windows_release_checks_critical_native_command_exit_codes():
+    source = (ROOT / ".github" / "workflows" / "windows-release.yml").read_text(encoding="utf-8")
+    assert 'pip self-upgrade failed with exit code' in source
+    assert 'Runtime dependency installation failed with exit code' in source
+    assert 'Packaging dependency installation failed with exit code' in source
+    assert 'pip check failed with exit code' in source
+    assert 'Python compilation failed with exit code' in source
+    assert 'Fast repository regression gate failed with exit code' in source
+    assert 'OmniRoute runtime preparation failed with exit code' in source
+    assert 'Bundled OmniRoute runtime health verification failed with exit code' in source
