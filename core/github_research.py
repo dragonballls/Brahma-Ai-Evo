@@ -27,6 +27,8 @@ API_VERSION = "2026-03-10"
 DEFAULT_TIMEOUT = 12
 CACHE_TTL_SECONDS = 1800
 MAX_READ_CHARS = 16000
+MAX_HTTP_RESPONSE_BYTES = 256 * 1024
+
 
 _STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "by", "can", "create", "do",
@@ -123,7 +125,13 @@ class GitHubResearchClient:
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         url = f"{API_BASE}{path}"
         try:
-            response = self.session.get(url, params=params or {}, timeout=self.timeout)
+            response = self.session.get(
+                url,
+                params=params or {},
+                timeout=self.timeout,
+                allow_redirects=False,
+                stream=True,
+            )
         except requests.RequestException as exc:
             raise GitHubResearchError(f"GitHub request failed: {exc}") from exc
 
@@ -133,13 +141,43 @@ class GitHubResearchClient:
             suffix = f" remaining={remaining}" if remaining is not None else ""
             if reset:
                 suffix += f" reset={reset}"
-            raise GitHubResearchError(f"GitHub rate limit or access restriction ({response.status_code}).{suffix}")
+            raise GitHubResearchError(
+                f"GitHub rate limit or access restriction ({response.status_code}).{suffix}"
+            )
+        if response.is_redirect or response.status_code in {301, 302, 303, 307, 308}:
+            raise GitHubResearchError("GitHub API returned an unexpected redirect.")
         if response.status_code >= 400:
-            detail = response.text[:500].replace("\n", " ")
+            chunks: list[bytes] = []
+            total = 0
+            try:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > 64 * 1024:
+                        raise GitHubResearchError("GitHub error response exceeded the safety limit.")
+                    chunks.append(chunk)
+            except requests.RequestException as exc:
+                raise GitHubResearchError("GitHub error response could not be read safely.") from exc
+            detail = b"".join(chunks).decode("utf-8", "replace")[:500].replace("\n", " ")
             raise GitHubResearchError(f"GitHub API returned {response.status_code}: {detail}")
+
+        chunks: list[bytes] = []
+        total = 0
         try:
-            payload = response.json()
-        except ValueError as exc:
+            for chunk in response.iter_content(chunk_size=8192):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > MAX_HTTP_RESPONSE_BYTES:
+                    raise GitHubResearchError("GitHub API response exceeded the safety limit.")
+                chunks.append(chunk)
+        except requests.RequestException as exc:
+            raise GitHubResearchError("GitHub response could not be read safely.") from exc
+
+        try:
+            payload = json.loads(b"".join(chunks).decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError) as exc:
             raise GitHubResearchError("GitHub returned invalid JSON.") from exc
         if not isinstance(payload, dict):
             raise GitHubResearchError("GitHub returned an unexpected response shape.")
