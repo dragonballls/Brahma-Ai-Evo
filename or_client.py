@@ -89,6 +89,27 @@ _failed_until: dict[str, float] = {}
 _model_state_lock = threading.Lock()
 
 
+class ToolExecutionError(RuntimeError):
+    """A tool action failed; do not allow the model to synthesize a success."""
+
+
+def _tool_result_failed(result: object) -> bool:
+    if isinstance(result, dict):
+        if result.get("success") is False or result.get("ok") is False:
+            return True
+        if result.get("error") not in (None, ""):
+            return True
+        if result.get("errors"):
+            return True
+        return False
+    text = str(result or "").strip().casefold()
+    return text.startswith((
+        "error:", "failed", "failure:", "could not", "couldn't", "unable to",
+        "cannot ", "can't ", "access denied:", "permission denied:", "not found:",
+        "invalid ", "unsupported ", "timed out", "timeout:",
+    ))
+
+
 def _read_bounded_json(response: requests.Response, *, max_bytes: int = MAX_LLM_RESPONSE_BYTES) -> dict:
     """Read and parse a successful HTTP JSON body without unbounded buffering."""
     chunks: list[bytes] = []
@@ -635,26 +656,23 @@ class OpenRouterClient:
                     if isinstance(raw_args, str):
                         try:
                             args = json.loads(raw_args) if raw_args.strip() else {}
-                            result = None
                         except json.JSONDecodeError as exc:
-                            args = {}
-                            result = f"Tool arguments were invalid JSON: {exc}"
+                            raise ToolExecutionError(f"Tool arguments were invalid JSON: {exc}") from exc
                     elif isinstance(raw_args, dict):
                         args = raw_args
-                        result = None
                     else:
-                        args = {}
-                        result = "The model returned invalid tool arguments."
+                        raise ToolExecutionError("The model returned invalid tool arguments.")
 
                     if not name:
-                        result = "The model returned a tool call without a name."
-                    elif name not in declared_names:
-                        result = f"The model requested an undeclared tool: {name}."
-                    elif result is None:
-                        try:
-                            result = tool_executor(name, args)
-                        except Exception as exc:
-                            result = f"Tool '{name}' failed: {exc}"
+                        raise ToolExecutionError("The model returned a tool call without a name.")
+                    if name not in declared_names:
+                        raise ToolExecutionError(f"The model requested an undeclared tool: {name}.")
+                    try:
+                        result = tool_executor(name, args)
+                    except Exception as exc:
+                        raise ToolExecutionError(f"Tool '{name}' failed: {exc}") from exc
+                    if _tool_result_failed(result):
+                        raise ToolExecutionError(f"Tool '{name}' failed: {result}")
 
                     call_id = str(call.get("id") or f"omni_tool_{round_index}_{index}")
                     normalized_messages.append({
@@ -662,6 +680,8 @@ class OpenRouterClient:
                         "tool_call_id": call_id,
                         "content": str(result),
                     })
+            except ToolExecutionError:
+                raise
             except Exception as exc:
                 logger.warning(f"[OmniRoute] tool request failed; using direct provider fallback: {exc}")
                 return None
@@ -773,24 +793,22 @@ class OpenRouterClient:
                     try:
                         args = json.loads(raw_args) if raw_args.strip() else {}
                     except json.JSONDecodeError as exc:
-                        result = f"Tool arguments were invalid JSON: {exc}"
-                        args = {}
-                    else:
-                        result = None
+                        raise ToolExecutionError(f"Tool arguments were invalid JSON: {exc}") from exc
+                elif isinstance(raw_args, dict):
+                    args = raw_args
                 else:
-                    args = raw_args if isinstance(raw_args, dict) else {}
-                    result = None
+                    raise ToolExecutionError("The model returned invalid tool arguments.")
 
                 if not name:
-                    result = "The model returned an invalid tool call with no tool name."
-                elif name not in declared_names:
-                    result = f"The model requested an undeclared tool: {name}."
-
-                if result is None:
-                    try:
-                        result = tool_executor(name, args)
-                    except Exception as exc:
-                        result = f"Tool '{name}' failed: {exc}"
+                    raise ToolExecutionError("The model returned an invalid tool call with no tool name.")
+                if name not in declared_names:
+                    raise ToolExecutionError(f"The model requested an undeclared tool: {name}.")
+                try:
+                    result = tool_executor(name, args)
+                except Exception as exc:
+                    raise ToolExecutionError(f"Tool '{name}' failed: {exc}") from exc
+                if _tool_result_failed(result):
+                    raise ToolExecutionError(f"Tool '{name}' failed: {result}")
 
                 call_id = str(call.get("id") or f"call_{round_index}_{index}")
                 normalized_messages.append({
