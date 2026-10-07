@@ -301,44 +301,46 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None, player: Any 
 
     elif tool == "screen_process":
         from actions.screen_processor import screen_process
-        screen_process(parameters=parameters, player=player)
-        return "Screen captured and analyzed."
+        return _require_tool_result(
+            tool,
+            screen_process(parameters=parameters, player=player),
+        )
 
     elif tool in ("mobile_autopilot", "android_autopilot"):
         from actions.mobile_autopilot import mobile_autopilot
-        return mobile_autopilot(parameters=parameters, player=player) or "Done."
+        return _require_tool_result(tool, mobile_autopilot(parameters=parameters, player=player))
 
     elif tool == "send_message":
         from actions.send_message import send_message
-        return send_message(parameters=parameters, player=None) or "Done."
+        return _require_tool_result(tool, send_message(parameters=parameters, player=None))
 
     elif tool == "reminder":
         from actions.reminder import reminder
-        return reminder(parameters=parameters, player=None) or "Done."
+        return _require_tool_result(tool, reminder(parameters=parameters, player=None))
 
     elif tool == "youtube_video":
         from actions.youtube_video import youtube_video
-        return youtube_video(parameters=parameters, player=None) or "Done."
+        return _require_tool_result(tool, youtube_video(parameters=parameters, player=None))
 
     elif tool == "weather_report":
         from actions.weather_report import weather_action
-        return weather_action(parameters=parameters, player=None) or "Done."
+        return _require_tool_result(tool, weather_action(parameters=parameters, player=None))
 
     elif tool == "computer_settings":
         from actions.computer_settings import computer_settings
-        return computer_settings(parameters=parameters, player=None) or "Done."
+        return _require_tool_result(tool, computer_settings(parameters=parameters, player=None))
 
     elif tool in ("smart_organizer", "desktop_organizer"):
         from actions.desktop_organizer_mcp import smart_organizer
-        return smart_organizer(parameters=parameters, player=player) or "Done."
+        return _require_tool_result(tool, smart_organizer(parameters=parameters, player=player))
 
     elif tool == "desktop_control":
         from actions.desktop import desktop_control
-        return desktop_control(parameters=parameters, player=None) or "Done."
+        return _require_tool_result(tool, desktop_control(parameters=parameters, player=None))
 
     elif tool == "computer_control":
         from actions.computer_control import computer_control
-        return computer_control(parameters=parameters, player=None) or "Done."
+        return _require_tool_result(tool, computer_control(parameters=parameters, player=None))
 
     elif tool == "generated_code":
         description = parameters.get("description", "")
@@ -352,39 +354,39 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None, player: Any 
 
     elif tool == "flight_finder":
         from actions.flight_finder import flight_finder
-        return flight_finder(parameters=parameters, player=None, speak=speak) or "Done."
+        return _require_tool_result(tool, flight_finder(parameters=parameters, player=None, speak=speak))
 
     elif tool in ("spotify_controller", "spotify", "music"):
         from actions.spotify_controller import spotify_controller
-        return spotify_controller(parameters=parameters, player=None, speak=speak) or "Done."
+        return _require_tool_result(tool, spotify_controller(parameters=parameters, player=None, speak=speak))
 
     elif tool in ("calendar_scheduler", "calendar", "schedule"):
         from actions.calendar_scheduler import calendar_scheduler
-        return calendar_scheduler(parameters=parameters, player=None, speak=speak) or "Done."
+        return _require_tool_result(tool, calendar_scheduler(parameters=parameters, player=None, speak=speak))
 
     elif tool in ("daily_briefing", "briefing"):
         from actions.daily_briefing import daily_briefing
-        return daily_briefing(parameters=parameters, player=None, speak=speak) or "Done."
+        return _require_tool_result(tool, daily_briefing(parameters=parameters, player=None, speak=speak))
 
     elif tool in ("code_helper", "code_agent"):
         from actions.code_helper import code_helper
-        return code_helper(parameters=parameters, player=None, speak=speak) or "Done."
+        return _require_tool_result(tool, code_helper(parameters=parameters, player=None, speak=speak))
 
     elif tool == "calorie_counter":
         from actions.calorie_counter import run as run_calorie_counter
-        return run_calorie_counter(parameters=parameters, player=None, speak=speak) or "Done."
+        return _require_tool_result(tool, run_calorie_counter(parameters=parameters, player=None, speak=speak))
 
     elif tool == "pushup_counter":
         from actions.pushup_counter import run as run_pushup_counter
-        return run_pushup_counter(parameters=parameters, player=None, speak=speak) or "Done."
+        return _require_tool_result(tool, run_pushup_counter(parameters=parameters, player=None, speak=speak))
 
     elif tool == "system_monitor":
         from actions.system_diagnostics_mcp import system_diagnostics
-        return system_diagnostics(parameters={"action": "ram_hogs"}, player=None, speak=speak) or "Done."
+        return _require_tool_result(tool, system_diagnostics(parameters={"action": "ram_hogs"}, player=None, speak=speak))
 
     elif tool == "upload_video":
         from actions.upload_video import run as run_upload_video
-        return run_upload_video(parameters=parameters, player=None, speak=speak) or "Done."
+        return _require_tool_result(tool, run_upload_video(parameters=parameters, player=None, speak=speak))
 
     elif tool in ("presentation_builder", "presentation", "create_presentation"):
         from actions.office_generator import generate_presentation_from_prompt
@@ -405,7 +407,7 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None, player: Any 
                 p.setdefault("service", parts[1])
             if len(parts) > 2:
                 p.setdefault("action", parts[2])
-        return google_workspace(parameters=p, player=None, speak=speak) or "Done."
+        return _require_tool_result(tool, google_workspace(parameters=p, player=None, speak=speak))
 
     elif tool in ("system_diagnostics", "diagnostics", "os_hardware", "hardware_control", "ram_hogs", "kill_process", "brightness_control"):
         from actions.system_diagnostics_mcp import system_diagnostics
@@ -416,14 +418,14 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None, player: Any 
             p.setdefault("action", "kill")
         elif tool == "brightness_control":
             p.setdefault("action", "brightness")
-        return system_diagnostics(parameters=p, player=None, speak=speak) or "Done."
+        return _require_tool_result(tool, system_diagnostics(parameters=p, player=None, speak=speak))
 
     elif tool in ("auto_heal", "self_patch", "rollback"):
         from actions.auto_heal_engine import auto_heal
         p = dict(parameters or {})
         if tool == "rollback":
             p.setdefault("action", "rollback")
-        return auto_heal(parameters=p, player=None, speak=speak) or "Done."
+        return _require_tool_result(tool, auto_heal(parameters=p, player=None, speak=speak))
 
     elif tool == "circuit_assembler":
         from actions.circuit_assembler import circuit_assembler
@@ -494,9 +496,7 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None, player: Any 
         if not request:
             raise ValueError("universal_task requires a request")
         result = run_universal_task(request, context=str(p.get("context") or ""))
-        if isinstance(result, (dict, list, bool)):
-            return result
-        return str(result or "Task completed.").strip()
+        return _require_tool_result(tool, result)
 
     elif tool == "skill_forge":
         p = parameters or {}
