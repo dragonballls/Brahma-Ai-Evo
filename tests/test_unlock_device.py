@@ -1,3 +1,5 @@
+import pytest
+
 
 
 def test_unlock_device_uses_canonical_settings_and_propagates_corruption(monkeypatch):

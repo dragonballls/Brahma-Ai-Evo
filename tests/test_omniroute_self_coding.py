@@ -459,11 +459,6 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
         self.assertNotIn('"clean", "-fd"', rollback)
         self.assertIn("preserved untracked or working-tree changes", rollback)
 
-
-if __name__ == "__main__":
-    unittest.main()
-
-
     def test_tool_call_empty_final_response_is_not_success(self):
         from or_client import OpenRouterClient
         client = OpenRouterClient()
@@ -494,3 +489,7 @@ if __name__ == "__main__":
         with patch.object(client, "_call_omniroute", return_value="[]"):
             with self.assertRaisesRegex(ValueError, "must be an object"):
                 client.chat_json("return json")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,5 +1,7 @@
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
+
 
 def test_dashboard_firewall_never_reclassifies_public_networks():
     source = (
