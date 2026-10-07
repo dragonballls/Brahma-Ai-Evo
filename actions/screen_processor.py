@@ -59,14 +59,57 @@ def _get_api_key() -> str:
     return key
 
 
-def _get_camera_index() -> int:
+def _load_api_config() -> dict:
+    """Load camera/config state without hiding corruption."""
+    if not API_CONFIG_PATH.exists():
+        return {}
     try:
-        with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-        if "camera_index" in cfg:
-            return int(cfg["camera_index"])
-    except Exception:
-        pass
+        raw_text = API_CONFIG_PATH.read_text(encoding="utf-8")
+        cfg = json.loads(raw_text)
+    except FileNotFoundError:
+        return {}
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise RuntimeError("Camera configuration is corrupted; refusing to overwrite it.") from exc
+    if not isinstance(cfg, dict):
+        raise RuntimeError("Camera configuration has an invalid root schema; refusing to overwrite it.")
+    return cfg
+
+
+def _save_api_config(cfg: dict) -> None:
+    """Atomically persist camera/config state in the same directory."""
+    API_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    import tempfile
+    temp_name = None
+    try:
+        fd, temp_name = tempfile.mkstemp(
+            prefix=f".{API_CONFIG_PATH.name}.",
+            suffix=".tmp",
+            dir=str(API_CONFIG_PATH.parent),
+        )
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            json.dump(cfg, handle, indent=4, ensure_ascii=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, API_CONFIG_PATH)
+        temp_name = None
+    finally:
+        if temp_name:
+            try:
+                Path(temp_name).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _get_camera_index() -> int:
+    cfg = _load_api_config()
+    if "camera_index" in cfg:
+        try:
+            camera_index = int(cfg["camera_index"])
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("Camera configuration contains an invalid camera_index.") from exc
+        if camera_index < 0:
+            raise RuntimeError("Camera configuration contains an invalid camera_index.")
+        return camera_index
 
     print("[Camera] [FIND] No camera index in config. Auto-detecting...")
     best_index = 0
@@ -87,14 +130,9 @@ def _get_camera_index() -> int:
         else:
             print(f"[Camera] [WARN]  Index {idx}: no valid frame.")
 
+    cfg["camera_index"] = best_index
     try:
-        cfg = {}
-        if API_CONFIG_PATH.exists():
-            with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-        cfg["camera_index"] = best_index
-        with open(API_CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=4)
+        _save_api_config(cfg)
         print(f"[Camera] [SAVE] Camera index {best_index} saved to config.")
     except Exception as e:
         print(f"[Camera] [WARN]  Could not save camera index: {e}")
