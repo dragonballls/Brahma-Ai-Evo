@@ -1,7 +1,11 @@
 import { z } from 'zod';
 import { defineTool } from './tool.js';
 import type { SpotifyHandlerExtra } from './types.js';
-import { handleSpotifyRequest, spotifyFetch } from './utils.js';
+import {
+  createSpotifyApi,
+  handleSpotifyRequest,
+  spotifyFetch,
+} from './utils.js';
 
 /**
  * Ensures there is an active Spotify device before attempting playback.
@@ -52,7 +56,7 @@ async function ensureActiveDevice(preferredDeviceId?: string): Promise<string> {
 }
 
 async function verifyPlayback(
-  spotifyApi: Awaited<ReturnType<typeof import('./utils.js').createSpotifyApi>>,
+  spotifyApi: Awaited<ReturnType<typeof createSpotifyApi>>,
   spotifyUri: string | undefined,
   resolvedType: string | undefined,
   deviceId: string,
