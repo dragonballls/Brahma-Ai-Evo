@@ -31,17 +31,44 @@ def _validate_coordinate(value, name):
         raise ValueError(f"Mobile action coordinate '{name}' is outside the safe range.")
     return coordinate
 
-def _verification_texts(ui_tree):
+def _validated_nodes(ui_tree):
     if not isinstance(ui_tree, dict):
         return []
-    values = []
-    for node in ui_tree.get("nodes", []) or []:
+    try:
+        screen_width, screen_height = _screen_dimensions(ui_tree)
+    except ValueError:
+        return []
+    nodes = ui_tree.get("nodes")
+    if not isinstance(nodes, list):
+        return []
+    valid = []
+    for node in nodes[:500]:
         if not isinstance(node, dict):
             continue
+        bounds = node.get("bounds")
+        if not isinstance(bounds, (list, tuple)) or len(bounds) != 4:
+            continue
+        try:
+            left, top, right, bottom = (float(value) for value in bounds)
+        except (TypeError, ValueError):
+            continue
+        if not all(math.isfinite(v) and v.is_integer() for v in (left, top, right, bottom)):
+            continue
+        left, top, right, bottom = map(int, (left, top, right, bottom))
+        if left < 0 or top < 0 or right > screen_width or bottom > screen_height:
+            continue
+        if right <= left or bottom <= top:
+            continue
+        valid.append((node, (left, top, right, bottom)))
+    return valid
+
+def _verification_texts(ui_tree):
+    values = []
+    for node, _bounds in _validated_nodes(ui_tree):
         for key in ("content_description", "text"):
             value = node.get(key)
             if isinstance(value, str) and value.strip():
-                values.append(value.strip())
+                values.append(value.strip()[:512])
     return values
 
 def _verify_completion(ui_tree, verification):
@@ -51,7 +78,7 @@ def _verify_completion(ui_tree, verification):
         claims = [item.strip() for item in verification if isinstance(item, str) and item.strip()]
     else:
         claims = []
-    if not claims:
+    if not claims or len(claims) > 10 or any(len(claim) > 512 for claim in claims):
         return False
     visible = "\n".join(_verification_texts(ui_tree)).casefold()
     return all(claim.casefold() in visible for claim in claims)
@@ -78,6 +105,12 @@ def _screen_dimensions(ui_tree: dict) -> tuple[int, int]:
         raise ValueError("Mobile device screen dimensions exceed the safe coordinate range.")
     return screen_width, screen_height
 
+
+def _point_is_visible(ui_tree, x, y):
+    return any(
+        left <= x < right and top <= y < bottom
+        for _node, (left, top, right, bottom) in _validated_nodes(ui_tree)
+    )
 
 def _build_prompt(instruction: str, ui_tree: dict) -> str:
     if not isinstance(instruction, str) or not instruction.strip():
@@ -203,6 +236,14 @@ def mobile_autopilot(parameters: dict, response=None, player=None, session_memor
             break
         if not isinstance(decision, dict):
             return json.dumps({"success": False, "error": "Mobile autopilot received malformed model output.", "steps_attempted": step})
+        try:
+            decision_bytes = len(json.dumps(decision, ensure_ascii=False).encode("utf-8"))
+        except (TypeError, ValueError):
+            return json.dumps({"success": False, "error": "Mobile autopilot received unserializable model output.", "steps_attempted": step})
+        if decision_bytes > 16 * 1024:
+            return json.dumps({"success": False, "error": "Mobile autopilot received oversized model output.", "steps_attempted": step})
+        if bool(parameters.get("cancelled", False)):
+            return json.dumps({"success": False, "error": "Mobile autopilot was cancelled during model generation.", "steps_attempted": step})
         action = decision.get("action")
         if not isinstance(action, str):
             return json.dumps({"success": False, "error": "Mobile autopilot received an invalid action.", "steps_attempted": step})
@@ -221,6 +262,8 @@ def mobile_autopilot(parameters: dict, response=None, player=None, session_memor
             player.speak_async(reason)
             
         if action == "done":
+            if bool(parameters.get("cancelled", False)):
+                return json.dumps({"success": False, "error": "Mobile autopilot was cancelled before completion verification.", "steps_attempted": step + 1})
             try:
                 verified_ui = _parse_remote_result(
                     connect_execute({"target": target, "action": "ui_dump", "parameters": {}}),
@@ -262,23 +305,7 @@ def mobile_autopilot(parameters: dict, response=None, player=None, session_memor
                     and command_parameters["y"] < screen_height
                 ):
                     raise ValueError("Mobile tap coordinates are outside the actual device screen bounds.")
-                point_visible = False
-                for node in ui_tree.get("nodes", [])[:500]:
-                    if not isinstance(node, dict):
-                        continue
-                    bounds = node.get("bounds")
-                    if not isinstance(bounds, (list, tuple)) or len(bounds) != 4:
-                        continue
-                    try:
-                        left, top, right, bottom = [float(v) for v in bounds]
-                    except (TypeError, ValueError):
-                        continue
-                    if not all(math.isfinite(v) for v in (left, top, right, bottom)):
-                        continue
-                    if left <= command_parameters["x"] < right and top <= command_parameters["y"] < bottom:
-                        point_visible = True
-                        break
-                if not point_visible:
+                if not _point_is_visible(ui_tree, command_parameters["x"], command_parameters["y"]):
                     raise ValueError("Mobile tap coordinates do not fall within a visible UI element.")
                 remote_action = "ui_tap"
                 delay = 2.0
@@ -336,9 +363,30 @@ def mobile_autopilot(parameters: dict, response=None, player=None, session_memor
             })
 
         try:
+            fresh_dump = _parse_remote_result(
+                connect_execute({"target": target, "action": "ui_dump", "parameters": {}}),
+                "ui_dump",
+            )
+            fresh_ui = fresh_dump.get("data", {})
+            if _ui_state_signature(fresh_ui) != _ui_state_signature(ui_tree):
+                return json.dumps({
+                    "success": False,
+                    "error": "Mobile UI changed before action dispatch; refusing to execute a stale action.",
+                    "steps_attempted": step + 1,
+                })
+        except (RuntimeError, ValueError) as exc:
+            return json.dumps({"success": False, "error": str(exc), "steps_attempted": step + 1})
+
+        if bool(parameters.get("cancelled", False)):
+            return json.dumps({
+                "success": False,
+                "error": "Mobile autopilot was cancelled before action dispatch.",
+                "steps_attempted": step + 1,
+            })
+
+        try:
             _parse_remote_result(
-                connect_execute({
-                    "target": target,
+                connect_execute({                    "target": target,
                     "action": remote_action,
                     "parameters": command_parameters,
                 }),
@@ -361,7 +409,14 @@ def mobile_autopilot(parameters: dict, response=None, player=None, session_memor
                 "error": "Mobile autopilot timed out.",
                 "steps_attempted": step + 1,
             })
-        time.sleep(min(delay, remaining))
+        sleep_until = time.monotonic() + min(delay, remaining)
+        while True:
+            if bool(parameters.get("cancelled", False)):
+                return json.dumps({"success": False, "error": "Mobile autopilot was cancelled during action delay.", "steps_attempted": step + 1})
+            wait_for = sleep_until - time.monotonic()
+            if wait_for <= 0:
+                break
+            time.sleep(min(0.25, wait_for))
 
 
     return json.dumps({

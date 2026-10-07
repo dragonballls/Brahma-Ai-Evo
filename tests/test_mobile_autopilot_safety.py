@@ -32,6 +32,19 @@ def test_mobile_autopilot_actually_dispatches_supported_actions():
                 "nodes": [
                     {
                         "bounds": [0, 0, 100, 100],
+                        "text": "Search",
+                    }
+                ]
+            },
+        },
+        {
+            "success": True,
+            "data": {
+                "screen_width": 1080,
+                "screen_height": 2400,
+                "nodes": [
+                    {
+                        "bounds": [0, 0, 100, 100],
                         "text": "Complete",
                     }
                 ]
@@ -51,9 +64,12 @@ def test_mobile_autopilot_actually_dispatches_supported_actions():
         )
 
     assert result["success"] is True
-    assert execute.call_count == 3
+    assert execute.call_count == 5
     assert execute.call_args_list[1].kwargs == {}
-    dispatched = execute.call_args_list[1].args[0]
+    assert execute.call_args_list[1].args[0]["action"] == "ui_dump"
+    assert execute.call_args_list[2].args[0]["action"] == "ui_tap"
+    assert execute.call_args_list[3].args[0]["action"] == "ui_dump"
+    dispatched = execute.call_args_list[2].args[0]
     assert dispatched["target"] == "phone-1"
     assert dispatched["action"] == "ui_tap"
     assert dispatched["parameters"] == {"x": 50, "y": 50}
@@ -122,6 +138,19 @@ def test_mobile_autopilot_dimension_validation_is_exercised_at_runtime():
         "screen_height": 2400,
         "nodes": [],
     }) == (1080, 2400)
+
+
+def test_mobile_autopilot_rejects_malformed_bounds_as_visible_evidence():
+    from actions import mobile_autopilot
+    ui = {
+        "screen_width": 1080, "screen_height": 2400,
+        "nodes": [
+            {"bounds": [-100, -100, 200, 200], "text": "Complete"},
+            {"bounds": [10, 10, 10, 20], "text": "Complete"},
+            {"bounds": [0, 0, 100, 100], "text": "Visible"},
+        ],
+    }
+    assert "complete" not in "\n".join(mobile_autopilot._verification_texts(ui)).casefold()
 
 
 def test_mobile_autopilot_never_reports_success_after_cancellation_is_observed_post_dispatch():
