@@ -50,6 +50,17 @@ def test_browser_shutdown_cleanup_is_registered_after_definition():
     source = (ROOT / "actions" / "browser_control.py").read_text(encoding="utf-8")
     assert source.index("def shutdown_browser") < source.index("atexit.register(shutdown_browser)")
 
+def test_browser_screenshot_verifies_the_final_artifact_before_success():
+    source = (ROOT / "actions" / "browser_control.py").read_text(encoding="utf-8")
+    start = source.index("async def _screenshot")
+    end = source.index("async def _wait_for", start)
+    block = source[start:end]
+    assert "await page.screenshot(path=tmp_name)" in block
+    assert "not Path(tmp_name).is_file() or Path(tmp_name).stat().st_size <= 0" in block
+    assert "os.replace(tmp_name, target)" in block
+    assert "not target.is_file() or target.stat().st_size <= 0" in block
+
+
 def test_browser_navigation_rejects_local_and_script_url_schemes():
     from actions.playwright_mcp_client import validate_browser_url
 
