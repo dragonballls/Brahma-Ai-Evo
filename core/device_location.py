@@ -1,4 +1,5 @@
 from core.user_paths import get_user_data_dir
+from core.network_safety import fetch_public_bytes
 # core/device_location.py
 
 import json
@@ -21,16 +22,6 @@ _SETTINGS_FILE = _CONFIG_DIR / "app_settings.json"
 _MEMORY_CACHE: Optional[Dict[str, Any]] = None
 _MEMORY_CACHE_TIME: float = 0
 _CACHE_TTL: float = 1800.0  # 30 minutes
-
-
-class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        raise urllib.error.URLError("Location service redirects are disabled.")
-
-
-def _open_no_redirect(req, timeout: float):
-    opener = urllib.request.build_opener(_NoRedirectHandler())
-    return opener.open(req, timeout=timeout)
 
 
 def _read_manual_override() -> Optional[str]:
@@ -172,21 +163,24 @@ def _reverse_geocode_osm(lat: float, lon: float) -> Optional[str]:
     """Reverse geocodes coordinates using OpenStreetMap Nominatim."""
     try:
         url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}"
-        req = urllib.request.Request(url, headers={"User-Agent": "BrahmaAI-LocationEngine/1.0"})
-        with _open_no_redirect(req, timeout=3.0) as resp:
-            raw = resp.read(64 * 1024 + 1)
-            if len(raw) > 64 * 1024:
-                raise ValueError("Location service response exceeded the safety limit.")
-            data = json.loads(raw.decode("utf-8"))
-            addr = data.get("address", {})
-            return (
-                addr.get("city")
-                or addr.get("town")
-                or addr.get("suburb")
-                or addr.get("borough")
-                or addr.get("county")
-                or addr.get("state_district")
-            )
+        status, raw = fetch_public_bytes(
+            url,
+            timeout=3.0,
+            max_response_bytes=64 * 1024,
+            headers={"User-Agent": "BrahmaAI-LocationEngine/1.0"},
+        )
+        if status >= 400:
+            raise RuntimeError(f"Location service returned HTTP {status}.")
+        data = json.loads(raw.decode("utf-8"))
+        addr = data.get("address", {}) if isinstance(data, dict) else {}
+        return (
+            addr.get("city")
+            or addr.get("town")
+            or addr.get("suburb")
+            or addr.get("borough")
+            or addr.get("county")
+            or addr.get("state_district")
+        )
     except Exception:
         return None
 
@@ -200,12 +194,15 @@ def _detect_via_ip_services() -> Optional[Dict[str, Any]]:
 
     for name, url, city_k, lat_k, lon_k, reg_k in endpoints:
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "curl/7.68.0"})
-            with _open_no_redirect(req, timeout=2.5) as resp:
-                raw = resp.read(64 * 1024 + 1)
-                if len(raw) > 64 * 1024:
-                    raise ValueError("Location service response exceeded the safety limit.")
-                data = json.loads(raw.decode("utf-8"))
+            status, raw = fetch_public_bytes(
+                url,
+                timeout=2.5,
+                max_response_bytes=64 * 1024,
+                headers={"User-Agent": "BrahmaAI-LocationEngine/1.0"},
+            )
+            if status >= 400:
+                raise RuntimeError(f"Location service returned HTTP {status}.")
+            data = json.loads(raw.decode("utf-8"))
                 city = data.get(city_k)
                 if city and isinstance(city, str) and city.strip() and city.lower() != "none":
                     return {
