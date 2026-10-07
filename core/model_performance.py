@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 import uuid
@@ -78,7 +79,12 @@ def _save(payload: dict[str, Any]) -> None:
 
 
 def record(*, provider: str, model: str, profile: str, score: float, latency_ms: float = 0.0) -> None:
-    score = max(0.0, min(100.0, float(score)))
+    score = float(score)
+    latency_ms = float(latency_ms)
+    if not math.isfinite(score) or not math.isfinite(latency_ms):
+        raise ValueError("Model-performance score and latency must be finite numbers.")
+    score = max(0.0, min(100.0, score))
+    latency_ms = max(0.0, latency_ms)
     key = f"{provider}|{model}|{profile}"
     with _LOCK:
         data = _load()
@@ -103,10 +109,17 @@ def lookup(*, provider: str, model: str, profile: str) -> dict[str, Any] | None:
 
 def routing_bonus(*, provider: str, model: str, profile: str) -> float:
     item = lookup(provider=provider, model=model, profile=profile)
-    if not item or int(item.get("samples", 0)) <= 0:
+    if not item:
+        return 0.0
+    try:
+        samples = int(item.get("samples", 0))
+        score = float(item.get("mean_score", 0.0))
+        latency = float(item.get("mean_latency_ms", 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+    if samples <= 0 or not math.isfinite(score) or not math.isfinite(latency):
         return 0.0
     # Keep learned routing bounded so a small, noisy history cannot overpower
     # the base quality heuristics or eliminate unseen models.
-    reliability = min(1.0, int(item["samples"]) / 8.0)
-    score = float(item.get("mean_score", 0.0))
+    reliability = min(1.0, samples / 8.0)
     return max(-6.0, min(6.0, (score - 75.0) * 0.12 * reliability))
