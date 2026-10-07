@@ -768,9 +768,94 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
 
     MAX_ARCHIVE_MEMBERS = 10_000
     MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024
+    MAX_ARCHIVE_COMPRESSION_RATIO = 1000
 
     dest = dest.resolve()
-    dest.mkdir(parents=True, exist_ok=True)
+    if dest.exists() and not dest.is_dir():
+        raise ValueError("Archive extraction destination is not a directory.")
+    if not dest.exists():
+        dest.mkdir(parents=True, exist_ok=False)
+    if dest.is_symlink():
+        raise ValueError("Archive extraction destination may not be a symlink.")
+
+    created_files: list[tuple[Path, tuple[int, int] | None]] = []
+    created_dirs: list[Path] = []
+
+    def _fingerprint(target: Path) -> tuple[int, int] | None:
+        try:
+            st = target.stat(follow_symlinks=False)
+            return int(getattr(st, "st_dev", 0)), int(getattr(st, "st_ino", 0))
+        except OSError:
+            return None
+
+    def _open_output(root: Path, target: Path):
+        """Open an archive output without following a raced leaf/parent on POSIX."""
+        import os
+        relative = target.relative_to(root)
+        parts = relative.parts
+        if not parts:
+            raise ValueError("Archive member resolved to its extraction root.")
+        if os.name != "nt" and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY"):
+            flags_dir = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            root_fd = os.open(str(root), flags_dir)
+            try:
+                dir_fd = root_fd
+                opened = [root_fd]
+                for part in parts[:-1]:
+                    try:
+                        os.mkdir(part, mode=0o755, dir_fd=dir_fd)
+                        created_dirs.append((root / Path(*parts[:parts.index(part) + 1])).resolve())
+                    except FileExistsError:
+                        pass
+                    next_fd = os.open(part, flags_dir, dir_fd=dir_fd)
+                    opened.append(next_fd)
+                    if dir_fd != root_fd:
+                        os.close(dir_fd)
+                    dir_fd = next_fd
+                leaf_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+                fd = os.open(parts[-1], leaf_flags, 0o600, dir_fd=dir_fd)
+                if dir_fd != root_fd:
+                    os.close(dir_fd)
+                os.close(root_fd)
+                handle = os.fdopen(fd, "wb")
+                created_files.append((target, _fingerprint(target)))
+                return handle
+            except Exception:
+                for fd in opened[1:]:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+                try:
+                    os.close(root_fd)
+                except OSError:
+                    pass
+                raise
+
+        # Windows fallback: exclusive leaf creation plus immediate reparse checks.
+        current = Path(root.anchor) if root.anchor else Path(".")
+        for part in root.parts[1:] if root.anchor else root.parts:
+            current = current / part
+            is_junction = getattr(current, "is_junction", None)
+            if current.is_symlink() or (is_junction is not None and is_junction()):
+                raise ValueError("Archive extraction destination contains a link/reparse component.")
+        current = root
+        for part in parts[:-1]:
+            current = current / part
+            if current.exists():
+                is_junction = getattr(current, "is_junction", None)
+                if current.is_symlink() or (is_junction is not None and is_junction()):
+                    raise ValueError("Archive extraction path contains a link/reparse component.")
+            else:
+                current.mkdir()
+                created_dirs.append(current)
+        parent = current
+        is_junction = getattr(parent, "is_junction", None)
+        if parent.is_symlink() or (is_junction is not None and is_junction()):
+            raise ValueError("Archive extraction parent contains a link/reparse component.")
+        handle = target.open("xb")
+        created_files.append((target, _fingerprint(target)))
+        return handle
 
     def preflight(members):
         total_size = 0
@@ -799,6 +884,11 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
                 mode = (member.external_attr >> 16) & 0o170000
                 if mode == 0o120000:
                     raise ValueError("Archive symlink members are not allowed.")
+                compressed = max(0, int(member.compress_size))
+                if not is_dir and compressed > 0 and size > compressed * MAX_ARCHIVE_COMPRESSION_RATIO:
+                    raise ValueError("Archive member compression ratio exceeds the safety limit.")
+                if not is_dir and compressed == 0 and size > 0:
+                    raise ValueError("Archive member has an unsafe zero-size compressed representation.")
             else:
                 if member.issym() or member.islnk():
                     raise ValueError("Archive link members are not allowed.")
@@ -807,38 +897,51 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
         for _, target, _ in planned:
             if any(parent in seen_types and seen_types[parent] is False for parent in target.parents if parent != dest):
                 raise ValueError(f"Archive contains a file/directory path conflict under {target.name}.")
-        return [(member, target) for member, target, _ in planned]
+        return [(member, target, is_dir) for member, target, is_dir in planned]
 
-    if path.suffix.lower() == ".zip":
-        with zipfile.ZipFile(path) as archive:
-            infos = archive.infolist()
-            if len(infos) > MAX_ARCHIVE_MEMBERS:
+    try:
+        if path.suffix.lower() == ".zip":
+            with zipfile.ZipFile(path) as archive:
+                infos = archive.infolist()
+                if len(infos) > MAX_ARCHIVE_MEMBERS:
+                    raise ValueError("Archive contains too many members.")
+                planned = preflight(infos)
+                for info, target, is_dir in planned:
+                    if is_dir:
+                        target.mkdir(parents=True, exist_ok=True)
+                        continue
+                    with archive.open(info, "r") as source, _open_output(dest, target) as output:
+                        shutil.copyfileobj(source, output)
+            return
+
+        with tarfile.open(path) as archive:
+            members = archive.getmembers()
+            if len(members) > MAX_ARCHIVE_MEMBERS:
                 raise ValueError("Archive contains too many members.")
-            planned = preflight(infos)
-            for info, target in planned:
-                if info.is_dir():
+            planned = preflight(members)
+            for member, target, is_dir in planned:
+                if is_dir:
                     target.mkdir(parents=True, exist_ok=True)
                     continue
-                target.parent.mkdir(parents=True, exist_ok=True)
-                with archive.open(info, "r") as source, target.open("xb") as output:
+                source = archive.extractfile(member)
+                if source is None:
+                    raise ValueError("Archive member could not be read safely.")
+                with source, _open_output(dest, target) as output:
                     shutil.copyfileobj(source, output)
-        return
-
-    with tarfile.open(path) as archive:
-        members = archive.getmembers()
-        if len(members) > MAX_ARCHIVE_MEMBERS:
-            raise ValueError("Archive contains too many members.")
-        planned = preflight(members)
-        for member, target in planned:
-            if member.isdir():
-                target.mkdir(parents=True, exist_ok=True)
-                continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            source = archive.extractfile(member)
-            if source is None:
-                raise ValueError("Archive member could not be read safely.")
-            with source, target.open("xb") as output:
-                shutil.copyfileobj(source, output)
+    except Exception:
+        for target, fingerprint in reversed(created_files):
+            try:
+                if fingerprint is not None and _fingerprint(target) == fingerprint:
+                    target.unlink(missing_ok=True)
+            except OSError:
+                pass
+        for directory in reversed(created_dirs):
+            try:
+                if directory.exists() and directory.is_dir() and not directory.is_symlink() and not any(directory.iterdir()):
+                    directory.rmdir()
+            except OSError:
+                pass
+        raise
 
 def _process_archive(path: Path, action: str, params: dict, speak=None) -> str:
     action = action or "list"
