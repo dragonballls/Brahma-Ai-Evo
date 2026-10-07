@@ -113,3 +113,59 @@ def test_self_coding_rejects_symlinked_checkpoint_metadata(tmp_path):
 
     with pytest.raises(Exception, match="must not be a symlink"):
         agent._load("checkpoint")
+
+
+def test_self_coding_checkpoint_save_uses_exclusive_file_creation(tmp_path):
+    import os
+    from unittest.mock import patch
+    from core.self_coding import Checkpoint, SelfCodingAgent
+
+    agent = object.__new__(SelfCodingAgent)
+    agent.repo = tmp_path
+    checkpoint = Checkpoint(
+        checkpoint_id="checkpoint-1",
+        branch="agent/checkpoint/checkpoint-1",
+        baseline="a" * 40,
+        base_branch="main",
+        commits=("b" * 40,),
+        created_at="now",
+        state="pending",
+    )
+    seen = {}
+    real_open = os.open
+
+    def checked_open(path, flags, mode=0o666):
+        seen["flags"] = flags
+        return real_open(path, flags, mode)
+
+    with patch("core.self_coding.os.open", side_effect=checked_open):
+        agent._save(checkpoint)
+
+    assert seen["flags"] & os.O_EXCL
+    assert (agent.checkpoint_dir / "checkpoint-1.json").exists()
+
+
+def test_self_coding_rejects_symlinked_checkpoint_directory(tmp_path):
+    import os
+    import pytest
+    from core.self_coding import SelfCodingAgent
+
+    agent = object.__new__(SelfCodingAgent)
+    agent.repo = tmp_path
+    target = tmp_path / "outside"
+    target.mkdir()
+    checkpoint_dir = agent.checkpoint_dir
+    try:
+        os.symlink(target, checkpoint_dir, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("Directory symlinks are unavailable in this environment.")
+
+    with pytest.raises(Exception, match="must not be a symlink"):
+        agent.list_checkpoints()
+
+
+def test_self_coding_link_like_guard_covers_junction_reparse_contract():
+    source = (ROOT / "core" / "self_coding.py").read_text(encoding="utf-8")
+    assert "is_junction = getattr(path, "is_junction", None)" in source
+    assert "FILE_ATTRIBUTE_REPARSE_POINT" in source
+    assert "Checkpoint directory must not be a symlink, junction, or reparse point." in source
