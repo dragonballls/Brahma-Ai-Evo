@@ -533,6 +533,79 @@ def test_instagram_reply_handler_does_not_claim_success_for_unverified_send():
     assert 'if isinstance(send_result, dict) and send_result.get("delivery_verified") is True' in block
 
 
+def test_tool_executor_failure_cannot_be_synthesized_as_success():
+    from or_client import OpenRouterClient, ToolExecutionError
+
+    client = object.__new__(OpenRouterClient)
+    client._omniroute = type("Gateway", (), {})()
+    client._omniroute.ensure_ready = lambda: False
+    client._is_rate_limited = lambda _model: False
+    client._is_temporarily_failed = lambda _model: False
+
+    response = {
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "dangerous_action",
+                        "arguments": "{}",
+                    },
+                }],
+            },
+        }],
+    }
+    calls = []
+    def fake_call(*_args, **_kwargs):
+        calls.append(1)
+        return response
+    client._call_tool_capable = fake_call
+
+    import pytest
+    with pytest.raises(ToolExecutionError, match="provider rejected"):
+        client.chat_with_tools(
+            [{"role": "user", "content": "do it"}],
+            [{"name": "dangerous_action", "description": "test", "parameters": {"type": "object", "properties": {}}}],
+            lambda _name, _args: {"success": False, "error": "provider rejected"},
+            allow_direct_fallback=True,
+            max_rounds=3,
+        )
+    assert len(calls) == 1
+
+
+def test_invalid_tool_arguments_fail_before_execution():
+    from or_client import OpenRouterClient, ToolExecutionError
+
+    client = object.__new__(OpenRouterClient)
+    client._omniroute = type("Gateway", (), {})()
+    client._omniroute.ensure_ready = lambda: False
+    client._is_rate_limited = lambda _model: False
+    client._is_temporarily_failed = lambda _model: False
+    client._call_tool_capable = lambda *_args, **_kwargs: {
+        "choices": [{
+            "message": {
+                "content": "",
+                "tool_calls": [{
+                    "id": "call_1",
+                    "function": {"name": "safe", "arguments": "{not-json"},
+                }],
+            },
+        }],
+    }
+    executed = []
+    with pytest.raises(ToolExecutionError, match="invalid JSON"):
+        client.chat_with_tools(
+            [{"role": "user", "content": "do it"}],
+            [{"name": "safe", "description": "test", "parameters": {"type": "object", "properties": {}}}],
+            lambda name, args: executed.append((name, args)),
+            max_rounds=2,
+        )
+    assert executed == []
+
+
 def test_redline_protocol_rejects_powercfg_failure(monkeypatch):
     import core.protocols as protocol_module
     monkeypatch.setattr(protocol_module.sys, "platform", "win32")
