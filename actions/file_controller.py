@@ -14,6 +14,10 @@ except ImportError:
 
 from core.undo import push_undo
 
+_WINFS = None
+if os.name == "nt":
+    from core import windows_file_safety as _WINFS
+
 _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 
 # Undo keeps a file's previous contents in memory so `write` can be reversed.
@@ -75,7 +79,10 @@ def _undo_create(target: Path):
                 )
             target.rmdir()
         else:
-            target.unlink()
+            if os.name == "nt" and _WINFS is not None:
+        _WINFS.unlink(target)
+        return
+    target.unlink()
         return f"Removed '{target.name}'."
     return _fn
 
@@ -294,6 +301,22 @@ def _secure_write_text(target: Path, content: str, *, append: bool = False, expe
             return
         finally:
             os.close(parent_fd)
+
+    if os.name == "nt" and _WINFS is not None:
+        _WINFS.write_text(
+            target,
+            content,
+            append=append,
+            expected_identity=expected_identity,
+        )
+        return
+
+    if os.name == "nt" and _WINFS is not None:
+        return _WINFS.read_text(
+            target,
+            max_chars=max_chars,
+            expected_identity=expected_identity,
+        )
 
     if _is_link_like(target):
         raise RuntimeError("Target is a link/reparse point.")
@@ -522,7 +545,10 @@ def move_file(path: str, name: str = "", destination: str = "") -> str:
         if not _is_safe_path(dst.parent):
             return f"Access denied (destination parent): {dst.parent}"
         origin = src.resolve()
-        shutil.move(str(src), str(dst))
+        if os.name == "nt" and _WINFS is not None:
+            _WINFS.rename(src, dst)
+        else:
+            shutil.move(str(src), str(dst))
         push_undo(f"moved {origin.name} to {dst.parent.name}/",
                   _undo_move(origin, dst.resolve()))
         return f"Moved: {src.name} → {dst.parent.name}/"
@@ -597,7 +623,10 @@ def rename_file(path: str, name: str = "", new_name: str = "") -> str:
             return f"A file named '{new_name}' already exists here."
 
         old_path = target.resolve()
-        target.rename(new_path)
+        if os.name == "nt" and _WINFS is not None:
+            _WINFS.rename(target, new_path)
+        else:
+            target.rename(new_path)
         push_undo(f"renamed {old_path.name} to {new_name}",
                   _undo_move(old_path, new_path.resolve()))
         return f"Renamed: {target.name} → {new_name}"
