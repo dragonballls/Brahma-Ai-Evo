@@ -64,6 +64,46 @@ MAX_DM_RECIPIENT_LENGTH = 320
 MAX_DM_MESSAGE_BYTES = 8 * 1024
 
 
+def _path_has_link_component(path: Path) -> bool:
+    try:
+        current = Path(path.anchor) if path.anchor else Path(".")
+        parts = path.parts[1:] if path.anchor else path.parts
+        for part in parts:
+            current = current / part
+            if current.is_symlink():
+                return True
+            is_junction = getattr(current, "is_junction", None)
+            if is_junction is not None and is_junction():
+                return True
+            if os.name == "nt":
+                attrs = getattr(current.stat(follow_symlinks=False), "st_file_attributes", 0)
+                reparse = getattr(_stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+                if reparse and attrs & reparse:
+                    return True
+        return False
+    except OSError:
+        return True
+
+
+def _validate_private_storage_path(path: Path, *, directory: bool = False) -> None:
+    path = Path(path)
+    if _path_has_link_component(path.parent):
+        raise RuntimeError(f"Instagram storage parent contains a symlink/junction/reparse component: {path.parent}")
+    if _path_has_link_component(path):
+        raise RuntimeError(f"Instagram storage path must not be a symlink/junction/reparse point: {path}")
+    if path.exists():
+        if directory and not path.is_dir():
+            raise RuntimeError(f"Instagram browser profile path is not a directory: {path}")
+        if not directory:
+            if not path.is_file():
+                raise RuntimeError(f"Instagram session path is not a regular file: {path}")
+            try:
+                if int(path.stat(follow_symlinks=False).st_nlink) > 1:
+                    raise RuntimeError(f"Instagram session path has multiple hard links: {path}")
+            except OSError as exc:
+                raise RuntimeError(f"Instagram session path could not be inspected safely: {path}") from exc
+
+
 def kill_browser_processes():
     """Ensures no orphan Playwright chromium processes hold locks on ig_browser_profile."""
     try:
@@ -460,6 +500,7 @@ class InstagramService:
 
         ig_log(f"Authenticating session for {username}...")
         try:
+            _validate_private_storage_path(SESSION_PATH)
             if SESSION_PATH.exists():
                 try:
                     self._client.load_settings(SESSION_PATH)
@@ -521,8 +562,25 @@ class InstagramService:
                             raise Exception("Instagram login rejected credentials. Please check your username and password, or use Session ID.")
                         raise
 
+            _validate_private_storage_path(SESSION_PATH.parent, directory=True)
             SESSION_PATH.parent.mkdir(parents=True, exist_ok=True)
-            self._client.dump_settings(SESSION_PATH)
+            _validate_private_storage_path(SESSION_PATH.parent, directory=True)
+            temp_session = SESSION_PATH.with_name(f".{SESSION_PATH.name}.{uuid.uuid4().hex}.tmp")
+            try:
+                self._client.dump_settings(temp_session)
+                _validate_private_storage_path(temp_session)
+                os.chmod(temp_session, 0o600)
+                os.replace(temp_session, SESSION_PATH)
+                _validate_private_storage_path(SESSION_PATH)
+                try:
+                    os.chmod(SESSION_PATH, 0o600)
+                except OSError:
+                    pass
+            finally:
+                try:
+                    temp_session.unlink(missing_ok=True)
+                except OSError:
+                    pass
             self._authenticated = True
             ig_log("Instagram authentication successful.")
             return True

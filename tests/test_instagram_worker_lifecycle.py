@@ -49,3 +49,37 @@ def test_instagram_dm_rejects_oversized_message():
         assert "8 KiB" in str(exc)
     else:
         raise AssertionError("oversized Instagram DMs must be rejected")
+
+
+def test_instagram_session_path_rejects_symlink(tmp_path):
+    from actions import instagram_mcp as ig
+    real = tmp_path / "real-session.json"
+    real.write_text("{}", encoding="utf-8")
+    link = tmp_path / "ig_session.json"
+    try:
+        link.symlink_to(real)
+    except (OSError, NotImplementedError):
+        return
+    try:
+        ig._validate_private_storage_path(link)
+    except RuntimeError as exc:
+        assert "symlink" in str(exc).lower()
+    else:
+        raise AssertionError("Instagram session symlink must be rejected")
+
+
+def test_instagram_storage_rejects_symlinked_profile_parent(tmp_path):
+    from actions import instagram_mcp as ig
+    real = tmp_path / "real-profile-root"
+    real.mkdir()
+    link = tmp_path / "profile-link"
+    try:
+        link.symlink_to(real, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        return
+    try:
+        ig._validate_private_storage_path(link / "ig_browser_profile", directory=True)
+    except RuntimeError as exc:
+        assert "parent" in str(exc).lower()
+    else:
+        raise AssertionError("Instagram browser profile under a symlinked parent must be rejected")
