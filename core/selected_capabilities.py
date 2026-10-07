@@ -37,13 +37,34 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _safe_state_text(path: Path, *, max_chars: int = 4 * 1024 * 1024) -> str:
+    if os.name == "nt":
+        from core.windows_file_safety import read_text
+        text, _size = read_text(path, max_chars=max_chars)
+        return text
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(path, flags)
+    try:
+        with os.fdopen(fd, "r", encoding="utf-8") as handle:
+            fd = -1
+            return handle.read(max_chars + 1)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 def _json_load(path: Path, default: Any) -> Any:
     if not path.is_file():
         return default
     if path.is_symlink():
         raise RuntimeError(f"Selected capability state path must not be a symlink: {path}")
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        raw = _safe_state_text(path)
+        if len(raw.encode("utf-8")) > 4 * 1024 * 1024:
+            raise ValueError("Selected capability state exceeds the 4 MiB safety limit.")
+        payload = json.loads(raw)
         if isinstance(default, (dict, list)) and not isinstance(payload, type(default)):
             raise ValueError("Selected capability state has an unexpected root schema.")
         return payload
