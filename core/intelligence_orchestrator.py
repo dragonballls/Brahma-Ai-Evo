@@ -99,7 +99,7 @@ def _runtime_intelligence_mode() -> str:
 def _contains_intent_term(text: str, terms: tuple[str, ...]) -> bool:
     normalized = str(text or "").casefold()
     return any(
-        re.search(rf"(?<!\\w){re.escape(str(term).casefold())}(?!\\w)", normalized)
+        re.search(rf"(?<!\w){re.escape(str(term).casefold())}(?!\w)", normalized)
         for term in terms
         if str(term).strip()
     )
