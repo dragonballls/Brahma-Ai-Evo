@@ -297,7 +297,12 @@ def _secure_write_text(target: Path, content: str, *, append: bool = False, expe
         raise ValueError("A file name is required.")
 
     if os.name == "nt" and _WINFS is not None:
-        _WINFS.unlink(target, expected_identity=expected_identity)
+        _WINFS.write_text(
+            target,
+            content,
+            append=append,
+            expected_identity=expected_identity,
+        )
         return
     if os.name != "nt" and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY"):
         parent_fd = _secure_parent_fd(parent)
@@ -329,15 +334,6 @@ def _secure_write_text(target: Path, content: str, *, append: bool = False, expe
             return
         finally:
             os.close(parent_fd)
-
-    if os.name == "nt" and _WINFS is not None:
-        _WINFS.write_text(
-            target,
-            content,
-            append=append,
-            expected_identity=expected_identity,
-        )
-        return
 
     if _is_link_like(target):
         raise RuntimeError("Target is a link/reparse point.")
