@@ -102,8 +102,10 @@ class RuntimeConsistencyTests(unittest.TestCase):
     def test_identity_persistence_is_atomic(self):
         source = self.read("core/identity.py")
         self.assertIn("self._lock = threading.RLock()", source)
-        self.assertIn("temp = self.config_file.with_suffix(\".json.tmp\")", source)
-        self.assertIn("temp.replace(self.config_file)", source)
+        self.assertIn("os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL", source)
+        self.assertIn("os.fsync(handle.fileno())", source)
+        self.assertIn("os.replace(temp, self.config_file)", source)
+        self.assertIn("Identity save verification found a mismatched final state.", source)
 
     def test_provider_policy_is_canonical(self):
         from core.provider_policy import (
@@ -639,7 +641,8 @@ class RuntimeConsistencyTests(unittest.TestCase):
         source = self.read("core/identity.py")
         self.assertIn("self._lock = threading.RLock()", source)
         self.assertIn("def _set_value(", source)
-        self.assertIn("temp.replace(self.config_file)", source)
+        self.assertIn("os.replace(temp, self.config_file)", source)
+        self.assertIn("os.O_EXCL", source)
         self.assertIn("raise", source)
         self.assertIn("with self._lock:", source)
 
