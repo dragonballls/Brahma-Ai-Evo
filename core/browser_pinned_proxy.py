@@ -506,6 +506,17 @@ class _Handler(socketserver.BaseRequestHandler):
             except OSError:
                 pass
 
+    def _error(self, status: int, message: str) -> None:
+        body = (message + "\n").encode("utf-8")
+        self.request.sendall(
+            (
+                f"HTTP/1.1 {status} Error\r\n"
+                f"Content-Length: {len(body)}\r\n"
+                "Connection: close\r\n"
+                "Content-Type: text/plain; charset=utf-8\r\n\r\n"
+            ).encode("ascii") + body
+        )
+
     @staticmethod
     def _validate_response_headers(header_block: bytes) -> int:
         if not header_block.endswith(b"\r\n\r\n"):
