@@ -156,7 +156,11 @@ class SmartHomeService:
         runtime_device = dict(device)
         runtime_device["provider_credentials"] = (account or {}).get("credentials", {})
         try:
-            provider.execute(runtime_device, "restart", {})
+            result = provider.execute(runtime_device, "restart", {})
+            if not isinstance(result, dict) or result.get("success") is False:
+                detail = str((result or {}).get("error") if isinstance(result, dict) else "Smart-home provider returned an invalid restart result.")
+                self._storage.log_activity(device["name"], f"Restart command failed: {detail}")
+                return {"success": False, "error": detail, "device": device}
         except Exception as exc:
             self._storage.log_activity(device["name"], f"Restart command failed: {exc}")
             return {"success": False, "error": str(exc), "device": device}
@@ -219,9 +223,13 @@ class SmartHomeService:
                 device_failures = 0
                 for i in range(repeat_count):
                     try:
-                        self.execute_device_action(device_id, "power", {"is_on": False})
+                        off_result = self.execute_device_action(device_id, "power", {"is_on": False})
+                        if off_result.get("success") is not True:
+                            raise RuntimeError(str(off_result.get("error") or off_result.get("detail") or "Power-off was rejected."))
                         time.sleep(0.3)
-                        self.execute_device_action(device_id, "power", {"is_on": True})
+                        on_result = self.execute_device_action(device_id, "power", {"is_on": True})
+                        if on_result.get("success") is not True:
+                            raise RuntimeError(str(on_result.get("error") or on_result.get("detail") or "Power-on was rejected."))
                         time.sleep(0.3)
                     except Exception as exc:
                         device_failures += 1
@@ -244,10 +252,16 @@ class SmartHomeService:
                         action_name = action
                     try:
                         response = self.execute_device_action(device_id, action_name, payload)
+                        if response.get("success") is not True:
+                            detail = str(response.get("error") or response.get("detail") or "Device action was rejected.")
+                            results.append(f"Device action failed: {detail}")
+                            failures.append({"device": str(device.get("name") or device_id), "error": detail})
+                            break
                         results.append(str(response.get("detail") or "Device updated."))
                     except Exception as exc:
                         results.append("Device action failed")
                         failures.append({"device": str(device.get("name") or device_id), "error": str(exc)})
+                        break
                     time.sleep(0.2)
                 continue
 
@@ -258,6 +272,11 @@ class SmartHomeService:
             else:
                 action_name = action
             response = self.execute_device_action(device_id, action_name, payload)
+            if response.get("success") is not True:
+                error_detail = str(response.get("error") or response.get("detail") or "Device action was rejected.")
+                results.append(f"Device action failed: {error_detail}")
+                failures.append({"device": str(device.get("name") or device_id), "error": error_detail})
+                continue
             results.append(str(response.get("detail") or "Device updated."))
 
         detail = " ".join(results)
