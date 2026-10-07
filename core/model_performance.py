@@ -66,11 +66,15 @@ def _save(payload: dict[str, Any]) -> None:
     _PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = _PATH.with_name(f".{_PATH.name}.{os.getpid()}-{uuid.uuid4().hex}.tmp")
     try:
-        tmp_path.write_text(
-            json.dumps(payload, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
+        serialized = json.dumps(payload, indent=2, sort_keys=True)
+        with tmp_path.open("w", encoding="utf-8") as handle:
+            handle.write(serialized)
+            handle.flush()
+            os.fsync(handle.fileno())
         tmp_path.replace(_PATH)
+        verified = json.loads(_safe_performance_text())
+        if verified != payload:
+            raise RuntimeError("Model-performance save verification found a mismatched final state.")
     finally:
         try:
             tmp_path.unlink(missing_ok=True)
