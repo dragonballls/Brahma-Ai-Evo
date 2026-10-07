@@ -138,3 +138,37 @@ def test_public_http_rejects_multicast_resolution(monkeypatch):
     ])
     with pytest.raises(ValueError, match="multicast"):
         network_safety.fetch_public_bytes("http://example.com/status")
+
+
+def test_crypto_live_price_rejects_injection_like_coin_ids():
+    from features import crypto_live_price
+    result = crypto_live_price.execute(coin_id="bitcoin&ids=ethereum")
+    assert result.get("error") == "Invalid cryptocurrency identifier."
+
+
+def test_crypto_live_price_uses_bounded_fixed_https_transport(monkeypatch):
+    from features import crypto_live_price
+
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+
+    def fake_open(url, **kwargs):
+        assert url.startswith("https://api.coingecko.com/")
+        assert kwargs["allowed_hosts"] == {"api.coingecko.com"}
+        assert kwargs["timeout"] == 8
+        return Response()
+
+    monkeypatch.setattr(crypto_live_price, "open_fixed_https", fake_open)
+    monkeypatch.setattr(
+        crypto_live_price,
+        "read_bounded",
+        lambda response, limit: (assert_limit(limit) or b'{"bitcoin":{"usd":123.45}}'),
+    )
+    result = crypto_live_price.execute(coin_id="bitcoin")
+    assert result["price"] == 123.45
+
+
+def assert_limit(limit):
+    assert limit == 128 * 1024
+    return None
