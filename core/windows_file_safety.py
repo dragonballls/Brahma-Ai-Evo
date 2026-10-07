@@ -1,21 +1,13 @@
-"""Windows handle-backed filesystem operations for Brahma's security boundary.
-
-This module intentionally uses Win32 handles for validation and mutation so a
-validated path cannot be swapped to a different reparse target between checks
-and the actual read/write/delete/rename operation.
-"""
-
+"""Windows handle-backed filesystem safety primitives."""
 from __future__ import annotations
 
 import ctypes
 import os
 import sys
 from pathlib import Path
-from typing import BinaryIO
 
-if sys.platform != "win32":  # pragma: no cover - imported only on Windows
+if sys.platform != "win32":  # pragma: no cover
     raise ImportError("windows_file_safety is Windows-only")
-
 
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
@@ -24,33 +16,25 @@ GENERIC_READ = 0x80000000
 GENERIC_WRITE = 0x40000000
 DELETE = 0x00010000
 FILE_READ_ATTRIBUTES = 0x00000080
-
 FILE_SHARE_READ = 0x00000001
 FILE_SHARE_WRITE = 0x00000002
 FILE_SHARE_DELETE = 0x00000004
-
 OPEN_EXISTING = 3
 CREATE_NEW = 1
-
 FILE_ATTRIBUTE_NORMAL = 0x00000080
+FILE_ATTRIBUTE_DIRECTORY = 0x00000010
+FILE_ATTRIBUTE_REPARSE_POINT = 0x00000400
 FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
 FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
 FILE_FLAG_WRITE_THROUGH = 0x80000000
-
-FILE_NAME_NORMALIZED = 0x0
 
 FileAttributeTagInfo = 9
 FileDispositionInfo = 4
 FileRenameInfo = 3
 
-FILE_ATTRIBUTE_REPARSE_POINT = 0x00000400
-
 
 class FILE_ATTRIBUTE_TAG_INFO_STRUCT(ctypes.Structure):
-    _fields_ = [
-        ("FileAttributes", ctypes.c_ulong),
-        ("ReparseTag", ctypes.c_ulong),
-    ]
+    _fields_ = [("FileAttributes", ctypes.c_ulong), ("ReparseTag", ctypes.c_ulong)]
 
 
 class BY_HANDLE_FILE_INFORMATION(ctypes.Structure):
@@ -76,41 +60,26 @@ class FILE_DISPOSITION_INFO_STRUCT(ctypes.Structure):
 
 
 kernel32.CreateFileW.argtypes = [
-    ctypes.c_wchar_p,
-    ctypes.c_ulong,
-    ctypes.c_ulong,
-    ctypes.c_void_p,
-    ctypes.c_ulong,
-    ctypes.c_ulong,
-    ctypes.c_void_p,
+    ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p,
+    ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p,
 ]
 kernel32.CreateFileW.restype = ctypes.c_void_p
 kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
 kernel32.CloseHandle.restype = ctypes.c_int
 kernel32.GetFinalPathNameByHandleW.argtypes = [
-    ctypes.c_void_p,
-    ctypes.c_wchar_p,
-    ctypes.c_ulong,
-    ctypes.c_ulong,
+    ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong,
 ]
 kernel32.GetFinalPathNameByHandleW.restype = ctypes.c_ulong
 kernel32.GetFileInformationByHandle.argtypes = [
-    ctypes.c_void_p,
-    ctypes.POINTER(BY_HANDLE_FILE_INFORMATION),
+    ctypes.c_void_p, ctypes.POINTER(BY_HANDLE_FILE_INFORMATION),
 ]
 kernel32.GetFileInformationByHandle.restype = ctypes.c_int
 kernel32.GetFileInformationByHandleEx.argtypes = [
-    ctypes.c_void_p,
-    ctypes.c_int,
-    ctypes.c_void_p,
-    ctypes.c_ulong,
+    ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_ulong,
 ]
 kernel32.GetFileInformationByHandleEx.restype = ctypes.c_int
 kernel32.SetFileInformationByHandle.argtypes = [
-    ctypes.c_void_p,
-    ctypes.c_int,
-    ctypes.c_void_p,
-    ctypes.c_ulong,
+    ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_ulong,
 ]
 kernel32.SetFileInformationByHandle.restype = ctypes.c_int
 
@@ -120,9 +89,9 @@ def _win_path(path: Path | str) -> str:
 
 
 def _strip_device_prefix(path: str) -> str:
-    if path.startswith("\\\\?\\UNC\\"):
-        return "\\\\" + path[8:]
-    if path.startswith("\\\\?\\"):
+    if path.startswith(r"\\?\UNC\\"):
+        return r"\\" + path[8:]
+    if path.startswith(r"\\?\"):
         return path[4:]
     return path
 
@@ -132,7 +101,7 @@ def _final_path(handle: int) -> str:
     while size <= 32768:
         buffer = ctypes.create_unicode_buffer(size)
         result = kernel32.GetFinalPathNameByHandleW(
-            ctypes.c_void_p(handle), buffer, size, FILE_NAME_NORMALIZED
+            ctypes.c_void_p(handle), buffer, size, 0,
         )
         if result == 0:
             raise OSError(ctypes.get_last_error(), "GetFinalPathNameByHandleW failed")
@@ -143,12 +112,10 @@ def _final_path(handle: int) -> str:
 
 
 def _is_under_home(final_path: str) -> bool:
-    candidate = Path(final_path).absolute()
-    home = Path.home().absolute()
     try:
-        candidate.relative_to(home)
+        Path(final_path).absolute().relative_to(Path.home().absolute())
         return True
-    except ValueError:
+    except (OSError, ValueError):
         return False
 
 
@@ -173,6 +140,14 @@ def _reject_reparse(handle: int, info: BY_HANDLE_FILE_INFORMATION) -> None:
         raise OSError("Refusing to operate on a Windows reparse point")
 
 
+def _identity(info: BY_HANDLE_FILE_INFORMATION) -> tuple[int, int, int]:
+    return (
+        int(info.dwVolumeSerialNumber),
+        int(info.nFileIndexHigh),
+        int(info.nFileIndexLow),
+    )
+
+
 def open_safe_file(
     path: Path | str,
     *,
@@ -180,14 +155,8 @@ def open_safe_file(
     append: bool = False,
     create_new: bool = False,
 ) -> tuple[int, str, BY_HANDLE_FILE_INFORMATION]:
-    """Open a regular file and prove its final handle path is home-confined."""
-    if create_new and append:
-        disposition = CREATE_NEW
-    elif create_new:
-        disposition = CREATE_NEW
-    else:
-        disposition = OPEN_EXISTING
-
+    """Open a regular file, reject reparse points, and prove its final path."""
+    disposition = CREATE_NEW if create_new else OPEN_EXISTING
     desired = GENERIC_READ | (GENERIC_WRITE if write else 0)
     flags = FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT
     if write:
@@ -211,11 +180,12 @@ def open_safe_file(
             raise OSError("Refusing a file whose final handle path is outside the user's home directory")
         info = _handle_info(handle)
         _reject_reparse(handle, info)
+        if info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY:
+            raise OSError("Refusing to operate on a directory as a regular file")
+
         import msvcrt
-        fd_flags = os.O_BINARY | (os.O_RDWR if write else os.O_RDONLY)
-        fd = msvcrt.open_osfhandle(int(handle), fd_flags)
-        # Ownership is transferred to the CRT fd.
-        handle = None
+        fd = msvcrt.open_osfhandle(int(handle), os.O_BINARY | (os.O_RDWR if write else os.O_RDONLY))
+        handle = None  # ownership transferred to fd
         if append:
             os.lseek(fd, 0, os.SEEK_END)
         return fd, final, info
@@ -226,21 +196,15 @@ def open_safe_file(
 
 
 def read_text(path: Path | str, *, max_chars: int, expected_identity=None) -> tuple[str, int]:
-    import msvcrt
-
     fd, _final, info = open_safe_file(path, write=False)
     try:
-        identity = (
-            int(info.dwVolumeSerialNumber),
-            int(info.nFileIndexHigh),
-            int(info.nFileIndexLow),
-        )
-        if expected_identity is not None and tuple(expected_identity) != identity:
-            raise OSError("Target changed identity before secure Windows read")
+        if expected_identity is not None and len(tuple(expected_identity)) == 3:
+            if tuple(expected_identity) != _identity(info):
+                raise OSError("Target changed identity before secure Windows read")
         with os.fdopen(fd, "r", encoding="utf-8", errors="ignore", closefd=True) as handle:
             fd = -1
             content = handle.read(max_chars + 1)
-        return content, int(info.nFileSizeHigh) << 32 | int(info.nFileSizeLow)
+        return content, (int(info.nFileSizeHigh) << 32) | int(info.nFileSizeLow)
     finally:
         if fd >= 0:
             os.close(fd)
@@ -260,13 +224,9 @@ def write_text(
         create_new=expected_identity is None,
     )
     try:
-        identity = (
-            int(info.dwVolumeSerialNumber),
-            int(info.nFileIndexHigh),
-            int(info.nFileIndexLow),
-        )
-        if expected_identity is not None and tuple(expected_identity) != identity:
-            raise OSError("Target changed identity before secure Windows write")
+        if expected_identity is not None and len(tuple(expected_identity)) == 3:
+            if tuple(expected_identity) != _identity(info):
+                raise OSError("Target changed identity before secure Windows write")
         if not append:
             os.ftruncate(fd, 0)
         with os.fdopen(fd, "w", encoding="utf-8", closefd=True) as handle:
@@ -274,15 +234,13 @@ def write_text(
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
-        return identity
-    except Exception:
+        return _identity(info)
+    finally:
         if fd >= 0:
             os.close(fd)
-        raise
 
 
 def unlink(path: Path | str, *, expected_identity=None) -> None:
-    path = Path(path)
     handle = kernel32.CreateFileW(
         _win_path(path),
         DELETE | FILE_READ_ATTRIBUTES,
@@ -300,13 +258,9 @@ def unlink(path: Path | str, *, expected_identity=None) -> None:
             raise OSError("Refusing to delete a file outside the user's home directory")
         info = _handle_info(handle)
         _reject_reparse(handle, info)
-        identity = (
-            int(info.dwVolumeSerialNumber),
-            int(info.nFileIndexHigh),
-            int(info.nFileIndexLow),
-        )
-        if expected_identity is not None and tuple(expected_identity) != identity:
-            raise OSError("Target changed identity before secure Windows delete")
+        if expected_identity is not None and len(tuple(expected_identity)) == 3:
+            if tuple(expected_identity) != _identity(info):
+                raise OSError("Target changed identity before secure Windows delete")
         disposition = FILE_DISPOSITION_INFO_STRUCT(1)
         if not kernel32.SetFileInformationByHandle(
             ctypes.c_void_p(handle),
@@ -319,12 +273,7 @@ def unlink(path: Path | str, *, expected_identity=None) -> None:
         kernel32.CloseHandle(ctypes.c_void_p(handle))
 
 
-def rename(
-    source: Path | str,
-    destination: Path | str,
-    *,
-    source_identity=None,
-) -> None:
+def rename(source: Path | str, destination: Path | str, *, source_identity=None) -> None:
     source_handle = kernel32.CreateFileW(
         _win_path(source),
         DELETE | FILE_READ_ATTRIBUTES,
@@ -336,6 +285,7 @@ def rename(
     )
     if source_handle in (None, INVALID_HANDLE_VALUE):
         raise OSError(ctypes.get_last_error(), f"CreateFileW failed for {source}")
+
     destination_path = Path(destination)
     parent_handle = kernel32.CreateFileW(
         _win_path(destination_path.parent),
@@ -349,40 +299,37 @@ def rename(
     if parent_handle in (None, INVALID_HANDLE_VALUE):
         kernel32.CloseHandle(ctypes.c_void_p(source_handle))
         raise OSError(ctypes.get_last_error(), f"CreateFileW failed for destination parent {destination_path.parent}")
+
     try:
         final_source = _final_path(source_handle)
         final_parent = _final_path(parent_handle)
         if not _is_under_home(final_source) or not _is_under_home(final_parent):
             raise OSError("Refusing a rename outside the user's home directory")
+
         source_info = _handle_info(source_handle)
         parent_info = _handle_info(parent_handle)
         _reject_reparse(source_handle, source_info)
         _reject_reparse(parent_handle, parent_info)
-        source_identity_now = (
-            int(source_info.dwVolumeSerialNumber),
-            int(source_info.nFileIndexHigh),
-            int(source_info.nFileIndexLow),
-        )
-        if source_identity is not None and tuple(source_identity) != source_identity_now:
-            raise OSError("Source changed identity before secure Windows rename")
+        if source_identity is not None and len(tuple(source_identity)) == 3:
+            if tuple(source_identity) != _identity(source_info):
+                raise OSError("Source changed identity before secure Windows rename")
 
         leaf = destination_path.name
-        if not leaf or leaf in {".", ".."} or "\\\x00" in leaf:
+        if not leaf or leaf in {".", ".."} or "\x00" in leaf or "/" in leaf or "\\" in leaf:
             raise ValueError("Invalid destination filename")
-        # FILE_RENAME_INFO has a flexible WCHAR tail.
+
         name = leaf.encode("utf-16-le")
-        size = ctypes.sizeof(ctypes.c_byte) + ctypes.sizeof(ctypes.c_void_p) + ctypes.sizeof(ctypes.c_ulong) + len(name)
+        pointer_size = ctypes.sizeof(ctypes.c_void_p)
+        root_offset = pointer_size
+        length_offset = root_offset + pointer_size
+        name_offset = length_offset + ctypes.sizeof(ctypes.c_ulong)
+        size = name_offset + len(name)
         raw = ctypes.create_string_buffer(size)
-        ctypes.memset(raw, 0, size)
-        offset_root = ctypes.sizeof(ctypes.c_byte)
-        if ctypes.sizeof(ctypes.c_void_p) == 8 and offset_root % 8:
-            offset_root += 8 - (offset_root % 8)
         ctypes.c_ubyte.from_buffer(raw, 0).value = 0
-        ctypes.c_void_p.from_buffer(raw, offset_root).value = parent_handle
-        offset_len = offset_root + ctypes.sizeof(ctypes.c_void_p)
-        ctypes.c_ulong.from_buffer(raw, offset_len).value = len(name)
-        offset_name = offset_len + ctypes.sizeof(ctypes.c_ulong)
-        raw[offset_name:offset_name + len(name)] = name
+        ctypes.c_void_p.from_buffer(raw, root_offset).value = parent_handle
+        ctypes.c_ulong.from_buffer(raw, length_offset).value = len(name)
+        raw[name_offset:name_offset + len(name)] = name
+
         if not kernel32.SetFileInformationByHandle(
             ctypes.c_void_p(source_handle),
             FileRenameInfo,
