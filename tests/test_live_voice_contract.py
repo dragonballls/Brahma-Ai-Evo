@@ -119,7 +119,9 @@ class LiveVoiceContractTests(unittest.TestCase):
         self.assertIn("safety_language = language_prompt_block()", self.main_text)
     def test_offline_voice_never_calls_network_speech_recognition(self):
         self.assertIn("recognize_sphinx(audio_data)", self.main_text)
-        self.assertIn('if bool(app_cfg.get("offline_mode_enabled", False)):', self.main_text)
+        self.assertIn('config_manager.get_boolean_setting("offline_mode_enabled", False)', self.main_text)
+        self.assertIn('config_manager.get_boolean_setting(\n            "allow_cloud_transcription", False\n        )', self.main_text)
+        self.assertNotIn('bool(app_cfg.get("offline_mode_enabled", False))', self.main_text)
         self.assertIn("recognize_google(audio_data)", self.main_text)
         requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
         self.assertRegex(requirements, r"(?im)^pocketsphinx(?:>=5\.0\.0,<6|==5\.0\.4)$")
@@ -145,6 +147,15 @@ class LiveVoiceContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_voice_startup_does_not_replace_corrupt_settings_with_network_defaults():
+    main_text = (ROOT / "main.py").read_text(encoding="utf-8")
+    start = main_text.index("voice_settings = config_manager.load_settings()")
+    block = main_text[start:main_text.index("client = genai.Client(", start)]
+    assert "voice configuration could not be loaded safely" in block
+    assert "voice startup halted" in block
+    assert "voice_settings = {}" not in block
 
 
 def test_microphone_transcription_does_not_use_cloud_without_explicit_permission(monkeypatch):
