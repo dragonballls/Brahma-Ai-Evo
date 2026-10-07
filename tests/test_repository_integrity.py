@@ -4,6 +4,7 @@ import ast
 from pathlib import Path
 import re
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -182,7 +183,13 @@ class RepositoryIntegrityTests(unittest.TestCase):
         self.assertIn("def _speak_native(self, text: str, profile)", main)
         self.assertIn("chat_with_tools(", main)
         self.assertIn("def chat_with_tools(", or_client)
-        self.assertIn('normalize_provider(self._provider) == GEMINI', llm)
+        import llm_client
+        with patch.object(llm_client.openrouter_client, "chat", return_value="ok") as chat:
+            client = llm_client.UnifiedAIClient.__new__(llm_client.UnifiedAIClient)
+            self.assertEqual(client._gemini_text("prompt", "system"), "ok")
+            kwargs = chat.call_args.kwargs
+            self.assertEqual(kwargs["provider"], "gemini")
+            self.assertFalse(kwargs["allow_direct_fallback"])
 
     def test_pyinstaller_includes_offline_speech_dependencies(self):
         source = (ROOT / "installer" / "BrahmaEvo.spec").read_text(encoding="utf-8")

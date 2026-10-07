@@ -30,7 +30,7 @@ def test_approve_push_failure_preserves_promoting_state_for_recovery():
     calls = []
 
     agent._load = lambda _checkpoint_id: checkpoint
-    agent._validate_checkpoint = lambda _checkpoint, _checkpoint_id=None: None
+    agent._validate_checkpoint = lambda _checkpoint: None
     agent.validate_repo = lambda: None
     agent._branch = lambda: checkpoint.branch
     agent._save = lambda value: saved.append(value)
@@ -80,7 +80,7 @@ def test_recover_undoing_push_failure_is_explicitly_ambiguous():
     checkpoint = _checkpoint(state="undoing", promoted_sha=promoted, undo_commits=(undo_tip,))
     agent = object.__new__(SelfCodingAgent)
     agent._load = lambda _checkpoint_id: checkpoint
-    agent._validate_checkpoint = lambda _checkpoint, _checkpoint_id=None: None
+    agent._validate_checkpoint = lambda _checkpoint: None
     agent.validate_repo = lambda: None
     agent._save = lambda _value: None
 
@@ -114,7 +114,7 @@ def test_undo_push_failure_preserves_undoing_state_for_recovery():
 
     agent = object.__new__(SelfCodingAgent)
     agent._load = lambda _checkpoint_id: checkpoint
-    agent._validate_checkpoint = lambda _checkpoint, _checkpoint_id=None: None
+    agent._validate_checkpoint = lambda _checkpoint: None
     agent.validate_repo = lambda: None
     agent._branch = lambda: "agent/checkpoint/original"
     agent._save = lambda value: saved.append(value)
@@ -213,7 +213,7 @@ def test_partial_undo_failure_restores_approved_state(tmp_path):
     calls = []
     agent = object.__new__(SelfCodingAgent)
     agent._load = lambda _checkpoint_id: checkpoint
-    agent._validate_checkpoint = lambda _checkpoint, _checkpoint_id=None: None
+    agent._validate_checkpoint = lambda _checkpoint: None
     agent.validate_repo = lambda: None
     agent._branch = lambda: "main"
     agent._save = lambda value: saved.append(value)
