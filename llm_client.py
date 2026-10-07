@@ -18,6 +18,32 @@ def _get_base_dir() -> Path:
 
 BASE_DIR = _get_base_dir()
 
+MAX_LOCAL_LLM_RESPONSE_BYTES = 2 * 1024 * 1024
+_LOCAL_LLM_RESPONSE_CHUNK_BYTES = 16 * 1024
+
+
+def _read_bounded_local_json(response: requests.Response) -> dict:
+    """Read a local-model JSON response with a hard memory bound."""
+    chunks: list[bytes] = []
+    total = 0
+    try:
+        for chunk in response.iter_content(chunk_size=_LOCAL_LLM_RESPONSE_CHUNK_BYTES):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > MAX_LOCAL_LLM_RESPONSE_BYTES:
+                raise ValueError("Local AI response exceeds the 2 MiB safety limit.")
+            chunks.append(chunk)
+        data = json.loads(b"".join(chunks).decode("utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("Local AI response JSON must be an object.")
+        return data
+    finally:
+        try:
+            response.close()
+        except Exception:
+            pass
+
 class UnifiedAIClient:
     def __init__(self):
         self._provider = GEMINI
@@ -66,23 +92,34 @@ class UnifiedAIClient:
         except ValueError as exc:
             logger.error("[LLM Client] Refusing unsafe Local AI endpoint: %s", exc)
             return None
+        resp = None
         try:
             resp = requests.post(
                 endpoint,
                 headers={"Content-Type": "application/json"},
                 json=payload,
-                timeout=120
+                timeout=120,
+                allow_redirects=False,
+                stream=True,
             )
-            if resp.status_code == 200:
-                data = resp.json()
-                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                return content.strip() if content else None
-            else:
-                logger.error(f"[LLM Client] Local AI Error {resp.status_code}: {resp.text}")
+            if 300 <= resp.status_code < 400:
+                logger.error("[LLM Client] Local AI redirect refused.")
                 return None
+            if resp.status_code != 200:
+                logger.error(f"[LLM Client] Local AI Error HTTP {resp.status_code}")
+                return None
+            data = _read_bounded_local_json(resp)
+            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            return content.strip() if content else None
         except Exception as e:
             logger.error(f"[LLM Client] Local AI Request Failed: {e}")
             return None
+        finally:
+            if resp is not None:
+                try:
+                    resp.close()
+                except Exception:
+                    pass
 
     def _gemini_text(self, prompt: str, system: str, max_tokens: int = 4096, temperature: float = 0.7) -> str:
         """Compatibility helper; all online text generation goes through OmniRoute."""

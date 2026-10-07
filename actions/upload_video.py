@@ -212,7 +212,7 @@ def run(parameters: dict, player=None, speak=None, session_memory=None) -> str:
             f"Video upload preparation failed: could not open the {platform_name.title()} "
             "Creator Studio. No upload was performed."
         )
-    _log(f"[Publisher] Launched {platform_name.title()} Creator Studio in browser.")
+    _log(f"[Publisher] Browser open request accepted for {platform_name.title()} Creator Studio; page load is not verified.")
 
     # Re-check the selected source before presenting success; the file may have
     # disappeared or changed while AI copy generation/browser startup was running.
@@ -251,7 +251,7 @@ def run(parameters: dict, player=None, speak=None, session_memory=None) -> str:
 
     spoken = (
         f"I've prepared {file_info} for {platform_name.title()}. "
-        "The creator studio is open; the video has not been uploaded automatically. "
+        "The browser open request for the creator studio was accepted; page load was not independently verified, and the video has not been uploaded automatically. "
         + (
             "Your optimized caption and hashtags are copied to the clipboard."
             if clipboard_status

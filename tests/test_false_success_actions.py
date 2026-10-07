@@ -92,3 +92,29 @@ def test_upload_video_success_language_does_not_claim_an_automatic_upload():
             })
 
     assert "has not been uploaded automatically" in result
+
+
+def test_upload_video_does_not_claim_browser_open_is_verified():
+    from actions import upload_video
+    from tempfile import TemporaryDirectory
+
+    with TemporaryDirectory() as tmp:
+        video = Path(tmp) / "demo.mp4"
+        video.write_bytes(b"video")
+
+        with patch.object(upload_video, "_find_candidate_video", return_value=video), \
+             patch.object(upload_video, "_generate_video_copy", return_value={
+                 "hook_title": "Demo",
+                 "caption": "Demo",
+                 "hashtags": [],
+                 "formatted_post": "Demo",
+             }), \
+             patch.object(upload_video.webbrowser, "open", return_value=True):
+            result = upload_video.run({
+                "platform": "youtube",
+                "description": "demo",
+                "video_path": str(video),
+            })
+
+    assert "page load was not independently verified" in result
+    assert "creator studio is open" not in result.lower()
