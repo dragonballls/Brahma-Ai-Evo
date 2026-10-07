@@ -60,6 +60,10 @@ def ig_log(msg: str):
         pass
 
 
+MAX_DM_RECIPIENT_LENGTH = 320
+MAX_DM_MESSAGE_BYTES = 8 * 1024
+
+
 def kill_browser_processes():
     """Ensures no orphan Playwright chromium processes hold locks on ig_browser_profile."""
     try:
@@ -73,6 +77,22 @@ def kill_browser_processes():
                 pass
     except Exception:
         pass
+
+
+def _validate_dm_inputs(recipient: object, message_text: object) -> tuple[str, str]:
+    clean_recipient = str(recipient or "").strip().lstrip("@")
+    clean_message = str(message_text or "")
+    if not clean_recipient or len(clean_recipient) > MAX_DM_RECIPIENT_LENGTH:
+        raise ValueError("Instagram recipient is missing or exceeds the safety limit.")
+    if len(clean_message.encode("utf-8")) > MAX_DM_MESSAGE_BYTES:
+        raise ValueError("Instagram message exceeds the 8 KiB safety limit.")
+    if any(ord(ch) < 0x20 and ch not in {"\r", "\n", "\t"} for ch in clean_message):
+        raise ValueError("Instagram message contains unsupported control characters.")
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in clean_recipient):
+        raise ValueError("Instagram recipient contains unsupported control characters.")
+    if clean_recipient.isdigit() and len(clean_recipient) > 30:
+        raise ValueError("Instagram thread ID is too long.")
+    return clean_recipient, clean_message
 
 
 class BrowserInstagramWorker(threading.Thread):
@@ -254,9 +274,8 @@ class BrowserInstagramWorker(threading.Thread):
     def send_dm_action(self, ctx, recipient: str, message_text: str, open_in_browser: bool = True) -> Dict[str, Any]:
         if not self.is_browser_logged_in(ctx):
             raise RuntimeError("Instagram browser profile is not logged in. Please click 'Connect via Browser' in Settings Hub.")
-
+        recipient, message_text = _validate_dm_inputs(recipient, message_text)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
-        recipient = str(recipient).strip().lstrip("@")
         thread_id = recipient if recipient.isdigit() else ""
 
         if thread_id:
@@ -265,7 +284,6 @@ class BrowserInstagramWorker(threading.Thread):
         else:
             page.goto("https://www.instagram.com/direct/inbox/", timeout=30000, wait_until="domcontentloaded")
             page.wait_for_timeout(1500)
-
             try:
                 for sel in ['button:has-text("Not Now")', 'button:has-text("Cancel")']:
                     btn = page.query_selector(sel)
@@ -294,7 +312,10 @@ class BrowserInstagramWorker(threading.Thread):
                 else:
                     raise RuntimeError(f"Could not find conversation or Message button for @{recipient}")
 
-        box = page.wait_for_selector('div[contenteditable="true"][role="textbox"], div[aria-label*="Message"], textarea', timeout=15000)
+        box = page.wait_for_selector(
+            'div[contenteditable="true"][role="textbox"], div[aria-label*="Message"], textarea',
+            timeout=15000,
+        )
         if not box:
             raise RuntimeError("Could not find message input box on chat thread.")
 
@@ -317,12 +338,18 @@ class BrowserInstagramWorker(threading.Thread):
                 ig_log(f"Browser launch notice: {e}")
 
         return {
-            "status": "success",
+            "success": False,
+            "status": "submitted",
+            "submitted": True,
+            "delivery_verified": False,
+            "error": "Instagram accepted the send interaction, but delivery was not independently verified.",
+            "error_code": "DELIVERY_UNVERIFIED",
             "recipient": recipient,
             "thread_id": final_tid,
             "message": message_text,
             "browser_url": browser_url,
         }
+
 
     def _poll_inbox(self, ctx):
         threads = self.get_inbox_action(ctx, amount=8)
@@ -517,25 +544,23 @@ class InstagramService:
     def send_dm(self, recipient: str, message_text: str, open_in_browser: bool = True) -> Dict[str, Any]:
         """
         Sends an Instagram Direct Message to a username or thread ID.
-        Optionally launches the chat thread in the user's default browser.
+        Delivery is reported as submitted unless independently verified.
         """
-        recipient = str(recipient).strip().lstrip("@")
+        recipient, message_text = _validate_dm_inputs(recipient, message_text)
         if self.is_browser_ready():
             try:
                 bw = self.get_browser_worker()
                 if bw:
                     ig_log(f"Dispatching send_dm via BrowserEngine to @{recipient}...")
-                    res = bw.execute(bw.send_dm_action, recipient, message_text, open_in_browser)
-                    return res
+                    return bw.execute(bw.send_dm_action, recipient, message_text, open_in_browser)
             except Exception as e:
-                ig_log(f"Browser send_dm error: {e}. Attempting instagrapi fallback...")
+                ig_log(f"Browser send_dm error before delivery result: {e}. Attempting instagrapi fallback...")
 
         cl = self.get_client(require_auth=True)
         thread_id = None
 
         ig_log(f"Sending DM via Instagrapi to '{recipient}': {message_text[:40]}...")
 
-        # Determine if recipient is numeric thread_id or username
         if recipient.isdigit() and len(recipient) > 10:
             thread_id = recipient
             try:
@@ -582,12 +607,18 @@ class InstagramService:
                 ig_log(f"Could not open browser: {e}")
 
         return {
-            "status": "success",
+            "success": False,
+            "status": "submitted",
+            "submitted": True,
+            "delivery_verified": False,
+            "error": "Instagram accepted the send request, but delivery was not independently verified.",
+            "error_code": "DELIVERY_UNVERIFIED",
             "recipient": recipient,
             "thread_id": thread_id,
             "message": message_text,
             "browser_url": browser_url,
         }
+
 
     def get_inbox(self, amount: int = 5) -> List[Dict[str, Any]]:
         """Retrieves recent inbox conversations and unread messages."""
