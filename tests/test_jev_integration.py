@@ -47,3 +47,10 @@ class JevIntegrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+    def test_browser_adapter_fails_closed_even_when_key_exists(self):
+        from core.jev_browser import JevBrowserUnavailable, run_goal
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": "present"}, clear=False):
+            with self.assertRaises(JevBrowserUnavailable):
+                run_goal("https://example.com", "Open the page")
