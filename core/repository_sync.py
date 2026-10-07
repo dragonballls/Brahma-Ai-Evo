@@ -7,6 +7,8 @@ import subprocess
 from pathlib import Path
 from typing import Iterable
 
+from core.command_safety import hidden_creationflags, resolve_git_executable
+
 
 class RepositorySyncError(RuntimeError):
     pass
@@ -36,13 +38,14 @@ def resolve_repository() -> Path | None:
 
 
 def _run(repo: Path, args: Iterable[str], timeout: int = 120) -> subprocess.CompletedProcess[str]:
+    git = resolve_git_executable(repo)
     return subprocess.run(
-        ["git", *args],
+        [git, *args],
         cwd=repo,
         text=True,
         capture_output=True,
         timeout=timeout,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        creationflags=hidden_creationflags(),
         check=False,
     )
 
