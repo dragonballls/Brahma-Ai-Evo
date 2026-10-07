@@ -705,7 +705,11 @@ class BrahmaHomePage(QWidget):
         super().__init__(parent)
         self._service = SmartHomeService()
         self._selected_device_id: str | None = None
-        self._voice_state = "Listening"
+        try:
+            from memory import config_manager
+            self._voice_state = "Push-to-Talk" if config_manager.get_push_to_talk_enabled() else "Hands-Free"
+        except Exception:
+            self._voice_state = "Hands-Free"
         self._voice_phase = 0
         self._drawer_anim = None
         self._device_tiles: list[_DeviceTile] = []
@@ -1207,7 +1211,11 @@ class BrahmaHomePage(QWidget):
         from PyQt6.QtWidgets import QInputDialog
         new_name, ok = QInputDialog.getText(self, "Rename Device", "New name:", text=str(device.get("name", "")))
         if ok and new_name.strip():
-            self._service.rename_device(self._selected_device_id, new_name.strip())
+            try:
+                self._service.rename_device(self._selected_device_id, new_name.strip())
+            except Exception:
+                self._status_chip.setText("<div style='line-height: 1.3;'><span style='color: #ffcc00;'>●</span> <span style='color: #ffffff;'>Rename failed</span></div>")
+                return
             self._refresh()
 
     def _restart_selected(self):
@@ -1224,11 +1232,16 @@ class BrahmaHomePage(QWidget):
         self._refresh()
 
     def _forget_selected(self):
-        if self._selected_device_id:
+        if not self._selected_device_id:
+            return
+        try:
             self._service.forget_device(self._selected_device_id)
-            self._selected_device_id = None
-            self._close_drawer()
-            self._refresh()
+        except Exception:
+            self._status_chip.setText("<div style='line-height: 1.3;'><span style='color: #ffcc00;'>●</span> <span style='color: #ffffff;'>Forget failed</span></div>")
+            return
+        self._selected_device_id = None
+        self._close_drawer()
+        self._refresh()
 
     def _refresh(self):
         devices = self._service.list_devices()
@@ -1371,9 +1384,19 @@ class BrahmaHomePage(QWidget):
             self._open_drawer(device)
 
     def _toggle_voice_mode(self):
-        states = ["Idle", "Listening", "Thinking", "Executing", "Completed"]
-        self._voice_phase = (self._voice_phase + 1) % len(states)
-        self._voice_state = states[self._voice_phase]
+        try:
+            from memory import config_manager
+            enabled = not config_manager.get_push_to_talk_enabled()
+            config_manager.set_push_to_talk_enabled(enabled)
+            self._voice_state = "Push-to-Talk" if enabled else "Hands-Free"
+        except Exception as exc:
+            self._voice_state = "Voice setting unavailable"
+            if hasattr(self, "_status_chip"):
+                self._status_chip.setText("<div style='line-height: 1.3;'><span style='color: #ffcc00;'>●</span> <span style='color: #ffffff;'>Voice setting unavailable</span></div>")
+            return
+        self._voice_phase += 1
+        # This control changes the real persisted microphone mode; it no longer
+        # fabricates transient listening/thinking/executing states.
         # Some UI paths may call this before voice widgets are built; guard access.
         if hasattr(self, "_voice_state_lbl") and isinstance(getattr(self, "_voice_state_lbl"), QLabel):
             try:
