@@ -31,6 +31,32 @@ PROTECTED_BOOT_FILES = {
 }
 
 
+def _write_exclusive_text(path: Path, text: str, *, mode: int = 0o600) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = -1
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def _copy_file_exclusive(source: Path, destination: Path, *, mode: int = 0o600) -> None:
+    fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+    try:
+        with source.open("rb") as src, os.fdopen(fd, "wb") as dst:
+            fd = -1
+            shutil.copyfileobj(src, dst, length=1024 * 1024)
+            dst.flush()
+            os.fsync(dst.fileno())
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 def mark_startup_healthy() -> None:
     """Clear the previous crash marker once Brahma reaches a healthy UI state."""
     try:
@@ -104,10 +130,10 @@ def check_and_recover_on_boot() -> bool:
 
     try:
         target_tmp = target_file.with_name(
-            f".{target_file.name}.rollback-{os.getpid()}-{uuid4().hex}.tmp"
+            f".{target_file.name}.rollback-{os.getpid()}-{uuid.uuid4().hex}.tmp"
         )
         try:
-            shutil.copy2(backup_file, target_tmp)
+            _copy_file_exclusive(backup_file, target_tmp)
             os.replace(target_tmp, target_file)
         finally:
             try:
@@ -122,10 +148,7 @@ def check_and_recover_on_boot() -> bool:
             f".{PATCH_HISTORY_FILE.name}.tmp-{os.getpid()}"
         )
         try:
-            history_tmp.write_text(
-                json.dumps(history, indent=4, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            _write_exclusive_text(history_tmp, json.dumps(history, indent=4, ensure_ascii=False))
             os.replace(history_tmp, PATCH_HISTORY_FILE)
         finally:
             try:
