@@ -4483,7 +4483,7 @@ class BrahmaLive:
                 self.ui.write_log(f"ERR: {err_msg}")
                 self.speak(err_msg)
                 try:
-                    self.ui.finish_task_workspace(err_msg, "Failed", 100)
+                    self.ui.finish_task_workspace(err_msg, "Failed", 0)
                 except Exception:
                     pass
             return True
