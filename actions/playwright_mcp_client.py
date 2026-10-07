@@ -264,18 +264,34 @@ class PlaywrightMCPClient:
                     },
                     timeout=30,
                 )
-                if not init_resp:
-                    logger.error("[PlaywrightMCP] Initialize handshake timed out or empty")
+                if not isinstance(init_resp, dict) or "result" not in init_resp:
+                    logger.error("[PlaywrightMCP] Initialize handshake timed out or returned no authoritative result")
+                    self.close()
                     return False
 
                 # Send initialized notification
                 self._send_notification("notifications/initialized", {})
 
-                # Cache tools
+                # Cache tools. A successful startup requires an authoritative
+                # tools/list result; merely receiving a response object is not
+                # enough to mark the client ready.
                 tools_resp = self._send_request("tools/list", {}, timeout=20)
-                if tools_resp and "result" in tools_resp:
-                    self._tools = tools_resp["result"].get("tools", [])
-                    logger.info(f"[PlaywrightMCP] Server initialized with {len(self._tools)} tools")
+                if not isinstance(tools_resp, dict) or "result" not in tools_resp:
+                    logger.error("[PlaywrightMCP] tools/list timed out or returned no authoritative result")
+                    self.close()
+                    return False
+                result = tools_resp.get("result")
+                if not isinstance(result, dict):
+                    logger.error("[PlaywrightMCP] tools/list returned a malformed result")
+                    self.close()
+                    return False
+                tools = result.get("tools", [])
+                if not isinstance(tools, list):
+                    logger.error("[PlaywrightMCP] tools/list returned malformed tool metadata")
+                    self.close()
+                    return False
+                self._tools = tools
+                logger.info(f"[PlaywrightMCP] Server initialized with {len(self._tools)} tools")
 
                 self._is_ready.set()
                 return True
@@ -561,6 +577,10 @@ class PlaywrightMCPClient:
                             shutil.copy2(src_f, out_p)
                         except Exception:
                             pass
+        if output_path:
+            if not out_p.is_file():
+                return f"Error: screenshot save was not completed or verified at '{out_p}'."
+            return text or f"Screenshot saved to '{out_p}'."
         return text or self._authoritative_result(res, "take_screenshot")
 
     def save_pdf(self, filename: Optional[str] = None) -> str:
