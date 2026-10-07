@@ -21,3 +21,10 @@ def test_google_workspace_credential_initialization_is_serialized_and_atomic():
     assert "def _credential_process_lock" in source
     assert "msvcrt.LK_NBLCK" in source
     assert "fcntl.flock" in source
+
+
+def test_google_workspace_delivery_messages_do_not_claim_unproven_cloud_or_email_delivery():
+    source = (ROOT / "actions" / "google_workspace_mcp.py").read_text(encoding="utf-8")
+    assert "was copied to local Brahma Workspace staging; it was not uploaded to Google Drive" in source
+    assert "Email accepted by the SMTP server" in source
+    assert "end-to-end delivery is not verified" in source
