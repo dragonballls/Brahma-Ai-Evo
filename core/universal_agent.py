@@ -30,6 +30,22 @@ def _result_text(result: Any) -> str:
     return str(result).strip()
 
 
+def _result_failed(result: Any) -> bool:
+    if isinstance(result, dict):
+        if result.get("success") is False or result.get("ok") is False:
+            return True
+        if result.get("error") not in (None, ""):
+            return True
+        if result.get("errors"):
+            return True
+        return False
+    text = str(result or "").strip().casefold()
+    return not text or text.startswith((
+        "error:", "failed", "failure:", "could not", "couldn't", "unable to",
+        "timed out", "timeout:",
+    ))
+
+
 def _execute_skill(name: str, args: dict[str, Any]) -> Any:
     return DynamicToolRegistry.execute_sync(name, args)
 
@@ -51,7 +67,7 @@ def run(request: str, *, context: str = "", max_repair_attempts: int = 2) -> dic
         args.setdefault("query", request)
         try:
             result = _execute_skill(skill_name, args)
-            if isinstance(result, dict) and result.get("success") is False:
+            if _result_failed(result):
                 return {
                     "success": False,
                     "status": "existing-skill-failed",
