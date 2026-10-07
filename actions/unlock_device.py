@@ -5,21 +5,13 @@ from pathlib import Path
 from actions.brahma_connect import connect_execute
 
 def _get_settings() -> dict:
-    try:
-        from ui import APP_SETTINGS_FILE
-        settings_file = APP_SETTINGS_FILE
-    except ImportError:
-        # Fallback if import fails
-        from core.user_paths import get_user_data_dir
-        settings_file = get_user_data_dir() / "config" / "app_settings.json"
-        
-    if settings_file.exists():
-        try:
-            with open(settings_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
+    """Read device settings through the canonical persistent settings layer."""
+    from memory.config_manager import load_settings
+
+    settings = load_settings()
+    if not isinstance(settings, dict):
+        raise RuntimeError("Device settings have an invalid root schema.")
+    return settings
 
 def unlock_device(parameters: dict, response=None, player=None, session_memory=None) -> str:
     target = parameters.get("target") or parameters.get("device_id")
@@ -28,7 +20,9 @@ def unlock_device(parameters: dict, response=None, player=None, session_memory=N
 
     settings = _get_settings()
     device_pins = settings.get("device_pins", {})
-    
+    if not isinstance(device_pins, dict):
+        return "Error: Device PIN settings are malformed; refusing to use or replace them."
+
     # Try to find pin by exact target match first
     pin = device_pins.get(target)
     
