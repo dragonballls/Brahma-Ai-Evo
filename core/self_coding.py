@@ -222,6 +222,8 @@ class SelfCodingAgent:
                 previous = commit
     def _load(self, checkpoint_id: str) -> Checkpoint:
         path = self._path(checkpoint_id)
+        if path.is_symlink():
+            raise SelfCodingError("Checkpoint metadata must not be a symlink.")
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             checkpoint = Checkpoint(
@@ -250,21 +252,21 @@ class SelfCodingAgent:
             return []
         output: list[dict[str, Any]] = []
         for path in sorted(self.checkpoint_dir.glob("*.json"), reverse=True):
-            try:
-                item = json.loads(path.read_text(encoding="utf-8"))
-                output.append(
-                    {
-                        "checkpoint_id": item.get("checkpoint_id"),
-                        "state": item.get("state"),
-                        "branch": item.get("branch"),
-                        "baseline": item.get("baseline"),
-                        "promoted_sha": item.get("promoted_sha"),
-                        "created_at": item.get("created_at"),
-                    }
-                )
-            except Exception:
-                continue
+            if path.is_symlink():
+                raise SelfCodingError("Checkpoint metadata must not be a symlink.")
+            checkpoint = self._load(path.stem)
+            output.append(
+                {
+                    "checkpoint_id": checkpoint.checkpoint_id,
+                    "state": checkpoint.state,
+                    "branch": checkpoint.branch,
+                    "baseline": checkpoint.baseline,
+                    "promoted_sha": checkpoint.promoted_sha,
+                    "created_at": checkpoint.created_at,
+                }
+            )
         return output
+
 
     @staticmethod
     def _coding_prompt(goal: str) -> str:
