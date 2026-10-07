@@ -530,4 +530,4 @@ def test_instagram_reply_handler_does_not_claim_success_for_unverified_send():
 
     assert "delivery was not independently verified" in block
     assert "Successfully sent manual reply" not in block
-    assert "if isinstance(send_result, dict) and send_result.get("delivery_verified") is True" in block
+    assert 'if isinstance(send_result, dict) and send_result.get("delivery_verified") is True' in block
