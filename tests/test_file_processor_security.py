@@ -372,3 +372,16 @@ def test_image_operations_report_success_only_after_valid_artifact(tmp_path):
     compressed = next(tmp_path.glob("sample_compressed_q70*.jpg"))
     with Image.open(compressed) as image:
         image.verify()
+
+
+def test_gemini_backed_file_processing_refuses_to_cross_selected_provider(monkeypatch):
+    from actions import file_processor
+    from memory import config_manager
+
+    monkeypatch.setattr(
+        config_manager,
+        "get_setting",
+        lambda key, default=None: "OpenRouter" if key == "default_ai_provider" else default,
+    )
+    with pytest.raises(RuntimeError, match="requires the Google Gemini provider"):
+        file_processor._gemini_client()

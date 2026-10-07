@@ -42,6 +42,10 @@ def _get_api_key() -> str:
 
 
 def _gemini_client():
+    """Return the Gemini adapter only when Gemini is the explicitly selected provider."""
+    from core.provider_policy import require_provider
+
+    require_provider("Gemini", "File AI analysis/transcription")
     return create_model("gemini-3.8-flash")
 
 
