@@ -404,3 +404,69 @@ def test_pending_reply_failure_and_delivery_states_are_honest():
     assert '"Reply delivered." if verified else "Reply submitted"' in block
     assert "100 if verified else 90" in block
     assert "delivery was not independently verified" in block
+
+
+def test_atomberg_provider_fails_closed_on_command_rejection():
+    from smart_home.providers.builtin import AtombergProvider
+    import smart_home.providers.builtin as builtin
+
+    class Client:
+        def send_command(self, _device_id, _command):
+            return False
+
+    device = {
+        "name": "Fan",
+        "external_id": "fan-1",
+        "traits": {},
+        "provider_credentials": {"api_key": "key", "refresh_token": "refresh"},
+    }
+    original = builtin.AtombergCloudClient
+    builtin.AtombergCloudClient = lambda *_args, **_kwargs: Client()
+    try:
+        try:
+            AtombergProvider().execute(device, "power", {"is_on": True})
+        except RuntimeError as exc:
+            assert "rejected" in str(exc).casefold()
+        else:
+            raise AssertionError("Atomberg provider claimed success after command rejection")
+    finally:
+        builtin.AtombergCloudClient = original
+
+
+def test_unimplemented_smart_home_providers_are_not_advertised_as_available():
+    from smart_home.providers.builtin import (
+        HueProvider, LgProvider, DaikinProvider, TuyaProvider, NestProvider, SmartThingsProvider,
+    )
+    for provider_cls in (HueProvider, LgProvider, DaikinProvider, TuyaProvider, NestProvider, SmartThingsProvider):
+        assert provider_cls.available is False
+        assert provider_cls.coming_soon is True
+
+
+def test_smart_home_service_rejects_unimplemented_provider_execution():
+    from smart_home.service import SmartHomeService
+
+    service = SmartHomeService.__new__(SmartHomeService)
+    class Registry:
+        def get(self, _key):
+            from smart_home.providers.builtin import HueProvider
+            return HueProvider()
+    service._registry = Registry()
+    try:
+        service._require_available_provider("hue")
+    except RuntimeError as exc:
+        assert "not available" in str(exc).casefold()
+    else:
+        raise AssertionError("Unavailable smart-home provider crossed the execution boundary")
+
+
+def test_smart_home_page_uses_provider_metadata_and_does_not_claim_fake_local_state():
+    source = (ROOT / "smart_home_page_new.py").read_text(encoding="utf-8")
+    assert "for info in self._service.list_platforms()" in source
+    assert "card.setEnabled(platform.available)" in source
+    assert "Integration not available yet." in source
+    assert "Provider:</span>" in source
+    assert "traits.get('firmware', 'N/A')" in source
+    assert "traits.get('mac', 'N/A')" in source
+    assert "traits.get('ip', 'N/A')" in source
+    assert "Device action failed" in source
+    assert "Device connection failed" in source
