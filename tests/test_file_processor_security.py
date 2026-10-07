@@ -337,7 +337,7 @@ def test_video_failed_ffmpeg_output_is_removed(tmp_path, monkeypatch):
 
     source = tmp_path / "sample.mp4"
     source.write_bytes(b"placeholder")
-    output = tmp_path / "sample_extract_audio.mp3"
+    output = tmp_path / "sample_audio.mp3"
 
     monkeypatch.setattr(file_processor, "_ffmpeg_available", lambda: True, raising=False)
 
@@ -347,7 +347,7 @@ def test_video_failed_ffmpeg_output_is_removed(tmp_path, monkeypatch):
 
     monkeypatch.setattr(file_processor.subprocess, "run", fake_run)
     result = file_processor._process_video(source, "extract_audio", {})
-    assert result.startswith("Extract audio failed:")
+    assert result.startswith("Extract audio failed (ffmpeg exit")
     assert not output.exists()
 
 
