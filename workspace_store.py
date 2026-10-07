@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import uuid
+import stat as _stat
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -24,6 +25,50 @@ STORE_FILE = CONFIG_DIR / "workspace_store.sqlite3"
 
 def _ensure_dir() -> None:
     os.makedirs(CONFIG_DIR, exist_ok=True)
+
+
+def _path_has_reparse_component(path: Path) -> bool:
+    try:
+        current = Path(path.anchor) if path.anchor else Path(".")
+        parts = path.parts[1:] if path.anchor else path.parts
+        for part in parts:
+            current = current / part
+            if current.is_symlink():
+                return True
+            is_junction = getattr(current, "is_junction", None)
+            if is_junction is not None and is_junction():
+                return True
+            if os.name == "nt":
+                attrs = getattr(current.stat(follow_symlinks=False), "st_file_attributes", 0)
+                reparse = getattr(_stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+                if reparse and attrs & reparse:
+                    return True
+        return False
+    except OSError:
+        return True
+
+
+def _validate_store_path(path: Path) -> None:
+    """Reject link-like database paths and hard-linked database files."""
+    path = Path(path)
+    if _path_has_reparse_component(path.parent):
+        raise RuntimeError("Workspace database parent contains a symlink/junction/reparse component.")
+    if path.is_symlink() or (getattr(path, "is_junction", lambda: False)()):
+        raise RuntimeError("Workspace database path must not be a symlink/junction.")
+    if path.exists():
+        if not path.is_file():
+            raise RuntimeError("Workspace database path is not a regular file.")
+        try:
+            if int(path.stat(follow_symlinks=False).st_nlink) > 1:
+                raise RuntimeError("Workspace database path has multiple hard links.")
+        except OSError as exc:
+            raise RuntimeError("Workspace database path could not be inspected safely.") from exc
+    for suffix in ("-wal", "-shm"):
+        sidecar = Path(f"{path}{suffix}")
+        if sidecar.is_symlink() or (getattr(sidecar, "is_junction", lambda: False)()):
+            raise RuntimeError(f"Workspace database sidecar {sidecar.name} must not be a symlink/junction.")
+        if sidecar.exists() and not sidecar.is_file():
+            raise RuntimeError(f"Workspace database sidecar {sidecar.name} is not a regular file.")
 
 
 def _now_ms() -> int:
@@ -106,12 +151,14 @@ class WorkspaceStore:
     def __init__(self, db_path: Path | None = None):
         _ensure_dir()
         self._db_path = Path(db_path or STORE_FILE)
+        _validate_store_path(self._db_path)
         self._lock = threading.RLock()
         self._init_db()
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         """Open a short-lived SQLite connection with deterministic transaction cleanup."""
+        _validate_store_path(self._db_path)
         conn = sqlite3.connect(self._db_path, timeout=10, check_same_thread=False)
         try:
             conn.row_factory = sqlite3.Row
