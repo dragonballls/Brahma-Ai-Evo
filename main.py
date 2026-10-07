@@ -3815,8 +3815,8 @@ class BrahmaLive:
             return
         # Route directly to Local Brain if preferred by user in settings or in air-gapped offline mode
         app_settings = config_manager.load_settings()
-        configured_provider = normalize_provider(app_settings.get("default_ai_provider", "Gemini"))
-        is_offline_mode = bool(app_settings.get("offline_mode_enabled", False))
+        configured_provider = validate_provider(app_settings.get("default_ai_provider", "Gemini"))
+        is_offline_mode = config_manager.get_boolean_setting("offline_mode_enabled", False)
 
         # If offline mode or Local provider selected, route directly to Local Brain
         if is_offline_mode or is_local(configured_provider):
@@ -6908,13 +6908,14 @@ class BrahmaLive:
         # recognizer only.
         app_cfg = config_manager.load_settings()
         text_voice_fallback = bool(getattr(self, "_text_voice_fallback", False))
-        allow_cloud_transcription = bool(
-            app_cfg.get("allow_cloud_transcription", False)
+        allow_cloud_transcription = config_manager.get_boolean_setting(
+            "allow_cloud_transcription", False
         )
+        offline_mode = config_manager.get_boolean_setting("offline_mode_enabled", False)
         local_voice_mode = (
             text_voice_fallback
             or is_local(app_cfg.get("default_ai_provider"))
-            or bool(app_cfg.get("offline_mode_enabled", False))
+            or offline_mode
         )
 
         def callback(indata, frames, time_info, status):
@@ -6959,7 +6960,7 @@ class BrahmaLive:
                                             text_cmd = _transcribe_microphone_pcm(
                                                 pcm_bytes,
                                                 SEND_SAMPLE_RATE,
-                                                offline_mode=bool(app_cfg.get("offline_mode_enabled", False)),
+                                                offline_mode=offline_mode,
                                                 allow_cloud_transcription=allow_cloud_transcription,
                                             )
                                             if text_cmd and len(text_cmd.strip()) > 1:
@@ -7397,14 +7398,22 @@ class BrahmaLive:
             _startup_log("[LIVE] packaged smoke-test mode complete")
             return
 
-        voice_settings = {}
         try:
             voice_settings = config_manager.load_settings()
-        except Exception:
-            voice_settings = {}
+            selected_voice_provider = validate_provider(
+                voice_settings.get("default_ai_provider", "Gemini")
+            )
+            voice_offline_mode = config_manager.get_boolean_setting(
+                "offline_mode_enabled", False
+            )
+        except Exception as exc:
+            self.ui.write_log(
+                f"ERR: Voice configuration could not be loaded safely; voice startup halted: {exc}"
+            )
+            return
         voice_fallback_mode = (
-            is_local(voice_settings.get("default_ai_provider"))
-            or bool(voice_settings.get("offline_mode_enabled", False))
+            is_local(selected_voice_provider)
+            or voice_offline_mode
         )
 
         try:
@@ -7435,7 +7444,7 @@ class BrahmaLive:
         if voice_fallback_mode:
             reason = (
                 "Offline Mode is enabled."
-                if bool(voice_settings.get("offline_mode_enabled", False))
+                if voice_offline_mode
                 else "Local AI is configured as the active provider."
             )
             await self._run_text_voice_fallback_loop(reason=reason)
