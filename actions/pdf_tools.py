@@ -856,6 +856,12 @@ def create_pdf(parameters: dict, player=None) -> str:
     except Exception as e:
         return f"PDF creation failed: {e}"
 
+    try:
+        verified = output_path.is_file() and output_path.stat().st_size > 0
+    except OSError:
+        verified = False
+    if not verified:
+        return f"PDF creation failed: saved artifact could not be verified at {output_path}"
     if auto_open:
         _open_file(output_path)
     return f"PDF created: {output_path}"
