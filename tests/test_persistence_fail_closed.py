@@ -64,3 +64,30 @@ def test_settings_save_rejects_symlink(tmp_path, monkeypatch):
     monkeypatch.setattr(config_manager, "SETTINGS_FILE", link)
     with pytest.raises(RuntimeError, match="symlink"):
         config_manager.save_settings({"theme": "light"})
+
+def test_memory_sessions_invalid_schema_fails_closed(tmp_path, monkeypatch):
+    import memory.memory_manager as mm
+    path = tmp_path / "long_term.json"
+    path.write_text('{"sessions":"corrupt"}', encoding="utf-8")
+    monkeypatch.setattr(mm, "MEMORY_PATH", path)
+    with pytest.raises(RuntimeError, match="malformed sessions"):
+        mm.load_memory()
+
+
+def test_chat_history_invalid_schema_is_not_treated_as_missing(tmp_path, monkeypatch):
+    import memory.memory_manager as mm
+    path = tmp_path / "chat_history.json"
+    path.write_text('{"wrong": true}', encoding="utf-8")
+    monkeypatch.setattr(mm, "CHAT_HISTORY_PATH", path)
+    with pytest.raises(RuntimeError, match="invalid schema"):
+        mm.load_chat_history()
+
+
+def test_pop_last_session_propagates_write_failure(tmp_path, monkeypatch):
+    import memory.memory_manager as mm
+    path = tmp_path / "long_term.json"
+    path.write_text('{"sessions":[{"summary":"hello"}]}', encoding="utf-8")
+    monkeypatch.setattr(mm, "MEMORY_PATH", path)
+    monkeypatch.setattr(mm, "_atomic_write_json", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk failure")))
+    with pytest.raises(OSError, match="disk failure"):
+        mm.pop_last_session()

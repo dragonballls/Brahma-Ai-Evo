@@ -76,6 +76,8 @@ def _empty_memory() -> dict:
     }
 
 def load_memory() -> dict:
+    if MEMORY_PATH.is_symlink():
+        raise RuntimeError("Persistent memory path must not be a symlink.")
     if not MEMORY_PATH.exists():
         return _empty_memory()
     with _lock:
@@ -100,6 +102,11 @@ def load_memory() -> dict:
                     return value
 
                 data = scrub(data)
+                if "sessions" in data and (
+                    not isinstance(data["sessions"], list)
+                    or any(not isinstance(item, dict) for item in data["sessions"])
+                ):
+                    raise RuntimeError("Persistent memory has a malformed sessions list.")
                 for key in base:
                     if key not in data:
                         data[key] = {}
@@ -173,6 +180,8 @@ def _trim_to_limit(memory: dict) -> dict:
 
 def _atomic_write_json(path: Path, value: object) -> None:
     """Write JSON via a sibling temp file and atomic replace under the memory lock."""
+    if path.is_symlink():
+        raise RuntimeError(f"Persistent state path must not be a symlink: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(f".{path.name}.{os.getpid()}-{__import__('uuid').uuid4().hex}.tmp")
     try:
@@ -614,7 +623,7 @@ def save_session_summary(summary: str, language: str = "") -> None:
     memory   = load_memory()
     sessions = memory.get("sessions", [])
     if not isinstance(sessions, list):
-        sessions = []
+        raise RuntimeError("Persistent memory has a malformed sessions list.")
     entry: dict = {
         "date":    datetime.now().strftime("%Y-%m-%d"),
         "summary": summary[:280],
@@ -635,32 +644,35 @@ def pop_last_session() -> dict | None:
     Calling this consumes the entry so it is never repeated in future briefings.
     """
     with _lock:
+        if MEMORY_PATH.is_symlink():
+            raise RuntimeError("Persistent memory path must not be a symlink.")
         if not MEMORY_PATH.exists():
             return None
-        try:
-            memory   = json.loads(MEMORY_PATH.read_text(encoding="utf-8"))
-            sessions = memory.get("sessions", [])
-            if not isinstance(sessions, list) or not sessions:
-                return None
-            entry = sessions.pop()          # remove the last entry
-            memory["sessions"] = sessions
-            _atomic_write_json(MEMORY_PATH, memory)
-            return entry
-        except Exception as e:
-            print(f"[Memory] ⚠️ pop_last_session error: {e}")
+        memory = load_memory()
+        sessions = memory.get("sessions", [])
+        if not isinstance(sessions, list) or not sessions:
             return None
+        entry = sessions.pop()
+        memory["sessions"] = sessions
+        _atomic_write_json(MEMORY_PATH, memory)
+        return entry
+
 
 # ── Chat History ──────────────────────────────────────────────────────────────
 CHAT_HISTORY_PATH = get_user_data_dir() / "memory" / "chat_history.json"
 MAX_HISTORY_LENGTH = 40
 
 def load_chat_history() -> list[dict]:
+    if CHAT_HISTORY_PATH.is_symlink():
+        raise RuntimeError("Chat history path must not be a symlink.")
     if not CHAT_HISTORY_PATH.exists():
         return []
     with _lock:
         try:
             data = json.loads(CHAT_HISTORY_PATH.read_text(encoding="utf-8"))
             if isinstance(data, list):
+                if any(not isinstance(item, dict) for item in data):
+                    raise ValueError("Chat history contains non-object entries.")
                 return data
         except (UnicodeError, json.JSONDecodeError) as e:
             raise RuntimeError("Chat history is corrupted.") from e
@@ -668,11 +680,18 @@ def load_chat_history() -> list[dict]:
             raise RuntimeError("Unable to read persistent chat history.") from e
         except ValueError as e:
             raise RuntimeError("Chat history has an invalid schema.") from e
+        raise RuntimeError("Chat history has an invalid schema.")
+
 
 def save_chat_history(history: list[dict]) -> None:
+    if not isinstance(history, list) or any(not isinstance(item, dict) for item in history):
+        raise TypeError("chat history must be a list of objects")
+    if CHAT_HISTORY_PATH.is_symlink():
+        raise RuntimeError("Chat history path must not be a symlink.")
     CHAT_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _lock:
         _atomic_write_json(CHAT_HISTORY_PATH, history[-MAX_HISTORY_LENGTH:])
+
 
 def append_to_chat_history(user_msg: str, ai_reply: str) -> None:
     history = load_chat_history()
