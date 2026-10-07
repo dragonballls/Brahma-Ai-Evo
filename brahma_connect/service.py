@@ -43,20 +43,30 @@ class BrahmaConnectService:
 
     def broadcast_chat_message(self, event: dict) -> bool:
         from .gateway.protocol import ProtocolTypes, build_message
+        from .gateway.websocket import SOCKET_SEND_TIMEOUT_SECONDS
         with self._lock:
             loop = self._loop
         if loop is None or loop.is_closed() or not loop.is_running():
             return False
         msg = build_message(ProtocolTypes.CHAT_MESSAGE, event)
         try:
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                pass
+            else:
+                # A synchronous API cannot safely block its owning event loop.
+                return False
             future = asyncio.run_coroutine_threadsafe(
                 self.gateway.hub.broadcast_chat_message(msg),
                 loop,
             )
-            future.add_done_callback(
-                lambda done: done.exception() if not done.cancelled() else None
-            )
-            return True
+            try:
+                delivered = future.result(timeout=SOCKET_SEND_TIMEOUT_SECONDS + 2.0)
+            except (concurrent.futures.TimeoutError, RuntimeError, OSError):
+                future.cancel()
+                return False
+            return int(delivered or 0) > 0
         except (RuntimeError, OSError):
             return False
 
