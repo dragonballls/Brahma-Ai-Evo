@@ -237,7 +237,9 @@ class SafetySandbox:
                 raise RuntimeError(
                     f"Unable to quarantine corrupted patch history: {quarantine_error}"
                 ) from exc
-            return []
+            raise RuntimeError(
+                f"Patch history was corrupt and has been quarantined as {quarantine.name}."
+            ) from exc
         except OSError as exc:
             raise RuntimeError("Unable to read persistent patch history.") from exc
 
