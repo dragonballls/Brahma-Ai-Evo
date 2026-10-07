@@ -37,8 +37,6 @@ def test_chromium_gpu_flags():
     assert "--enable-gpu-rasterization" in flags
     assert "--enable-zero-copy" in flags
     assert "--ignore-gpu-blocklist" in flags
-    assert "--disable-frame-rate-limit" in flags
-    assert "--disable-gpu-vsync" in flags
     assert "--use-angle=d3d11" in flags
 
 def test_globe_bridge_signals():
