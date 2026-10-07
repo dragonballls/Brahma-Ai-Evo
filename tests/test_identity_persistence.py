@@ -81,3 +81,11 @@ def test_identity_save_detects_mismatched_final_state_and_cleans_temp(tmp_path, 
 
     assert path.is_file()
     assert not list(path.parent.glob(f".{path.name}.*.tmp"))
+
+
+def test_identity_state_survives_reload(tmp_path, monkeypatch):
+    service, path, _ = _service(tmp_path, monkeypatch)
+    service.set_owner_name("Reloaded Owner")
+    reloaded = IdentityService()
+    assert reloaded.get_owner_name() == "Reloaded Owner"
+    assert path.is_file()
