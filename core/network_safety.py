@@ -44,6 +44,124 @@ def open_fixed_https(url: str, *, allowed_hosts: Iterable[str], timeout: float, 
     return opener.open(request, timeout=timeout)
 
 
+
+
+class _PinnedHTTPConnection:
+    def __init__(self, host: str, port: int, ip_address: str, timeout: float):
+        self.host = host
+        self.port = port
+        self.ip_address = ip_address
+        self.timeout = timeout
+        self.sock = None
+
+    def connect(self) -> None:
+        self.sock = socket.create_connection((self.ip_address, self.port), timeout=self.timeout)
+
+
+class _PinnedHTTPSConnection:
+    def __init__(self, host: str, port: int, ip_address: str, timeout: float):
+        import http.client
+        self.host = host
+        self.port = port
+        self.ip_address = ip_address
+        self.timeout = timeout
+        self._conn = http.client.HTTPSConnection(host, port=port, timeout=timeout)
+
+    def request(self, method: str, path: str, headers: dict[str, str] | None = None) -> None:
+        import socket as _socket
+        self._conn.close()
+        raw = _socket.create_connection((self.ip_address, self.port), timeout=self.timeout)
+        try:
+            self._conn.sock = self._conn._context.wrap_socket(raw, server_hostname=self.host)
+        except Exception:
+            raw.close()
+            raise
+        self._conn.request(method, path, headers=headers or {})
+
+    def getresponse(self):
+        return self._conn.getresponse()
+
+    def close(self) -> None:
+        self._conn.close()
+
+
+class _PinnedHTTPWrapper:
+    def __init__(self, conn, response):
+        self.conn = conn
+        self.response = response
+
+    def __enter__(self):
+        return self.response
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            self.response.close()
+        finally:
+            self.conn.close()
+        return False
+
+
+def fetch_public_url_status(
+    url: str,
+    *,
+    timeout: float = 5.0,
+    max_response_bytes: int = 64 * 1024,
+    headers: dict[str, str] | None = None,
+) -> int:
+    """GET a public HTTP(S) URL using one DNS resolution and no redirect following."""
+    parsed = urllib.parse.urlsplit(str(url or "").strip())
+    host = (parsed.hostname or "").rstrip(".").lower()
+    if parsed.scheme.lower() not in {"http", "https"} or not host:
+        raise ValueError("Public URL must use an absolute HTTP(S) URL.")
+    if parsed.username or parsed.password:
+        raise ValueError("Public URL may not contain embedded credentials.")
+    port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+    try:
+        entries = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        raise ValueError("Public URL could not be resolved safely.") from exc
+    candidates = []
+    for entry in entries:
+        address = ipaddress.ip_address(entry[4][0])
+        if not address.is_global:
+            continue
+        if entry[4][0] not in candidates:
+            candidates.append(entry[4][0])
+    if not candidates:
+        raise ValueError("Public URL resolved only to non-global addresses.")
+
+    request_path = parsed.path or "/"
+    if parsed.query:
+        request_path += "?" + parsed.query
+    request_headers = dict(headers or {})
+    request_headers.setdefault("Connection", "close")
+    request_headers.setdefault("User-Agent", "Brahma-Ai-Evo-monitor/1")
+    ip_address = candidates[0]
+
+    if parsed.scheme.lower() == "https":
+        conn = _PinnedHTTPSConnection(host, port, ip_address, timeout)
+    else:
+        import http.client
+        conn = http.client.HTTPConnection(host, port=port, timeout=timeout)
+        original_connect = conn.connect
+        def _pinned_connect() -> None:
+            conn.sock = socket.create_connection((ip_address, port), timeout=timeout)
+        conn.connect = _pinned_connect
+
+    try:
+        conn.request("GET", request_path, headers=request_headers)
+        response = conn.getresponse()
+        raw = response.read(max_response_bytes + 1)
+        if len(raw) > max_response_bytes:
+            raise ValueError(f"Public URL response exceeded the {max_response_bytes} byte safety limit.")
+        return int(response.status)
+    finally:
+        try:
+            response.close()
+        except Exception:
+            pass
+        conn.close()
+
 def read_bounded(response, max_bytes: int) -> bytes:
     raw = response.read(max_bytes + 1)
     if len(raw) > max_bytes:
