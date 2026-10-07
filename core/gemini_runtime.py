@@ -124,6 +124,8 @@ class GeminiModelAdapter:
         config: Any = None,
         **kwargs: Any,
     ) -> GeminiTextResponse:
+        from core.provider_policy import require_provider
+        require_provider("Gemini", "Gemini text generation")
         from google import genai
 
         client = genai.Client(
