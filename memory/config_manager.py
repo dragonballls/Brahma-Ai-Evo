@@ -172,7 +172,10 @@ def set_output_device(name: str) -> None:
 
 def get_cloud_transcription_enabled() -> bool:
     """Return whether cloud speech recognition is explicitly permitted."""
-    return bool(get_setting("allow_cloud_transcription", False))
+    value = get_setting("allow_cloud_transcription", False)
+    # Permission is opt-in and must be represented by the literal boolean True.
+    # Invalid persisted values fail closed instead of enabling network transcription.
+    return value is True
 
 
 def set_cloud_transcription_enabled(enabled: bool) -> None:
