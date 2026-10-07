@@ -55,12 +55,27 @@ class DeviceManager:
         self._devices: dict[str, DeviceRecord] = {}
         self.load()
 
-    def _preserve_corrupt_registry(self, raw_text: str) -> Path:
-        """Preserve the bytes already read without renaming the live pathname."""
+    def _quarantine_corrupt_registry(self, raw_bytes: bytes) -> Path:
+        """Atomically move a corrupt registry aside, preserving its exact bytes."""
+        _validate_registry_path(self.registry_path)
         backup = self.registry_path.with_name(
             f"{self.registry_path.name}.corrupt-{int(time.time())}-{uuid.uuid4().hex[:8]}"
         )
-        backup.write_text(raw_text, encoding="utf-8")
+        try:
+            self.registry_path.replace(backup)
+        except OSError as exc:
+            raise RuntimeError(
+                "Device registry is corrupted and could not be quarantined safely."
+            ) from exc
+        try:
+            if backup.read_bytes() != raw_bytes:
+                raise RuntimeError(
+                    "Device registry quarantine verification failed; refusing recovery."
+                )
+        except OSError as exc:
+            raise RuntimeError(
+                "Device registry quarantine could not be verified safely."
+            ) from exc
         return backup
 
     def load(self) -> None:
@@ -69,46 +84,29 @@ class DeviceManager:
             if not self.registry_path.exists():
                 self._devices = {}
                 return
-            raw_text = None
+            raw_bytes = None
             try:
-                raw_text = self.registry_path.read_text(encoding="utf-8")
-                raw = json.loads(raw_text)
-            except (UnicodeError, json.JSONDecodeError) as exc:
-                if isinstance(raw_text, str):
-                    try:
-                        self._preserve_corrupt_registry(raw_text)
-                    except OSError as quarantine_exc:
-                        raise RuntimeError(
-                            "Device registry is corrupted and could not be preserved safely."
-                        ) from quarantine_exc
-                raise RuntimeError(
-                    "Device registry is corrupted; refusing to substitute or rename it."
-                ) from exc
+                raw_bytes = self.registry_path.read_bytes()
+                raw = json.loads(raw_bytes.decode("utf-8"))
+            except (UnicodeError, json.JSONDecodeError):
+                if raw_bytes is None:
+                    raise RuntimeError("Device registry could not be read safely; refusing recovery.")
+                self._quarantine_corrupt_registry(raw_bytes)
+                self._devices = {}
+                return
             except OSError as exc:
                 raise RuntimeError(
                     "Device registry could not be read safely; refusing to overwrite it."
                 ) from exc
             if not isinstance(raw, dict):
-                try:
-                    self._preserve_corrupt_registry(raw_text)
-                except OSError as quarantine_exc:
-                    raise RuntimeError(
-                        "Device registry has an invalid schema and could not be preserved safely."
-                    ) from quarantine_exc
-                raise RuntimeError(
-                    "Device registry has an invalid root schema; refusing to substitute or rename it."
-                )
+                self._quarantine_corrupt_registry(raw_bytes)
+                self._devices = {}
+                return
             devices = raw.get("devices", raw)
             if not isinstance(devices, dict):
-                try:
-                    self._preserve_corrupt_registry(raw_text)
-                except OSError as quarantine_exc:
-                    raise RuntimeError(
-                        "Device registry has an invalid devices schema and could not be preserved safely."
-                    ) from quarantine_exc
-                raise RuntimeError(
-                    "Device registry has an invalid devices schema; refusing to substitute or rename it."
-                )
+                self._quarantine_corrupt_registry(raw_bytes)
+                self._devices = {}
+                return
             loaded: dict[str, DeviceRecord] = {}
             for device_id, item in (devices or {}).items():
                 try:
@@ -121,33 +119,19 @@ class DeviceManager:
                         raise ValueError("device record key does not match its embedded identity")
                     if not str(record.secret_hash or "").strip():
                         raise ValueError("device record is missing secret data")
-                except Exception as exc:
-                    try:
-                        self._preserve_corrupt_registry(raw_text)
-                    except OSError as quarantine_exc:
-                        raise RuntimeError(
-                            "Device registry contains an invalid record and could not be preserved safely."
-                        ) from quarantine_exc
+                except Exception:
+                    self._quarantine_corrupt_registry(raw_bytes)
                     self._devices = {}
-                    raise RuntimeError(
-                        "Device registry contains an invalid record; refusing to substitute or rename it."
-                    ) from exc
+                    return
                 key = record_id
                 # A persisted online flag cannot represent a live socket after restart.
                 # Re-establish online state only after successful authentication.
                 record.online = False
                 record.connection_id = ""
                 if key in loaded:
-                    try:
-                        self._preserve_corrupt_registry(raw_text)
-                    except OSError as quarantine_exc:
-                        raise RuntimeError(
-                            "Device registry contains duplicate identities and could not be preserved safely."
-                        ) from quarantine_exc
+                    self._quarantine_corrupt_registry(raw_bytes)
                     self._devices = {}
-                    raise RuntimeError(
-                        "Device registry contains duplicate device identities; refusing to substitute or rename it."
-                    )
+                    return
                 loaded[key] = record
             self._devices = loaded
 

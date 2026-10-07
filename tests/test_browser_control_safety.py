@@ -69,7 +69,8 @@ def test_browser_navigation_rejects_local_and_script_url_schemes():
 
     with patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("93.184.216.34", 443))]):
         assert validate_browser_url("https://example.com") == "https://example.com"
-    assert validate_browser_url("http://127.0.0.1:8080/health") == "http://127.0.0.1:8080/health"
+    with patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("127.0.0.1", 8080))]):
+        assert validate_browser_url("http://127.0.0.1:8080/health") == "http://127.0.0.1:8080/health"
     assert validate_browser_url("localhost:8765") == "https://localhost:8765"
     assert validate_browser_url("about:blank") == "about:blank"
 

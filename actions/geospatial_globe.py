@@ -294,6 +294,7 @@ def fetch_live_flights_in_bounds(min_lat: float, max_lat: float, min_lon: float,
                     })
     except Exception as exc:
         raise RuntimeError("Live flight data is unavailable.") from exc
+    return flights
 
 
 def reverse_geocode_area(lat: float, lon: float) -> str:

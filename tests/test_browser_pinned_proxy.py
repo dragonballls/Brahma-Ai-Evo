@@ -80,13 +80,13 @@ def test_connect_tunnel_forwards_initial_and_bidirectional_bytes():
     import socket
 
     received = []
-    ready = threading.Event()
+    received_event = threading.Event()
 
     class Handler(socketserver.BaseRequestHandler):
         def handle(self):
-            ready.set()
             data = self.request.recv(5)
             received.append(data)
+            received_event.set()
             self.request.sendall(data)
 
     target = socketserver.TCPServer(("127.0.0.1", 0), Handler)
@@ -106,7 +106,7 @@ def test_connect_tunnel_forwards_initial_and_bidirectional_bytes():
         raw.settimeout(5)
         response = raw.recv(4096)
         assert b"HTTP/1.1 200 Connection Established\r\n" in response
-        assert ready.wait(2)
+        assert received_event.wait(2)
         assert received == [b"hello"]
         if b"hello" not in response:
             response += raw.recv(4096)
@@ -271,8 +271,10 @@ def test_request_header_limit_is_strict():
 
 
 def test_upstream_oversized_response_headers_are_rejected_before_exposure():
+    from core.browser_pinned_proxy import _ProxyUpstreamError
+
     oversized = b"HTTP/1.1 200 OK\r\nX-Fill: " + (b"a" * 65520) + b"\r\n\r\nsecret"
-    with pytest.raises(ValueError, match="header line exceeds"):
+    with pytest.raises(_ProxyUpstreamError, match="header line exceeds"):
         _Handler._validate_response_headers(oversized[: oversized.find(b"\r\n\r\n") + 4])
 
 

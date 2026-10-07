@@ -80,8 +80,6 @@ def _validate_browser_hostname(hostname: str, *, scheme: str) -> str:
     try:
         addresses = [ipaddress.ip_address(host)]
     except ValueError:
-        if local_host:
-            return host
         try:
             addresses = [
                 ipaddress.ip_address(info[4][0])
@@ -91,6 +89,13 @@ def _validate_browser_hostname(hostname: str, *, scheme: str) -> str:
             raise ValueError(f"Browser hostname '{host}' could not be resolved safely.") from exc
         if not addresses:
             raise ValueError(f"Browser hostname '{host}' did not resolve to any address.")
+
+    if local_host and scheme == "http":
+        if not all(address.is_loopback for address in addresses):
+            raise ValueError(
+                f"Browser navigation to host '{host}' resolves outside loopback."
+            )
+        return host
 
     for address in addresses:
         if any(getattr(address, attr, False) for attr in _PRIVATE_BROWSER_IP_ATTRIBUTES):

@@ -143,8 +143,8 @@ class _PinnedResolver:
                 if not allow_loopback:
                     raise ValueError("Proxy loopback destination is not allowed.")
                 return normalized
-            if not literal.is_global:
-                raise ValueError("Proxy destination resolves to a non-global address.")
+            if literal.is_multicast or not literal.is_global:
+                raise ValueError("Proxy destination resolves to a non-global or multicast address.")
             return normalized
 
         with self._lock:
@@ -166,8 +166,8 @@ class _PinnedResolver:
                     if not address.is_loopback:
                         raise ValueError("Proxy local destination resolved outside loopback.")
                     addresses.append(str(address))
-                elif not address.is_global:
-                    raise ValueError("Proxy destination resolved to a non-global address.")
+                elif address.is_multicast or not address.is_global:
+                    raise ValueError("Proxy destination resolved to a non-global or multicast address.")
                 else:
                     addresses.append(str(address))
             if not addresses:

@@ -598,15 +598,19 @@ def test_ota_rejects_mismatched_supplied_checksum(monkeypatch, tmp_path: Path):
     )
     monkeypatch.setattr(ota, "_asset_digest", lambda _release, _asset: "a" * 64)
 
+    calls = []
+
     def unexpected_download(*_args, **_kwargs):
+        calls.append(True)
         raise AssertionError("network download must not start after checksum mismatch")
 
-    monkeypatch.setattr(ota.urllib.request, "urlopen", unexpected_download)
+    monkeypatch.setattr(ota, "download_public_to_file", unexpected_download)
     result = ota.download_and_apply_update(
         "https://example.test/setup.exe",
         expected_sha256="b" * 64,
     )
     assert result is False
+    assert calls == []
 
 
 def test_dynamic_registry_redacts_credential_like_errors():
@@ -1228,10 +1232,34 @@ def test_executor_treats_boolean_false_as_tool_failure():
     _raise_for_failed_tool_result(True)
 
 
-def test_executor_does_not_claim_forged_skill_executed_after_exception():
-    source = Path("agent/executor.py").read_text(encoding="utf-8")
-    assert "Execution failed:" in source
-    assert "Executed, but returned:" not in source
+def test_executor_does_not_claim_forged_skill_executed_after_exception(monkeypatch):
+    import agent.executor as executor
+    from core.dynamic_registry import DynamicToolRegistry
+    from core.skill_forge import SkillForge
+
+    monkeypatch.setattr(
+        SkillForge,
+        "forge_skill",
+        lambda *args, **kwargs: {
+            "success": True,
+            "name": "broken_skill",
+            "description": "test",
+        },
+    )
+    monkeypatch.setattr(DynamicToolRegistry, "has_tool", lambda _name: True)
+
+    def fail_execute(*_args, **_kwargs):
+        raise RuntimeError("forced execution failure")
+
+    monkeypatch.setattr(DynamicToolRegistry, "execute_sync", fail_execute)
+    spoken = []
+    result = executor._run_skill_forge("test goal", speak=spoken.append)
+
+    assert isinstance(result, dict)
+    assert result["success"] is False
+    assert result["created"] is True
+    assert "initial execution failed" in result["error"].lower()
+    assert not any("activated feature" in message.lower() for message in spoken)
 
 
 def test_smart_home_credential_key_is_created_private_and_atomic():
@@ -1265,10 +1293,27 @@ def test_confirmation_gate_does_not_convert_explicit_false_to_done(monkeypatch):
     assert not any("done." in entry.lower() for entry in logs)
 
 
-def test_universal_task_preserves_structured_failure_for_executor_validation():
-    source = Path("agent/executor.py").read_text(encoding="utf-8")
-    block = source.split('elif tool == "universal_task"', 1)[1].split('elif tool == "skill_forge"', 1)[0]
-    assert "if isinstance(result, (dict, list, bool)):" in block
+def test_universal_task_preserves_structured_failure_for_executor_validation(monkeypatch):
+    import agent.executor as executor
+    import core.universal_agent as universal_agent
+
+    failure = {
+        "success": False,
+        "status": "provider-failed",
+        "message": "provider unavailable",
+    }
+    monkeypatch.setattr(universal_agent, "run", lambda *args, **kwargs: failure)
+
+    result = executor._call_tool(
+        "universal_task",
+        {"request": "test task"},
+        speak=None,
+        player=None,
+    )
+
+    assert result == failure
+    with pytest.raises(RuntimeError, match="provider unavailable"):
+        executor._raise_for_failed_tool_result(result)
 
 
 def test_executor_preserves_structured_dynamic_skill_failures():
@@ -1307,7 +1352,7 @@ def test_openrouter_and_omniroute_authenticated_posts_disable_redirects():
 def test_geospatial_live_failures_do_not_fabricate_data(monkeypatch):
     import actions.geospatial_globe as globe
 
-    monkeypatch.setattr(globe.urllib.request, "urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("network down")))
+    monkeypatch.setattr(globe, "_open_no_redirect", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("network down")))
 
     with pytest.raises(ValueError, match="Unable to resolve location"):
         globe.geocode_location("definitely-not-a-real-place-9e7f")
@@ -1398,6 +1443,9 @@ def test_gateway_disconnect_does_not_mark_active_device_offline_when_close_fails
     gateway._append_log = lambda *args, **kwargs: None
 
     class Hub:
+        async def get(self, *_args, **_kwargs):
+            return object()
+
         async def close_device(self, *_args, **_kwargs):
             return False
 

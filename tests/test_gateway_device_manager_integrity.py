@@ -27,8 +27,9 @@ def test_invalid_device_record_is_quarantined_instead_of_silently_dropped(tmp_pa
         encoding="utf-8",
     )
 
-    with pytest.raises(RuntimeError, match="invalid record"):
-        DeviceManager(registry)
+    manager = DeviceManager(registry)
+    assert manager.list_devices() == []
+    assert not registry.exists()
 
     backups = list(tmp_path.glob("devices.json.corrupt-*"))
     assert len(backups) == 1
@@ -83,8 +84,9 @@ def test_duplicate_device_id_records_are_quarantined(tmp_path):
         encoding="utf-8",
     )
 
-    with pytest.raises(RuntimeError, match="duplicate device identities"):
-        DeviceManager(registry)
+    manager = DeviceManager(registry)
+    assert manager.list_devices() == []
+    assert not registry.exists()
 
     backups = list(tmp_path.glob("devices.json.corrupt-*"))
     assert len(backups) == 1
@@ -108,9 +110,9 @@ def test_mismatched_registry_key_and_embedded_device_id_is_rejected(tmp_path):
         encoding="utf-8",
     )
 
-    with pytest.raises(RuntimeError, match="invalid record"):
-        DeviceManager(registry)
-
+    manager = DeviceManager(registry)
+    assert manager.list_devices() == []
+    assert not registry.exists()
     assert len(list(tmp_path.glob("devices.json.corrupt-*"))) == 1
 
 
@@ -129,17 +131,17 @@ def test_device_registry_rejects_symlinked_parent(tmp_path):
         DeviceManager(link_dir / "devices.json")
 
 
-def test_corrupt_device_registry_is_preserved_without_renaming_live_path(tmp_path):
+def test_corrupt_device_registry_is_quarantined_and_recovered(tmp_path):
     from brahma_connect.gateway.device_manager import DeviceManager
 
     registry = tmp_path / "devices.json"
     raw = "{broken"
     registry.write_text(raw, encoding="utf-8")
-    with pytest.raises(RuntimeError, match="refusing to substitute or rename it"):
-        DeviceManager(registry)
 
-    assert registry.exists()
-    assert registry.read_text(encoding="utf-8") == raw
+    manager = DeviceManager(registry)
+
+    assert manager.list_devices() == []
+    assert not registry.exists()
     copies = list(tmp_path.glob("devices.json.corrupt-*"))
     assert len(copies) == 1
     assert copies[0].read_text(encoding="utf-8") == raw
