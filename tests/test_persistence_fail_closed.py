@@ -45,3 +45,22 @@ def test_smart_home_corrupt_traits_state_does_not_become_empty_defaults(tmp_path
 
     with pytest.raises(RuntimeError, match="corrupt trait state"):
         storage.list_devices()
+
+def test_settings_save_rejects_symlink(tmp_path, monkeypatch):
+    import memory.config_manager as config_manager
+    import os
+    settings = tmp_path / "app_settings.json"
+    monkeypatch.setattr(config_manager, "SETTINGS_FILE", settings)
+    monkeypatch.setattr(config_manager, "CONFIG_DIR", tmp_path)
+    config_manager._SETTINGS_CACHE = None
+    config_manager.save_settings({"theme": "dark"})
+    outside = tmp_path / "outside.json"
+    outside.write_text("keep", encoding="utf-8")
+    link = tmp_path / "linked.json"
+    try:
+        os.symlink(outside, link)
+    except (OSError, NotImplementedError):
+        return
+    monkeypatch.setattr(config_manager, "SETTINGS_FILE", link)
+    with pytest.raises(RuntimeError, match="symlink"):
+        config_manager.save_settings({"theme": "light"})

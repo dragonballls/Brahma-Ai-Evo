@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict
 import threading
+import uuid
 
 from core.runtime_paths import CONFIG_DIR, APP_SETTINGS_PATH
 
@@ -35,6 +36,8 @@ def load_settings() -> Dict[str, Any]:
     global _SETTINGS_CACHE
     with _SETTINGS_LOCK:
         _ensure_config()
+        if SETTINGS_FILE.is_symlink():
+            raise RuntimeError("Settings file must not be a symlink.")
         signature = _settings_signature()
         if _SETTINGS_CACHE is not None and _SETTINGS_CACHE[0] == signature:
             return dict(_SETTINGS_CACHE[1])
@@ -64,6 +67,10 @@ def save_settings(data: Dict[str, Any]) -> None:
         raise TypeError("settings update must be a dictionary")
     with _SETTINGS_LOCK:
         _ensure_config()
+        if SETTINGS_FILE.is_symlink():
+            raise RuntimeError("Settings file must not be a symlink.")
+        if SETTINGS_FILE.exists() and not SETTINGS_FILE.is_file():
+            raise RuntimeError("Settings path is not a regular file.")
         current: Dict[str, Any] = {}
         if SETTINGS_FILE.is_file():
             try:
@@ -78,7 +85,7 @@ def save_settings(data: Dict[str, Any]) -> None:
                 )
             current.update(loaded)
         current.update(data)
-        temp_path = SETTINGS_FILE.with_suffix(".json.tmp")
+        temp_path = SETTINGS_FILE.with_name(f".{SETTINGS_FILE.name}.{uuid.uuid4().hex}.tmp")
         try:
             temp_path.write_text(
                 json.dumps(current, indent=4, ensure_ascii=False),
