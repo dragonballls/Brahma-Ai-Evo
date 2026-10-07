@@ -80,7 +80,7 @@ def load_settings() -> Dict[str, Any]:
             data = json.loads(raw)
         except OSError as exc:
             raise RuntimeError("Settings file could not be read safely.") from exc
-        except (UnicodeError, json.JSONDecodeError) as exc:
+        except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
             raise RuntimeError(
                 "Settings file is unreadable or corrupted; refusing to use empty defaults."
             ) from exc
@@ -106,7 +106,7 @@ def save_settings(data: Dict[str, Any]) -> None:
         if SETTINGS_FILE.is_file():
             try:
                 loaded = json.loads(_read_settings_text())
-            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
                 raise RuntimeError(
                     "Settings file is unreadable or corrupted; refusing to overwrite it."
                 ) from exc
