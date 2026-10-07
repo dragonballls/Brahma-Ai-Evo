@@ -12,8 +12,8 @@ def test_weather_live_response_is_size_bounded(monkeypatch):
             return b"x" * (64 * 1024 + 1)
 
     monkeypatch.setattr(
-        weather_report.urllib.request,
-        "urlopen",
+        weather_report,
+        "open_fixed_https",
         lambda *args, **kwargs: _Response(),
     )
 
