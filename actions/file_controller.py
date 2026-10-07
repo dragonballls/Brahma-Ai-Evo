@@ -66,6 +66,7 @@ def _undo_move(src: Path, dst: Path):
 def _undo_create(target: Path):
     """Reverse a create only when the object still matches the post-create identity."""
     expected = _fingerprint(target)
+
     def _fn():
         if _fingerprint(target) != expected:
             return f"'{target.name}' changed after creation — leaving it alone."
@@ -77,12 +78,12 @@ def _undo_create(target: Path):
                     f"'{target.name}' is not empty any more — "
                     f"leaving it alone rather than deleting your files."
                 )
-            target.rmdir()
-        else:
             if os.name == "nt" and _WINFS is not None:
-        _WINFS.unlink(target)
-        return
-    target.unlink()
+                _WINFS.unlink(target)
+            else:
+                target.rmdir()
+        else:
+            _secure_unlink(target)
         return f"Removed '{target.name}'."
     return _fn
 
@@ -311,13 +312,6 @@ def _secure_write_text(target: Path, content: str, *, append: bool = False, expe
         )
         return
 
-    if os.name == "nt" and _WINFS is not None:
-        return _WINFS.read_text(
-            target,
-            max_chars=max_chars,
-            expected_identity=expected_identity,
-        )
-
     if _is_link_like(target):
         raise RuntimeError("Target is a link/reparse point.")
     if expected_identity is not None:
@@ -333,6 +327,12 @@ def _secure_write_text(target: Path, content: str, *, append: bool = False, expe
 def _secure_read_text(target: Path, max_chars: int, *, expected_identity=None) -> tuple[str, int]:
     """Read a validated text file without following a raced leaf on POSIX."""
     target = Path(target).absolute()
+    if os.name == "nt" and _WINFS is not None:
+        return _WINFS.read_text(
+            target,
+            max_chars=max_chars,
+            expected_identity=expected_identity,
+        )
     if os.name != "nt" and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY"):
         parent_fd = _secure_parent_fd(target.parent)
         if parent_fd is None:
