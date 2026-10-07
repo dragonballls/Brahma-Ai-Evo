@@ -123,3 +123,53 @@ def test_undo_push_failure_preserves_undoing_state_for_recovery():
     assert saved[-1].state == "undoing"
     assert saved[-1].undo_commits == (undo_tip,)
     assert ("reset", "--hard", promoted) not in calls
+
+
+def test_recover_promoting_resets_main_not_checkpoint_branch():
+    promoted = "c" * 40
+    checkpoint = _checkpoint(state="promoting", promoted_sha=promoted)
+    saved = []
+    calls = []
+
+    agent = object.__new__(SelfCodingAgent)
+    agent._load = lambda _checkpoint_id: checkpoint
+    agent.validate_repo = lambda: None
+    agent._branch = lambda: "agent/checkpoint/original"
+    agent._save = lambda value: saved.append(value)
+
+    def fake_git(*args, **kwargs):
+        calls.append(args)
+        if args == ("fetch", "origin", "main"):
+            return _result(args)
+        if args == ("rev-parse", "refs/remotes/origin/main"):
+            return _result(args, stdout=checkpoint.baseline)
+        if args == ("rev-parse", "refs/heads/main"):
+            return _result(args, stdout=promoted)
+        if args == ("switch", "main"):
+            return _result(args)
+        if args == ("reset", "--hard", checkpoint.baseline):
+            return _result(args)
+        if args == ("switch", "agent/checkpoint/original"):
+            return _result(args)
+        if args == ("rev-parse", checkpoint.branch):
+            return _result(args, stdout=checkpoint.commits[-1])
+        raise AssertionError(f"unexpected git call: {args}")
+
+    agent._git = fake_git
+
+    # Re-enter approval after restoring the unpublished local main. The nested
+    # approval call must see the checkpoint branch intact.
+    agent._approve_unlocked = lambda checkpoint_id: (
+        "reapproved"
+        if checkpoint_id == checkpoint.checkpoint_id
+        else (_ for _ in ()).throw(AssertionError("wrong checkpoint id"))
+    )
+
+    assert agent._recover_promoting(checkpoint) == "reapproved"
+    assert ("switch", "main") in calls
+    assert ("reset", "--hard", checkpoint.baseline) in calls
+    assert calls.index(("switch", "main")) < calls.index(("reset", "--hard", checkpoint.baseline))
+    assert calls.index(("reset", "--hard", checkpoint.baseline)) < calls.index(("switch", "agent/checkpoint/original"))
+    assert ("switch", "agent/checkpoint/original") in calls
+    assert saved[-1].state == "pending"
+    assert saved[-1].promoted_sha is None
