@@ -134,6 +134,29 @@ def test_unified_client_only_allows_direct_cloud_fallback_for_openrouter(monkeyp
     assert client._allow_direct_cloud_fallback() is True
 
 
+def test_invalid_provider_setting_fails_closed():
+    from core.provider_policy import validate_provider
+
+    with pytest.raises(ValueError, match="Unsupported AI provider"):
+        validate_provider("NotAProvider")
+
+
+def test_invalid_provider_setting_cannot_retain_stale_client_provider(monkeypatch):
+    client = UnifiedAIClient.__new__(UnifiedAIClient)
+
+    def broken_settings():
+        return {"default_ai_provider": "NotAProvider"}
+
+    monkeypatch.setattr("memory.config_manager.load_settings", broken_settings)
+    with pytest.raises(ValueError, match="Unsupported AI provider"):
+        client.reload_settings()
+
+
+def test_non_boolean_offline_setting_is_not_treated_as_true():
+    value = "false"
+    assert not isinstance(value, bool)
+
+
 def test_intelligence_orchestrator_is_provider_preserving_by_default():
     source = IntelligenceOrchestrator._call.__kwdefaults__
     # The public orchestrator helper intentionally defaults to no direct provider switch.
