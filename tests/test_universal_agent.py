@@ -132,5 +132,39 @@ class UniversalCapabilityAgentTests(unittest.TestCase):
         self.assertEqual(result["status"], "synthesis-failed")
 
 
+    def test_existing_skill_structured_failure_is_not_reported_as_success(self):
+        class Registry:
+            @classmethod
+            def initialize(cls):
+                pass
+
+            @classmethod
+            def find_matching_skill(cls, request):
+                return ("known_skill", {})
+
+            @classmethod
+            def has_tool(cls, name):
+                return name == "known_skill"
+
+            @classmethod
+            def execute_sync(cls, name, args):
+                return {
+                    "success": False,
+                    "status": "provider-failed",
+                    "error": "provider unavailable",
+                }
+
+        original = universal_agent.DynamicToolRegistry
+        try:
+            universal_agent.DynamicToolRegistry = Registry
+            result = universal_agent.run("do the known thing")
+        finally:
+            universal_agent.DynamicToolRegistry = original
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["status"], "existing-skill-failed")
+        self.assertEqual(result["error"], "provider unavailable")
+
+
 if __name__ == "__main__":
     unittest.main()
