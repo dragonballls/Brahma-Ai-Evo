@@ -385,3 +385,13 @@ def test_gemini_backed_file_processing_refuses_to_cross_selected_provider(monkey
     )
     with pytest.raises(RuntimeError, match="requires the Google Gemini provider"):
         file_processor._gemini_client()
+
+
+def test_file_processor_rejects_empty_handler_result(tmp_path, monkeypatch):
+    from actions import file_processor
+
+    source = tmp_path / "sample.txt"
+    source.write_text("hello", encoding="utf-8")
+    monkeypatch.setattr(file_processor, "_process_text_doc", lambda *args, **kwargs: "")
+    result = file_processor.file_processor({"file_path": str(source), "action": "summarize"})
+    assert result == "Processing failed: action returned no usable result."
