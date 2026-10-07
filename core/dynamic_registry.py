@@ -51,6 +51,25 @@ FEATURES_DIR = PROJECT_ROOT / "features"
 APPDATA_SKILLS_DIR = get_user_data_dir() / "skills"
 
 
+def _is_link_like(path: Path) -> bool:
+    """Reject symlinks, junctions, and Windows reparse points before loading code."""
+    path = Path(path)
+    if path.is_symlink():
+        return True
+    is_junction = getattr(path, "is_junction", None)
+    if is_junction is not None and is_junction():
+        return True
+    if os.name == "nt":
+        try:
+            attrs = getattr(path.stat(follow_symlinks=False), "st_file_attributes", 0)
+            reparse = getattr(getattr(os, "stat", None), "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+            if reparse and attrs & reparse:
+                return True
+        except OSError:
+            return True
+    return False
+
+
 class DynamicSkill:
     """Represents a loaded, runnable feature or synthetic skill in Brahma AI."""
 
@@ -179,8 +198,8 @@ class DynamicToolRegistry:
                 continue
             # The repository feature tree is trusted code. Do not follow a
             # symlink placed there to execute code from an unrelated location.
-            if item.is_symlink():
-                logger.warning("[Registry] Refusing symlinked feature entry '%s'.", item.name)
+            if _is_link_like(item):
+                logger.warning("[Registry] Refusing symlinked/junction/reparse feature entry '%s'.", item.name)
                 continue
 
             # Case A: Single Python module file (e.g. features/internet_speed_test.py).
@@ -211,7 +230,7 @@ class DynamicToolRegistry:
 
                     manifest_path = item.with_suffix("") / "manifest.json"
                     if manifest_path.exists():
-                        if manifest_path.is_symlink():
+                        if _is_link_like(manifest_path):
                             logger.warning("[Registry] Refusing symlinked native feature manifest '%s'.", item.name)
                             continue
                         with open(manifest_path, "r", encoding="utf-8") as f:
@@ -234,8 +253,8 @@ class DynamicToolRegistry:
                 manifest_file = item / "manifest.json"
                 code_file = item / "skill.py"
                 if manifest_file.exists() and code_file.exists():
-                    if manifest_file.is_symlink() or code_file.is_symlink():
-                        logger.warning("[Registry] Refusing symlinked feature package '%s'.", item.name)
+                    if _is_link_like(manifest_file) or _is_link_like(code_file) or _is_link_like(item):
+                        logger.warning("[Registry] Refusing symlinked/junction/reparse feature package '%s'.", item.name)
                         continue
                     try:
                         with open(manifest_file, "r", encoding="utf-8") as f:
