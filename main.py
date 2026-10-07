@@ -520,6 +520,7 @@ def _cloud_tool_reply(
         max_tokens=8192,
         temperature=0.35,
         max_rounds=6,
+        provider=provider,
     )
 
 def _ig_gemini_reply(username: str, text: str) -> str:
