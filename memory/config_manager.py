@@ -168,6 +168,17 @@ def set_output_device(name: str) -> None:
     set_setting("output_device", name)
 
 
+# --- Voice transcription privacy
+
+def get_cloud_transcription_enabled() -> bool:
+    """Return whether cloud speech recognition is explicitly permitted."""
+    return bool(get_setting("allow_cloud_transcription", False))
+
+
+def set_cloud_transcription_enabled(enabled: bool) -> None:
+    set_setting("allow_cloud_transcription", bool(enabled))
+
+
 # --- Push-to-Talk
 
 def get_push_to_talk_enabled() -> bool:
