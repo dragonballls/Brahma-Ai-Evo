@@ -27,7 +27,15 @@ def _smoke_trace(message: str) -> None:
 def _action_result_is_failure(result: object) -> bool:
     """Recognize explicit action failure without misclassifying valid zero-result messages."""
     if isinstance(result, dict):
-        return result.get("success") is False or result.get("ok") is False
+        if result.get("success") is False or result.get("ok") is False:
+            return True
+        error = result.get("error")
+        if error not in (None, ""):
+            return True
+        errors = result.get("errors")
+        if errors:
+            return True
+        return False
     text = str(result or "").strip().casefold()
     if not text:
         return True
