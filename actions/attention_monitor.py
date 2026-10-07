@@ -505,6 +505,12 @@ def _speak_edge_native(
                 pitch=pitch,
             )
             communicator.save_sync(audio_path)
+            if generation != _current_speech_generation():
+                try:
+                    os.remove(audio_path)
+                except OSError:
+                    pass
+                return
         except Exception as exc:
             if generation != _current_speech_generation():
                 return
