@@ -14,29 +14,42 @@ def test_local_flight_radar_fails_closed_without_device_location(monkeypatch):
 
 
 def test_flight_radar_network_reader_rejects_oversized_response(monkeypatch):
-    class FakeResponse:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def read(self, limit):
-            return b"x" * limit
-
-    class FakeOpener:
-        def open(self, *_args, **_kwargs):
-            return FakeResponse()
-
     monkeypatch.setattr(radar, "_validate_remote_host", lambda _url: None)
-    monkeypatch.setattr(radar.urllib.request, "build_opener", lambda *_args: FakeOpener())
 
+    def fake_fetch(*args, **kwargs):
+        raise ValueError("Flight-radar response exceeds the 4 MiB safety limit.")
+
+    monkeypatch.setattr(radar, "fetch_public_bytes", fake_fetch)
     try:
         radar._fetch_json("https://opensky-network.org/api/states/all", timeout=1)
     except ValueError as exc:
         assert "4 MiB safety limit" in str(exc)
     else:
         raise AssertionError("oversized response must be rejected")
+
+
+def test_flight_radar_network_reader_uses_pinned_transport_and_rejects_redirect(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(radar, "_validate_remote_host", lambda _url: None)
+
+    def fake_fetch(url, *, timeout, max_response_bytes, headers):
+        captured["url"] = url
+        captured["timeout"] = timeout
+        captured["max_response_bytes"] = max_response_bytes
+        captured["headers"] = headers
+        return 302, b"redirect"
+
+    monkeypatch.setattr(radar, "fetch_public_bytes", fake_fetch)
+
+    try:
+        radar._fetch_json("https://opensky-network.org/api/states/all", timeout=8)
+    except RuntimeError as exc:
+        assert "HTTP 302" in str(exc)
+    else:
+        raise AssertionError("redirect response must not be accepted")
+    assert captured["timeout"] == 8
+    assert captured["max_response_bytes"] == radar.MAX_NETWORK_RESPONSE_BYTES
+    assert captured["headers"]["User-Agent"].startswith("BrahmaAI-FlightRadar")
 
 
 def test_flight_radar_rejects_non_global_resolved_address(monkeypatch):
