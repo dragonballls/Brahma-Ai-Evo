@@ -485,8 +485,10 @@ def _speak_edge_native(
         try:
             import edge_tts
         except Exception as exc:
+            if generation != _current_speech_generation():
+                return
             print(f"[AttentionMonitor] Edge TTS import failed: {exc}. Falling back to offline male voice.")
-            _speak_sapi_male(text, rate=sapi_rate)
+            _speak_sapi_male(text, rate=sapi_rate, generation=generation)
             return
 
         try:
@@ -508,7 +510,7 @@ def _speak_edge_native(
                 return
             print(f"[AttentionMonitor] Edge TTS generation failed: {exc}. Falling back to offline male voice.")
             _cleanup_current_audio()
-            _speak_sapi_male(text, rate=sapi_rate)
+            _speak_sapi_male(text, rate=sapi_rate, generation=generation)
             return
 
         # Play Edge TTS audio via Windows PresentationCore MediaPlayer (native across Windows 10 & 11).
@@ -544,7 +546,7 @@ def _speak_edge_native(
             if generation != _current_speech_generation():
                 return
             print(f"[AttentionMonitor] MediaPlayer playback failed: {exc}. Falling back to offline male voice.")
-            _speak_sapi_male(text, rate=sapi_rate)
+            _speak_sapi_male(text, rate=sapi_rate, generation=generation)
         finally:
             _cleanup_current_audio()
 
