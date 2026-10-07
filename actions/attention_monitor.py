@@ -543,8 +543,8 @@ def speak_native(text: str, force_edge: bool = False) -> None:
     text = (text or "").strip()
     if not text:
         return
-    generation = _next_speech_generation()
     stop_native_speech()
+    generation = _current_speech_generation()
     if _speech_sink is not None:
         try:
             _speech_sink(text)
