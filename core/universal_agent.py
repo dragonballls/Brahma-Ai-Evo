@@ -111,7 +111,7 @@ def run(request: str, *, context: str = "", max_repair_attempts: int = 2) -> dic
         context_hints=synthesis_context,
         max_repair_attempts=max_repair_attempts,
     )
-    if not forged.get("success"):
+    if not isinstance(forged, dict) or forged.get("success") is not True:
         return {
             "success": False,
             "status": "synthesis-failed",
