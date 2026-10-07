@@ -10,6 +10,7 @@ def test_reminder_does_not_claim_success_without_scheduler_verification(monkeypa
     monkeypatch.setenv("TEMP", str(tmp_path))
     target = (datetime.now() + timedelta(days=1)).replace(second=0, microsecond=0)
     calls = []
+    created_name = {"value": ""}
 
     class Result:
         def __init__(self, code, stderr="", stdout=""):
@@ -20,6 +21,7 @@ def test_reminder_does_not_claim_success_without_scheduler_verification(monkeypa
     def fake_run(args, **kwargs):
         calls.append(list(args))
         if args[1] == "/Create":
+            created_name["value"] = args[3]
             return Result(0)
         if args[1] == "/Query":
             return Result(1, stderr="verification unavailable")
@@ -39,13 +41,24 @@ def test_reminder_reports_success_only_after_scheduler_verification(monkeypatch,
     monkeypatch.setenv("TEMP", str(tmp_path))
     target = (datetime.now() + timedelta(days=1)).replace(second=0, microsecond=0)
     calls = []
+    created_name = {"value": ""}
 
     class Result:
-        returncode = 0
-        stderr = ""
-        stdout = "TaskName: verified"
+        def __init__(self, stdout=""):
+            self.returncode = 0
+            self.stderr = ""
+            self.stdout = stdout
 
-    monkeypatch.setattr(subprocess, "run", lambda args, **kwargs: calls.append(list(args)) or Result())
+    def fake_run(args, **kwargs):
+        calls.append(list(args))
+        if args[1] == "/Create":
+            created_name["value"] = args[3]
+            return Result()
+        if args[1] == "/Query":
+            return Result(stdout=f"TaskName: {created_name['value']}")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
     result = reminder({"date": target.strftime("%Y-%m-%d"), "time": target.strftime("%H:%M"), "message": "hello"})
 
     assert result.startswith("Reminder set for")
