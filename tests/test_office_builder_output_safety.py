@@ -1,4 +1,5 @@
 from pathlib import Path
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -17,23 +18,50 @@ def test_office_builder_implicit_outputs_avoid_collisions():
     assert "candidate = DEFAULT_OUTPUT_DIR / f" in source
 
 
+
 def test_presentation_save_failure_cannot_claim_created(monkeypatch, tmp_path):
     from actions import office_builder as office
 
-    class Presentation:
-        def __init__(self):
-            pass
+    Presentation, RGBColor, MSO_SHAPE, Inches, Pt = office._import_pptx()
+
+    class NoSavePresentation(Presentation):
         def save(self, _path):
             return None
 
-    monkeypatch.setattr(office, "_import_pptx", lambda: (
-        lambda: None,
-        lambda *_args: None,
-        type("Shapes", (), {})(),
-        lambda x: x,
-        lambda x: x,
-    ))
-    # Validate the production post-save guard directly with the real object API shape.
-    output = tmp_path / "deck.pptx"
-    output.write_bytes(b"")
-    assert not (output.is_file() and output.stat().st_size > 0)
+    monkeypatch.setattr(
+        office,
+        "_import_pptx",
+        lambda: (NoSavePresentation, RGBColor, MSO_SHAPE, Inches, Pt),
+    )
+    with pytest.raises(RuntimeError, match="save could not be verified"):
+        office.create_presentation({
+            "title": "Verification Test",
+            "slides": [{"title": "Test", "bullets": ["Body"]}],
+            "output_path": str(tmp_path / "deck.pptx"),
+            "auto_open": False,
+        })
+
+
+def test_spreadsheet_save_failure_cannot_claim_created(monkeypatch, tmp_path):
+    from actions import office_builder as office
+
+    Workbook, BarChart, LineChart, PieChart, Reference, Alignment, Font, PatternFill, get_column_letter = office._import_openpyxl()
+
+    class NoSaveWorkbook(Workbook):
+        def save(self, _path):
+            return None
+
+    monkeypatch.setattr(
+        office,
+        "_import_openpyxl",
+        lambda: (
+            NoSaveWorkbook, BarChart, LineChart, PieChart, Reference,
+            Alignment, Font, PatternFill, get_column_letter,
+        ),
+    )
+    with pytest.raises(RuntimeError, match="save could not be verified"):
+        office.create_spreadsheet({
+            "title": "Verification Test",
+            "output_path": str(tmp_path / "sheet.xlsx"),
+            "auto_open": False,
+        })
