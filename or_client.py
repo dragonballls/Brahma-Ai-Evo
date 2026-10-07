@@ -80,10 +80,38 @@ MAX_RETRIES_PER_MODEL = 2    # attempts before moving to next model
 RETRY_DELAY           = 2    # seconds between retries
 RATE_LIMIT_COOLDOWN   = 60   # seconds before retrying a rate-limited model
 FAILED_MODEL_COOLDOWN = 30   # seconds before retrying a transiently unavailable model
+MAX_LLM_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_LLM_ERROR_BYTES = 64 * 1024
+_RESPONSE_CHUNK_BYTES = 16 * 1024
 
 _rate_limited: dict[str, float] = {}
 _failed_until: dict[str, float] = {}
 _model_state_lock = threading.Lock()
+
+
+def _read_bounded_json(response: requests.Response, *, max_bytes: int = MAX_LLM_RESPONSE_BYTES) -> dict:
+    """Read and parse a successful HTTP JSON body without unbounded buffering."""
+    chunks: list[bytes] = []
+    total = 0
+    try:
+        for chunk in response.iter_content(chunk_size=_RESPONSE_CHUNK_BYTES):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > max_bytes:
+                raise ValueError(f"LLM response exceeds the {max_bytes // (1024 * 1024)} MiB safety limit.")
+            chunks.append(chunk)
+        raw = b"".join(chunks)
+        data = json.loads(raw.decode("utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("LLM response JSON must be an object.")
+        return data
+    finally:
+        try:
+            response.close()
+        except Exception:
+            pass
+
 
 class OpenRouterClient:
 
@@ -168,7 +196,8 @@ class OpenRouterClient:
                 headers=headers,
                 json=payload,
                 timeout=REQUEST_TIMEOUT,
-                    allow_redirects=False,
+                allow_redirects=False,
+                stream=True,
             )
             if 300 <= response.status_code < 400:
                 logger.warning("[OmniRoute] Authenticated request was redirected; refusing credential forwarding.")
@@ -239,6 +268,7 @@ class OpenRouterClient:
                     json=payload,
                     timeout=REQUEST_TIMEOUT,
                     allow_redirects=False,
+                    stream=True,
                 )
 
                 if resp.status_code == 401:
@@ -266,7 +296,7 @@ class OpenRouterClient:
                     return None
 
                 if resp.status_code == 200:
-                    data    = resp.json()
+                    data    = _read_bounded_json(resp)
                     content = (
                         data.get("choices", [{}])[0]
                             .get("message", {})
@@ -434,7 +464,7 @@ class OpenRouterClient:
                     )
                     return {}
                 if resp.status_code == 200:
-                    data = resp.json()
+                    data = _read_bounded_json(resp)
                     if not isinstance(data, dict):
                         return {}
                     choices = data.get("choices")
@@ -536,9 +566,9 @@ class OpenRouterClient:
                 return None
 
             try:
-                data = response.json()
+                data = _read_bounded_json(response)
             except Exception as exc:
-                logger.warning(f"[OmniRoute] invalid tool response JSON: {exc}")
+                logger.warning(f"[OmniRoute] invalid/bounded tool response JSON: {exc}")
                 return None
 
             message = data.get("choices", [{}])[0].get("message", {}) or {}

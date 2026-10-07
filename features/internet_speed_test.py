@@ -6,7 +6,7 @@ Triggers: internet speed, speed test, test my speed, check speed, download speed
 
 import os
 import sys
-import time
+import logging
 from typing import Dict, Any
 
 FEATURE_METADATA = {
@@ -38,29 +38,21 @@ def execute(**kwargs) -> Dict[str, Any]:
 
     try:
         import speedtest
-        st = speedtest.Speedtest()
+        st = speedtest.Speedtest(timeout=10)
         st.get_best_server()
         download_speed = st.download() / 1_000_000.0  # Mbps
         upload_speed = st.upload() / 1_000_000.0      # Mbps
         ping = float(st.results.ping)
     except Exception as e:
-        # Fallback benchmark estimation if speedtest-cli servers are slow/throttled
-        import urllib.request
-        try:
-            t0 = time.time()
-            urllib.request.urlopen("https://1.1.1.1", timeout=5)
-            ping = round((time.time() - t0) * 1000, 2)
-            # Estimate download speed via small chunk
-            t1 = time.time()
-            with urllib.request.urlopen("https://speed.cloudflare.com/__down?bytes=10000000", timeout=8) as r:
-                data = r.read()
-            dt = time.time() - t1
-            download_speed = round((len(data) * 8 / (dt * 1_000_000)), 2)
-            upload_speed = round(download_speed * 0.45, 2)
-        except Exception:
-            download_speed = 45.20
-            upload_speed = 22.80
-            ping = 24.50
+        logger = __import__("logging").getLogger("internet_speed_test")
+        logger.warning("Internet speed measurement failed: %s", e)
+        return {
+            "title": "Internet Speed Test Unavailable",
+            "summary": f"Speed test failed: {e}",
+            "spoken_narrative": "I couldn't measure your internet speed because the network test failed.",
+            "error": str(e),
+            "success": False,
+        }
 
     # Create dark HUD styled plot
     fig, ax = plt.subplots(figsize=(8, 5.5))

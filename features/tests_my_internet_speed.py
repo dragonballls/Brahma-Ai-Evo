@@ -75,25 +75,10 @@ def execute(**kwargs) -> Dict[str, Any]:
         }
 
     except Exception as e:
-        # Fallback benchmark estimation if speedtest-cli servers are slow/throttled
-        try:
-            t0 = time.time()
-            urllib.request.urlopen("https://1.1.1.1", timeout=4)
-            ping = round((time.time() - t0) * 1000, 2)
-            download_speed = 48.50
-            upload_speed = 24.10
-        except Exception:
-            download_speed = 45.20
-            upload_speed = 22.80
-            ping = 25.0
-
-        summary = f"Download: {download_speed:.2f} Mbps, Upload: {upload_speed:.2f} Mbps, Ping: {ping:.2f} ms"
-        spoken = f"Internet speed test measured {download_speed:.1f} megabits per second download and {upload_speed:.1f} megabits per second upload."
         return {
-            "title": "Internet Speed Test Results",
-            "summary": summary,
-            "spoken_narrative": spoken,
-            "download_mbps": download_speed,
-            "upload_mbps": upload_speed,
-            "ping_ms": ping,
+            "title": "Internet Speed Test Unavailable",
+            "summary": f"Speed test failed: {e}",
+            "spoken_narrative": "I couldn't measure your internet speed because the network test failed.",
+            "error": str(e),
+            "success": False,
         }
