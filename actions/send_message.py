@@ -119,10 +119,14 @@ def _send_instagram(receiver: str, message: str) -> str:
     try:
         from actions.instagram_mcp import InstagramService
         res = InstagramService.instance().send_dm(receiver, message, open_in_browser=True)
-        if not _is_success_result(res):
-            error = res.get("error") if isinstance(res, dict) else "Instagram returned a malformed send result."
-            return f"Instagram send failed: {error}"
-        return f"Message sent to @{receiver} via Instagram. Thread opened in browser."
+        if not isinstance(res, dict):
+            return "Instagram send failed: Instagram returned a malformed send result."
+        if res.get("delivery_verified") is True and res.get("success") is True:
+            return f"Message delivered to @{receiver} via Instagram. Browser navigation was requested."
+        if res.get("submitted") is True:
+            return f"Instagram message submission was accepted for @{receiver}, but delivery was not independently verified."
+        error = res.get("error") or "Instagram send did not complete successfully."
+        return f"Instagram send failed: {error}"
     except Exception as e:
         try:
             _open_instagram_home()
@@ -149,12 +153,12 @@ def _upload_instagram_media(media_path: str, caption: str = "", mode: str = "pos
             res = svc.post_reel(str(path), caption=caption, open_in_browser=True)
             if not _is_success_result(res):
                 return f"Instagram Reel publish failed: {res.get('error') if isinstance(res, dict) else 'malformed result'}"
-            return f"Instagram Reel published: {res.get('reel_url')} (opened in browser)"
+            return f"Instagram Reel published: {res.get('reel_url')}; browser navigation was requested but not independently verified."
         else:
             res = svc.post_photo(str(path), caption=caption, open_in_browser=True)
             if not _is_success_result(res):
                 return f"Instagram Photo publish failed: {res.get('error') if isinstance(res, dict) else 'malformed result'}"
-            return f"Instagram Photo published: {res.get('post_url')} (opened in browser)"
+            return f"Instagram Photo published: {res.get('post_url')}; browser navigation was requested but not independently verified."
     except Exception as e:
         return f"Instagram API upload error: {e}"
 
@@ -237,7 +241,7 @@ def _send_email_via_browser(platform: str, receiver: str, message: str) -> str:
             if not webbrowser.open(url):
                 return "Could not open the default mail client to compose email."
             
-        return f"Opened {app_name} to compose email to {receiver}."
+        return f"Browser compose request sent for {receiver} using {app_name}; page load was not independently verified."
     except Exception as e:
         return f"Email browser compose error: {e}"
 
