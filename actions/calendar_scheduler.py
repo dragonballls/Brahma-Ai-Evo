@@ -110,11 +110,19 @@ def _save_events(events: list[dict]) -> None:
             raise ValueError("Calendar contains too many events.")
         EVENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
         temp = EVENTS_FILE.with_name(f".{EVENTS_FILE.name}.{uuid.uuid4().hex}.tmp")
-        temp.write_text(
-            json.dumps(events, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        payload = json.dumps(events, indent=2, ensure_ascii=False)
+        with temp.open("w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
         temp.replace(EVENTS_FILE)
+        try:
+            raw = _safe_events_text()
+            verified = json.loads(raw)
+        except Exception as exc:
+            raise RuntimeError("Calendar save could not be verified after replacement.") from exc
+        if verified != events:
+            raise RuntimeError("Calendar save verification found a mismatched final state.")
 
 
 def _ics_escape(value: object) -> str:
@@ -303,8 +311,18 @@ def calendar_scheduler(
 
         desktop_ics = Path.home() / "Desktop" / "brahma_calendar.ics"
         temp_ics = desktop_ics.with_name(f".{desktop_ics.name}.{uuid.uuid4().hex}.tmp")
-        temp_ics.write_text("\n".join(ics_lines), encoding="utf-8")
+        payload = "\n".join(ics_lines)
+        with temp_ics.open("w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
         temp_ics.replace(desktop_ics)
+        try:
+            verified_bytes = desktop_ics.read_bytes()
+        except OSError as exc:
+            raise RuntimeError("Calendar export could not be verified after replacement.") from exc
+        if not verified_bytes or verified_bytes != payload.encode("utf-8"):
+            raise RuntimeError("Calendar export verification found a mismatched final artifact.")
         return f"Exported calendar events to {desktop_ics}"
 
     return f"Unknown calendar action: '{action}'."
