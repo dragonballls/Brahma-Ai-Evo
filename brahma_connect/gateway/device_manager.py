@@ -46,6 +46,33 @@ def _validate_registry_path(path: Path) -> None:
         raise RuntimeError("Device registry path must be a regular file.")
 
 
+def _read_registry_bytes(path: Path, *, max_bytes: int = 4 * 1024 * 1024) -> bytes:
+    if os.name == "nt":
+        from core.windows_file_safety import open_safe_file
+        fd, _final_path, info = open_safe_file(path, write=False)
+        if int(info.nNumberOfLinks) > 1:
+            os.close(fd)
+            raise OSError("Device registry has multiple hard links.")
+    else:
+        flags = os.O_RDONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        fd = os.open(path, flags)
+        if os.fstat(fd).st_nlink > 1:
+            os.close(fd)
+            raise OSError("Device registry has multiple hard links.")
+    try:
+        with os.fdopen(fd, "rb") as handle:
+            fd = -1
+            raw = handle.read(max_bytes + 1)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+    if len(raw) > max_bytes:
+        raise ValueError("Device registry exceeds the 4 MiB safety limit.")
+    return raw
+
+
 class DeviceManager:
     def __init__(self, registry_path: Path):
         self.registry_path = Path(registry_path)
@@ -86,7 +113,7 @@ class DeviceManager:
                 return
             raw_bytes = None
             try:
-                raw_bytes = self.registry_path.read_bytes()
+                raw_bytes = _read_registry_bytes(self.registry_path)
                 raw = json.loads(raw_bytes.decode("utf-8"))
             except (UnicodeError, json.JSONDecodeError):
                 if raw_bytes is None:
