@@ -7,6 +7,7 @@ receives credentials or gets arbitrary config-file access.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -131,6 +132,8 @@ def validate(key: str, value: Any) -> Any:
             number = float(value)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"'{value}' is not a valid number for {key}.") from exc
+        if not math.isfinite(number):
+            raise ValueError(f"'{value}' is not a finite number for {key}.")
         if spec.minimum is not None and number < spec.minimum:
             raise ValueError(f"{key} cannot be below {spec.minimum}.")
         if spec.maximum is not None and number > spec.maximum:
