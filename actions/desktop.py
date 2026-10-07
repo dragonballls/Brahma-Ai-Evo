@@ -11,7 +11,8 @@ import socket
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import quote, urlparse
-import urllib.request
+
+from core.network_safety import download_public_to_file
 
 try:
     import pyautogui
@@ -243,17 +244,17 @@ def set_wallpaper_from_url(url: str) -> str:
         fd, temp_name = tempfile.mkstemp(suffix=suffix)
         os.close(fd)
         tmp = Path(temp_name)
-        total = 0
         max_bytes = 20 * 1024 * 1024
-        with urllib.request.urlopen(safe_url, timeout=15) as response, tmp.open("wb") as output:
-            while True:
-                chunk = response.read(64 * 1024)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > max_bytes:
-                    return "Could not download wallpaper: image exceeds the 20 MiB safety limit."
-                output.write(chunk)
+        allowed_hosts = {(parsed.hostname or "").rstrip(".").lower()}
+        with tmp.open("wb") as output:
+            download_public_to_file(
+                safe_url,
+                output,
+                timeout=15,
+                max_response_bytes=max_bytes,
+                allowed_redirect_hosts=allowed_hosts,
+                headers={"User-Agent": "Brahma-Evo-Desktop/1"},
+            )
         return set_wallpaper(str(tmp))
     except Exception as e:
         return f"Could not download wallpaper: {e}"
