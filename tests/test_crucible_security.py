@@ -99,3 +99,13 @@ def execute(**kwargs):
     for code in payloads:
         ok, reason = SkillCrucible.validate_ast(code)
         assert not ok, (reason, code)
+
+
+def test_crucible_zero_exit_without_authoritative_result_is_failure():
+    ok, message, telemetry = SkillCrucible.run_sandbox_test(
+        "def execute(**kwargs):\n    raise SystemExit(0)\n",
+        [{"input": {}}],
+    )
+    assert not ok
+    assert "no authoritative test result" in message
+    assert telemetry.get("results") == []
