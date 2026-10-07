@@ -10,6 +10,7 @@ from core.user_paths import get_user_data_dir
 import json
 import logging
 import os
+import stat as _stat
 import threading
 import re
 import time
@@ -29,6 +30,46 @@ _SECRET_RE = re.compile(
 _TOKEN_RE = re.compile(r"\b(?:sk-[A-Za-z0-9_-]{20,}|gsk_[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b")
 
 
+def _is_link_like(path: Path) -> bool:
+    path = Path(path)
+    if path.is_symlink():
+        return True
+    is_junction = getattr(path, "is_junction", None)
+    if is_junction is not None and is_junction():
+        return True
+    if os.name == "nt":
+        try:
+            attrs = getattr(path.stat(follow_symlinks=False), "st_file_attributes", 0)
+            reparse = getattr(_stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+            if reparse and attrs & reparse:
+                return True
+        except OSError:
+            return True
+    return False
+
+
+def _assert_safe_path(path: Path) -> None:
+    current = Path(path)
+    while True:
+        if _is_link_like(current):
+            raise RuntimeError(
+                f"Learned-rules persistence path must not contain a symlink, junction, or reparse point: {current}"
+            )
+        try:
+            if current.exists() and current.is_file():
+                if int(current.stat(follow_symlinks=False).st_nlink) > 1:
+                    raise RuntimeError(
+                        f"Learned-rules persistence path has multiple hard links: {current}"
+                    )
+        except OSError as exc:
+            raise RuntimeError(
+                f"Learned-rules persistence path could not be inspected safely: {current}"
+            ) from exc
+        if current.parent == current:
+            break
+        current = current.parent
+
+
 class LearnedRulesEngine:
     """Manages persistent behavioral rules and directives learned from the user."""
 
@@ -38,6 +79,7 @@ class LearnedRulesEngine:
     def _load_raw() -> List[Dict[str, Any]]:
         if not RULES_FILE.exists():
             return []
+        _assert_safe_path(RULES_FILE)
         try:
             with open(RULES_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -82,16 +124,30 @@ class LearnedRulesEngine:
         try:
             with LearnedRulesEngine._lock:
                 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+                _assert_safe_path(RULES_FILE)
                 temp = RULES_FILE.with_name(
                     f".{RULES_FILE.name}.{os.getpid()}-{uuid.uuid4().hex}.tmp"
                 )
+                fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 try:
-                    temp.write_text(
-                        json.dumps(rules, indent=4, ensure_ascii=False),
-                        encoding="utf-8",
-                    )
+                    with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+                        fd = -1
+                        handle.write(json.dumps(rules, indent=4, ensure_ascii=False))
+                        handle.flush()
+                        os.fsync(handle.fileno())
                     os.replace(temp, RULES_FILE)
-                finally:
+                    _assert_safe_path(RULES_FILE)
+                    persisted = json.loads(RULES_FILE.read_text(encoding="utf-8"))
+                    if persisted != rules:
+                        raise RuntimeError("Learned-rules save verification found a mismatched final state.")
+                except Exception:
+                    if fd >= 0:
+                        try:
+                            os.close(fd)
+                        except OSError:
+                            pass
+                    raise
+                finally
                     try:
                         temp.unlink(missing_ok=True)
                     except OSError:
