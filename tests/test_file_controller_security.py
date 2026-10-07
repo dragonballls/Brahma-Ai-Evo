@@ -264,3 +264,78 @@ def test_read_file_rejects_symlink_replacement_before_secure_open(tmp_path, monk
     result = file_controller.read_file(str(tmp_path), target.name)
     assert "could not read file" in result.lower()
     assert "secret" not in result
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows handle integration")
+def test_undo_move_passes_exact_handle_identity_to_windows_rename(tmp_path, monkeypatch):
+    from actions import file_controller
+
+    dst = tmp_path / "moved.txt"
+    src = tmp_path / "original.txt"
+    dst.write_text("moved", encoding="utf-8")
+
+    captured = {}
+
+    real_winfs = file_controller._WINFS
+    real_rename = real_winfs.rename
+
+    def fake_rename(source, destination, *, source_identity=None):
+        captured["source"] = source
+        captured["destination"] = destination
+        captured["source_identity"] = source_identity
+
+    monkeypatch.setattr(real_winfs, "rename", fake_rename)
+    undo = file_controller._undo_move(src, dst)
+    assert undo().startswith("'original.txt' is back")
+    assert captured["source_identity"] is not None
+    assert len(tuple(captured["source_identity"])) == 3
+    monkeypatch.setattr(real_winfs, "rename", real_rename)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows handle integration")
+def test_undo_write_passes_exact_handle_identity_to_windows_writer(tmp_path, monkeypatch):
+    from actions import file_controller
+
+    target = tmp_path / "target.txt"
+    target.write_text("after", encoding="utf-8")
+    expected = file_controller._fingerprint(target)
+    captured = {}
+
+    real_winfs = file_controller._WINFS
+    real_write = real_winfs.write_text
+
+    def fake_write(path, content, *, append=False, expected_identity=None):
+        captured["path"] = path
+        captured["content"] = content
+        captured["expected_identity"] = expected_identity
+        return tuple(expected_identity)
+
+    monkeypatch.setattr(real_winfs, "write_text", fake_write)
+    undo = file_controller._undo_write(target, "before", expected)
+    assert undo() == "Restored the previous contents of 'target.txt'."
+    assert captured["content"] == "before"
+    assert len(tuple(captured["expected_identity"])) == 3
+    monkeypatch.setattr(real_winfs, "write_text", real_write)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows handle integration")
+def test_secure_unlink_uses_handle_backed_delete(tmp_path, monkeypatch):
+    from actions import file_controller
+
+    target = tmp_path / "target.txt"
+    target.write_text("data", encoding="utf-8")
+    identity = file_controller._expected_identity(target)
+
+    captured = {}
+    real_winfs = file_controller._WINFS
+    real_unlink = real_winfs.unlink
+
+    def fake_unlink(path, *, expected_identity=None):
+        captured["path"] = path
+        captured["expected_identity"] = expected_identity
+
+    monkeypatch.setattr(real_winfs, "unlink", fake_unlink)
+    file_controller._secure_unlink(target, expected_identity=identity)
+    assert captured["path"] == target
+    assert captured["expected_identity"] == identity
+    monkeypatch.setattr(real_winfs, "unlink", real_unlink)
