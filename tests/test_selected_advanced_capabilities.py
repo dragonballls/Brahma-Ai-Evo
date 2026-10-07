@@ -28,7 +28,7 @@ class _FakeResponse:
         self.value = value
     def __enter__(self): return self
     def __exit__(self, *args): return False
-    def read(self): return json.dumps(self.value).encode("utf-8")
+    def read(self, _max_bytes=None): return json.dumps(self.value).encode("utf-8")
 
 
 class SelectedCapabilitiesTests(unittest.TestCase):
