@@ -721,6 +721,7 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
         if switched.returncode != 0:
             raise SelfCodingError(switched.stderr.strip() or "Unable to switch to main for undo.")
         undo_commits: list[str] = []
+        published_undo = False
         try:
             try:
                 self._save(replace(checkpoint, state="undoing", undo_commits=()))
@@ -782,6 +783,12 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
                     "Undo publish outcome is ambiguous; checkpoint remains in undoing state for recovery. "
                     f"Push result: {detail}"
                 )
+            # Once the remote accepted the undo tip, local main must remain at
+            # that same tip until the durable checkpoint can be finalized.
+            # Resetting local main back to the promoted commit here would make
+            # a later recovery see local/remote disagreement and become unable
+            # to prove whether the published undo is complete.
+            published_undo = True
             try:
                 self._save(replace(checkpoint, state="undone", undo_commits=tuple(undo_commits)))
             except Exception as save_exc:
@@ -793,9 +800,15 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
             return "undone"
         except Exception:
             try:
-                if self._branch() == "main":
-                    self._git("reset", "--hard", checkpoint.promoted_sha)
-                self._git("switch", current)
+                if published_undo:
+                    # The undo has already been published. Never rewind local
+                    # main to the promoted state; doing so breaks durable
+                    # recovery because remote main is already at the undo tip.
+                    self._git("switch", current)
+                else:
+                    if self._branch() == "main":
+                        self._git("reset", "--hard", checkpoint.promoted_sha)
+                    self._git("switch", current)
             except Exception:
                 pass
             raise
