@@ -4350,9 +4350,7 @@ class BrahmaLive:
             try:
                 self.ui.finish_task_workspace(
                     reply_text if verified else (
-                        f"{reply_text}
-
-Delivery was not independently verified: {result}"
+                        f"{reply_text}\n\nDelivery was not independently verified: {result}"
                     ),
                     "Reply delivered." if verified else "Reply submitted",
                     100 if verified else 90,
