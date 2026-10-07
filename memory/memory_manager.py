@@ -189,10 +189,17 @@ def _atomic_write_json(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(f".{path.name}.{os.getpid()}-{__import__('uuid').uuid4().hex}.tmp")
     try:
-        temp.write_text(
-            json.dumps(value, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        payload = json.dumps(value, indent=2, ensure_ascii=False)
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(payload)
+        except Exception:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise
         temp.replace(path)
     except Exception:
         try:
