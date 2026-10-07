@@ -214,7 +214,7 @@ class IntelligenceOrchestrator:
         if p=="maintenance":return ("systems diagnostician","independent verifier")
         if p=="vision":return ("visual analyst","independent visual verifier")
         return ("primary reasoner","critical reasoner")
-    def _call(self,prompt:str,system:str,model:str,max_tokens:int,temp:float,history=None,*,allow_direct_fallback:bool=False)->str:
+    def _call(self,prompt:str,system:str,model:str,max_tokens:int,temp:float,history=None,*,allow_direct_fallback:bool=False,provider:Optional[str]=None)->str:
         return cloud_client.chat(
             prompt=prompt,
             system=system,
@@ -223,6 +223,7 @@ class IntelligenceOrchestrator:
             max_tokens=max_tokens,
             temperature=temp,
             allow_direct_fallback=allow_direct_fallback,
+            provider=provider,
         )
     def respond(self,prompt:str,*,system="You are Brahma Evo, a precise and helpful assistant.",history=None,context="",profile=None)->str:
         prompt=(prompt or "").strip()
@@ -270,7 +271,7 @@ class IntelligenceOrchestrator:
                 thread_name_prefix="BrahmaEnsemble",
             ) as executor:
                 submitted = {
-                    executor.submit(self._call, *spec): meta
+                    executor.submit(self._call, *spec, provider=meta[1]): meta
                     for meta, spec in specs.items()
                 }
                 for future in as_completed(submitted):
@@ -377,6 +378,7 @@ class IntelligenceOrchestrator:
                         int(pc.get("max_tokens",4096)),
                         0.15,
                         None,
+                        provider="",
                     )
                     if result and result.strip():
                         log.info(
@@ -435,6 +437,7 @@ class IntelligenceOrchestrator:
                         system=system+" You are an independent structured-reasoning specialist.",
                         model=model,max_tokens=max_tokens,temperature=float(pc.get("temperature",0.2)),
                         allow_direct_fallback=False,
+                        provider=provider,
                     )]=(index,provider,model)
                 drafts=[]
                 for future in as_completed(futures):
@@ -452,6 +455,7 @@ class IntelligenceOrchestrator:
                     system=system+" Reconcile contradictions and return ONLY one valid JSON object.",
                     model=judge_model,max_tokens=max_tokens,temperature=0.1,
                     allow_direct_fallback=False,
+                    provider="",
                 )
                 clean=str(raw or "").strip()
                 if clean.startswith("```"):
