@@ -301,7 +301,8 @@ class BrahmaGateway:
             return {"success": False, "error": "Device not found.", "error_code": "DEVICE_NOT_FOUND"}
 
         was_online = bool(record.online)
-        if not was_online:
+        connection = await self.hub.get(record.device_id)
+        if connection is None and not was_online:
             self._append_log(
                 "DEVICE_DISCONNECTED",
                 device_id=record.device_id,
@@ -316,8 +317,27 @@ class BrahmaGateway:
                 "already_disconnected": True,
             }
 
-        disconnected = False
-        try:
+        if connection is None:
+            try:
+                self.device_manager.mark_offline(record.device_id)
+            except Exception as exc:
+                self._append_log(
+                    "DEVICE_DISCONNECT_PERSISTENCE_FAILED",
+                    device_id=record.device_id,
+                    name=record.name,
+                    error=str(exc),
+                )
+                return {
+                    "success": False,
+                    "device": record.to_dict(),
+                    "disconnected": False,
+                    "error": f"Device had no active connection, but offline state could not be persisted: {exc}",
+                    "error_code": "DISCONNECT_PERSISTENCE_FAILED",
+                }
+            self._append_log("DEVICE_DISCONNECTED", device_id=record.device_id, name=record.name, forced=True, reconciled=True)
+            return {"success": True, "device": record.to_dict(), "disconnected": False, "already_disconnected": True, "reconciled": True}
+
+        disconnected = False        try:
             disconnected = await self.hub.close_device(record.device_id, reason=reason)
         except Exception:
             disconnected = False
@@ -660,9 +680,25 @@ class BrahmaGateway:
         async def forget_device(device_id: str, req: Request):
             if not _local_management_allowed(req):
                 return JSONResponse({"ok": False, "error": "Local management endpoint."}, status_code=403)
-            if not self.device_manager.remove(device_id):
+            record = self.device_manager.get(device_id)
+            if record is None:
                 return JSONResponse({"ok": False, "error": "Device not found."}, status_code=404)
-            await self.hub.close_device(device_id, reason="Device forgotten")
+            connection = await self.hub.get(device_id)
+            if connection is not None:
+                try:
+                    closed = await self.hub.close_device(device_id, reason="Device forgotten")
+                except Exception:
+                    closed = False
+                if not closed:
+                    return JSONResponse(
+                        {"ok": False, "error": "Unable to close the active device connection; device was not forgotten.", "error_code": "DISCONNECT_FAILED"},
+                        status_code=503,
+                    )
+            if not self.device_manager.remove(device_id):
+                return JSONResponse(
+                    {"ok": False, "error": "Device could not be forgotten because persistence failed.", "error_code": "PERSISTENCE_FAILED"},
+                    status_code=500,
+                )
             self._append_log("DEVICE_FORGOTTEN", device_id=device_id)
             return {"ok": True}
 
@@ -993,4 +1029,14 @@ class BrahmaGateway:
             with self._serve_lock:
                 self._server = None
                 self._running = False
-            self.discovery.stop()
+            try:
+                closed_devices = await self.hub.close_all()
+                with self._pending_lock:
+                    self._pending_requests.clear()
+                for device_id in closed_devices:
+                    try:
+                        self.device_manager.mark_offline(device_id)
+                    except Exception as exc:
+                        self._append_log("DEVICE_DISCONNECT_PERSISTENCE_FAILED", device_id=device_id, error=str(exc))
+            finally:
+                self.discovery.stop()

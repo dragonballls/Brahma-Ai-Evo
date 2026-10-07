@@ -68,6 +68,36 @@ def test_gateway_same_socket_reregistration_cleans_stale_device_state():
     asyncio.run(scenario())
 
 
+def test_connection_hub_close_all_settles_every_pending_future():
+    import asyncio
+    from brahma_connect.gateway.websocket import ConnectionHub
+
+    class Socket:
+        async def close(self, **kwargs):
+            return None
+
+    async def scenario():
+        hub = ConnectionHub()
+        socket = Socket()
+        await hub.attach(socket)
+        await hub.register(socket, "device-shutdown")
+        future = await hub.set_pending("device-shutdown", "req-shutdown")
+        assert future is not None
+        closed = await hub.close_all()
+        return closed, future, await hub.get("device-shutdown")
+
+    closed, future, current = asyncio.run(scenario())
+    assert closed == ["device-shutdown"]
+    assert current is None
+    assert future.done()
+    try:
+        future.result()
+    except RuntimeError as exc:
+        assert "shutting down" in str(exc).lower()
+    else:
+        raise AssertionError("Pending future was not rejected during shutdown.")
+
+
 def test_gateway_rejects_reauthentication_on_an_already_authenticated_socket():
     source = (ROOT / "brahma_connect" / "gateway" / "server.py").read_text(encoding="utf-8")
     assert "This WebSocket is already authenticated; reconnect to change devices." in source

@@ -214,6 +214,27 @@ class ConnectionHub:
         if future and not future.done():
             future.set_exception(RuntimeError(error))
 
+    async def close_all(self, *, code: int = 1001, reason: str = "Gateway shutting down") -> list[str]:
+        async with self._lock:
+            states = list(self._connections.values())
+            device_ids = [state.device_id for state in states if state.device_id]
+            self._connections.clear()
+            self._socket_index.clear()
+            pending = []
+            for state in states:
+                state.authenticated = False
+                pending.extend(state.pending.values())
+                state.pending.clear()
+        for state in states:
+            try:
+                await asyncio.wait_for(state.websocket.close(code=code, reason=reason), timeout=SOCKET_SEND_TIMEOUT_SECONDS)
+            except Exception:
+                pass
+        for future in pending:
+            if not future.done():
+                future.set_exception(RuntimeError(reason))
+        return device_ids
+
     async def close_device(self, device_id: str, code: int = 1000, reason: str = "") -> bool:
         key = str(device_id)
         async with self._lock:
