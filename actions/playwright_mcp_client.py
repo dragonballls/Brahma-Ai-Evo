@@ -19,13 +19,13 @@ logger.setLevel(logging.INFO)
 _ALLOWED_BROWSER_URL_SCHEMES = frozenset({"http", "https"})
 _ALLOWED_BROWSER_ABOUT_URLS = frozenset({"about:blank"})
 _LOCAL_BROWSER_HOSTS = frozenset({"localhost", "localhost.localdomain"})
-_PRIVATE_BROWSER_IPS = frozenset({
-    "unspecified",
-    "loopback",
-    "private",
-    "link_local",
-    "multicast",
-    "reserved",
+_PRIVATE_BROWSER_IP_ATTRIBUTES = frozenset({
+    "is_unspecified",
+    "is_loopback",
+    "is_private",
+    "is_link_local",
+    "is_multicast",
+    "is_reserved",
 })
 _REDIRECT_BLOCK_ENV = "BRAHMA_BROWSER_BLOCKED_HOSTS"
 _REDIRECT_ALLOW_ENV = "BRAHMA_BROWSER_ALLOWED_HOSTS"
@@ -93,7 +93,7 @@ def _validate_browser_hostname(hostname: str, *, scheme: str) -> str:
             raise ValueError(f"Browser hostname '{host}' did not resolve to any address.")
 
     for address in addresses:
-        if any(getattr(address, attr) for attr in _PRIVATE_BROWSER_IPS):
+        if any(getattr(address, attr, False) for attr in _PRIVATE_BROWSER_IP_ATTRIBUTES):
             raise ValueError(
                 f"Browser navigation to host '{host}' resolves to a private/reserved network address."
             )
