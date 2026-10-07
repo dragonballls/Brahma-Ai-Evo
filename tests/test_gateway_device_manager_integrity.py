@@ -127,3 +127,19 @@ def test_device_registry_rejects_symlinked_parent(tmp_path):
 
     with pytest.raises(RuntimeError, match="parent"):
         DeviceManager(link_dir / "devices.json")
+
+
+def test_corrupt_device_registry_is_preserved_without_renaming_live_path(tmp_path):
+    from brahma_connect.gateway.device_manager import DeviceManager
+
+    registry = tmp_path / "devices.json"
+    raw = "{broken"
+    registry.write_text(raw, encoding="utf-8")
+    with pytest.raises(RuntimeError, match="refusing to substitute or rename it"):
+        DeviceManager(registry)
+
+    assert registry.exists()
+    assert registry.read_text(encoding="utf-8") == raw
+    copies = list(tmp_path.glob("devices.json.corrupt-*"))
+    assert len(copies) == 1
+    assert copies[0].read_text(encoding="utf-8") == raw
