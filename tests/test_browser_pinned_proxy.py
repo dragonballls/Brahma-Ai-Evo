@@ -1,4 +1,5 @@
 import http.client
+import socket
 import socketserver
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -271,7 +272,7 @@ def test_request_header_limit_is_strict():
 
 def test_upstream_oversized_response_headers_are_rejected_before_exposure():
     oversized = b"HTTP/1.1 200 OK\r\nX-Fill: " + (b"a" * 65520) + b"\r\n\r\nsecret"
-    with pytest.raises(ValueError, match="response headers exceed"):
+    with pytest.raises(ValueError, match="header line exceeds"):
         _Handler._validate_response_headers(oversized[: oversized.find(b"\r\n\r\n") + 4])
 
 
