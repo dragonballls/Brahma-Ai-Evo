@@ -69,6 +69,9 @@ jobs:
           tests/test_gateway_connection_limits.py
           tests/test_mobile_autopilot_safety.py
           tests/test_self_coding_integrity.py
+          tests/test_self_coding_recovery_behavior.py
+          tests/test_provider_routing_integrity.py
+          tests/test_dev_agent_integrity.py
           tests/test_repository_sync.py
           tests/test_desktop_organizer_safety.py
           tests/test_brahma_connect.py
