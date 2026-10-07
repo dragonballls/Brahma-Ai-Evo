@@ -428,7 +428,7 @@ def rename(source: Path | str, destination: Path | str, *, source_identity=None)
         if not leaf or leaf in {".", ".."} or "\x00" in leaf or "/" in leaf or "\\" in leaf:
             raise ValueError("Invalid destination filename")
 
-        name = _win_path(destination_path).encode("utf-16-le")
+        name = leaf.encode("utf-16-le")
         pointer_size = ctypes.sizeof(ctypes.c_void_p)
         root_offset = pointer_size
         length_offset = root_offset + pointer_size
@@ -436,7 +436,7 @@ def rename(source: Path | str, destination: Path | str, *, source_identity=None)
         size = name_offset + len(name)
         raw = ctypes.create_string_buffer(size)
         ctypes.c_ubyte.from_buffer(raw, 0).value = 0
-        ctypes.c_void_p.from_buffer(raw, root_offset).value = None
+        ctypes.c_void_p.from_buffer(raw, root_offset).value = parent_handle
         ctypes.c_ulong.from_buffer(raw, length_offset).value = len(name)
         raw[name_offset:name_offset + len(name)] = name
 

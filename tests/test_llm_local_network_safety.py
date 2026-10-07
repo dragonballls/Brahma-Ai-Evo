@@ -73,6 +73,7 @@ def test_unified_local_chat_json_rejects_non_object_json(monkeypatch):
     import llm_client
 
     client = llm_client.UnifiedAIClient()
+    monkeypatch.setattr(client, "reload_settings", lambda: None)
     client._provider = "Local"
     monkeypatch.setattr(
         client,

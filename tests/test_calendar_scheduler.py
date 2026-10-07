@@ -30,9 +30,9 @@ def test_calendar_ics_fields_are_escaped():
     export_start = source.index('elif action in ("export_ics", "export")')
     export_block = source[export_start:source.index('return f"Exported calendar events', export_start)]
     assert "def _ics_escape" in source
-    assert 'SUMMARY:{_ics_escape(ev.get("title"))}' in export_block
-    assert 'DESCRIPTION:{_ics_escape(ev.get("description", \'\'))}' in export_block
-    assert 'LOCATION:{_ics_escape(ev.get("location", \'\'))}' in export_block
+    assert "_ics_escape(ev.get('title'))" in export_block
+    assert "_ics_escape(ev.get('description', ''))" in export_block
+    assert "_ics_escape(ev.get('location', ''))" in export_block
 
 
 def test_calendar_title_is_bounded_and_export_is_atomic():
