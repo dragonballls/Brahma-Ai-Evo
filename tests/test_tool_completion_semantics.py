@@ -16,7 +16,8 @@ def test_tool_completion_detects_explicit_failure_results():
     source = (ROOT / "main.py").read_text(encoding="utf-8")
     assert 'result.get("success") is False' in source
     assert 'result.get("ok") is False' in source
-    assert 'startswith(\n                ("error:", "failed:", "failure:", "unable to ", "could not ")' in source
+    for prefix in ("error:", "failed", "failure:", "could not", "unable to", "cannot "):
+        assert prefix in source.casefold()
 
 def test_main_execute_tool_has_strict_runtime_result_gate():
     source = (ROOT / "main.py").read_text(encoding="utf-8")

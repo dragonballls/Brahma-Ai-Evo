@@ -305,3 +305,44 @@ def test_secure_text_output_rejects_race_created_symlink(tmp_path, monkeypatch):
     assert outside.read_text(encoding="utf-8") == "keep"
     if target.exists():
         assert target.is_symlink()
+
+
+def test_image_resize_convert_and_compress_validate_real_artifacts(tmp_path):
+    from PIL import Image
+    from actions.file_processor import _process_image
+
+    source = tmp_path / "sample.png"
+    Image.new("RGB", (32, 24), "white").save(source)
+
+    resized_result = _process_image(source, "resize", {"width": 16})
+    assert "Saved:" in resized_result
+    resized = next(source.parent.glob("sample_resized_16x12*.png"))
+    assert Image.open(resized).size == (16, 12)
+
+    converted_result = _process_image(source, "convert", {"format": "jpg"})
+    assert "Saved:" in converted_result
+    converted = next(source.parent.glob("sample_converted*.jpg"))
+    assert Image.open(converted).format == "JPEG"
+
+    compressed_result = _process_image(source, "compress", {"quality": 70})
+    assert "Saved:" in compressed_result
+    compressed = next(source.parent.glob("sample_compressed_q70*.jpg"))
+    assert Image.open(compressed).format == "JPEG"
+
+
+def test_generated_output_verification_failure_is_honest_and_cleans_invalid_output(tmp_path, monkeypatch):
+    from PIL import Image
+    from actions import file_processor
+
+    source = tmp_path / "sample.png"
+    Image.new("RGB", (8, 8), "white").save(source)
+
+    original_save = Image.Image.save
+    def write_empty(self, fp, *args, **kwargs):
+        Path(fp).write_bytes(b"")
+
+    monkeypatch.setattr(Image.Image, "save", write_empty)
+    result = file_processor._process_image(source, "resize", {"width": 4})
+    assert result.startswith("Resize failed:")
+    assert not list(source.parent.glob("sample_resized_4x4*.png"))
+    monkeypatch.setattr(Image.Image, "save", original_save)
