@@ -107,7 +107,7 @@ def test_archive_runtime_rejects_malicious_paths_duplicate_members_and_collision
         base = Path(root)
         archive_path = base / "malicious.zip"
         with zipfile.ZipFile(archive_path, "w") as zf:
-            for name in ("../escape.txt", "/absolute.txt", "C:/drive-relative.txt", r"\\server\\share\\unc.txt"):
+            for name in ("../escape.txt", "/absolute.txt", "C:/drive-relative.txt", "C:drive-relative.txt", r"\\server\\share\\unc.txt"):
                 zf.writestr(name, b"x")
         with pytest.raises(ValueError):
             _safe_extract_archive(archive_path, base / "out")
@@ -182,16 +182,23 @@ def test_archive_runtime_enforces_compression_ratio_and_rolls_back_partial_failu
             zf.writestr("second.txt", b"two")
         out = base / "out"
         import actions.file_processor as fp
-        original = fp.shutil.copyfileobj
-        calls = {"count": 0}
+        original_open_output = fp._safe_extract_archive.__globals__.get("_open_output") if False else None
 
-        def fail_second(source, target):
+        original_zipfile = zipfile.ZipFile
+
+        def fail_second_output(*args, **kwargs):
+            return original_zipfile(*args, **kwargs)
+
+        calls = {"count": 0}
+        original_open = fp.zipfile.ZipFile.open
+
+        def open_with_second_failure(self, member, mode="r", pwd=None, force_zip64=False):
             calls["count"] += 1
             if calls["count"] == 2:
-                raise OSError("simulated write failure")
-            return original(source, target)
+                raise OSError("simulated source failure")
+            return original_open(self, member, mode=mode, pwd=pwd, force_zip64=force_zip64)
 
-        with patch.object(fp.shutil, "copyfileobj", side_effect=fail_second):
+        with patch.object(fp.zipfile.ZipFile, "open", side_effect=open_with_second_failure):
             with pytest.raises(OSError):
                 _safe_extract_archive(archive_path, out)
         assert not (out / "first.txt").exists()
@@ -212,3 +219,41 @@ def test_archive_runtime_rejects_tar_gz_compression_bomb():
 
         with pytest.raises(ValueError, match="compression ratio"):
             _safe_extract_archive(archive_path, base / "out")
+
+
+def test_archive_runtime_rejects_member_emitting_more_bytes_than_declared(tmp_path):
+    from actions import file_processor as fp
+
+    base = tmp_path
+    archive_path = base / "malformed.zip"
+    with zipfile.ZipFile(archive_path, "w") as zf:
+        zf.writestr("small.txt", b"x")
+
+    original_open = fp.zipfile.ZipFile.open
+
+    class OversizedReader:
+        def __init__(self):
+            self.sent = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _size=-1):
+            if self.sent:
+                return b""
+            self.sent = True
+            return b"x" * (1024 * 1024 * 2)
+
+    def forged_open(self, member, mode="r", pwd=None, force_zip64=False):
+        if getattr(member, "filename", "") == "small.txt":
+            return OversizedReader()
+        return original_open(self, member, mode=mode, pwd=pwd, force_zip64=force_zip64)
+
+    with patch.object(fp.zipfile.ZipFile, "open", forged_open):
+        with pytest.raises(ValueError, match="declared"):
+            fp._safe_extract_archive(archive_path, base / "out")
+
+    assert not (base / "out" / "small.txt").exists()
