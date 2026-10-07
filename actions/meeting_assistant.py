@@ -393,6 +393,8 @@ Answer: ...
                     config={"temperature": 0.2},
                 )
                 text = _extract_text(response)
+                if not text:
+                    raise RuntimeError("Gemini returned an empty meeting analysis response.")
                 summary, answer = _clean_response(text)
                 self._last_answer = answer or summary
                 payload = {
