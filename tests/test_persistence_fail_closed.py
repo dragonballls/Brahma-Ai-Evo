@@ -158,3 +158,57 @@ def test_screen_processor_rejects_invalid_camera_index_without_autodetection(tmp
 
     assert camera_calls == []
     assert path.read_text(encoding="utf-8") == '{"camera_index": "not-an-int"}'
+
+
+def test_youtube_token_atomic_replace_does_not_follow_existing_symlink(tmp_path):
+    from core import creator_publish
+
+    outside = tmp_path / "outside-token.json"
+    outside.write_text("do-not-overwrite", encoding="utf-8")
+    target = tmp_path / "youtube_token.json"
+    try:
+        target.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("Symlink support unavailable")
+
+    class Credentials:
+        def to_json(self):
+            return '{"token":"new-secret"}'
+
+    creator_publish._save_token(target, Credentials())
+    assert target.read_text(encoding="utf-8") == '{"token":"new-secret"}'
+    assert outside.read_text(encoding="utf-8") == "do-not-overwrite"
+
+
+def test_smart_home_database_rejects_hard_linked_wal(tmp_path):
+    import os
+    from smart_home import storage
+
+    db = tmp_path / "smart_home.sqlite3"
+    sidecar = Path(f"{db}-wal")
+    outside = tmp_path / "outside-wal"
+    outside.write_bytes(b"wal")
+    try:
+        os.link(outside, sidecar)
+    except (OSError, NotImplementedError):
+        pytest.skip("Hard-link support unavailable")
+
+    with pytest.raises(RuntimeError, match="multiple hard links"):
+        storage._validate_db_path(db)
+
+
+def test_workspace_database_rejects_hard_linked_shm(tmp_path):
+    import os
+    import workspace_store
+
+    db = tmp_path / "workspace.sqlite3"
+    sidecar = Path(f"{db}-shm")
+    outside = tmp_path / "outside-shm"
+    outside.write_bytes(b"shm")
+    try:
+        os.link(outside, sidecar)
+    except (OSError, NotImplementedError):
+        pytest.skip("Hard-link support unavailable")
+
+    with pytest.raises(RuntimeError, match="multiple hard links"):
+        workspace_store._validate_store_path(db)
