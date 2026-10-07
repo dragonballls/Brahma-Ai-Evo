@@ -255,8 +255,7 @@ def test_rollback_refuses_dirty_checkpoint_branch_before_reset():
     def fake_git(*args, **kwargs):
         calls.append(args)
         if args == ("status", "--porcelain"):
-            return _result(args, stdout=" M unrelated.txt
-")
+            return _result(args, stdout=" M unrelated.txt\n")
         raise AssertionError(f"unexpected destructive or post-check command: {args}")
 
     agent._git = fake_git
