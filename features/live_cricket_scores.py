@@ -11,6 +11,7 @@ FEATURE_METADATA = {
     "active": True
 }
 
+import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 import os
@@ -19,6 +20,14 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
+MAX_NETWORK_RESPONSE_BYTES = 512 * 1024
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.URLError("Redirects are disabled for live cricket requests")
+
+
 def execute(**kwargs):
     query = (kwargs.get('query') or kwargs.get('match_id') or kwargs.get('team') or '').lower().strip()
     rss_url = "https://static.cricinfo.com/rss/livescores.xml"
@@ -26,8 +35,11 @@ def execute(**kwargs):
     matches = []
     try:
         req = urllib.request.Request(rss_url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
-        with urllib.request.urlopen(req, timeout=8) as response:
-            xml_data = response.read()
+        opener = urllib.request.build_opener(_NoRedirectHandler())
+        with opener.open(req, timeout=8) as response:
+            xml_data = response.read(MAX_NETWORK_RESPONSE_BYTES + 1)
+            if len(xml_data) > MAX_NETWORK_RESPONSE_BYTES:
+                raise ValueError("Live cricket response exceeded the 512 KiB safety limit.")
 
         root = ET.fromstring(xml_data)
         for item in root.findall('./channel/item'):
