@@ -338,22 +338,24 @@ class SelfAwareness:
         return None
 
     def set_runtime_state(self, state: str, *, current_task: str = "", last_action: str = "", last_action_status: str = "", persist: bool = False) -> None:
-        self._state["last_state"] = str(state or "idle").strip().lower()
-        self._state["current_task"] = str(current_task or "")
-        self._state["last_action"] = str(last_action or "")
-        self._state["last_action_status"] = str(last_action_status or "")
-        if persist:
-            self.save()
+        with self._lock:
+            self._state["last_state"] = str(state or "idle").strip().lower()
+            self._state["current_task"] = str(current_task or "")
+            self._state["last_action"] = str(last_action or "")
+            self._state["last_action_status"] = str(last_action_status or "")
+            if persist:
+                self.save()
 
     def attach_request_context(self, request: str, *, user_text: str = "") -> str:
         block = self.prompt_block(user_text or request)
         return f"{block}\nCURRENT USER REQUEST:\n{request.strip()}"
 
     def record_action(self, tool_name: str, status: str, *, task: str = "") -> None:
-        self._state["last_action"] = str(tool_name or "")
-        self._state["last_action_status"] = str(status or "")
-        if task:
-            self._state["current_task"] = task
-        self.save()
+        with self._lock:
+            self._state["last_action"] = str(tool_name or "")
+            self._state["last_action_status"] = str(status or "")
+            if task:
+                self._state["current_task"] = task
+            self.save()
 
 self_awareness = SelfAwareness()
