@@ -130,7 +130,7 @@ def web_search(
     if mode == "compare":
         try:
             result = _compare(items or ([query] if query else []), aspect)
-            print("[WebSearch] Gemini compare OK.")
+            print("[WebSearch] Compare result ready.")
             return result
         except Exception as e:
             print(f"[WebSearch] Gemini compare failed ({e}) - trying DDG...")
