@@ -15,11 +15,32 @@ _PATH = get_user_data_dir() / "intelligence" / "model_performance.json"
 _LOCK = RLock()
 
 
+def _safe_performance_text() -> str:
+    if os.name == "nt":
+        from core.windows_file_safety import read_text
+        text, _size = read_text(_PATH, max_chars=4 * 1024 * 1024)
+        return text
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(_PATH, flags)
+    try:
+        with os.fdopen(fd, "r", encoding="utf-8") as handle:
+            fd = -1
+            return handle.read(4 * 1024 * 1024 + 1)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 def _load() -> dict[str, Any]:
     if not _PATH.is_file():
         return {"schema_version": 1, "models": {}}
     try:
-        payload = json.loads(_PATH.read_text(encoding="utf-8"))
+        raw = _safe_performance_text()
+        if len(raw.encode("utf-8")) > 4 * 1024 * 1024:
+            raise ValueError("Model-performance state exceeds the 4 MiB safety limit.")
+        payload = json.loads(raw)
         if isinstance(payload, dict) and isinstance(payload.get("models", {}), dict):
             return payload
         raise ValueError("Model-performance state has an invalid schema.")
