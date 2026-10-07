@@ -536,6 +536,8 @@ def create_presentation(parameters: dict, player=None) -> str:
             add_textbox(slide, Inches(8.35), Inches(5.15), Inches(3.0), Inches(0.65), str(spec["notes"]), font_size=10, color_key="muted")
 
     prs.save(output_path)
+    if not output_path.is_file() or output_path.stat().st_size <= 0:
+        raise RuntimeError(f"Presentation save could not be verified at {output_path}.")
     if auto_open:
         _open_file(output_path)
     return f"Presentation created: {output_path}"
@@ -663,6 +665,8 @@ def create_spreadsheet(parameters: dict, player=None) -> str:
         wb.remove(wb["Sheet"])
 
     wb.save(output_path)
+    if not output_path.is_file() or output_path.stat().st_size <= 0:
+        raise RuntimeError(f"Spreadsheet save could not be verified at {output_path}.")
     if auto_open:
         _open_file(output_path)
     return f"Spreadsheet created: {output_path}"
