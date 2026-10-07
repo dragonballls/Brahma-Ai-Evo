@@ -6,6 +6,7 @@ and AI options. Backed by the user-scoped %LOCALAPPDATA%/BrahmaAI/config/app_set
 
 from __future__ import annotations
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict
 import threading
@@ -87,10 +88,17 @@ def save_settings(data: Dict[str, Any]) -> None:
         current.update(data)
         temp_path = SETTINGS_FILE.with_name(f".{SETTINGS_FILE.name}.{uuid.uuid4().hex}.tmp")
         try:
-            temp_path.write_text(
-                json.dumps(current, indent=4, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            payload = json.dumps(current, indent=4, ensure_ascii=False)
+            fd = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    handle.write(payload)
+            except Exception:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                raise
             temp_path.replace(SETTINGS_FILE)
             global _SETTINGS_CACHE
             _SETTINGS_CACHE = (_settings_signature(), dict(current))
