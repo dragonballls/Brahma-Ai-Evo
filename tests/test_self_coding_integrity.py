@@ -166,6 +166,6 @@ def test_self_coding_rejects_symlinked_checkpoint_directory(tmp_path):
 
 def test_self_coding_link_like_guard_covers_junction_reparse_contract():
     source = (ROOT / "core" / "self_coding.py").read_text(encoding="utf-8")
-    assert "is_junction = getattr(path, "is_junction", None)" in source
+    assert 'is_junction = getattr(path, "is_junction", None)' in source
     assert "FILE_ATTRIBUTE_REPARSE_POINT" in source
     assert "Checkpoint directory must not be a symlink, junction, or reparse point." in source
