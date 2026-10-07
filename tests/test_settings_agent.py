@@ -62,6 +62,12 @@ class ConversationalSettingsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             settings_agent.validate("sound_effects_volume", float("inf"))
 
+    def test_cloud_transcription_permission_requires_literal_true(self):
+        config_manager.save_settings({"allow_cloud_transcription": "true"})
+        self.assertFalse(config_manager.get_cloud_transcription_enabled())
+        config_manager.save_settings({"allow_cloud_transcription": True})
+        self.assertTrue(config_manager.get_cloud_transcription_enabled())
+
     def test_apply_persists_and_reports_changes(self):
         result = settings_agent.apply("set sound effects volume to 42")
         self.assertTrue(result["ok"])
