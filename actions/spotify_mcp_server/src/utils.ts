@@ -66,6 +66,10 @@ export function loadSpotifyConfig(): SpotifyConfig {
   }
 
   try {
+    const stat = fs.lstatSync(CONFIG_FILE);
+    if (!stat.isFile()) {
+      throw new Error('Spotify configuration file must be a regular file.');
+    }
     const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
     if (!(config.clientId && config.clientSecret && config.redirectUri)) {
       throw new Error(
@@ -83,7 +87,47 @@ export function loadSpotifyConfig(): SpotifyConfig {
 }
 
 export function saveSpotifyConfig(config: SpotifyConfig): void {
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf8');
+  const directory = path.dirname(CONFIG_FILE);
+  fs.mkdirSync(directory, { recursive: true });
+
+  if (fs.existsSync(CONFIG_FILE)) {
+    const stat = fs.lstatSync(CONFIG_FILE);
+    if (!stat.isFile()) {
+      throw new Error('Spotify configuration file must be a regular file.');
+    }
+  }
+
+  const tempFile = path.join(
+    directory,
+    `.${path.basename(CONFIG_FILE)}.${crypto.randomUUID()}.tmp`,
+  );
+  const payload = JSON.stringify(config, null, 2);
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(tempFile, 'wx', 0o600);
+    fs.writeFileSync(fd, payload, 'utf8');
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(tempFile, CONFIG_FILE);
+  } catch (error) {
+    throw new Error(
+      `Failed to persist Spotify configuration: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // Best-effort descriptor cleanup after persistence failure.
+      }
+    }
+    try {
+      if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
+    } catch {
+      // Do not replace the original persistence failure with cleanup noise.
+    }
+  }
 }
 
 let cachedSpotifyApi: SpotifyApi | null = null;
