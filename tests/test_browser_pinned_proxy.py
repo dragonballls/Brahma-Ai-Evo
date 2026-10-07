@@ -277,6 +277,32 @@ def test_upstream_oversized_response_headers_are_rejected_before_exposure():
     with pytest.raises(_ProxyUpstreamError, match="header line exceeds"):
         _Handler._validate_response_headers(oversized[: oversized.find(b"\r\n\r\n") + 4])
 
+def test_upstream_response_rejects_content_length_transfer_encoding_conflict():
+    from core.browser_pinned_proxy import _ProxyUpstreamError
+
+    ambiguous = (
+        b"HTTP/1.1 200 OK\r\n"
+        b"Content-Length: 4\r\n"
+        b"Transfer-Encoding: chunked\r\n"
+        b"\r\n"
+    )
+    with pytest.raises(_ProxyUpstreamError, match="Ambiguous upstream response framing"):
+        _Handler._validate_response_headers(ambiguous)
+
+
+def test_upstream_response_rejects_duplicate_transfer_encoding_headers():
+    from core.browser_pinned_proxy import _ProxyUpstreamError
+
+    duplicate = (
+        b"HTTP/1.1 200 OK\r\n"
+        b"Transfer-Encoding: chunked\r\n"
+        b"Transfer-Encoding: chunked\r\n"
+        b"\r\n"
+    )
+    with pytest.raises(_ProxyUpstreamError, match="Unsupported upstream Transfer-Encoding framing"):
+        _Handler._validate_response_headers(duplicate)
+
+
 
 @pytest.mark.parametrize(
     "literal",
