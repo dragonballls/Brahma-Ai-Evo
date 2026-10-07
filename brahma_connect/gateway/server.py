@@ -389,7 +389,8 @@ class BrahmaGateway:
             self._append_log("DEVICE_DISCONNECTED", device_id=record.device_id, name=record.name, forced=True, reconciled=True)
             return {"success": True, "device": record.to_dict(), "disconnected": False, "already_disconnected": True, "reconciled": True}
 
-        disconnected = False        try:
+        disconnected = False
+        try:
             disconnected = await self.hub.close_device(record.device_id, reason=reason)
         except Exception:
             disconnected = False
