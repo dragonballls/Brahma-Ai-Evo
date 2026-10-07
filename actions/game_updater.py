@@ -7,6 +7,8 @@ import subprocess
 import threading
 import winreg
 from pathlib import Path
+
+from core.network_safety import fetch_public_bytes
 from datetime import datetime
 
 
@@ -371,16 +373,26 @@ def _search_steam_appid(game_name: str) -> tuple[str | None, str | None]:
             return app_id, canonical
 
     try:
-        import urllib.request, urllib.parse
+        import urllib.parse
         query = urllib.parse.quote(game_name)
         url   = f"https://store.steampowered.com/api/storesearch/?term={query}&l=english&cc=US"
-        req   = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=6) as resp:
-            items = json.loads(resp.read().decode()).get("items", [])
+        status, raw = fetch_public_bytes(
+            url,
+            timeout=6,
+            max_response_bytes=1 * 1024 * 1024,
+            headers={"User-Agent": "Brahma-Evo-GameUpdater/1"},
+        )
+        if status != 200:
+            raise RuntimeError(f"Steam Store API returned HTTP {status}.")
+        items = json.loads(raw.decode("utf-8")).get("items", [])
+        if not isinstance(items, list):
+            raise ValueError("Steam Store API returned an invalid item list.")
         if items:
             best = items[0]
+            if not isinstance(best, dict) or "id" not in best or "name" not in best:
+                raise ValueError("Steam Store API returned a malformed top result.")
             print(f"[GameUpdater] 🌐 Store API: {best['name']} ({best['id']})")
-            return str(best["id"]), best["name"]
+            return str(best["id"]), str(best["name"])
     except Exception as e:
         print(f"[GameUpdater] ⚠️ AppID search failed: {e}")
 
