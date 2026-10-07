@@ -79,6 +79,16 @@ def _file_size_str(path: Path) -> str:
     return f"{size/1024**3:.1f} GB"
 
 
+def _cleanup_generated_artifact(path: Path | None) -> None:
+    if path is None:
+        return
+    try:
+        if path.is_symlink() or path.is_file():
+            path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _verify_output_artifact(path: Path) -> Path:
     """Fail closed unless a newly generated file really exists and is non-empty."""
     path = Path(path)
@@ -88,7 +98,11 @@ def _verify_output_artifact(path: Path) -> Path:
         if path.stat().st_size <= 0:
             raise RuntimeError(f"Generated output is empty: {path}")
     except OSError as exc:
+        _cleanup_generated_artifact(path)
         raise RuntimeError(f"Generated output could not be verified: {path}") from exc
+    except RuntimeError:
+        _cleanup_generated_artifact(path)
+        raise
     return path
 
 def _output_path(src: Path, suffix: str, new_ext: str = None) -> Path:
@@ -201,6 +215,7 @@ def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
                 return f"{result[:300]}...\n\nFull result saved to: {out}"
             return result
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"AI image analysis failed: {e}"
 
     if action == "resize":
@@ -227,6 +242,7 @@ def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
             _verify_output_artifact(out)
             return f"Resized from {w}x{h} to {new_size[0]}x{new_size[1]}. Saved: {out.name}"
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"Resize failed: {e}"
 
     if action == "convert":
@@ -241,6 +257,7 @@ def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
             _verify_output_artifact(out)
             return f"Converted to {fmt.upper()}. Saved: {out.name}"
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"Convert failed: {e}"
 
     if action == "compress":
@@ -254,6 +271,7 @@ def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
             _verify_output_artifact(out)
             return f"Compressed: {before} → {after}. Saved: {out.name}"
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"Compress failed: {e}"
 
     if action == "info":
@@ -262,6 +280,7 @@ def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
             return (f"Image info: {img.format}, {img.size[0]}x{img.size[1]}px, "
                     f"mode: {img.mode}, size: {_file_size_str(path)}")
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"Info failed: {e}"
 
     return _process_image(path, "describe", {"instruction": f"{action}: {params}"})
@@ -319,6 +338,7 @@ def _process_pdf(path: Path, action: str, params: dict, speak=None) -> str:
                 return f"{result[:400]}...\n\nFull result saved: {out.name}"
             return result
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"AI analysis failed: {e}"
 
     if action == "info":
@@ -363,6 +383,7 @@ def _process_text_doc(path: Path, file_type: str, action: str,
             except ImportError:
                 return "python-docx not installed."
             except Exception as e:
+                _cleanup_generated_artifact(locals().get("out"))
                 return f"Read failed: {e}"
         else:
             return path.read_text(encoding="utf-8", errors="ignore")
@@ -412,6 +433,7 @@ def _process_text_doc(path: Path, file_type: str, action: str,
             return f"{result[:400]}...\n\nFull result saved: {out.name}"
         return result
     except Exception as e:
+        _cleanup_generated_artifact(locals().get("out"))
         return f"AI processing failed: {e}"
 
 
@@ -430,6 +452,7 @@ def _process_data(path: Path, file_type: str, action: str,
         else:
             df = pd.read_excel(path)
     except Exception as e:
+        _cleanup_generated_artifact(locals().get("out"))
         return f"Could not read file: {e}"
 
     if action == "info":
@@ -442,6 +465,7 @@ def _process_data(path: Path, file_type: str, action: str,
             desc = df.describe(include="all").to_string()
             return f"Statistics:\n{desc[:2000]}"
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"Stats failed: {e}"
 
     if action == "analyze":
@@ -454,6 +478,7 @@ def _process_data(path: Path, file_type: str, action: str,
             response = model.generate_content(prompt)
             return response.text.strip()
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"AI analysis failed: {e}"
 
     if action in ("convert", "to_csv", "to_excel", "to_json"):
@@ -472,6 +497,7 @@ def _process_data(path: Path, file_type: str, action: str,
         _verify_output_artifact(out)
             return f"Converted to {fmt.upper()}. Saved: {out.name}"
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"Convert failed: {e}"
 
     if action == "filter":
@@ -491,6 +517,7 @@ def _process_data(path: Path, file_type: str, action: str,
         _verify_output_artifact(out)
             return f"Filtered: {len(filtered)} rows match. Saved: {out.name}"
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"Filter failed: {e}"
 
     if action == "sort":
@@ -503,6 +530,7 @@ def _process_data(path: Path, file_type: str, action: str,
         _verify_output_artifact(out)
             return f"Sorted by '{col}'. Saved: {out.name}"
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"Sort failed: {e}"
 
     preview = df.head(30).to_string()
@@ -513,6 +541,7 @@ def _process_data(path: Path, file_type: str, action: str,
         )
         return response.text.strip()
     except Exception as e:
+        _cleanup_generated_artifact(locals().get("out"))
         return f"Processing failed: {e}"
 
 
@@ -522,6 +551,7 @@ def _process_json(path: Path, action: str, params: dict, speak=None) -> str:
         content = path.read_text(encoding="utf-8")
         data    = json.loads(content)
     except Exception as e:
+        _cleanup_generated_artifact(locals().get("out"))
         return f"Invalid JSON: {e}"
 
     if action == "validate":
@@ -543,6 +573,7 @@ def _process_json(path: Path, action: str, params: dict, speak=None) -> str:
             response = model.generate_content(prompt)
             return response.text.strip()
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"AI processing failed: {e}"
 
     if action == "to_csv":
@@ -607,6 +638,7 @@ def _process_code(path: Path, action: str, params: dict, speak=None) -> str:
             return f"{result[:400]}...\n\nSaved: {out.name}"
         return result
     except Exception as e:
+        _cleanup_generated_artifact(locals().get("out"))
         return f"AI processing failed: {e}"
 
 def _process_audio(path: Path, action: str, params: dict, speak=None) -> str:
@@ -625,6 +657,7 @@ def _process_audio(path: Path, action: str, params: dict, speak=None) -> str:
         except ImportError:
             return f"Audio file: {_file_size_str(path)} (install pydub for more info)"
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"Info failed: {e}"
 
     if action == "transcribe":
@@ -648,6 +681,7 @@ def _process_audio(path: Path, action: str, params: dict, speak=None) -> str:
                 return f"Transcription saved: {out.name}\n\nPreview: {result[:300]}"
             return result
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"Transcription failed: {e}"
 
     if action == "convert":
@@ -662,6 +696,7 @@ def _process_audio(path: Path, action: str, params: dict, speak=None) -> str:
         except ImportError:
             return "pydub not installed. Run: pip install pydub"
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"Convert failed: {e}"
 
     if action == "trim":
@@ -679,6 +714,7 @@ def _process_audio(path: Path, action: str, params: dict, speak=None) -> str:
         except ImportError:
             return "pydub not installed."
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"Trim failed: {e}"
 
     return f"Unknown audio action: '{action}'. Try: transcribe, info, convert, trim"
@@ -725,10 +761,12 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
                 capture_output=True, timeout=300
             )
             if result.returncode != 0:
+                _cleanup_generated_artifact(locals().get("out"))
                 return f"Extract audio failed (ffmpeg exit {result.returncode})."
         _verify_output_artifact(out)
             return f"Audio extracted. Saved: {out.name}"
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"Extract audio failed: {e}"
 
     if action == "trim":
@@ -744,10 +782,12 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
             cmd += ["-c", "copy", str(out), "-y"]
             result = subprocess.run(cmd, capture_output=True, timeout=600)
             if result.returncode != 0:
+                _cleanup_generated_artifact(locals().get("out"))
                 return f"Trim failed (ffmpeg exit {result.returncode})."
         _verify_output_artifact(out)
             return f"Trimmed video saved: {out.name}"
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"Trim failed: {e}"
 
     if action == "extract_frame":
@@ -762,10 +802,12 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
                 capture_output=True, timeout=30
             )
             if result.returncode != 0:
+                _cleanup_generated_artifact(locals().get("out"))
                 return f"Extract frame failed (ffmpeg exit {result.returncode})."
         _verify_output_artifact(out)
             return f"Frame extracted at {timestamp}. Saved: {out.name}"
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"Extract frame failed: {e}"
 
     if action == "compress":
@@ -782,12 +824,14 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
                 capture_output=True, timeout=1800
             )
             if result.returncode != 0:
+                _cleanup_generated_artifact(locals().get("out"))
                 return f"Compress failed (ffmpeg exit {result.returncode})."
             before = _file_size_str(path)
             after  = _file_size_str(out)
         _verify_output_artifact(out)
             return f"Compressed: {before} → {after}. Saved: {out.name}"
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"Compress failed: {e}"
 
     if action == "transcribe":
@@ -803,10 +847,12 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
                 capture_output=True, timeout=300
             )
             if result.returncode != 0:
+                _cleanup_generated_artifact(locals().get("out"))
                 return f"Video transcription failed (ffmpeg exit {result.returncode})."
             result = _process_audio(tmp_audio, "transcribe", params, speak)
             return result
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"Video transcription failed: {e}"
         finally:
             if tmp_audio.exists():
@@ -823,10 +869,12 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
                 capture_output=True, timeout=1800
             )
             if result.returncode != 0:
+                _cleanup_generated_artifact(locals().get("out"))
                 return f"Convert failed (ffmpeg exit {result.returncode})."
         _verify_output_artifact(out)
             return f"Converted to {fmt.upper()}. Saved: {out.name}"
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"Convert failed: {e}"
 
     return f"Unknown video action: '{action}'. Try: info, trim, extract_audio, extract_frame, compress, transcribe, convert"
@@ -1132,6 +1180,7 @@ def _process_archive(path: Path, action: str, params: dict, speak=None) -> str:
             suffix  = f"\n... and {len(names)-30} more" if len(names) > 30 else ""
             return f"Archive contains {len(names)} files:\n{preview}{suffix}"
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"List failed: {e}"
 
     if action == "extract":
@@ -1146,6 +1195,7 @@ def _process_archive(path: Path, action: str, params: dict, speak=None) -> str:
             _safe_extract_archive(path, dest)
             return f"Extracted to: {dest}"
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"Extract failed: {e}"
 
     return f"Unknown archive action: '{action}'. Try: list, extract"
@@ -1183,6 +1233,7 @@ def _process_pptx(path: Path, action: str, params: dict, speak=None) -> str:
             response = model.generate_content(prompt)
             return response.text.strip()
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"AI processing failed: {e}"
 
     return f"Unknown PPTX action: '{action}'. Try: summarize, extract_text, analyze"
@@ -1273,6 +1324,7 @@ def file_processor(parameters: dict, player=None, speak=None) -> str:
             response = model.generate_content(prompt)
             return response.text.strip()
         except Exception as e:
+            _cleanup_generated_artifact(locals().get("out"))
             return f"Unknown file type ({path.suffix}). Could not process: {e}"
 
     dispatch = {
