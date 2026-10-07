@@ -320,6 +320,8 @@ def test_partial_undo_failure_restores_approved_state(tmp_path):
             return _result(args, stdout="")
         if args == ("revert", "--abort"):
             return _result(args)
+        if args == ("push", "origin", "main"):
+            return _result(args, returncode=1, stderr="push failed during partial undo test")
         raise AssertionError(f"unexpected git call: {args}")
 
     agent._git = fake_git
