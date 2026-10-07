@@ -82,7 +82,8 @@ def load_memory() -> dict:
         return _empty_memory()
     with _lock:
         try:
-            data = json.loads(MEMORY_PATH.read_text(encoding="utf-8"))
+            raw_text = MEMORY_PATH.read_text(encoding="utf-8")
+            data = json.loads(raw_text)
             if isinstance(data, dict):
                 base = _empty_memory()
                 changed = False
@@ -116,18 +117,20 @@ def load_memory() -> dict:
                 return data
             raise RuntimeError("Persistent memory has an invalid root schema.")
         except (UnicodeError, json.JSONDecodeError, ValueError) as e:
-            quarantine = MEMORY_PATH.with_name(
-                f"{MEMORY_PATH.name}.corrupt-{int(time.time())}-{uuid.uuid4().hex[:8]}"
-            )
-            try:
-                MEMORY_PATH.replace(quarantine)
-                print(f"[Memory] ⚠️ Corrupt memory quarantined as {quarantine.name}")
-            except OSError as quarantine_exc:
-                raise RuntimeError(
-                    "Persistent memory is corrupted and could not be quarantined safely."
-                ) from quarantine_exc
+            raw_text = locals().get("raw_text")
+            if isinstance(raw_text, str):
+                quarantine = MEMORY_PATH.with_name(
+                    f"{MEMORY_PATH.name}.corrupt-{int(time.time())}-{uuid.uuid4().hex[:8]}"
+                )
+                try:
+                    quarantine.write_text(raw_text, encoding="utf-8")
+                    print(f"[Memory] ⚠️ Corrupt memory preserved as {quarantine.name}")
+                except OSError as quarantine_exc:
+                    raise RuntimeError(
+                        "Persistent memory is corrupted and could not be preserved safely."
+                    ) from quarantine_exc
             raise RuntimeError(
-                "Persistent memory was corrupted and the original file was quarantined."
+                "Persistent memory is corrupted; refusing to use empty defaults."
             ) from e
         except OSError as e:
             # Do not turn an unreadable existing store into a writable empty store;
