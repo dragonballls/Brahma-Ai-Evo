@@ -130,8 +130,15 @@ def save_settings(data: Dict[str, Any]) -> None:
                     pass
                 raise
             temp_path.replace(SETTINGS_FILE)
+            try:
+                persisted_raw = _read_settings_text()
+                persisted = json.loads(persisted_raw)
+            except Exception as exc:
+                raise RuntimeError("Settings save could not be verified after replacement.") from exc
+            if not isinstance(persisted, dict) or persisted != current:
+                raise RuntimeError("Settings save verification found a mismatched final state.")
             global _SETTINGS_CACHE
-            _SETTINGS_CACHE = (_settings_signature(), dict(current))
+            _SETTINGS_CACHE = (_settings_signature(), dict(persisted))
         except Exception as e:
             try:
                 temp_path.unlink(missing_ok=True)
