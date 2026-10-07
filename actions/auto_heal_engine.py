@@ -60,14 +60,34 @@ def _write_exclusive_text(path: Path, text: str, *, mode: int = 0o600) -> None:
 
 
 def _copy_file_exclusive(source: Path, destination: Path, *, mode: int = 0o600) -> None:
+    """Copy a source without following symlink/hardlink substitutions."""
+    if os.name == "nt":
+        from core.windows_file_safety import open_safe_file
+        source_fd, _final, source_info = open_safe_file(source, write=False)
+        if int(source_info.nNumberOfLinks) > 1:
+            os.close(source_fd)
+            raise OSError("Refusing to copy a hard-linked auto-heal source.")
+        src_fd = source_fd
+    else:
+        flags = os.O_RDONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        src_fd = os.open(source, flags)
+        if os.fstat(src_fd).st_nlink > 1:
+            os.close(src_fd)
+            raise OSError("Refusing to copy a hard-linked auto-heal source.")
+
     fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
     try:
-        with source.open("rb") as src, os.fdopen(fd, "wb") as dst:
+        with os.fdopen(src_fd, "rb", closefd=True) as src, os.fdopen(fd, "wb") as dst:
+            src_fd = -1
             fd = -1
             shutil.copyfileobj(src, dst, length=1024 * 1024)
             dst.flush()
             os.fsync(dst.fileno())
     finally:
+        if src_fd >= 0:
+            os.close(src_fd)
         if fd >= 0:
             os.close(fd)
 
@@ -163,6 +183,14 @@ class SafetySandbox:
 
     @staticmethod
     def create_backup(file_path: Path) -> Path:
+        file_path = Path(file_path)
+        if _is_link_like(file_path):
+            raise OSError("Refusing to back up a symlink, junction, or reparse-point source.")
+        try:
+            if file_path.stat().st_nlink > 1:
+                raise OSError("Refusing to back up a hard-linked source.")
+        except OSError:
+            raise
         BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
         # Use nanosecond time plus entropy so rapid consecutive repairs to the
         # same file can never overwrite each other's rollback backup.
@@ -225,6 +253,11 @@ class SafetySandbox:
                         return {"success": False, "message": "Rollback paths are outside the protected auto-heal roots."}
                     if not backup.is_file() or not target.is_file():
                         return {"success": False, "message": f"Backup file '{backup}' missing."}
+                    try:
+                        if backup.stat().st_nlink > 1 or target.stat().st_nlink > 1:
+                            return {"success": False, "message": "Rollback refuses hard-linked target or backup files."}
+                    except OSError as exc:
+                        return {"success": False, "message": f"Rollback identity check failed: {exc}"}
 
                     try:
                         SafetySandbox._restore_backup_atomically(backup, target)
@@ -414,6 +447,18 @@ class AutoHealEngine:
             ).hexdigest()
         except (OSError, UnicodeError) as exc:
             return {"success": False, "message": f"Unable to fingerprint original source safely: {exc}"}
+
+        # Detect ordinary concurrent edits after the backup was captured. If the
+        # source changed, never overwrite the newer on-disk version.
+        try:
+            current_source = target_path.read_text(encoding="utf-8").replace("\r\n", "\n").encode("utf-8")
+            if hashlib.sha256(current_source).hexdigest() != preimage_sha256:
+                return {
+                    "success": False,
+                    "message": "Target source changed after backup creation; refusing to overwrite concurrent work.",
+                }
+        except (OSError, UnicodeError) as exc:
+            return {"success": False, "message": f"Unable to re-check target before patch publication: {exc}"}
 
         # Publish the verified source atomically so a process crash cannot leave
         # a partially rewritten target before rollback history is durable.
