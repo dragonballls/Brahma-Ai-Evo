@@ -69,6 +69,16 @@ def _validate_store_path(path: Path) -> None:
             raise RuntimeError(f"Workspace database sidecar {sidecar.name} must not be a symlink/junction.")
         if sidecar.exists() and not sidecar.is_file():
             raise RuntimeError(f"Workspace database sidecar {sidecar.name} is not a regular file.")
+        if sidecar.exists():
+            try:
+                if int(sidecar.stat(follow_symlinks=False).st_nlink) > 1:
+                    raise RuntimeError(
+                        f"Workspace database sidecar {sidecar.name} has multiple hard links."
+                    )
+            except OSError as exc:
+                raise RuntimeError(
+                    f"Workspace database sidecar {sidecar.name} could not be inspected safely."
+                ) from exc
 
 
 def _now_ms() -> int:
