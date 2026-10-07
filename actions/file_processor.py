@@ -929,6 +929,14 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
             if len(members) > MAX_ARCHIVE_MEMBERS:
                 raise ValueError("Archive contains too many members.")
             planned = preflight(members)
+            archive_bytes = max(1, int(path.stat().st_size))
+            if total_size := sum(
+                max(0, int(getattr(member, "file_size", getattr(member, "size", 0))))
+                for member, _target, is_dir in planned
+                if not is_dir
+            ):
+                if total_size > archive_bytes * MAX_ARCHIVE_COMPRESSION_RATIO:
+                    raise ValueError("Archive compression ratio exceeds the safety limit.")
             for member, target, is_dir in planned:
                 if is_dir:
                     _open_directory(dest, target)
