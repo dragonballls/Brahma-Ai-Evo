@@ -441,8 +441,11 @@ class IntelligenceOrchestrator:
                     parts=clean.split("```"); clean=parts[1] if len(parts)>1 else clean
                     if clean.lstrip().startswith("json"): clean=clean.lstrip()[4:]
                 try:
-                    return json.loads(clean.strip().strip("`"))
-                except json.JSONDecodeError:
+                    parsed = json.loads(clean.strip().strip("`"))
+                    if not isinstance(parsed, dict):
+                        raise ValueError("structured ensemble judge returned a non-object JSON value")
+                    return parsed
+                except (json.JSONDecodeError, ValueError):
                     log.debug("structured ensemble judge returned invalid JSON; falling back")
         pc=self._cfg(profile,c); count=min(max(1,int(pc.get("specialists",1))),int(c.get("max_specialists",2)),max(1,int(c.get("parallel_workers",4))))
         model=str(pc.get("model","auto/smart")); roles=self._roles(profile)[:count]; drafts=[]

@@ -144,3 +144,23 @@ def test_structured_orchestrator_rejects_non_object_json_and_uses_fail_safe_fall
 
     result = intelligence_orchestrator.IntelligenceOrchestrator().respond_json("return an object")
     assert result == {"success": True}
+
+
+def test_structured_ensemble_judge_rejects_non_object_json(monkeypatch):
+    from core import intelligence_orchestrator as orch
+
+    c = dict(orch.DEFAULTS)
+    c["ensemble_enabled"] = True
+    monkeypatch.setattr(orch, "load_config", lambda: c)
+    monkeypatch.setattr(orch, "allowed", lambda: True)
+    monkeypatch.setattr(orch, "_ensemble_models", lambda *args, **kwargs: [("openai", "openai/test")])
+    monkeypatch.setattr(orch, "_ensemble_roles", lambda *args, **kwargs: ("primary",))
+    monkeypatch.setattr(orch.cloud_client, "chat", lambda *args, **kwargs: "[]")
+    monkeypatch.setattr(
+        orch.cloud_client,
+        "chat_json",
+        lambda *args, **kwargs: {"success": True, "source": "safe-fallback"},
+    )
+
+    result = orch.IntelligenceOrchestrator().respond_json("test")
+    assert result == {"success": True, "source": "safe-fallback"}
