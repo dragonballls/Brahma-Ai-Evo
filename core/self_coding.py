@@ -565,18 +565,20 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
                 self._save(replace(checkpoint, state="approved", undo_commits=()))
                 return self._undo_unlocked(checkpoint.checkpoint_id)
             raise SelfCodingError("Undo started but no durable undo commit was recorded; main state is ambiguous.")
+        # A durable undo tip can remain in metadata even after an interrupted
+        # local rollback restored main to the last approved promotion. Detect that
+        # state before requiring local main to match the recorded undo commit so the
+        # safe retry path is actually reachable.
+        if remote_sha == checkpoint.promoted_sha and local_sha == checkpoint.promoted_sha:
+            self._save(replace(checkpoint, state="approved", undo_commits=()))
+            return self._undo_unlocked(checkpoint.checkpoint_id)
+
         undo_tip = checkpoint.undo_commits[-1]
         if local_sha != undo_tip:
             raise SelfCodingError("Local main does not match the durable undo checkpoint tip.")
         if remote_sha == undo_tip:
             self._save(replace(checkpoint, state="undone"))
             return "undone"
-        if remote_sha == checkpoint.promoted_sha and local_sha == checkpoint.promoted_sha:
-            # The prior undo may have been partially created locally and then safely
-            # discarded before publication. Clear the unpublished undo tip and retry
-            # from the last known approved state.
-            self._save(replace(checkpoint, state="approved", undo_commits=()))
-            return self._undo_unlocked(checkpoint.checkpoint_id)
         if remote_sha != checkpoint.promoted_sha:
             raise SelfCodingError("Undo recovery found unrelated remote main changes; refusing further mutation.")
         pushed = self._git("push", "origin", "main", timeout=300)
