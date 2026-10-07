@@ -191,6 +191,31 @@ def test_auto_heal_does_not_bypass_selected_provider_with_direct_openrouter_fall
     direct.assert_not_called()
 
 
+def test_web_search_compare_fallback_does_not_claim_gemini_success(monkeypatch, capsys):
+    from actions import web_search
+
+    monkeypatch.setattr(
+        web_search,
+        "_gemini_search",
+        Mock(side_effect=RuntimeError("Gemini unavailable")),
+    )
+    monkeypatch.setattr(
+        web_search,
+        "_ddg_search",
+        Mock(return_value=[{"title": "fallback", "snippet": "fallback result", "url": "https://example.test"}]),
+    )
+
+    result = web_search.web_search(
+        {"mode": "compare", "items": ["alpha", "beta"], "aspect": "general"},
+    )
+
+    output = capsys.readouterr().out
+    assert "Gemini compare failed" in output
+    assert "Gemini compare OK" not in output
+    assert "Comparison — GENERAL" in result
+    assert "fallback result" in result
+
+
 def test_call_audio_transcription_refuses_selected_openrouter(monkeypatch):
     from actions.call_assistant import CallAssistant
 
