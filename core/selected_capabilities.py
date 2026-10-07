@@ -646,7 +646,10 @@ class Life360Provider:
         )
         opener = urlrequest.build_opener(_NoRedirectHandler())
         with opener.open(req, timeout=self.timeout) as response:
-            return json.loads(response.read().decode("utf-8"))
+            raw = response.read(64 * 1024 + 1)
+            if len(raw) > 64 * 1024:
+                raise ValueError("Life360 Home Assistant response exceeded the safety limit.")
+            return json.loads(raw.decode("utf-8"))
 
     @staticmethod
     def _point(attrs: dict[str, Any]) -> tuple[float, float] | None:
