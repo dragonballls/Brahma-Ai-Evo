@@ -74,3 +74,16 @@ def test_repository_sync_git_path_uses_trusted_resolution(tmp_path, monkeypatch)
 
     with pytest.raises(CommandSafetyError, match="repository or current directory"):
         repository_sync._run(tmp_path, ("status",))
+
+
+def test_windows_startfile_reports_submission_not_completion(tmp_path, monkeypatch):
+    import actions.cmd_control as cmd
+
+    if cmd.os.name != "nt":
+        pytest.skip("Windows-specific semantic contract")
+    target = tmp_path / "notes.txt"
+    target.write_text("hello", encoding="utf-8")
+    monkeypatch.setattr(cmd.os, "startfile", lambda _path: None)
+
+    result = cmd._open_target(f"open {target}")
+    assert result == f"Open request submitted for {target}."
