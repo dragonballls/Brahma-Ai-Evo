@@ -66,3 +66,17 @@ def test_local_chat_complete_rejects_non_object_json(monkeypatch):
     monkeypatch.setattr(local_brain.urllib.request, "urlopen", lambda *a, **k: Response())
     with pytest.raises(ValueError, match="JSON object"):
         local_brain.LocalBrain().chat_complete([{"role": "user", "content": "x"}])
+
+
+def test_unified_local_chat_json_rejects_non_object_json(monkeypatch):
+    import llm_client
+
+    client = llm_client.UnifiedAIClient()
+    client._provider = "Local"
+    monkeypatch.setattr(
+        client,
+        "_local_chat_completion",
+        lambda *args, **kwargs: "[]",
+    )
+    with pytest.raises(ValueError, match="must be an object"):
+        client.chat_json("return an object")

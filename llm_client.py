@@ -210,9 +210,12 @@ class UnifiedAIClient:
                     clean = clean[4:]
             clean = clean.strip().rstrip("`").strip()
             try:
-                return json.loads(clean)
+                parsed = json.loads(clean)
             except json.JSONDecodeError as e:
-                raise ValueError(f"Local model returned unparseable JSON: {e}\nRaw output: {raw[:200]}")
+                raise ValueError(f"Local model returned unparseable JSON: {e}\nRaw output: {raw[:200]}") from e
+            if not isinstance(parsed, dict):
+                raise ValueError("Local model JSON response must be an object.")
+            return parsed
         return openrouter_client.chat_json(prompt, system, model or "auto", max_tokens)
 
     def vision(self, prompt: str, image_b64: str, mime: str = "image/png", system: str = "Analyze the image.", model: Optional[str] = None, max_tokens: int = 1024) -> str:
