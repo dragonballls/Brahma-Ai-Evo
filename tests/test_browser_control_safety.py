@@ -190,3 +190,45 @@ def test_public_browser_control_uses_guarded_native_backend_instead_of_mcp_navig
     assert "_bt._go_to" in public
     assert "_bt._back" in public
     assert "_bt._forward" in public
+
+
+def test_guarded_browser_context_disables_service_workers_before_request_routing():
+    from actions.browser_control import _BrowserThread
+
+    class Page:
+        def is_closed(self):
+            return False
+
+    class Context:
+        def __init__(self):
+            self.kwargs = None
+            self.route_args = None
+
+        async def route(self, *args):
+            self.route_args = args
+
+        async def new_page(self):
+            return Page()
+
+    class Browser:
+        def __init__(self):
+            self.context = Context()
+
+        def is_connected(self):
+            return True
+
+        async def new_context(self, **kwargs):
+            self.context.kwargs = kwargs
+            return self.context
+
+    async def run():
+        thread = _BrowserThread()
+        thread._browser = Browser()
+        page = await thread._get_page()
+        return thread._browser.context, page
+
+    context, page = asyncio.run(run())
+    assert page is not None
+    assert context.kwargs["service_workers"] == "block"
+    assert context.route_args[0] == "**/*"
+    assert context.route_args[1] == _BrowserThread._guard_request
