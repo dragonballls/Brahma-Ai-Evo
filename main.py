@@ -4351,14 +4351,54 @@ class BrahmaLive:
                 
             elif intent == "MANUAL_REPLY":
                 self.ui.write_log(f"SYS: Sending manual reply to @{username}: '{payload}'")
-                self.speak("Message sent.")
                 from actions.instagram_mcp import send_direct_reply
                 def _do_send():
                     try:
-                        send_direct_reply(thread_id, payload)
+                        result = send_direct_reply(thread_id, payload)
+                        submitted = isinstance(result, dict) and result.get("submitted") is True
+                        delivery_verified = isinstance(result, dict) and result.get("delivery_verified") is True
+                        if delivery_verified:
+                            self.speak("Message delivered.")
+                            self.ui.write_log(f"SYS: Instagram reply delivery verified for @{username}.")
+                            try:
+                                self.ui.finish_task_workspace("Instagram reply delivery was independently verified.", "Reply delivered", 100)
+                            except Exception:
+                                pass
+                        elif submitted:
+                            self.speak("Message send was accepted, but delivery was not independently verified.")
+                            self.ui.write_log(f"SYS: Instagram reply submission accepted for @{username}; delivery remains unverified.")
+                            try:
+                                self.ui.finish_task_workspace(
+                                    "Instagram accepted the reply request; delivery was not independently verified.",
+                                    "Reply submitted",
+                                    90,
+                                )
+                            except Exception:
+                                pass
+                        else:
+                            error = result.get("error") if isinstance(result, dict) else str(result)
+                            self.speak("The Instagram reply was not confirmed as sent.")
+                            self.ui.write_log(f"ERR: Instagram reply was not confirmed for @{username}: {error}")
+                            try:
+                                self.ui.finish_task_workspace(
+                                    f"Instagram reply was not confirmed as sent: {error}",
+                                    "Reply failed",
+                                    0,
+                                )
+                            except Exception:
+                                pass
                     except Exception as e:
-                        print(f"Error sending manual reply to @{username}: {e}")
-                threading.Thread(target=_do_send, daemon=True).start()
+                        self.ui.write_log(f"Error sending manual reply to @{username}: {e}")
+                        self.speak("The Instagram reply failed.")
+                        try:
+                            self.ui.finish_task_workspace(
+                                f"Instagram reply failed: {e}",
+                                "Reply failed",
+                                0,
+                            )
+                        except Exception:
+                            pass
+                threading.Thread(target=_do_send, daemon=True, name="instagram-manual-reply").start()
                 
             elif intent == "IGNORE":
                 return False
