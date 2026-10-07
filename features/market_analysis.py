@@ -11,48 +11,57 @@ FEATURE_METADATA = {
     "active": True
 }
 
-import urllib.request
 import json
 import os
+import re
 import datetime
+from core.network_safety import open_fixed_https, read_bounded
 import matplotlib
 matplotlib.use('Agg') # Use the 'Agg' backend for non-interactive plotting
 import matplotlib.pyplot as plt
 
 def execute(**kwargs):
-    symbol = kwargs.get('symbol', 'BTCUSDT').upper()
-    interval = kwargs.get('interval', '1h')
-    limit = kwargs.get('limit', 24)
-
-    # Ensure limit is an integer
+    symbol = str(kwargs.get('symbol', 'BTCUSDT') or '').strip().upper()
+    interval = str(kwargs.get('interval', '1h') or '').strip().lower()
+    if not re.fullmatch(r"[A-Z0-9]{2,20}", symbol):
+        return {"error": "Invalid trading pair symbol."}
+    valid_intervals = {"1s", "1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w", "1M"}
+    if interval not in valid_intervals:
+        return {"error": f"Invalid interval '{interval}'."}
     try:
-        limit = int(limit)
-    except ValueError:
+        limit = int(kwargs.get('limit', 24))
+    except (TypeError, ValueError):
         return {"error": "Invalid 'limit' parameter. Must be an integer."}
+    if not 1 <= limit <= 1000:
+        return {"error": "Invalid 'limit' parameter. Must be between 1 and 1000."}
 
-    # --- Fetch Live Price Data ---
     ticker_url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}"
-    current_price = "N/A"
-    price_change_percent = "N/A"
     try:
-        with urllib.request.urlopen(ticker_url, timeout=8) as response:
-            ticker_data = json.loads(response.read().decode())
-            current_price = float(ticker_data.get('lastPrice', 0))
-            price_change_percent = float(ticker_data.get('priceChangePercent', 0))
-    except urllib.error.URLError as e:
-        print(f"Error fetching live ticker data for {symbol}: {e}")
-    except json.JSONDecodeError as e:
-        print(f"Error decoding live ticker JSON for {symbol}: {e}")
+        with open_fixed_https(
+            ticker_url,
+            allowed_hosts={"api.binance.com"},
+            timeout=8,
+            headers={"User-Agent": "Brahma-Evo/1.0"},
+        ) as response:
+            ticker_data = json.loads(read_bounded(response, 256 * 1024).decode("utf-8"))
+        current_price = float(ticker_data["lastPrice"])
+        price_change_percent = float(ticker_data["priceChangePercent"])
     except Exception as e:
-        print(f"An unexpected error occurred fetching live ticker data: {e}")
+        return {"error": f"Failed to fetch live ticker data for {symbol}: {e}"}
 
-    # --- Fetch Historical Klines Data for Graph ---
-    klines_url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
     times = []
     prices = []
+    klines_url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
     try:
-        with urllib.request.urlopen(klines_url, timeout=8) as response:
-            klines_data = json.loads(response.read().decode())
+        with open_fixed_https(
+            klines_url,
+            allowed_hosts={"api.binance.com"},
+            timeout=8,
+            headers={"User-Agent": "Brahma-Evo/1.0"},
+        ) as response:
+            klines_data = json.loads(read_bounded(response, 1024 * 1024).decode("utf-8"))
+            if not isinstance(klines_data, list):
+                return {"error": "Binance returned an invalid historical data payload."}
             for kline in klines_data:
                 close_time_ms = kline[6]  # Close time in milliseconds
                 close_price = float(kline[4]) # Close price
@@ -115,6 +124,7 @@ def execute(**kwargs):
     summary_text += f"Displaying {len(prices)} {interval} data points."
 
     return {
+        "success": True,
         "image_path": image_path,
         "title": f"{symbol} Market Analysis",
         "summary": summary_text
