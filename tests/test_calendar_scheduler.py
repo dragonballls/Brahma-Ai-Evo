@@ -1,3 +1,5 @@
+import pytest
+
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,3 +58,19 @@ def test_calendar_rejects_non_mapping_parameters_without_crashing():
 
     result = calendar.calendar_scheduler(["not", "a", "mapping"])
     assert result == "You have no upcoming events on your calendar."
+
+
+def test_calendar_export_fails_closed_on_malformed_event(monkeypatch, tmp_path):
+    import actions.calendar_scheduler as calendar
+
+    monkeypatch.setattr(calendar, "EVENTS_FILE", tmp_path / "calendar_events.json")
+    calendar._save_events([{
+        "id": "bad",
+        "title": "Broken",
+        "date": "not-a-date",
+        "time": "12:00",
+        "duration_minutes": 30,
+    }])
+
+    with pytest.raises(RuntimeError, match="Calendar export aborted"):
+        calendar.calendar_scheduler({"action": "export_ics"})

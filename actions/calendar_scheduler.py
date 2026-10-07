@@ -259,7 +259,10 @@ def calendar_scheduler(
         for ev in events:
             try:
                 dt_start = datetime.strptime(f"{ev['date']} {ev['time']}", "%Y-%m-%d %H:%M")
-                dt_end = dt_start + timedelta(minutes=ev.get("duration_minutes", 30))
+                duration_value = int(ev.get("duration_minutes", 30))
+                if duration_value < 1 or duration_value > 10080:
+                    raise ValueError("duration out of range")
+                dt_end = dt_start + timedelta(minutes=duration_value)
                 ics_lines.extend([
                     "BEGIN:VEVENT",
                     f"UID:{ev.get('id', uuid.uuid4())}@brahma.ai",
@@ -271,8 +274,10 @@ def calendar_scheduler(
                     f"LOCATION:{_ics_escape(ev.get('location', ''))}",
                     "END:VEVENT",
                 ])
-            except Exception:
-                continue
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Calendar export aborted because event '{ev.get('id', 'unknown')}' is malformed."
+                ) from exc
         ics_lines.append("END:VCALENDAR")
 
         desktop_ics = Path.home() / "Desktop" / "brahma_calendar.ics"
