@@ -231,4 +231,4 @@ def test_guarded_browser_context_disables_service_workers_before_request_routing
     assert page is not None
     assert context.kwargs["service_workers"] == "block"
     assert context.route_args[0] == "**/*"
-    assert context.route_args[1] == _BrowserThread._guard_request
+    assert context.route_args[1].__func__ is _BrowserThread._guard_request
