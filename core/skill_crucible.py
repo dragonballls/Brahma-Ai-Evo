@@ -581,6 +581,10 @@ class SkillCrucible:
         Executes test cases in an isolated child process to verify runtime correctness.
         Returns: (passed: bool, message: str, telemetry: dict)
         """
+        safe, reason = cls.validate_ast(skill_code)
+        if not safe:
+            return False, f"Sandbox static validation failed: {_redact_text(reason)}", {"results": []}
+
         py_exe = _get_python_executable()
 
         # Build runner harness
@@ -820,6 +824,14 @@ def run_tests():
 
             is_err = False
             err_msg = ""
+            serialized_result = None
+            try:
+                candidate = json.dumps(res, ensure_ascii=False)
+                if len(candidate.encode("utf-8")) <= 256 * 1024:
+                    serialized_result = candidate
+            except Exception:
+                serialized_result = None
+
             if isinstance(res, dict):
                 if res.get("error"):
                     is_err = True
@@ -831,11 +843,13 @@ def run_tests():
                 is_err = True
                 err_msg = res
 
+            entry = {"index": i, "success": not is_err, "output": str(res)[:300]}
+            if serialized_result is not None:
+                entry["result_json"] = serialized_result
             if is_err:
-                results.append({{"index": i, "success": False, "error": err_msg, "output": str(res)[:300]}})
-            else:
-                results.append({{"index": i, "success": True, "output": str(res)[:300]}})
-        except Exception as exc:
+                entry["error"] = err_msg
+            results.append(entry)
+        except BaseException as exc:
             tb = traceback.format_exc()
             results.append({{"index": i, "success": False, "error": str(exc), "traceback": tb}})
             
@@ -883,7 +897,10 @@ if __name__ == '__main__':
                 pass
 
             if test_results is None:
-                test_results = [{"success": True, "output": output_str[:300]}]
+                return False, (
+                    "Sandbox execution produced no authoritative test result; "
+                    "completion cannot be inferred from a zero exit code."
+                ), {"results": [], "elapsed_s": elapsed}
 
             safe_results = []
             for item in test_results:
