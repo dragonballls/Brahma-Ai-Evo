@@ -96,6 +96,7 @@ jobs:
           tests/test_ppt_template_network_safety.py
           tests/test_app_host_safety.py
           tests/test_false_success_actions.py
+          tests/test_meeting_assistant_contract.py
           tests/test_persistence_fail_closed.py
           tests/test_model_performance.py
           tests/test_continuous_evolution.py
