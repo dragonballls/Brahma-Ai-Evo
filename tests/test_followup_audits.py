@@ -1580,3 +1580,11 @@ def test_executor_rejects_non_object_tool_parameters_before_dispatch():
 
     with pytest.raises(ValueError, match="parameters must be a JSON object"):
         _call_tool("web_search", "query=hello", speak=None)
+
+
+def test_action_result_failure_classifier_does_not_misclassify_empty_or_explicit_failures():
+    from main import _action_result_is_failure
+    assert _action_result_is_failure("") is True
+    assert _action_result_is_failure("Could not open the Gmail inbox.") is True
+    assert _action_result_is_failure("Gmail credentials not configured.") is True
+    assert _action_result_is_failure("No messages found matching query 'ALL'.") is False

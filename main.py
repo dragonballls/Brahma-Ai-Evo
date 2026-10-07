@@ -23,6 +23,29 @@ def _smoke_trace(message: str) -> None:
     except Exception:
         pass
 
+
+def _action_result_is_failure(result: object) -> bool:
+    """Recognize explicit action failure text without treating valid 'No ...' results as failures."""
+    if isinstance(result, dict):
+        return result.get("success") is False
+    text = str(result or "").strip().casefold()
+    if not text:
+        return True
+    return text.startswith((
+        "error:",
+        "failed",
+        "failure:",
+        "could not",
+        "unable to",
+        "gmail credentials not configured",
+        "invalid gmail",
+        "recipient email address",
+        "unknown google workspace",
+        "unknown gmail action",
+        "unknown calendar action",
+        "unknown google workspace service",
+    ))
+
 _smoke_trace("main bootstrap entered")
 
 # Efficient GPU/WebGL configuration; the visualizer controls its own adaptive frame rate.
@@ -3363,6 +3386,11 @@ class BrahmaLive:
                     from actions.google_workspace_mcp import google_workspace
                     res = google_workspace({"service": "gmail", "action": "unread"}, player=self.ui, speak=self.speak)
                     self.ui.write_log(f"[GoogleWorkspace] {res}")
+                    if _action_result_is_failure(res):
+                        if hasattr(self.ui, "update_task_workspace"):
+                            self.ui.update_task_workspace(status="Email Check Failed", output=str(res), percent=0)
+                        self.speak("Unable to check emails. Please ensure your credentials are set up in Settings.")
+                        return
                     if hasattr(self.ui, "update_task_workspace"):
                         self.ui.update_task_workspace(status="Email Check Completed", output=res, percent=100)
                     self.speak("Here are your latest emails, sir.")
@@ -3387,6 +3415,11 @@ class BrahmaLive:
                     from actions.google_workspace_mcp import google_workspace
                     res = google_workspace({"service": "calendar", "action": "list"}, player=self.ui, speak=self.speak)
                     self.ui.write_log(f"[GoogleWorkspace] {res}")
+                    if _action_result_is_failure(res):
+                        if hasattr(self.ui, "update_task_workspace"):
+                            self.ui.update_task_workspace(status="Schedule Check Failed", output=str(res), percent=0)
+                        self.speak("There was an issue checking your schedule, sir.")
+                        return
                     if hasattr(self.ui, "update_task_workspace"):
                         self.ui.update_task_workspace(status="Schedule Retrieved", output=res, percent=100)
                     self.speak("Here is your schedule, sir.")
