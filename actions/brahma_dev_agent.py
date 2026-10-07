@@ -97,7 +97,7 @@ class NativeTools:
         if any(token in raw for token in (";", "&&", "||", "|", ">", "<", "\n", "\r")):
             return "Error: shell control operators and redirection are not permitted."
 
-        raw_executable = raw.split(None, 1)[0].strip().strip(""'")
+        raw_executable = raw.split(None, 1)[0].strip().strip("'\"")
         if _EXPLICIT_EXECUTABLE_RE.match(raw_executable):
             return "Error: executable paths are not permitted."
         try:
