@@ -160,7 +160,7 @@ from core.single_instance import SingleInstance
 from core.voice_guard import VoiceCommandGate, VoiceToolExecutionGate
 from core.duplex_voice import BargeInGate, PlaybackGeneration
 from core.prosody import profile_for_text, profile_prompt_block
-from core.provider_policy import normalize_provider, is_local, is_gemini, is_openrouter
+from core.provider_policy import normalize_provider, validate_provider, is_local, is_gemini, is_openrouter
 _smoke_trace("top-level imports complete")
 from config import get_api_key
 
@@ -4805,10 +4805,16 @@ class BrahmaLive:
             request_text = f"{memory_ctx}\n\nCurrent User Request:\n{text}" if memory_ctx else text
 
             app_settings = config_manager.load_settings()
-            configured_provider = normalize_provider(app_settings.get("default_ai_provider", "Gemini"))
+            configured_provider = validate_provider(app_settings.get("default_ai_provider", "Gemini"))
             local_model_target = app_settings.get("local_ai_model", "qwen2.5:3b")
-            is_offline_mode = bool(app_settings.get("offline_mode_enabled", False))
-            auto_provider_switch = bool(app_settings.get("auto_provider_switch", True))
+            offline_setting = app_settings.get("offline_mode_enabled", False)
+            if not isinstance(offline_setting, bool):
+                raise RuntimeError("Offline-mode setting is invalid; refusing to route the request.")
+            is_offline_mode = offline_setting
+            auto_switch_setting = app_settings.get("auto_provider_switch", True)
+            if not isinstance(auto_switch_setting, bool):
+                raise RuntimeError("Provider-switch setting is invalid; refusing automatic provider fallback.")
+            auto_provider_switch = auto_switch_setting
 
             is_cloud_gemini = is_gemini(configured_provider)
             is_cloud_openrouter = is_openrouter(configured_provider)
@@ -7971,7 +7977,10 @@ def _main_impl():
         selected_provider = normalize_provider(
             selected_settings.get("default_ai_provider", "Gemini")
         )
-        offline_mode = bool(selected_settings.get("offline_mode_enabled", False))
+        offline_setting = selected_settings.get("offline_mode_enabled", False)
+        if not isinstance(offline_setting, bool):
+            raise RuntimeError("Offline-mode setting is invalid; refusing to start network-capable voice behavior.")
+        offline_mode = offline_setting
         gemini_voice_ready = _has_gemini_voice_credentials()
 
         # Gemini Live provides the full-duplex native-audio experience when its
