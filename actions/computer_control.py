@@ -234,8 +234,14 @@ def _clipboard_paste(text: str) -> str:
 def _screenshot(save_path: str | None = None) -> str:
     _require_pyautogui()
     path = _safe_screenshot_path(save_path)
-    img  = pyautogui.screenshot()
+    img = pyautogui.screenshot()
     img.save(str(path))
+    try:
+        verified = path.is_file() and path.stat().st_size > 0
+    except OSError:
+        verified = False
+    if not verified:
+        return f"Screenshot failed: saved artifact could not be verified at {path}"
     return f"Screenshot saved: {path}"
 
 
