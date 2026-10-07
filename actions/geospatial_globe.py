@@ -6,11 +6,22 @@ live flight radar integration, and geographic inspection.
 
 import math
 import urllib.request
+import urllib.error
 import urllib.parse
 import json
 from typing import Dict, Any, Tuple, Optional, List
 
 _MAX_NETWORK_RESPONSE_BYTES = 64 * 1024
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.URLError("Geospatial service redirects are disabled.")
+
+
+def _open_no_redirect(req, timeout: float):
+    opener = urllib.request.build_opener(_NoRedirectHandler())
+    return opener.open(req, timeout=timeout)
 
 
 def _read_json_response(resp):
@@ -156,7 +167,7 @@ def geocode_location(location_name: str) -> Tuple[float, float, str]:
     try:
         url = f"https://geocoding-api.open-meteo.com/v1/search?name={urllib.parse.quote(location_name)}&count=1"
         req = urllib.request.Request(url, headers={"User-Agent": "BrahmaAI-HoloGlobe/1.0"})
-        with urllib.request.urlopen(req, timeout=4) as response:
+        with _open_no_redirect(req, timeout=4) as response:
             payload = _read_json_response(response)
             results = payload.get("results") or []
             if results:
@@ -253,7 +264,7 @@ def fetch_live_flights_in_bounds(min_lat: float, max_lat: float, min_lon: float,
     flights = []
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "BrahmaAI-FlightRadar/1.0"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with _open_no_redirect(req, timeout=5) as resp:
             data = _read_json_response(resp)
             states = data.get("states") or []
             for s in states[:150]:  # Limit to 150 aircraft for optimal 3D frame rates
@@ -296,7 +307,7 @@ def reverse_geocode_area(lat: float, lon: float) -> str:
     try:
         url = f"https://api.bigdatacloud.net/data/reverse-geocode-client?latitude={lat:.3f}&longitude={lon:.3f}&localityLanguage=en"
         req = urllib.request.Request(url, headers={"User-Agent": "BrahmaAI-HoloGlobe/1.0"})
-        with urllib.request.urlopen(req, timeout=3) as resp:
+        with _open_no_redirect(req, timeout=3) as resp:
             data = _read_json_response(resp)
             city = data.get("city") or data.get("locality") or ""
             principal = data.get("principalSubdivision") or ""
@@ -331,7 +342,7 @@ def fetch_driving_route(lat1: float, lon1: float, lat2: float, lon2: float) -> D
     )
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "BrahmaAI-Navigator/1.0"})
-        with urllib.request.urlopen(req, timeout=6) as resp:
+        with _open_no_redirect(req, timeout=6) as resp:
             data = _read_json_response(resp)
             if data.get("code") == "Ok" and data.get("routes"):
                 best_route = data["routes"][0]
@@ -371,7 +382,7 @@ def fetch_live_iss() -> Dict[str, Any]:
     url = "https://api.wheretheiss.at/v1/satellites/25544"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "BrahmaAI-SpaceRadar/1.0"})
-        with urllib.request.urlopen(req, timeout=4) as resp:
+        with _open_no_redirect(req, timeout=4) as resp:
             data = _read_json_response(resp)
             lat = round(float(data["latitude"]), 4)
             lon = round(float(data["longitude"]), 4)
@@ -398,7 +409,7 @@ def fetch_live_earthquakes(min_magnitude: float = 2.5) -> List[Dict[str, Any]]:
     url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "BrahmaAI-Seismic/1.0"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with _open_no_redirect(req, timeout=5) as resp:
             data = _read_json_response(resp)
             features = data.get("features", [])
             results = []
@@ -473,7 +484,7 @@ def fetch_nearby_places(query_or_category: str, center_lat: Optional[float] = No
                 data=urllib.parse.urlencode({"data": ov_body}).encode("utf-8"),
                 headers={"User-Agent": "BrahmaAI-GeospatialPOI/1.0"}
             )
-            with urllib.request.urlopen(req, timeout=8) as resp:
+            with _open_no_redirect(req, timeout=8) as resp:
                 data = _read_json_response(resp)
                 elements = data.get("elements", [])
                 places = []
@@ -524,7 +535,7 @@ def fetch_nearby_places(query_or_category: str, center_lat: Optional[float] = No
     url = f"https://nominatim.openstreetmap.org/search?format=json&q={encoded_q}&viewbox={viewbox}&bounded=0&limit=12"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "BrahmaAI-GeospatialPOI/1.0"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with _open_no_redirect(req, timeout=5) as resp:
             data = _read_json_response(resp)
             places = []
             for item in data:
@@ -572,7 +583,7 @@ def fetch_location_weather(lat: float, lon: float) -> Dict[str, Any]:
     }
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "BrahmaAI-Weather/1.0"})
-        with urllib.request.urlopen(req, timeout=4) as resp:
+        with _open_no_redirect(req, timeout=4) as resp:
             data = _read_json_response(resp)
             curr = data.get("current")
             if not isinstance(curr, dict):
@@ -607,7 +618,7 @@ def fetch_radar_timestamp() -> Optional[int]:
     try:
         url = "https://api.rainviewer.com/public/weather-maps.json"
         req = urllib.request.Request(url, headers={"User-Agent": "BrahmaAI-WeatherRadar/1.0"})
-        with urllib.request.urlopen(req, timeout=4) as resp:
+        with _open_no_redirect(req, timeout=4) as resp:
             data = _read_json_response(resp)
             past = data.get("radar", {}).get("past", [])
             if past:
