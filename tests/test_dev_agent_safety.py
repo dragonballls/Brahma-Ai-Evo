@@ -25,3 +25,41 @@ def test_dev_agent_file_tools_confine_paths_to_workspace():
     assert "Path escapes the configured developer workspace." in source
     assert "path = self._workspace_path(file_path)" in source
     assert "search_root = self._workspace_path(path)" in source
+
+
+def test_brahma_dev_records_only_real_verification_commands():
+    from actions.brahma_dev_agent import BrahmaDevAgent
+
+    assert BrahmaDevAgent._is_verification_command("Bash", {"command": "python -m pytest -q"})
+    assert BrahmaDevAgent._is_verification_command("bash", {"command": "npm run build"})
+    assert not BrahmaDevAgent._is_verification_command("bash", {"command": "echo tests passed"})
+
+
+def test_brahma_dev_refuses_success_without_verification(monkeypatch, tmp_path):
+    from actions.brahma_dev_agent import BrahmaDevAgent
+
+    agent = BrahmaDevAgent(tmp_path)
+    monkeypatch.setattr(agent, "_github_research_preflight", lambda _instruction: "")
+    monkeypatch.setattr(agent, "_call_llm", lambda: "The project is complete.")
+    result = agent.run("build a project", max_turns=1)
+
+    assert result.startswith("Error: Developer task incomplete")
+    assert agent.verification_evidence == []
+
+
+def test_brahma_dev_accepts_final_response_after_verified_command(monkeypatch, tmp_path):
+    from actions.brahma_dev_agent import BrahmaDevAgent
+
+    agent = BrahmaDevAgent(tmp_path)
+    monkeypatch.setattr(agent, "_github_research_preflight", lambda _instruction: "")
+    monkeypatch.setattr(agent.tools, "bash", lambda *_args, **_kwargs: "pytest: 1 passed")
+    replies = iter([
+        '<tool_call><name>Bash</name><arguments>{"command":"python -m pytest -q"}</arguments></tool_call>',
+        "The project is complete and the verification command passed.",
+    ])
+    monkeypatch.setattr(agent, "_call_llm", lambda: next(replies))
+
+    result = agent.run("build a project", max_turns=2)
+
+    assert result == "The project is complete and the verification command passed."
+    assert agent.verification_evidence == ["python -m pytest -q"]
