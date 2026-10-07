@@ -84,3 +84,19 @@ def test_windows_exclusive_handle_blocks_write_and_delete_sharing(tmp_path):
         os.close(fd)
 
     assert target.read_text(encoding="utf-8") == "protected"
+
+
+def test_windows_rename_refuses_reparse_parent(tmp_path):
+    from core import windows_file_safety as winfs
+    real = tmp_path / "real"
+    real.mkdir()
+    source = real / "source.txt"
+    source.write_text("data", encoding="utf-8")
+    link = tmp_path / "link"
+    try:
+        link.symlink_to(real, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("Directory symlinks are unavailable on this Windows runner.")
+    with pytest.raises(OSError, match="reparse-point"):
+        winfs.rename(source, link / "renamed.txt")
+    assert source.exists()

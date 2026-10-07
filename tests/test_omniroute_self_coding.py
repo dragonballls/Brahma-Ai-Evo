@@ -462,3 +462,35 @@ class OmniRouteSelfCodingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+    def test_tool_call_empty_final_response_is_not_success(self):
+        from or_client import OpenRouterClient
+        client = OpenRouterClient()
+        response = {
+            "choices": [{
+                "message": {"content": "", "tool_calls": []},
+                "finish_reason": "stop",
+            }]
+        }
+        with patch.object(client, "_call_omniroute_tool_capable", return_value=None), patch.object(
+            client, "_call_tool_capable", return_value=response
+        ):
+            with self.assertRaisesRegex(RuntimeError, "completion was not verified"):
+                client.chat_with_tools(
+                    messages=[{"role": "user", "content": "do it"}],
+                    tools=[{
+                        "name": "declared_safe_action",
+                        "description": "safe",
+                        "parameters": {"type": "object", "properties": {}},
+                    }],
+                    tool_executor=lambda *_args, **_kwargs: None,
+                    max_rounds=1,
+                )
+
+    def test_chat_json_rejects_non_object_model_output(self):
+        from or_client import OpenRouterClient
+        client = OpenRouterClient()
+        with patch.object(client, "_call_omniroute", return_value="[]"):
+            with self.assertRaisesRegex(ValueError, "must be an object"):
+                client.chat_json("return json")

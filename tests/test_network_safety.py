@@ -120,3 +120,21 @@ def test_public_transport_preserves_redirect_response_without_following(monkeypa
     status, body = network_safety.fetch_public_bytes("http://example.com/redirect", max_response_bytes=64)
     assert status == 302
     assert body == b"redirect-body"
+
+
+def test_fixed_https_rejects_multicast_resolution(monkeypatch):
+    from core import network_safety
+    monkeypatch.setattr(network_safety.socket, "getaddrinfo", lambda *a, **k: [
+        (2, 1, 6, "", ("224.0.0.1", 443))
+    ])
+    with pytest.raises(ValueError, match="multicast"):
+        network_safety.validate_fixed_https_url("https://example.com/data", {"example.com"})
+
+
+def test_public_http_rejects_multicast_resolution(monkeypatch):
+    from core import network_safety
+    monkeypatch.setattr(network_safety.socket, "getaddrinfo", lambda *a, **k: [
+        (2, 1, 6, "", ("224.0.0.1", 80))
+    ])
+    with pytest.raises(ValueError, match="multicast"):
+        network_safety.fetch_public_bytes("http://example.com/status")

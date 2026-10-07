@@ -125,3 +125,16 @@ def test_download_public_to_file_strips_credentials_when_redirect_port_changes(m
     assert "Authorization" not in requests[1][3]
     assert "Proxy-Authorization" not in requests[1][3]
     assert bytes(output) == b"ok"
+
+
+def test_public_download_rejects_multicast_resolution(monkeypatch):
+    from core import network_safety
+    monkeypatch.setattr(network_safety.socket, "getaddrinfo", lambda *args, **kwargs: [
+        (2, 1, 6, "", ("224.0.0.1", kwargs.get("port", 80)))
+    ])
+    with pytest.raises(ValueError, match="multicast"):
+        network_safety.download_public_to_file(
+            "https://example.com/file",
+            type("Output", (), {"write": lambda self, chunk: len(chunk)})(),
+            require_https=True,
+        )

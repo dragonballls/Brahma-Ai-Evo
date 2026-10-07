@@ -51,3 +51,17 @@ def test_untrusted_skill_executes_validated_source_bytes_after_replacement_race(
     monkeypatch.setattr(SkillCrucible, "validate_ast", staticmethod(validate_then_swap))
     skill = DynamicSkill(skill_dir, {"name": "race_skill"}, untrusted=True)
     assert skill.execute_sync() == "safe"
+
+
+def test_dynamic_registry_rejects_native_feature_deletion():
+    from core.dynamic_registry import DynamicSkill, DynamicToolRegistry
+    original = DynamicToolRegistry._skills
+    initialized = DynamicToolRegistry._initialized
+    try:
+        native = DynamicSkill(ROOT / "features" / "native_feature.py", {"name": "native_feature"})
+        DynamicToolRegistry._skills = {"native_feature": native}
+        DynamicToolRegistry._initialized = True
+        assert DynamicToolRegistry.delete_skill("native_feature") is False
+    finally:
+        DynamicToolRegistry._skills = original
+        DynamicToolRegistry._initialized = initialized
