@@ -91,3 +91,21 @@ def test_pop_last_session_propagates_write_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(mm, "_atomic_write_json", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk failure")))
     with pytest.raises(OSError, match="disk failure"):
         mm.pop_last_session()
+
+
+def test_corrupt_memory_is_preserved_without_renaming_the_original(tmp_path, monkeypatch):
+    import memory.memory_manager as mm
+
+    path = tmp_path / "long_term.json"
+    raw = "{not valid json"
+    path.write_text(raw, encoding="utf-8")
+    monkeypatch.setattr(mm, "MEMORY_PATH", path)
+
+    with pytest.raises(RuntimeError, match="refusing to use empty defaults"):
+        mm.load_memory()
+
+    assert path.exists()
+    assert path.read_text(encoding="utf-8") == raw
+    copies = list(tmp_path.glob("long_term.json.corrupt-*"))
+    assert len(copies) == 1
+    assert copies[0].read_text(encoding="utf-8") == raw
