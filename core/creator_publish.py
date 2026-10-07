@@ -22,6 +22,20 @@ def _secret_path() -> Path | None:
     ]
     return next((x.resolve() for x in candidates if x.is_file()), None)
 
+def _studio_fallback_message(opened: bool) -> str:
+    return (
+        "Direct YouTube API credentials are not configured; "
+        + ("YouTube Studio was opened." if opened else "YouTube Studio could not be opened automatically.")
+        + " The package is ready."
+    )
+
+
+def _extract_uploaded_video_id(response: Any) -> str:
+    if not isinstance(response, dict) or not response.get("id"):
+        raise RuntimeError("YouTube upload returned no video ID; refusing to report a successful publish.")
+    return str(response["id"])
+
+
 def _save_token(path: Path, credentials: Any) -> None:
     """Persist the OAuth token without following a replace-time symlink."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -86,11 +100,7 @@ def publish_project(
                 "mode": "studio_fallback",
                 "video": str(video),
                 "metadata": metadata,
-                "message": (
-                    "Direct YouTube API credentials are not configured; "
-                    + ("YouTube Studio was opened." if opened else "YouTube Studio could not be opened automatically.")
-                    + " The package is ready."
-                ),
+                "message": _studio_fallback_message(opened),
             }
         flow = InstalledAppFlow.from_client_secrets_file(str(secret), SCOPES)
         credentials = flow.run_local_server(port=0, access_type="offline", prompt="consent")
@@ -121,9 +131,7 @@ def publish_project(
     response = None
     while response is None:
         _, response = request.next_chunk()
-    video_id = response.get("id") if isinstance(response, dict) else None
-    if not video_id:
-        raise RuntimeError("YouTube upload returned no video ID; refusing to report a successful publish.")
+    video_id = _extract_uploaded_video_id(response)
     thumbnail = manifest.get("thumbnail_path")
     if video_id and thumbnail and Path(thumbnail).is_file():
         service.thumbnails().set(
