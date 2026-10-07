@@ -98,6 +98,25 @@ def test_connection_hub_close_all_settles_every_pending_future():
         raise AssertionError("Pending future was not rejected during shutdown.")
 
 
+def test_gateway_bounds_unauthenticated_payload_fields_and_log_size():
+    from brahma_connect.gateway.server import (
+        _MAX_CHAT_TEXT,
+        _MAX_LOG_PAYLOAD_BYTES,
+        _bounded_metadata,
+        _bounded_string,
+        _bounded_string_list,
+    )
+    import pytest
+
+    with pytest.raises(ValueError):
+        _bounded_string("x" * 257, "device_name")
+    with pytest.raises(ValueError):
+        _bounded_string_list(["x"] * 65, "capabilities")
+    with pytest.raises(ValueError):
+        _bounded_metadata({"large": "x" * (_MAX_LOG_PAYLOAD_BYTES)})
+    assert _MAX_CHAT_TEXT == 16 * 1024
+
+
 def test_gateway_rejects_reauthentication_on_an_already_authenticated_socket():
     source = (ROOT / "brahma_connect" / "gateway" / "server.py").read_text(encoding="utf-8")
     assert "This WebSocket is already authenticated; reconnect to change devices." in source

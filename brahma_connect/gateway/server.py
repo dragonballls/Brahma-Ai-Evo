@@ -52,6 +52,53 @@ def _safe_bool(value: object, default: bool) -> bool:
 
 AUTH_HANDSHAKE_TIMEOUT_SECONDS = 30.0
 
+_MAX_LOG_PAYLOAD_BYTES = 32 * 1024
+_MAX_PENDING_STRING = 256
+_MAX_PENDING_LIST = 64
+_MAX_PENDING_LIST_ITEM = 128
+_MAX_PENDING_METADATA_BYTES = 8 * 1024
+_MAX_EVENT_PAYLOAD_BYTES = 64 * 1024
+_MAX_CHAT_TEXT = 16 * 1024
+
+
+def _bounded_string(value: object, field: str, maximum: int = _MAX_PENDING_STRING, default: str = "") -> str:
+    if value is None:
+        return default
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string.")
+    value = value.strip()
+    if len(value) > maximum:
+        raise ValueError(f"{field} exceeds the safe size limit.")
+    return value
+
+
+def _bounded_string_list(value: object, field: str) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > _MAX_PENDING_LIST:
+        raise ValueError(f"{field} exceeds the safe item limit.")
+    result = []
+    for item in value:
+        if not isinstance(item, str) or len(item) > _MAX_PENDING_LIST_ITEM:
+            raise ValueError(f"{field} contains an invalid item.")
+        result.append(item)
+    return result
+
+
+def _bounded_metadata(value: object) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("metadata must be an object.")
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("metadata is not serializable.") from exc
+    if len(encoded) > _MAX_PENDING_METADATA_BYTES:
+        raise ValueError("metadata exceeds the safe size limit.")
+    return dict(value)
+
+
 _SENSITIVE_LOG_KEYS = {
     "api_key", "apikey", "authorization", "bearer", "client_secret",
     "device_secret", "pairing_code", "pairing_token", "pin", "password",
@@ -213,6 +260,11 @@ class BrahmaGateway:
 
     def _append_log(self, event_type: str, **payload: Any) -> None:
         safe_payload = {str(key): _redact_log_value(value, str(key)) for key, value in payload.items()}
+        try:
+            if len(json.dumps(safe_payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > _MAX_LOG_PAYLOAD_BYTES:
+                safe_payload = {"error": "Log payload exceeded the safety limit.", "event": str(event_type)[:128]}
+        except (TypeError, ValueError):
+            safe_payload = {"error": "Log payload was not serializable.", "event": str(event_type)[:128]}
         entry = {"type": event_type, "timestamp": now_iso(), **safe_payload}
         with self._log_lock:
             self._log.append(entry)
@@ -596,14 +648,18 @@ class BrahmaGateway:
             return {"success": False, "error": "Pairing offer is already being used."}
         self._pair_attempts.pop(client_ip, None)
 
-        device_name = str(payload.get("device_name") or "Unknown Device").strip()
-        platform = str(payload.get("platform") or "unknown").strip()
-        os_version = str(payload.get("os_version") or "")
-        agent_version = str(payload.get("agent_version") or "")
+        try:
+            device_name = _bounded_string(payload.get("device_name"), "device_name") or "Unknown Device"
+            platform = _bounded_string(payload.get("platform"), "platform") or "unknown"
+            os_version = _bounded_string(payload.get("os_version"), "os_version")
+            agent_version = _bounded_string(payload.get("agent_version"), "agent_version")
+            capabilities = _bounded_string_list(payload.get("capabilities"), "capabilities")
+            permissions = _bounded_string_list(payload.get("permissions"), "permissions")
+            metadata = _bounded_metadata(payload.get("metadata"))
+        except ValueError as exc:
+            self.pairing_manager.release(claimed_offer.pairing_token)
+            return {"success": False, "error": str(exc)}
         battery = payload.get("battery")
-        capabilities = list(payload.get("capabilities") or [])
-        permissions = list(payload.get("permissions") or [])
-        metadata = dict(payload.get("metadata") or {})
         try:
             record, secret = self.device_manager.create_from_pairing(
                 name=device_name,
@@ -815,6 +871,17 @@ class BrahmaGateway:
                         # Replace any older pending request from this socket and
                         # bound the total pending set so unauthenticated HELLO spam
                         # cannot grow memory without limit.
+                        try:
+                            hello_device_name = _bounded_string(payload.get("device_name"), "device_name") or "Unknown Device"
+                            hello_platform = _bounded_string(payload.get("platform"), "platform") or "unknown"
+                            hello_os_version = _bounded_string(payload.get("os_version"), "os_version")
+                            hello_agent_version = _bounded_string(payload.get("agent_version"), "agent_version")
+                            hello_capabilities = _bounded_string_list(payload.get("capabilities"), "capabilities")
+                            hello_permissions = _bounded_string_list(payload.get("permissions"), "permissions")
+                            hello_metadata = _bounded_metadata(payload.get("metadata"))
+                        except ValueError as exc:
+                            await websocket.send_json(build_message(ProtocolTypes.ERROR, {"error": str(exc)}, request_id=request_id))
+                            continue
                         with self._pending_lock:
                             stale_ids = [
                                 pending_id
@@ -834,14 +901,14 @@ class BrahmaGateway:
                                 "request_id": pending_id,
                                 "websocket": websocket,
                                 "timestamp": now_iso(),
-                                "device_name": str(payload.get("device_name") or "Unknown Device"),
-                                "platform": str(payload.get("platform") or "unknown"),
-                                "os_version": str(payload.get("os_version") or ""),
-                                "agent_version": str(payload.get("agent_version") or ""),
-                                "capabilities": list(payload.get("capabilities") or []),
-                                "permissions": list(payload.get("permissions") or []),
+                                "device_name": hello_device_name,
+                                "platform": hello_platform,
+                                "os_version": hello_os_version,
+                                "agent_version": hello_agent_version,
+                                "capabilities": hello_capabilities,
+                                "permissions": hello_permissions,
                                 "battery": payload.get("battery"),
-                                "metadata": dict(payload.get("metadata") or {}),
+                                "metadata": hello_metadata,
                                 "ip": websocket.client.host if websocket.client else "",
                             }
                             self._pending_requests[pending_id] = pending_item
@@ -936,6 +1003,12 @@ class BrahmaGateway:
                                 )
                             )
                             continue
+                        try:
+                            if len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > _MAX_EVENT_PAYLOAD_BYTES:
+                                raise ValueError("Device event payload exceeds the safe size limit.")
+                        except (TypeError, ValueError) as exc:
+                            await websocket.send_json(build_message(ProtocolTypes.ERROR, {"error": str(exc)}, request_id=request_id))
+                            continue
                         self._append_log("EVENT", device_id=device_id, payload=payload)
                         continue
 
@@ -949,8 +1022,12 @@ class BrahmaGateway:
                                 )
                             )
                             continue
-                        if self.on_chat_message and payload.get("text"):
-                            self.on_chat_message(payload.get("text"))
+                        text_value = payload.get("text")
+                        if text_value and (not isinstance(text_value, str) or len(text_value) > _MAX_CHAT_TEXT):
+                            await websocket.send_json(build_message(ProtocolTypes.ERROR, {"error": "Chat message exceeds the safe size limit."}, request_id=request_id))
+                            continue
+                        if self.on_chat_message and text_value:
+                            self.on_chat_message(text_value)
                         continue
 
                     if msg_type == ProtocolTypes.DEVICE_OFFLINE:
