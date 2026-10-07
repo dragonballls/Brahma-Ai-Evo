@@ -87,6 +87,7 @@ def _asset_digest(release: dict, asset: dict) -> str | None:
                 max_response_bytes=64 * 1024,
                 headers={"User-Agent": "BrahmaEvo-OTA"},
                 allowed_redirect_hosts=_GITHUB_ASSET_REDIRECT_HOSTS,
+                require_https=True,
             )
             manifest = buffer.getvalue().decode("utf-8", errors="replace")
             for line in manifest.splitlines():
@@ -159,6 +160,16 @@ def _sha256(path: Path) -> str:
             digest.update(chunk)
     return digest.hexdigest()
 
+def _sha256_open_file(handle) -> str:
+    digest = hashlib.sha256()
+    handle.flush()
+    os.fsync(handle.fileno())
+    handle.seek(0)
+    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+        digest.update(chunk)
+    handle.seek(0, os.SEEK_END)
+    return digest.hexdigest()
+
 
 def download_and_apply_update(
     url: str,
@@ -168,6 +179,7 @@ def download_and_apply_update(
 ):
     """Download, verify, then launch a release installer."""
     temp_path: Path | None = None
+    installer_handle = None
     try:
         supplied_digest = str(expected_sha256 or "").strip().lower()
         expected_size = int(expected_size or 0)
@@ -186,21 +198,30 @@ def download_and_apply_update(
             raise RuntimeError("OTA update rejected: supplied checksum does not match the published release checksum.")
         digest = trusted_digest
 
+        try:
+            asset_size = int(asset.get("size") or 0)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("OTA update rejected: release installer size is invalid.") from exc
+        if asset_size <= 0 or asset_size > _MAX_INSTALLER_BYTES:
+            raise RuntimeError("OTA installer exceeds the 1 GiB safety limit or has no valid release size.")
+        if expected_size and expected_size != asset_size:
+            raise RuntimeError("OTA update rejected: supplied installer size does not match the current release asset.")
+        total_size = asset_size
+
         update_dir = __import__("core.user_paths", fromlist=["get_user_data_dir"]).get_user_data_dir() / "updates"
         update_dir.mkdir(parents=True, exist_ok=True)
 
         with _OTA_APPLY_LOCK:
             import tempfile
             fd, temp_name = tempfile.mkstemp(
-                prefix=f"{setup_path.stem}.{uuid.uuid4().hex}.",
+                prefix=f"BrahmaEvo_Update_{uuid.uuid4().hex}.",
                 suffix=".exe.download",
                 dir=str(update_dir),
             )
-            os.close(fd)
             temp_path = Path(temp_name)
+            installer_handle = os.fdopen(fd, "w+b", buffering=0)
 
-            with temp_path.open("wb") as output:
-                total_size = expected_size
+            try:
                 downloaded = 0
 
                 class _ProgressWriter:
@@ -209,37 +230,49 @@ def download_and_apply_update(
                         downloaded += len(chunk)
                         if ui_callback and total_size > 0:
                             ui_callback(min(100, int(downloaded / total_size * 100)))
-                        return output.write(chunk)
+                        return installer_handle.write(chunk)
 
-                download_public_to_file(
+                received = download_public_to_file(
                     url,
                     _ProgressWriter(),
                     timeout=30,
                     max_response_bytes=_MAX_INSTALLER_BYTES,
                     headers={"User-Agent": "BrahmaEvo-OTA"},
                     allowed_redirect_hosts=_GITHUB_ASSET_REDIRECT_HOSTS,
+                    require_https=True,
                 )
+                if received != asset_size:
+                    raise RuntimeError("OTA installer size does not match the release asset.")
+                actual = _sha256_open_file(installer_handle)
+                if actual != digest:
+                    raise RuntimeError("OTA installer SHA-256 verification failed; download was not executed.")
 
-            if expected_size and temp_path.stat().st_size != expected_size:
-                raise RuntimeError("OTA installer size does not match the release asset.")
+                launch_path = temp_path
+                DETACHED_PROCESS = int(getattr(subprocess, "DETACHED_PROCESS", 0x00000008))
+                CREATE_NO_WINDOW = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                subprocess.Popen(
+                    [str(launch_path), "--silent"],
+                    creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS,
+                )
+            finally:
+                if installer_handle is not None:
+                    try:
+                        installer_handle.close()
+                    except Exception:
+                        pass
+                    installer_handle = None
 
-            actual = _sha256(temp_path)
-            if actual != digest:
-                raise RuntimeError("OTA installer SHA-256 verification failed; download was not executed.")
-
-            launch_path = temp_path
         temp_path = None
-
-        DETACHED_PROCESS = int(getattr(subprocess, "DETACHED_PROCESS", 0x00000008))
-        CREATE_NO_WINDOW = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        subprocess.Popen(
-            [str(launch_path), "--silent"],
-            creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS,
-        )
         raise SystemExit(0)
     except SystemExit:
         raise
     except Exception as e:
+        if installer_handle is not None:
+            try:
+                installer_handle.close()
+            except Exception:
+                pass
+            installer_handle = None
         if temp_path is not None:
             try:
                 temp_path.unlink(missing_ok=True)
