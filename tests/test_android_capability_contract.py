@@ -11,7 +11,8 @@ ANDROID_STATE = ROOT / "brahma-connect-android" / "app" / "src" / "main" / "java
 
 def test_android_remote_actions_are_capability_gated():
     handler = ANDROID_HANDLER.read_text(encoding="utf-8")
-    supported = set(re.findall(r'^\s*"([^"]+)"\s*->', handler, flags=re.MULTILINE))
+    dispatch = handler.split("return when (action.lowercase())", 1)[1].split("private fun getDeviceInfo", 1)[0]
+    supported = set(re.findall(r'^\s*"([^"]+)"\s*->', dispatch, flags=re.MULTILINE))
     assert supported
     assert supported <= set(ACTION_CAPABILITIES)
 

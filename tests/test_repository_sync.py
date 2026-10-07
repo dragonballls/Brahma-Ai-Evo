@@ -48,7 +48,8 @@ class RepositorySyncTests(unittest.TestCase):
                         r.stdout = "remote"
                     return r
                 run.side_effect = fake_run
-                result = repository_sync.publish_verified_repair(target, "abc123")
+                with patch.dict(os.environ, {"BRAHMA_AUTO_PUBLISH_REPAIRS": "1"}):
+                    result = repository_sync.publish_verified_repair(target, "abc123")
             self.assertEqual(result["reason"], "remote_main_changed")
 
     def test_auto_heal_calls_repository_sync_after_verification(self):

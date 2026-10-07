@@ -83,10 +83,10 @@ def test_self_coding_list_checkpoints_does_not_skip_corruption(tmp_path):
 
     agent = object.__new__(SelfCodingAgent)
     agent.repo = tmp_path
-    agent.checkpoint_dir = tmp_path / ".git" / "brahma-checkpoints"
-    agent.checkpoint_dir.mkdir(parents=True)
+    checkpoint_dir = agent.checkpoint_dir
+    checkpoint_dir.mkdir(parents=True)
 
-    path = agent.checkpoint_dir / "broken.json"
+    path = checkpoint_dir / "broken.json"
     path.write_text("{broken", encoding="utf-8")
 
     with pytest.raises(Exception):
@@ -100,12 +100,12 @@ def test_self_coding_rejects_symlinked_checkpoint_metadata(tmp_path):
 
     agent = object.__new__(SelfCodingAgent)
     agent.repo = tmp_path
-    agent.checkpoint_dir = tmp_path / ".git" / "brahma-checkpoints"
-    agent.checkpoint_dir.mkdir(parents=True)
+    checkpoint_dir = agent.checkpoint_dir
+    checkpoint_dir.mkdir(parents=True)
 
     source = tmp_path / "outside.json"
     source.write_text("{}", encoding="utf-8")
-    link = agent.checkpoint_dir / "checkpoint.json"
+    link = checkpoint_dir / "checkpoint.json"
     try:
         os.symlink(source, link)
     except (OSError, NotImplementedError):

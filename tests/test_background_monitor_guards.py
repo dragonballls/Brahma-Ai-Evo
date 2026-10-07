@@ -4,7 +4,8 @@ from actions import background_monitor
 def test_background_monitor_clamps_nonpositive_intervals(monkeypatch):
     background_monitor._monitors.clear()
     monkeypatch.setattr(background_monitor, "_ensure_monitor_thread", lambda: None)
-    monitor_id = background_monitor.add_monitor("system", "cpu", 80, interval_sec=0)
+    background_monitor.add_monitor("system", "cpu", 80, interval_sec=0)
+    monitor_id = next(iter(background_monitor._monitors))
     try:
         assert background_monitor._monitors[monitor_id]["interval"] == 1
     finally:
@@ -54,7 +55,8 @@ def test_background_monitor_rejects_credentialed_and_malformed_crypto_targets(mo
 def test_background_monitor_clamps_large_intervals_and_limits_count(monkeypatch):
     background_monitor._monitors.clear()
     monkeypatch.setattr(background_monitor, "_ensure_monitor_thread", lambda: None)
-    monitor_id = background_monitor.add_monitor("system", "cpu", 80, interval_sec=999999)
+    background_monitor.add_monitor("system", "cpu", 80, interval_sec=999999)
+    monitor_id = next(iter(background_monitor._monitors))
     try:
         assert background_monitor._monitors[monitor_id]["interval"] == 86400
         background_monitor._monitors.clear()
