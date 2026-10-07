@@ -24,7 +24,7 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
       - name: Install lightweight test dependency
-        run: python -m pip install --prefer-binary requests psutil pywin32 bleak pytest fastapi uvicorn cryptography
+        run: python -m pip install --prefer-binary requests psutil pywin32 bleak pytest fastapi uvicorn cryptography playwright==1.63.0
       - name: Compile all Python sources
         run: python -m compileall -q .
       - name: Run whole-repository integrity scanner
@@ -101,7 +101,7 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
       - name: Install lightweight test dependency
-        run: python -m pip install requests psutil pywin32 bleak pytest
+        run: python -m pip install requests psutil pywin32 bleak pytest playwright==1.63.0
       - name: Run ${{ matrix.group }} regressions
         shell: pwsh
         run: |
