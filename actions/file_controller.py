@@ -87,19 +87,10 @@ def _undo_write(target: Path, previous: str | None, expected_after):
             return f"'{target.name}' changed after the original write — leaving it alone."
         if previous is None:
             if target.exists():
-                target.unlink()
+                _secure_unlink(target)
                 return f"Removed '{target.name}' — it did not exist before."
             return f"'{target.name}' is already gone."
-        target.parent.mkdir(parents=True, exist_ok=True)
-        temp = target.with_name(f".{target.name}.undo-{os.getpid()}-{datetime.now().timestamp():.6f}.tmp")
-        try:
-            temp.write_text(previous, encoding="utf-8")
-            os.replace(temp, target)
-        finally:
-            try:
-                temp.unlink(missing_ok=True)
-            except OSError:
-                pass
+        _secure_write_text(target, previous, append=False)
         return f"Restored the previous contents of '{target.name}'."
     return _fn
 
@@ -234,6 +225,91 @@ def _resolve_path(raw: str) -> Path:
 
     return Path(raw).expanduser()
 
+def _secure_parent_fd(parent: Path):
+    """Open a home-confined parent directory without following reparse components."""
+    parent = Path(parent).absolute()
+    if not _is_safe_path(parent):
+        raise RuntimeError(f"Access denied: {parent}")
+    root = Path.home().absolute()
+    try:
+        relative = parent.relative_to(root)
+    except ValueError as exc:
+        raise RuntimeError(f"Access denied: {parent}") from exc
+
+    if os.name == "nt" or not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+        return None
+
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open(str(root), flags)
+    try:
+        for part in relative.parts:
+            next_fd = os.open(part, flags, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+        return fd
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise
+
+
+def _secure_write_text(target: Path, content: str, *, append: bool = False) -> None:
+    """Write a text file without following a raced leaf/parent when the OS supports openat."""
+    target = Path(target).absolute()
+    parent = target.parent
+    leaf = target.name
+    if not leaf:
+        raise ValueError("A file name is required.")
+
+    if os.name != "nt" and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY"):
+        parent_fd = _secure_parent_fd(parent)
+        if parent_fd is None:
+            raise RuntimeError("Secure parent descriptor could not be opened.")
+        try:
+            flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW
+            if append:
+                flags |= os.O_APPEND
+            else:
+                flags |= os.O_TRUNC
+            fd = os.open(leaf, flags, 0o600, dir_fd=parent_fd)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    handle.write(content)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                fd = -1
+            finally:
+                if fd >= 0:
+                    os.close(fd)
+            return
+        finally:
+            os.close(parent_fd)
+
+    if _is_link_like(target):
+        raise RuntimeError("Target is a link/reparse point.")
+    with target.open("a" if append else "w", encoding="utf-8") as handle:
+        handle.write(content)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _secure_unlink(target: Path) -> None:
+    """Remove only the named leaf under a validated parent directory."""
+    target = Path(target).absolute()
+    if os.name != "nt" and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY"):
+        parent_fd = _secure_parent_fd(target.parent)
+        if parent_fd is None:
+            raise RuntimeError("Secure parent descriptor could not be opened.")
+        try:
+            os.unlink(target.name, dir_fd=parent_fd)
+            return
+        finally:
+            os.close(parent_fd)
+    target.unlink()
+
+
 def _format_size(b: int) -> str:
     for unit in ["B", "KB", "MB", "GB", "TB"]:
         if b < 1024:
@@ -315,7 +391,7 @@ def create_file(path: str, name: str = "", content: str = "") -> str:
                 previous = target.read_text(encoding="utf-8")
             except Exception as exc:
                 return f"Could not create file: existing target '{target.name}' could not be read safely: {exc}"
-        target.write_text(content, encoding="utf-8")
+        _secure_write_text(target, content, append=False)
         expected_after = _fingerprint(target)
         if expected_after is None:
             return f"Could not create file: unable to verify the created file safely."
@@ -552,8 +628,7 @@ def write_file(path: str, name: str = "", content: str = "",
             return f"Access denied: {target.parent}"
         if _is_link_like(target) or _is_hardlinked_regular_file(target):
             return f"Could not write file: link/reparse or hard-linked targets are not permitted."
-        with open(target, mode, encoding="utf-8") as f:
-            f.write(content)
+        _secure_write_text(target, content, append=append)
 
         expected_after = _fingerprint(target) if undoable else None
         if undoable and expected_after is None:
