@@ -11,8 +11,9 @@ FEATURE_METADATA = {
     "active": True
 }
 
-import urllib.request
 import json
+import re
+from core.network_safety import open_fixed_https, read_bounded
 
 def execute(**kwargs):
     """
@@ -26,13 +27,20 @@ def execute(**kwargs):
         dict: A dictionary containing the coin ID, its live price in USD, and the currency.
               Returns an error message if the price cannot be fetched.
     """
-    coin_id = kwargs.get('coin_id', 'bitcoin').lower()
+    coin_id = str(kwargs.get('coin_id', 'bitcoin') or '').strip().lower()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", coin_id):
+        return {"error": "Invalid cryptocurrency identifier."}
     currency = 'usd'
     api_url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies={currency}"
 
     try:
-        with urllib.request.urlopen(api_url, timeout=8) as response:
-            data = json.loads(response.read().decode())
+        with open_fixed_https(
+            api_url,
+            allowed_hosts={"api.coingecko.com"},
+            timeout=8,
+            headers={"User-Agent": "Brahma-Evo/1.0"},
+        ) as response:
+            data = json.loads(read_bounded(response, 128 * 1024).decode("utf-8"))
 
         if coin_id in data and currency in data[coin_id]:
             price = data[coin_id][currency]
