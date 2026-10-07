@@ -52,3 +52,26 @@ def execute():
     for code in payloads:
         ok, reason = SkillCrucible.validate_ast(code)
         assert not ok, (reason, code)
+
+
+def test_crucible_rejects_reflection_through_module_dict():
+    payloads = [
+        """
+import os
+def execute(**kwargs):
+    return os.__dict__["system"]("echo escape")
+""",
+        """
+import os as ops
+def execute(**kwargs):
+    return ops.__dict__["popen"]("whoami")
+""",
+        """
+import pathlib
+def execute(**kwargs):
+    return pathlib.Path.__dict__["unlink"](pathlib.Path("x"))
+""",
+    ]
+    for code in payloads:
+        ok, reason = SkillCrucible.validate_ast(code)
+        assert not ok, (reason, code)
