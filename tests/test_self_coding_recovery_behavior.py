@@ -224,3 +224,75 @@ def test_partial_undo_failure_restores_approved_state(tmp_path):
     assert ("reset", "--hard", promoted) in calls
     assert saved[-1].state == "approved"
     assert saved[-1].undo_commits == ()
+
+
+def test_rollback_refuses_wrong_current_branch_before_reset():
+    agent = object.__new__(SelfCodingAgent)
+    calls = []
+    agent._branch = lambda: "main"
+
+    def fake_git(*args, **kwargs):
+        calls.append(args)
+        raise AssertionError(f"destructive rollback command must not run: {args}")
+
+    agent._git = fake_git
+
+    try:
+        agent._rollback("a" * 40, "agent/checkpoint/test-checkpoint", "main")
+    except SelfCodingError as exc:
+        assert "not the checkpoint branch" in str(exc)
+        assert "destructive reset" in str(exc)
+    else:
+        raise AssertionError("rollback must refuse when current branch is not the checkpoint branch")
+    assert calls == []
+
+
+def test_rollback_refuses_dirty_checkpoint_branch_before_reset():
+    agent = object.__new__(SelfCodingAgent)
+    calls = []
+    agent._branch = lambda: "agent/checkpoint/test-checkpoint"
+
+    def fake_git(*args, **kwargs):
+        calls.append(args)
+        if args == ("status", "--porcelain"):
+            return _result(args, stdout=" M unrelated.txt
+")
+        raise AssertionError(f"unexpected destructive or post-check command: {args}")
+
+    agent._git = fake_git
+
+    try:
+        agent._rollback("a" * 40, "agent/checkpoint/test-checkpoint", "main")
+    except SelfCodingError as exc:
+        assert "uncommitted changes" in str(exc)
+        assert "destructive reset" in str(exc)
+    else:
+        raise AssertionError("rollback must refuse a dirty checkpoint branch")
+    assert ("reset", "--hard", "a" * 40) not in calls
+
+
+def test_rollback_clean_checkpoint_resets_then_switches_and_deletes_branch():
+    agent = object.__new__(SelfCodingAgent)
+    calls = []
+    agent._branch = lambda: "agent/checkpoint/test-checkpoint"
+
+    def fake_git(*args, **kwargs):
+        calls.append(args)
+        if args == ("status", "--porcelain"):
+            return _result(args, stdout="")
+        if args == ("reset", "--hard", "a" * 40):
+            return _result(args)
+        if args == ("switch", "main"):
+            return _result(args)
+        if args == ("branch", "-D", "agent/checkpoint/test-checkpoint"):
+            return _result(args)
+        raise AssertionError(f"unexpected git call: {args}")
+
+    agent._git = fake_git
+    agent._rollback("a" * 40, "agent/checkpoint/test-checkpoint", "main")
+    assert calls == [
+        ("status", "--porcelain"),
+        ("reset", "--hard", "a" * 40),
+        ("switch", "main"),
+        ("branch", "-D", "agent/checkpoint/test-checkpoint"),
+    ]
