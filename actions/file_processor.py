@@ -318,7 +318,7 @@ def _process_pdf(path: Path, action: str, params: dict, speak=None) -> str:
         if action == "extract_text":
             out = _output_path(path, "text", ".txt")
             _secure_write_new_text(out, text)
-        _verify_output_artifact(out)
+            _verify_output_artifact(out)
             return f"Text extracted ({len(text)} chars). Saved: {out.name}"
 
         prompt_map = {
@@ -334,7 +334,7 @@ def _process_pdf(path: Path, action: str, params: dict, speak=None) -> str:
             if len(result) > 600 and params.get("save", True):
                 out = _output_path(path, action, ".txt")
                 _secure_write_new_text(out, result)
-        _verify_output_artifact(out)
+                _verify_output_artifact(out)
                 return f"{result[:400]}...\n\nFull result saved: {out.name}"
             return result
         except Exception as e:
@@ -363,7 +363,7 @@ def _process_pdf(path: Path, action: str, params: dict, speak=None) -> str:
                     doc.add_paragraph(para.strip())
             out = _output_path(path, "converted", ".docx")
             doc.save(out)
-        _verify_output_artifact(out)
+            _verify_output_artifact(out)
             return f"Converted to Word document. Saved: {out.name}"
         except ImportError:
             return "python-docx not installed. Run: pip install python-docx"
@@ -402,7 +402,7 @@ def _process_text_doc(path: Path, file_type: str, action: str,
         if file_type != "txt":
             out = _output_path(path, "extracted", ".txt")
             _secure_write_new_text(out, content)
-        _verify_output_artifact(out)
+            _verify_output_artifact(out)
             return f"Text extracted. Saved: {out.name}"
         return content[:2000]
 
@@ -429,7 +429,7 @@ def _process_text_doc(path: Path, file_type: str, action: str,
         if len(result) > 600 and params.get("save", True):
             out = _output_path(path, action, ".txt")
             _secure_write_new_text(out, result)
-        _verify_output_artifact(out)
+            _verify_output_artifact(out)
             return f"{result[:400]}...\n\nFull result saved: {out.name}"
         return result
     except Exception as e:
@@ -494,7 +494,7 @@ def _process_data(path: Path, file_type: str, action: str,
             elif fmt == "json":
                 out = _output_path(path, "converted", ".json")
                 df.to_json(out, orient="records", force_ascii=False, indent=2)
-        _verify_output_artifact(out)
+            _verify_output_artifact(out)
             return f"Converted to {fmt.upper()}. Saved: {out.name}"
         except Exception as e:
             _cleanup_generated_artifact(locals().get("out"))
@@ -514,7 +514,7 @@ def _process_data(path: Path, file_type: str, action: str,
             else:                         filtered = df[df[col] == value]
             out = _output_path(path, "filtered", ".csv")
             filtered.to_csv(out, index=False)
-        _verify_output_artifact(out)
+            _verify_output_artifact(out)
             return f"Filtered: {len(filtered)} rows match. Saved: {out.name}"
         except Exception as e:
             _cleanup_generated_artifact(locals().get("out"))
@@ -527,7 +527,7 @@ def _process_data(path: Path, file_type: str, action: str,
             sorted_df = df.sort_values(col, ascending=asc)
             out = _output_path(path, "sorted", path.suffix)
             sorted_df.to_csv(out, index=False)
-        _verify_output_artifact(out)
+            _verify_output_artifact(out)
             return f"Sorted by '{col}'. Saved: {out.name}"
         except Exception as e:
             _cleanup_generated_artifact(locals().get("out"))
@@ -583,7 +583,7 @@ def _process_json(path: Path, action: str, params: dict, speak=None) -> str:
                 df  = pd.DataFrame(data)
                 out = _output_path(path, "converted", ".csv")
                 df.to_csv(out, index=False)
-        _verify_output_artifact(out)
+                _verify_output_artifact(out)
                 return f"Converted to CSV. Saved: {out.name}"
             return "JSON must be an array of objects to convert to CSV."
         except ImportError:
@@ -634,7 +634,7 @@ def _process_code(path: Path, action: str, params: dict, speak=None) -> str:
             code_match = re.search(r"```(?:\w+)?\n(.*?)```", result, re.DOTALL)
             code_to_save = code_match.group(1) if code_match else result
             _secure_write_new_text(out, code_to_save)
-        _verify_output_artifact(out)
+            _verify_output_artifact(out)
             return f"{result[:400]}...\n\nSaved: {out.name}"
         return result
     except Exception as e:
@@ -677,7 +677,7 @@ def _process_audio(path: Path, action: str, params: dict, speak=None) -> str:
             if params.get("save", True):
                 out = _output_path(path, "transcript", ".txt")
                 _secure_write_new_text(out, result)
-        _verify_output_artifact(out)
+                _verify_output_artifact(out)
                 return f"Transcription saved: {out.name}\n\nPreview: {result[:300]}"
             return result
         except Exception as e:
@@ -691,7 +691,7 @@ def _process_audio(path: Path, action: str, params: dict, speak=None) -> str:
             audio = AudioSegment.from_file(path)
             out   = _output_path(path, "converted", f".{fmt}")
             audio.export(out, format=fmt)
-        _verify_output_artifact(out)
+            _verify_output_artifact(out)
             return f"Converted to {fmt.upper()}. Saved: {out.name}"
         except ImportError:
             return "pydub not installed. Run: pip install pydub"
@@ -709,7 +709,7 @@ def _process_audio(path: Path, action: str, params: dict, speak=None) -> str:
             trimmed = audio[int(start * 1000):end_ms]
             out     = _output_path(path, f"trim_{int(start)}s_{int(end)}s")
             trimmed.export(out, format=path.suffix.lstrip("."))
-        _verify_output_artifact(out)
+            _verify_output_artifact(out)
             return f"Trimmed audio ({int(start)}s–{int(end)}s). Saved: {out.name}"
         except ImportError:
             return "pydub not installed."
@@ -763,7 +763,7 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
             if result.returncode != 0:
                 _cleanup_generated_artifact(locals().get("out"))
                 return f"Extract audio failed (ffmpeg exit {result.returncode})."
-        _verify_output_artifact(out)
+            _verify_output_artifact(out)
             return f"Audio extracted. Saved: {out.name}"
         except Exception as e:
             _cleanup_generated_artifact(locals().get("out"))
@@ -784,7 +784,7 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
             if result.returncode != 0:
                 _cleanup_generated_artifact(locals().get("out"))
                 return f"Trim failed (ffmpeg exit {result.returncode})."
-        _verify_output_artifact(out)
+            _verify_output_artifact(out)
             return f"Trimmed video saved: {out.name}"
         except Exception as e:
             _cleanup_generated_artifact(locals().get("out"))
@@ -804,7 +804,7 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
             if result.returncode != 0:
                 _cleanup_generated_artifact(locals().get("out"))
                 return f"Extract frame failed (ffmpeg exit {result.returncode})."
-        _verify_output_artifact(out)
+            _verify_output_artifact(out)
             return f"Frame extracted at {timestamp}. Saved: {out.name}"
         except Exception as e:
             _cleanup_generated_artifact(locals().get("out"))
@@ -828,7 +828,7 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
                 return f"Compress failed (ffmpeg exit {result.returncode})."
             before = _file_size_str(path)
             after  = _file_size_str(out)
-        _verify_output_artifact(out)
+            _verify_output_artifact(out)
             return f"Compressed: {before} → {after}. Saved: {out.name}"
         except Exception as e:
             _cleanup_generated_artifact(locals().get("out"))
@@ -871,7 +871,7 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
             if result.returncode != 0:
                 _cleanup_generated_artifact(locals().get("out"))
                 return f"Convert failed (ffmpeg exit {result.returncode})."
-        _verify_output_artifact(out)
+            _verify_output_artifact(out)
             return f"Converted to {fmt.upper()}. Saved: {out.name}"
         except Exception as e:
             _cleanup_generated_artifact(locals().get("out"))
@@ -1225,7 +1225,7 @@ def _process_pptx(path: Path, action: str, params: dict, speak=None) -> str:
         if action == "extract_text":
             out = _output_path(path, "text", ".txt")
             _secure_write_new_text(out, text)
-        _verify_output_artifact(out)
+            _verify_output_artifact(out)
             return f"Text extracted. Saved: {out.name}"
         try:
             model    = _gemini_client()
