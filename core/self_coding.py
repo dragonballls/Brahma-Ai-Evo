@@ -14,6 +14,7 @@ import os
 import json
 from pathlib import Path
 import re
+import stat as _stat
 import subprocess
 import sys
 import threading
@@ -26,6 +27,24 @@ from core.efficiency_policy import EFFICIENCY_DIRECTIVE
 
 
 _SELF_CODING_LOCK = threading.RLock()
+
+
+def _is_link_like(path: Path) -> bool:
+    path = Path(path)
+    if path.is_symlink():
+        return True
+    is_junction = getattr(path, "is_junction", None)
+    if is_junction is not None and is_junction():
+        return True
+    if os.name == "nt":
+        try:
+            attrs = getattr(path.stat(follow_symlinks=False), "st_file_attributes", 0)
+            reparse = getattr(_stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+            if reparse and attrs & reparse:
+                return True
+        except OSError:
+            return True
+    return False
 
 
 class SelfCodingError(RuntimeError):
@@ -151,7 +170,11 @@ class SelfCodingAgent:
 
     def _save(self, checkpoint: Checkpoint) -> None:
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        if _is_link_like(self.checkpoint_dir):
+            raise SelfCodingError("Checkpoint directory must not be a symlink, junction, or reparse point.")
         target = self._path(checkpoint.checkpoint_id)
+        if target.exists() and _is_link_like(target):
+            raise SelfCodingError("Checkpoint metadata must not be a symlink, junction, or reparse point.")
         temp = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
         payload = json.dumps(
             {
@@ -167,10 +190,20 @@ class SelfCodingAgent:
             },
             indent=2,
         )
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         try:
-            temp.write_text(payload, encoding="utf-8")
-            temp.replace(target)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                fd = -1
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp, target)
         except Exception:
+            try:
+                if fd >= 0:
+                    os.close(fd)
+            except OSError:
+                pass
             try:
                 temp.unlink(missing_ok=True)
             except Exception:
@@ -228,8 +261,8 @@ class SelfCodingAgent:
                 previous = commit
     def _load(self, checkpoint_id: str) -> Checkpoint:
         path = self._path(checkpoint_id)
-        if path.is_symlink():
-            raise SelfCodingError("Checkpoint metadata must not be a symlink.")
+        if _is_link_like(self.checkpoint_dir) or _is_link_like(path):
+            raise SelfCodingError("Checkpoint metadata must not be a symlink, junction, or reparse point.")
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             checkpoint = Checkpoint(
@@ -256,10 +289,12 @@ class SelfCodingAgent:
     def list_checkpoints(self) -> list[dict[str, Any]]:
         if not self.checkpoint_dir.is_dir():
             return []
+        if _is_link_like(self.checkpoint_dir):
+            raise SelfCodingError("Checkpoint directory must not be a symlink, junction, or reparse point.")
         output: list[dict[str, Any]] = []
         for path in sorted(self.checkpoint_dir.glob("*.json"), reverse=True):
-            if path.is_symlink():
-                raise SelfCodingError("Checkpoint metadata must not be a symlink.")
+            if _is_link_like(path):
+                raise SelfCodingError("Checkpoint metadata must not be a symlink, junction, or reparse point.")
             checkpoint = self._load(path.stem)
             output.append(
                 {
