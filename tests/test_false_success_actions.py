@@ -476,3 +476,20 @@ def test_self_coding_max_iteration_path_never_claims_completion():
     source = (ROOT / "actions" / "brahma_dev_agent.py").read_text(encoding="utf-8")
     assert "Developer task incomplete: the iteration limit was reached before the agent" in source
     assert 'Completed developer task after max iterations.' not in source
+
+
+def test_smart_home_connect_rejects_unavailable_provider_before_discovery():
+    from smart_home.service import SmartHomeService
+
+    service = SmartHomeService.__new__(SmartHomeService)
+    class Registry:
+        def get(self, _key):
+            from smart_home.providers.builtin import HueProvider
+            return HueProvider()
+    service._registry = Registry()
+    try:
+        service.connect_devices("hue", "Hue", {"bridge_ip": "127.0.0.1"}, ["fake"])
+    except RuntimeError as exc:
+        assert "not available" in str(exc).casefold()
+    else:
+        raise AssertionError("Unavailable provider reached connect/discovery path")
