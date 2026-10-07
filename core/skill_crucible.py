@@ -827,10 +827,12 @@ def run_tests():
             else:
                 res = execute(**args)
                 
-            # Check that result is presentable and not an error dictionary
+            # A null result does not prove that a generated skill completed its
+            # requested work. Treat it as an unverifiable execution outcome.
             if res is None:
-                res = "Operation completed with no output."
+                raise RuntimeError("Skill returned no result; completion could not be verified.")
 
+            # Check that result is presentable and not an error dictionary
             is_err = False
             err_msg = ""
             serialized_result = None

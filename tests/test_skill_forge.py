@@ -149,6 +149,19 @@ def test_crucible_rejects_dangerous_generated_primitives():
         assert "unlink" in error or "subprocess" in error or "TLS" in error or "dynamic execution" in error
 
 
+def test_crucible_rejects_null_skill_results_as_unverified():
+    from core.skill_crucible import SkillCrucible
+
+    ok, message, telemetry = SkillCrucible.run_sandbox_test(
+        "def execute(**kwargs):\n    return None\n",
+        [{"input": {}}],
+    )
+
+    assert ok is False
+    assert "no result" in message.casefold()
+    assert telemetry.get("results")
+
+
 def test_crucible_detects_error_dictionary_in_sandbox():
     broken_code = 'def execute(**kwargs):\n    return {"error": "SSL handshake failed"}\n'
     ok, msg, telemetry = SkillCrucible.run_sandbox_test(broken_code, [{"input": {}}])
