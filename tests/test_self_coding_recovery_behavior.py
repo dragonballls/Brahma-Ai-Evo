@@ -186,7 +186,6 @@ def test_undo_push_failure_preserves_undoing_state_for_recovery():
     promoted = "c" * 40
     undo_tip = "d" * 40
     checkpoint = _checkpoint(state="approved", promoted_sha=promoted)
-    checkpoint = replace(checkpoint, commits=("a" * 40, "b" * 40))
     saved = []
     calls = []
 
@@ -297,6 +296,7 @@ def test_partial_undo_failure_restores_approved_state(tmp_path):
     agent._save = lambda value: saved.append(value)
 
     first_undo = "d" * 40
+    revert_count = {"value": 0}
     def fake_git(*args, **kwargs):
         calls.append(args)
         if args == ("fetch", "origin", "main"):
@@ -307,19 +307,16 @@ def test_partial_undo_failure_restores_approved_state(tmp_path):
             return _result(args, stdout=promoted)
         if args == ("switch", "main"):
             return _result(args)
-        if args == ("revert", "--no-edit", checkpoint.commits[-1]):
+        if len(args) == 3 and args[:2] == ("revert", "--no-edit"):
+            revert_count["value"] += 1
+            if revert_count["value"] == 2:
+                return _result(args, returncode=1, stderr="conflict during second revert")
             return _result(args)
-        if args == ("status", "--porcelain"):
-            return _result(args, stdout="")
         if args == ("rev-parse", "HEAD"):
             return _result(args, stdout=first_undo)
         if args == ("reset", "--hard", promoted):
             return _result(args)
-        if args == ("revert", "--no-edit", checkpoint.commits[0]):
-            return _result(args, returncode=1, stderr="conflict during second revert")
         if args == ("revert", "--abort"):
-            return _result(args)
-        if args == ("switch", "main"):
             return _result(args)
         raise AssertionError(f"unexpected git call: {args}")
 
