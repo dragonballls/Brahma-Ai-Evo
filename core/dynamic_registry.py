@@ -116,10 +116,11 @@ class DynamicSkill:
                     raise RuntimeError(f"Refusing to load skill from a symlinked directory: {self.skill_dir}")
                 source = code_path.read_text(encoding="utf-8")
                 if self.untrusted:
-                    from core.skill_crucible import SkillCrucible
-                    safe, reason = SkillCrucible.validate_ast(source)
-                    if not safe:
-                        raise RuntimeError(f"Persisted skill failed runtime validation: {_redact_text(reason)}")
+                    # Persisted/user-generated skills are never imported into the
+                    # Brahma host process. Validation is necessary but insufficient:
+                    # activation must execute inside the same isolated Crucible
+                    # runtime boundary used for behavioral verification.
+                    return None
                 module_name = f"brahma_skill_{self.name}_{abs(hash(str(code_path)))}"
                 module = type(sys)(module_name)
                 module.__file__ = str(code_path)
@@ -134,6 +135,43 @@ class DynamicSkill:
                 self.module = module
             return self.module
 
+    def _execute_untrusted(self, **kwargs) -> Any:
+        from core.skill_crucible import SkillCrucible
+
+        code_path = self.skill_path / "skill.py" if self.skill_path.is_dir() else self.skill_path
+        code_path = code_path.resolve(strict=True)
+        if code_path.is_symlink() or self.skill_dir.is_symlink():
+            raise RuntimeError(f"Refusing to execute skill from a link-like path: {code_path}")
+
+        source = code_path.read_text(encoding="utf-8")
+        safe, reason = SkillCrucible.validate_ast(source)
+        if not safe:
+            raise RuntimeError(f"Persisted skill failed runtime validation: {_redact_text(reason)}")
+
+        passed, message, telemetry = SkillCrucible.run_sandbox_test(
+            source,
+            [{"input": kwargs}],
+            timeout=75.0,
+        )
+        if not passed:
+            raise RuntimeError(f"Persisted skill execution failed safely: {_redact_text(message)}")
+
+        results = telemetry.get("results") if isinstance(telemetry, dict) else None
+        if not isinstance(results, list) or not results or not isinstance(results[0], dict):
+            raise RuntimeError("Persisted skill returned no authoritative sandbox result.")
+        first = results[0]
+        if not first.get("success"):
+            raise RuntimeError(
+                f"Persisted skill execution failed: {_redact_text(first.get('error') or 'unknown sandbox failure')}"
+            )
+        serialized = first.get("result_json")
+        if isinstance(serialized, str):
+            try:
+                return json.loads(serialized)
+            except (TypeError, ValueError):
+                pass
+        return str(first.get("output") or "")
+
     def to_tool_declaration(self) -> Dict[str, Any]:
         """Returns Gemini function declaration dict."""
         return {
@@ -144,19 +182,30 @@ class DynamicSkill:
 
     def execute_sync(self, **kwargs) -> Any:
         """Executes the skill synchronously (safe for worker threads)."""
-        module = self._load_module()
-        if not hasattr(module, "execute"):
-            raise AttributeError(f"Feature '{self.name}' has no 'execute' function.")
-        func = getattr(module, "execute")
+        if self.untrusted:
+            result = self._execute_untrusted(**kwargs)
+        else:
+            module = self._load_module()
+            if module is None:
+                raise RuntimeError(f"Untrusted skill '{self.name}' cannot be imported into the host process.")
+            if not hasattr(module, "execute"):
+                raise AttributeError(f"Feature '{self.name}' has no 'execute' function.")
+            func = getattr(module, "execute")
+            if inspect.iscoroutinefunction(func):
+                result = asyncio.run(func(**kwargs))
+            else:
+                result = func(**kwargs)
         with self._state_lock:
             self.invocations += 1
-        if inspect.iscoroutinefunction(func):
-            return asyncio.run(func(**kwargs))
-        return func(**kwargs)
+        return result
 
     async def execute_async(self, **kwargs) -> Any:
         """Executes the skill asynchronously without thread-pool registration conflicts."""
+        if self.untrusted:
+            return await asyncio.to_thread(self.execute_sync, **kwargs)
         module = self._load_module()
+        if module is None:
+            raise RuntimeError(f"Untrusted skill '{self.name}' cannot be imported into the host process.")
         if not hasattr(module, "execute"):
             raise AttributeError(f"Feature '{self.name}' has no 'execute' function.")
 
@@ -166,8 +215,7 @@ class DynamicSkill:
 
         if inspect.iscoroutinefunction(func):
             return await func(**kwargs)
-        else:
-            return await asyncio.to_thread(func, **kwargs)
+        return await asyncio.to_thread(func, **kwargs)
 
 
 class DynamicToolRegistry:
