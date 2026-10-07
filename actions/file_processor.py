@@ -84,9 +84,7 @@ def _output_path(src: Path, suffix: str, new_ext: str = None) -> Path:
     counter = 1
     while True:
         candidate = src.parent / f"{src.stem}_{suffix}_{counter}{ext}"
-        if not candidate.exists():
-            if candidate.is_symlink():
-                continue
+        if not candidate.exists() and not candidate.is_symlink():
             return candidate
         counter += 1
 

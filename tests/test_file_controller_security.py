@@ -139,3 +139,32 @@ def test_file_processor_output_path_skips_existing_symlink(tmp_path):
     output = file_processor._output_path(source, "compressed")
     assert output != link
     assert not output.exists()
+
+
+def test_file_processor_output_path_advances_past_broken_symlink(tmp_path):
+    from actions import file_processor
+
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"video")
+    broken = tmp_path / "video_compressed_1.mp4"
+
+    try:
+        broken.symlink_to(tmp_path / "missing-target.mp4")
+    except (OSError, NotImplementedError):
+        return
+
+    output = file_processor._output_path(source, "compressed")
+    assert output == tmp_path / "video_compressed.mp4" or output == tmp_path / "video_compressed_2.mp4"
+    assert output != broken
+
+
+def test_list_files_does_not_build_unbounded_result_list(tmp_path, monkeypatch):
+    from actions import file_controller
+
+    for i in range(700):
+        (tmp_path / f"file-{i:04d}.txt").write_text("x", encoding="utf-8")
+    monkeypatch.setattr(file_controller, "_SAFE_ROOTS", [tmp_path])
+
+    result = file_controller.list_files(str(tmp_path))
+    assert "showing first 500 of 700 items" in result
+    assert result.count("📄") <= 500

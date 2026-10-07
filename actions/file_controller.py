@@ -263,26 +263,33 @@ def list_files(path: str = "desktop", show_hidden: bool = False) -> str:
         if not target.is_dir():
             return f"Not a directory: {target}"
 
+        max_items = 500
         items = []
-        for item in sorted(target.iterdir()):
+        total_items = 0
+        for item in sorted(target.iterdir(), key=lambda p: p.name.lower()):
             if not show_hidden and item.name.startswith("."):
                 continue
-            if item.is_dir():
-                items.append(f"📁 {item.name}/")
-            else:
-                size = _format_size(item.stat().st_size)
-                items.append(f"📄 {item.name} ({size})")
+            total_items += 1
+            if len(items) >= max_items:
+                continue
+            try:
+                if item.is_dir():
+                    items.append(f"📁 {item.name}/")
+                else:
+                    size = _format_size(item.stat().st_size)
+                    items.append(f"📄 {item.name} ({size})")
+            except OSError:
+                items.append(f"⚠️ {item.name} (metadata unavailable)")
 
         if not items:
             return f"Directory is empty: {target.name}/"
 
-        max_items = 500
-        if len(items) > max_items:
+        if total_items > max_items:
             return (
-                f"Contents of {target.name}/ (showing first {max_items} of {len(items)} items):\n"
-                + "\n".join(items[:max_items])
+                f"Contents of {target.name}/ (showing first {max_items} of {total_items} items):\n"
+                + "\n".join(items)
             )
-        return f"Contents of {target.name}/ ({len(items)} items):\n" + "\n".join(items)
+        return f"Contents of {target.name}/ ({total_items} items):\n" + "\n".join(items)
 
     except PermissionError:
         return f"Permission denied: {path}"
