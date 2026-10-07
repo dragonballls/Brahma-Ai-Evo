@@ -183,6 +183,8 @@ def ensure_directory(path: Path | str) -> bool:
         raise OSError(ctypes.get_last_error(), f"CreateFileW failed for directory {target}")
     try:
         final = _final_path(handle)
+        if os.path.normcase(final) != os.path.normcase(_win_path(target)):
+            raise OSError("Directory reached through a reparse-point path component")
         info = _handle_info(handle)
         _reject_reparse(handle, info)
         if not (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY):
@@ -207,6 +209,7 @@ def open_safe_file(
     write: bool = False,
     append: bool = False,
     create_new: bool = False,
+    exclusive: bool = False,
 ) -> tuple[int, str, BY_HANDLE_FILE_INFORMATION]:
     """Open a regular file, reject reparse points, and prove its final path."""
     disposition = CREATE_NEW if create_new else OPEN_EXISTING
@@ -215,10 +218,13 @@ def open_safe_file(
     if write:
         flags |= FILE_FLAG_WRITE_THROUGH
 
+    share_mode = FILE_SHARE_READ if exclusive else (
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
+    )
     handle = kernel32.CreateFileW(
         _win_path(path),
         desired,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        share_mode,
         None,
         disposition,
         flags,
@@ -229,6 +235,8 @@ def open_safe_file(
 
     try:
         final = _final_path(handle)
+        if os.path.normcase(final) != os.path.normcase(_win_path(path)):
+            raise OSError("Refusing a file reached through a reparse-point path component")
         if not _is_under_home(final):
             raise OSError("Refusing a file whose final handle path is outside the user's home directory")
         info = _handle_info(handle)
