@@ -25,24 +25,21 @@ def _smoke_trace(message: str) -> None:
 
 
 def _action_result_is_failure(result: object) -> bool:
-    """Recognize explicit action failure text without treating valid 'No ...' results as failures."""
+    """Recognize explicit action failure without misclassifying valid zero-result messages."""
     if isinstance(result, dict):
-        return result.get("success") is False
+        return result.get("success") is False or result.get("ok") is False
     text = str(result or "").strip().casefold()
     if not text:
         return True
     return text.startswith((
-        "error:",
-        "failed",
-        "failure:",
-        "could not",
-        "unable to",
-        "gmail credentials not configured",
-        "invalid gmail",
-        "recipient email address",
-        "unknown google workspace",
-        "unknown gmail action",
-        "unknown calendar action",
+        "error:", "failed", "failure:", "could not", "couldn't", "unable to",
+        "cannot ", "can't ", "access denied:", "permission denied:", "not found:",
+        "invalid ", "unsupported ", "timed out", "timeout:",
+        "no running processes found", "could not detect display brightness",
+        "no smart home devices are connected", "smart-home provider rejected",
+        "smart home command failed", "failed to",
+        "gmail credentials not configured", "invalid gmail", "recipient email address",
+        "unknown google workspace", "unknown gmail action", "unknown calendar action",
         "unknown google workspace service",
     ))
 
@@ -3147,6 +3144,11 @@ class BrahmaLive:
                         else:
                             out_text = str(res).strip()
                         self.ui.write_log(f"Brahma Evo [{skill_name}]:\n{out_text}")
+                        if _action_result_is_failure(res):
+                            if hasattr(self.ui, "finish_task_workspace"):
+                                self.ui.finish_task_workspace(out_text, f"{skill_name} failed.", 0)
+                            self.speak(f"{skill_name.replace('_', ' ')} failed.")
+                            return
                         if hasattr(self.ui, "finish_task_workspace"):
                             self.ui.finish_task_workspace(out_text, f"{skill_name} completed.", 100)
                         if hasattr(self.ui, "show_hud_deliverable"):
@@ -3279,6 +3281,11 @@ class BrahmaLive:
                     from actions.office_generator import generate_presentation_from_prompt
                     res = generate_presentation_from_prompt(text, player=self.ui, speak=self.speak)
                     self.ui.write_log(f"[BrahmaOffice] {res}")
+                    if _action_result_is_failure(res):
+                        if hasattr(self.ui, "update_task_workspace"):
+                            self.ui.update_task_workspace(status="Presentation Failed", output=res, percent=0)
+                        self.speak("There was an issue creating the presentation, sir. Please check the logs.")
+                        return
                     if hasattr(self.ui, "update_task_workspace"):
                         self.ui.update_task_workspace(status="Presentation Completed", output=res, percent=100)
                     self.speak("Your presentation has been created and saved to Desktop, sir.")
@@ -3305,6 +3312,11 @@ class BrahmaLive:
                     from actions.office_generator import generate_spreadsheet_from_prompt
                     res = generate_spreadsheet_from_prompt(text, player=self.ui, speak=self.speak)
                     self.ui.write_log(f"[BrahmaOffice] {res}")
+                    if _action_result_is_failure(res):
+                        if hasattr(self.ui, "update_task_workspace"):
+                            self.ui.update_task_workspace(status="Spreadsheet Failed", output=res, percent=0)
+                        self.speak("There was an issue creating the spreadsheet, sir. Please check the logs.")
+                        return
                     if hasattr(self.ui, "update_task_workspace"):
                         self.ui.update_task_workspace(status="Spreadsheet Completed", output=res, percent=100)
                     self.speak("Your spreadsheet workbook has been created and saved to Desktop, sir.")
@@ -3335,7 +3347,7 @@ class BrahmaLive:
                     }, speak=self.speak)
                     self.ui.write_log(f"[BrahmaDev] {res[:400]}")
 
-                    if "encountered an error during inference" in res or "LLM error:" in res:
+                    if _action_result_is_failure(res) or "encountered an error during inference" in res or "LLM error:" in res:
                         if hasattr(self.ui, "update_task_workspace"):
                             self.ui.update_task_workspace(status="Build Error", output=res, percent=0)
                         self.speak("There was an error building the project, sir. Please check the logs.")
@@ -3445,7 +3457,8 @@ class BrahmaLive:
                 res = system_diagnostics({"action": "ram_hogs"}, player=self.ui, speak=self.speak)
                 self.ui.write_log(f"[Diagnostics] {res}")
                 if hasattr(self.ui, "finish_task_workspace"):
-                    self.ui.finish_task_workspace(res, "Memory analysis complete.", 100)
+                    failed = _action_result_is_failure(res)
+                    self.ui.finish_task_workspace(res, "Memory analysis failed." if failed else "Memory analysis complete.", 0 if failed else 100)
             threading.Thread(target=_run_ram, daemon=True).start()
             return
 
@@ -3455,7 +3468,8 @@ class BrahmaLive:
                 res = system_diagnostics({"action": "battery"}, player=self.ui, speak=self.speak)
                 self.ui.write_log(f"[Diagnostics] {res}")
                 if hasattr(self.ui, "finish_task_workspace"):
-                    self.ui.finish_task_workspace(res, "Battery check complete.", 100)
+                    failed = _action_result_is_failure(res)
+                    self.ui.finish_task_workspace(res, "Battery check failed." if failed else "Battery check complete.", 0 if failed else 100)
             threading.Thread(target=_run_battery, daemon=True).start()
             return
 
@@ -3475,7 +3489,8 @@ class BrahmaLive:
                 res = system_diagnostics(p, player=self.ui, speak=self.speak)
                 self.ui.write_log(f"[Diagnostics] {res}")
                 if hasattr(self.ui, "finish_task_workspace"):
-                    self.ui.finish_task_workspace(res, "Brightness adjusted.", 100)
+                    failed = _action_result_is_failure(res)
+                    self.ui.finish_task_workspace(res, "Brightness adjustment failed." if failed else "Brightness adjusted.", 0 if failed else 100)
             threading.Thread(target=_run_brightness, daemon=True).start()
             return
 
@@ -3486,7 +3501,8 @@ class BrahmaLive:
                 res = system_diagnostics({"action": "kill", "target": target_app, "force": "force" in lower_cmd}, player=self.ui, speak=self.speak)
                 self.ui.write_log(f"[Diagnostics] {res}")
                 if hasattr(self.ui, "finish_task_workspace"):
-                    self.ui.finish_task_workspace(res, "Process management complete.", 100)
+                    failed = _action_result_is_failure(res)
+                    self.ui.finish_task_workspace(res, "Process management failed." if failed else "Process management complete.", 0 if failed else 100)
             threading.Thread(target=_run_kill, daemon=True).start()
             return
 
@@ -3497,7 +3513,8 @@ class BrahmaLive:
                 res = system_diagnostics({"action": "status"}, player=self.ui, speak=self.speak)
                 self.ui.write_log(f"[Diagnostics] {res}")
                 if hasattr(self.ui, "finish_task_workspace"):
-                    self.ui.finish_task_workspace(res, "System report ready.", 100)
+                    failed = _action_result_is_failure(res)
+                    self.ui.finish_task_workspace(res, "System report failed." if failed else "System report ready.", 0 if failed else 100)
             threading.Thread(target=_run_diag, daemon=True).start()
             return
 
@@ -3546,7 +3563,8 @@ class BrahmaLive:
                 res = auto_heal({"action": "heal"}, player=self.ui, speak=self.speak)
                 self.ui.write_log(f"[AutoHeal] {res}")
                 if hasattr(self.ui, "finish_task_workspace"):
-                    self.ui.finish_task_workspace(res, "Self-patching complete.", 100)
+                    failed = _action_result_is_failure(res)
+                    self.ui.finish_task_workspace(res, "Self-patching failed." if failed else "Self-patching complete.", 0 if failed else 100)
             threading.Thread(target=_run_heal, daemon=True).start()
             return
 
@@ -3556,7 +3574,8 @@ class BrahmaLive:
                 res = auto_heal({"action": "rollback"}, player=self.ui, speak=self.speak)
                 self.ui.write_log(f"[AutoHeal] {res}")
                 if hasattr(self.ui, "finish_task_workspace"):
-                    self.ui.finish_task_workspace(res, "Rollback complete.", 100)
+                    failed = _action_result_is_failure(res)
+                    self.ui.finish_task_workspace(res, "Rollback failed." if failed else "Rollback complete.", 0 if failed else 100)
             threading.Thread(target=_run_rollback, daemon=True).start()
             return
 
@@ -3567,7 +3586,8 @@ class BrahmaLive:
                 res = auto_heal({"action": action_type}, player=self.ui, speak=self.speak)
                 self.ui.write_log(f"[AutoHeal] {res}")
                 if hasattr(self.ui, "finish_task_workspace"):
-                    self.ui.finish_task_workspace(res, "Auto-heal report ready.", 100)
+                    failed = _action_result_is_failure(res)
+                    self.ui.finish_task_workspace(res, "Auto-heal report failed." if failed else "Auto-heal report ready.", 0 if failed else 100)
             threading.Thread(target=_run_history, daemon=True).start()
             return
 
@@ -3580,7 +3600,8 @@ class BrahmaLive:
                 self.speak(msg)
                 self.ui.write_log(f"[LearnedRules] {msg}")
                 if hasattr(self.ui, "finish_task_workspace"):
-                    self.ui.finish_task_workspace(msg, "Rule learned.", 100)
+                    failed = _action_result_is_failure(res)
+                    self.ui.finish_task_workspace(msg, "Rule learning failed." if failed else "Rule learned.", 0 if failed else 100)
             threading.Thread(target=_run_learn, daemon=True).start()
             return
 
@@ -3623,8 +3644,12 @@ class BrahmaLive:
                     break
             if clean_app_candidate in _APP_ALIASES or any(clean_app_candidate in k for k in _APP_ALIASES):
                 def _run_open_local_app():
-                    open_app({"app_name": clean_app_candidate}, player=self.ui)
-                    self.speak(f"Opening {clean_app_candidate}, sir.")
+                    result = open_app({"app_name": clean_app_candidate}, player=self.ui)
+                    if _action_result_is_failure(result):
+                        self.ui.write_log(f"ERR: {result}")
+                        self.speak(f"I couldn't confirm {clean_app_candidate} opened, sir.")
+                        return
+                    self.speak(result)
                 threading.Thread(target=_run_open_local_app, daemon=True).start()
                 return
 
@@ -3837,11 +3862,27 @@ class BrahmaLive:
                 "Verify the new state",
                 "Report the result",
             ]
+            if result.get("success") is not True:
+                failure_detail = detail or str(result.get("error") or "Smart-home provider rejected the action.")
+                self.ui.update_task_workspace(
+                    title=title,
+                    command=text,
+                    plan=plan,
+                    status="Smart-home command failed",
+                    output=failure_detail,
+                    percent=0,
+                    source=source,
+                )
+                self.ui.write_log(f"ERR: {failure_detail}")
+                self.speak(failure_detail)
+                if not self.ui.muted:
+                    self.ui.set_state("LISTENING")
+                return True
             self.ui.update_task_workspace(
                 title=title,
                 command=text,
                 plan=plan,
-                status="Executing smart-home command",
+                status="Smart-home command completed",
                 output=detail,
                 percent=100,
                 source=source,
@@ -3864,7 +3905,7 @@ class BrahmaLive:
                 ],
                 status="Smart-home command failed",
                 output=message,
-                percent=100,
+                percent=0,
                 source=source,
             )
             self.speak(message)
