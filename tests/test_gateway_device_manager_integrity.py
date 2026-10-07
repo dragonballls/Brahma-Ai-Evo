@@ -112,3 +112,18 @@ def test_mismatched_registry_key_and_embedded_device_id_is_rejected(tmp_path):
         DeviceManager(registry)
 
     assert len(list(tmp_path.glob("devices.json.corrupt-*"))) == 1
+
+
+def test_device_registry_rejects_symlinked_parent(tmp_path):
+    from brahma_connect.gateway.device_manager import DeviceManager
+
+    real_dir = tmp_path / "real-registry"
+    real_dir.mkdir()
+    link_dir = tmp_path / "registry-link"
+    try:
+        link_dir.symlink_to(real_dir, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        return
+
+    with pytest.raises(RuntimeError, match="parent"):
+        DeviceManager(link_dir / "devices.json")

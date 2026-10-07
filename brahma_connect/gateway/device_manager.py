@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat as _stat
 import re
 import threading
 import time
@@ -13,10 +15,42 @@ from .models import DeviceRecord
 from .protocol import now_iso
 
 
+def _path_has_link_component(path: Path) -> bool:
+    try:
+        current = Path(path.anchor) if path.anchor else Path(".")
+        parts = path.parts[1:] if path.anchor else path.parts
+        for part in parts:
+            current = current / part
+            if current.is_symlink():
+                return True
+            is_junction = getattr(current, "is_junction", None)
+            if is_junction is not None and is_junction():
+                return True
+            if os.name == "nt":
+                attrs = getattr(current.stat(follow_symlinks=False), "st_file_attributes", 0)
+                reparse = getattr(_stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+                if reparse and attrs & reparse:
+                    return True
+        return False
+    except OSError:
+        return True
+
+
+def _validate_registry_path(path: Path) -> None:
+    path = Path(path)
+    if _path_has_link_component(path.parent):
+        raise RuntimeError("Device registry parent contains a symlink/junction/reparse component.")
+    if path.is_symlink() or getattr(path, "is_junction", lambda: False)():
+        raise RuntimeError("Device registry path must not be a symlink/junction.")
+    if path.exists() and not path.is_file():
+        raise RuntimeError("Device registry path must be a regular file.")
+
+
 class DeviceManager:
     def __init__(self, registry_path: Path):
         self.registry_path = Path(registry_path)
         self.registry_path.parent.mkdir(parents=True, exist_ok=True)
+        _validate_registry_path(self.registry_path)
         self._lock = threading.RLock()
         self._devices: dict[str, DeviceRecord] = {}
         self.load()
@@ -31,8 +65,7 @@ class DeviceManager:
 
     def load(self) -> None:
         with self._lock:
-            if self.registry_path.is_symlink():
-                raise RuntimeError("Device registry path must not be a symlink.")
+            _validate_registry_path(self.registry_path)
             if not self.registry_path.exists():
                 self._devices = {}
                 return
@@ -117,8 +150,7 @@ class DeviceManager:
 
     def save(self) -> None:
         with self._lock:
-            if self.registry_path.is_symlink():
-                raise RuntimeError("Device registry path must not be a symlink.")
+            _validate_registry_path(self.registry_path)
             payload = {"devices": {device_id: record.to_storage_dict() for device_id, record in self._devices.items()}}
             temp_path = self.registry_path.with_name(
                 f".{self.registry_path.name}.{uuid.uuid4().hex}.tmp"
