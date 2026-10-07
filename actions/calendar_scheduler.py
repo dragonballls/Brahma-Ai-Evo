@@ -69,12 +69,33 @@ PLUGIN = {
 }
 
 
+def _safe_events_text() -> str:
+    if os.name == "nt":
+        from core.windows_file_safety import read_text
+        text, _size = read_text(EVENTS_FILE, max_chars=4 * 1024 * 1024)
+        return text
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(EVENTS_FILE, flags)
+    try:
+        with os.fdopen(fd, "r", encoding="utf-8") as handle:
+            fd = -1
+            return handle.read(4 * 1024 * 1024 + 1)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 def _load_events() -> list[dict]:
     with _EVENTS_LOCK:
         if not EVENTS_FILE.exists():
             return []
         try:
-            data = json.loads(EVENTS_FILE.read_text(encoding="utf-8"))
+            raw = _safe_events_text()
+            if len(raw.encode("utf-8")) > 4 * 1024 * 1024:
+                raise ValueError("Calendar event store exceeds the 4 MiB safety limit.")
+            data = json.loads(raw)
             if not isinstance(data, list) or len(data) > _MAX_EVENTS:
                 raise ValueError("Calendar event store is malformed.")
             return [event for event in data if isinstance(event, dict)]
