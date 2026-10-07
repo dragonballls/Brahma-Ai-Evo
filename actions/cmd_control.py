@@ -98,6 +98,7 @@ def _open_target(task: str) -> str | None:
 
     if os.name == "nt":
         os.startfile(str(resolved_target))
+        return f"Open request submitted for {target}."
     else:
         try:
             proc = subprocess.Popen(
