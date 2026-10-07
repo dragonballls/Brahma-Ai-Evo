@@ -5314,20 +5314,35 @@ class BrahmaLive:
         self._speak_native(text, profile)
 
     def _speak_native(self, text: str, profile) -> None:
-        def _speak_thread():
+        from actions.attention_monitor import (
+            _current_speech_generation,
+            _speak_edge_native,
+            stop_native_speech,
+        )
+
+        # A new utterance supersedes any prior native playback. The generation
+        # is captured after cancellation so stale workers can never resume old audio.
+        stop_native_speech()
+        generation = _current_speech_generation()
+
+        def _speak_thread() -> None:
+            if generation != _current_speech_generation():
+                return
             try:
                 self.set_speaking(True)
-                from actions.attention_monitor import _speak_edge_native
                 _speak_edge_native(
                     text,
                     rate=profile.edge_rate,
                     pitch=profile.edge_pitch,
                     sapi_rate=profile.sapi_rate,
+                    generation=generation,
                 )
             except Exception as exc:
-                print(f"[Brahma Speak] Unified TTS failed: {exc}")
+                if generation == _current_speech_generation():
+                    print(f"[Brahma Speak] Unified TTS failed: {exc}")
             finally:
-                self.set_speaking(False)
+                if generation == _current_speech_generation():
+                    self.set_speaking(False)
 
         threading.Thread(
             target=_speak_thread,
