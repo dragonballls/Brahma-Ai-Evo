@@ -84,3 +84,8 @@ def test_flight_report_filename_parts_cannot_escape_desktop():
     assert "/" not in _safe_filename_part("../../escape", "origin")
     assert "\\" not in _safe_filename_part(r"..\..\escape", "origin")
     assert _safe_filename_part("   ", "origin") == "origin"
+
+
+def test_flight_date_parser_rejects_impossible_iso_date():
+    from actions.flight_finder import _parse_date
+    assert _parse_date("2026-99-99") is None
