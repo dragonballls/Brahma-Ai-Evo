@@ -15,13 +15,19 @@ import urllib.request
 import json
 import os
 import datetime
+import re
+from pathlib import Path
+from core.network_safety import open_fixed_https, read_bounded
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 def execute(**kwargs):
-    symbol = kwargs.get('symbol', 'BMW.DE')
+    symbol = str(kwargs.get('symbol', 'BMW.DE') or '').strip().upper()
     period = kwargs.get('period', '1mo')
+
+    if not re.fullmatch(r'[A-Z0-9][A-Z0-9._=-]{0,31}', symbol):
+        return {"error": "Invalid stock symbol format."}
     
     # Validate period to prevent arbitrary string injection into URL
     valid_periods = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '10y', 'ytd', 'max']
@@ -30,16 +36,21 @@ def execute(**kwargs):
 
     # Yahoo Finance v8 API endpoint for historical data
     # We fetch historical data which also contains the latest price in the meta section
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range={period}&interval=1d"
+    from urllib.parse import quote
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{quote(symbol, safe='._=-')}?range={period}&interval=1d"
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
     
     try:
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=8) as response:
-            data = json.loads(response.read().decode())
+        with open_fixed_https(
+            url,
+            allowed_hosts={"query1.finance.yahoo.com"},
+            timeout=8,
+            headers=headers,
+        ) as response:
+            data = json.loads(read_bounded(response, 4 * 1024 * 1024).decode())
 
         if not data or 'chart' not in data or not data['chart']['result']:
             return {"error": f"Could not retrieve data for symbol '{symbol}'. It might be invalid or unavailable."}
@@ -95,7 +106,15 @@ def execute(**kwargs):
 
         # Save the plot to a file
         image_filename = f'{symbol.replace(".", "_")}_stock_price_trend_{period}.png'
-        image_path = os.path.join(deliverables_dir, image_filename)
+        deliverables_path = Path(deliverables_dir).resolve()
+        image_path_obj = (deliverables_path / image_filename).resolve()
+        try:
+            image_path_obj.relative_to(deliverables_path)
+        except ValueError as exc:
+            raise ValueError("Stock chart output path escaped the deliverables directory.") from exc
+        if image_path_obj.is_symlink() or (image_path_obj.exists() and not image_path_obj.is_file()):
+            raise ValueError("Stock chart output path is unsafe.")
+        image_path = str(image_path_obj)
         plt.savefig(image_path, bbox_inches='tight', dpi=100, facecolor=fig.get_facecolor())
         plt.close(fig) # Close the figure to free memory
 
