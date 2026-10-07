@@ -278,7 +278,7 @@ class SkillCrucible:
             ("builtins", "compile"),
         }
         dangerous_dunder_attributes = {
-            "__class__", "__base__", "__bases__", "__mro__", "__subclasses__",
+            "__dict__", "__class__", "__base__", "__bases__", "__mro__", "__subclasses__",
             "__globals__", "__builtins__", "__code__", "__closure__", "__func__",
             "__self__", "__getattribute__", "__getattr__", "__setattr__", "__delattr__",
             "__reduce__", "__reduce_ex__", "f_globals", "f_builtins", "f_locals",
