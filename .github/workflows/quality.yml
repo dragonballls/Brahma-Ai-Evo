@@ -98,6 +98,7 @@ jobs:
               python -m unittest tests.test_performance_brain -v
               python -m unittest tests.test_desktop_integrations -v
               python -m unittest tests.test_device_manager -v
+              python -m unittest tests.test_tool_completion_semantics -v
 
           - group: media-settings
             commands: |

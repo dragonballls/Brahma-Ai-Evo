@@ -295,7 +295,9 @@ def _update_steam_games(steam_path: Path, game_name: str = None) -> str:
     if update_started:
         names  = ", ".join(update_started[:3])
         suffix = f" and {len(update_started) - 3} more" if len(update_started) > 3 else ""
-        parts.append(f"Update started for: {names}{suffix}.")
+        parts.append(
+            f"Update request launched for: {names}{suffix}; Steam's resulting update state is not independently verified."
+        )
     if already_running:
         parts.append(f"Already updating: {', '.join(already_running)}.")
     if already_updated:
