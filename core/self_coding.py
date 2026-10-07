@@ -610,13 +610,20 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
             ) from save_exc
         pushed = self._git("push", "origin", "main", timeout=300)
         if pushed.returncode != 0:
-            current_head = self._git("rev-parse", "HEAD")
-            status = self._git("status", "--porcelain")
-            if current_head.returncode == 0 and current_head.stdout.strip() == promoted_sha and not status.stdout.strip():
-                self._git("reset", "--hard", checkpoint.baseline)
-            self._git("switch", previous)
-            self._save(checkpoint)
-            raise SelfCodingError(pushed.stderr.strip() or "Approval publish failed safely.")
+            # The remote may have accepted the update even if the client observed
+            # a transport/receipt failure. Keep the durable promoting marker and
+            # promoted SHA so recovery can fetch and distinguish baseline,
+            # published, and unrelated-remote outcomes without destroying state.
+            switched_back = self._git("switch", previous)
+            if switched_back.returncode != 0:
+                raise SelfCodingError(
+                    "Approval publish outcome is ambiguous and the checkpoint branch "
+                    "could not be restored; durable promotion metadata remains available for recovery."
+                )
+            raise SelfCodingError(
+                pushed.stderr.strip()
+                or "Approval publish outcome is ambiguous; checkpoint remains in promoting state for recovery."
+            )
         approved = replace(promoting, state="approved")
         try:
             self._save(approved)
@@ -706,10 +713,20 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
                 raise SelfCodingError("Main became dirty during undo; refusing to publish ambiguous work.")
             pushed = self._git("push", "origin", "main", timeout=300)
             if pushed.returncode != 0:
-                self._git("reset", "--hard", checkpoint.promoted_sha)
-                self._git("switch", current)
-                self._save(checkpoint)
-                raise SelfCodingError(pushed.stderr.strip() or "Unable to publish checkpoint undo.")
+                # Preserve the durable undoing marker and current undo tip. A
+                # failed push may still have reached the remote, and recovery
+                # can safely fetch and distinguish published, unpublished, and
+                # unrelated-remote outcomes.
+                switched_back = self._git("switch", current)
+                if switched_back.returncode != 0:
+                    raise SelfCodingError(
+                        "Undo publish outcome is ambiguous and the original branch "
+                        "could not be restored; durable undo metadata remains available for recovery."
+                    )
+                raise SelfCodingError(
+                    pushed.stderr.strip()
+                    or "Undo publish outcome is ambiguous; checkpoint remains in undoing state for recovery."
+                )
             try:
                 self._save(replace(checkpoint, state="undone", undo_commits=tuple(undo_commits)))
             except Exception as save_exc:
