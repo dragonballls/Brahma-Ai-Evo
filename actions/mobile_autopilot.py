@@ -313,6 +313,56 @@ def mobile_autopilot(parameters: dict, response=None, player=None, session_memor
         except ValueError as exc:
             return json.dumps({"success": False, "error": str(exc), "steps_attempted": step + 1})
 
+        signature = json.dumps(
+            {"action": action, "parameters": command_parameters, "ui": ui_tree},
+            sort_keys=True,
+            ensure_ascii=False,
+            default=str,
+        )
+        count = seen_signatures.get(signature, 0) + 1
+        seen_signatures[signature] = count
+        if count > MAX_REPEAT_SIGNATURES:
+            return json.dumps({
+                "success": False,
+                "error": "Mobile autopilot detected a repeated action loop.",
+                "steps_attempted": step + 1,
+            })
+
+        if bool(parameters.get("cancelled", False)):
+            return json.dumps({
+                "success": False,
+                "error": "Mobile autopilot was cancelled before action dispatch.",
+                "steps_attempted": step + 1,
+            })
+
+        try:
+            _parse_remote_result(
+                connect_execute({
+                    "target": target,
+                    "action": remote_action,
+                    "parameters": command_parameters,
+                }),
+                action,
+            )
+        except (RuntimeError, ValueError) as exc:
+            return json.dumps({"success": False, "error": str(exc), "steps_attempted": step + 1})
+
+        if bool(parameters.get("cancelled", False)):
+            return json.dumps({
+                "success": False,
+                "error": "Mobile autopilot was cancelled after remote action dispatch; outcome is not reported as success.",
+                "steps_attempted": step + 1,
+            })
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return json.dumps({
+                "success": False,
+                "error": "Mobile autopilot timed out.",
+                "steps_attempted": step + 1,
+            })
+        time.sleep(min(delay, remaining))
+
 
     return json.dumps({
         "success": False,
