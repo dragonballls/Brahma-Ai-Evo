@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import pytest
+from unittest.mock import patch
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -34,3 +37,21 @@ def test_executor_forge_failure_is_structured_not_reported_as_success():
     block = source[source.index("execution_output = """):source.index("def _raise_for_failed_tool_result", source.index("execution_output = """))]
     assert "_raise_for_failed_tool_result(run_result)" in block
     assert 'return {"success": False, "error": message, "name": name, "created": True}' in block
+
+
+def test_executor_preserves_falsy_action_failure_results():
+    import agent.executor as executor
+
+    with (
+        patch("actions.open_app.open_app", return_value=False),
+        patch("actions.web_search.web_search", return_value=False),
+        patch("actions.game_updater.game_updater", return_value=False),
+        patch("actions.browser_control.browser_control", return_value=False),
+        patch("actions.file_controller.file_controller", return_value=False),
+        patch("actions.cmd_control.cmd_control", return_value=False),
+    ):
+        for tool in ("open_app", "web_search", "game_updater", "browser_control", "file_controller", "cmd_control"):
+            result = executor._call_tool(tool, {}, None)
+            assert result is False
+            with pytest.raises(RuntimeError):
+                executor._raise_for_failed_tool_result(result)
