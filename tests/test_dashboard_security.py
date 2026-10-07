@@ -18,3 +18,13 @@ def test_dashboard_crypto_asset_never_falls_back_to_external_cdn():
     block = source[start:source.index('@app.get("/login")', start)]
     assert "RedirectResponse" not in block
     assert "status_code=503" in block
+
+
+def test_dashboard_command_cannot_report_empty_command_as_success():
+    source = (ROOT / "dashboard" / "server.py").read_text(encoding="utf-8")
+    start = source.index('@app.post("/api/command")')
+    end = source.index('@app.post("/api/wake")', start)
+    block = source[start:end]
+    assert 'if not text:' in block
+    assert 'Command text is required.' in block
+    assert 'return JSONResponse({"ok": True, "status": "queued"})' in block

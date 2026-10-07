@@ -840,12 +840,13 @@ class DashboardServer:
                 text = (body.get("text") or "").strip()
             if len(str(text).encode("utf-8")) > 256 * 1024:
                 return JSONResponse({"error": "Command payload is too large."}, status_code=413)
-            if text:
-                if not self._enqueue_command(text):
-                    return JSONResponse({"error": "Command queue is busy; retry shortly."}, status_code=429)
-                if self._wake_callback:
-                    self._wake_callback()
-            return JSONResponse({"ok": True})
+            if not text:
+                return JSONResponse({"error": "Command text is required."}, status_code=400)
+            if not self._enqueue_command(text):
+                return JSONResponse({"error": "Command queue is busy; retry shortly."}, status_code=429)
+            if self._wake_callback:
+                self._wake_callback()
+            return JSONResponse({"ok": True, "status": "queued"})
 
         @app.post("/api/wake")
         async def wake_ep(req: Request):
