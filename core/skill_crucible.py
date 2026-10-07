@@ -356,9 +356,9 @@ class SkillCrucible:
                 if node.attr in dangerous_dunder_attributes:
                     return False, f"Security Violation: prohibited attribute access '{node.attr}'."
                 if isinstance(node.value, ast.Name):
-                owner = module_aliases.get(node.value.id, node.value.id)
-                if (owner, node.attr) in banned_attributes:
-                    return False, f"Security Violation: prohibited attribute '{owner}.{node.attr}'."
+                    owner = module_aliases.get(node.value.id, node.value.id)
+                    if (owner, node.attr) in banned_attributes:
+                        return False, f"Security Violation: prohibited attribute '{owner}.{node.attr}'."
 
         # Reject dangerous runtime/builtin names even when referenced indirectly,
         # such as assigning getattr/eval to an alias or indexing __builtins__.
