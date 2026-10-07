@@ -16,7 +16,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from urllib.request import urlopen
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 from zipfile import ZipFile
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -31,11 +32,42 @@ NODE_URL = f"https://nodejs.org/dist/v{NODE_VERSION}/{NODE_ZIP_NAME}"
 NODE_SHA256 = "158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541"
 OMNIROUTE_METADATA_URL = f"https://registry.npmjs.org/omniroute/{OMNIROUTE_VERSION}"
 CACHE_SCHEMA = "1"
+MAX_NODE_ARCHIVE_BYTES = 256 * 1024 * 1024
+MAX_OMNI_METADATA_BYTES = 4 * 1024 * 1024
+MAX_OMNI_TARBALL_BYTES = 64 * 1024 * 1024
+_DOWNLOAD_CHUNK_BYTES = 1024 * 1024
+_ALLOWED_DOWNLOAD_HOSTS = frozenset({"nodejs.org", "registry.npmjs.org"})
 
 
-def _download(url: str, path: Path) -> None:
-    with urlopen(url, timeout=180) as response, path.open("wb") as output:
-        shutil.copyfileobj(response, output)
+class _NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise RuntimeError("Runtime preparation downloads do not permit redirects")
+
+
+def _download(url: str, path: Path, *, max_bytes: int) -> None:
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or parsed.hostname not in _ALLOWED_DOWNLOAD_HOSTS:
+        raise RuntimeError(f"Refusing runtime download from unapproved host: {parsed.hostname or 'unknown'}")
+    request = Request(url, headers={"User-Agent": "BrahmaEvo-RuntimeBuilder/1.0"})
+    opener = build_opener(_NoRedirectHandler())
+    with opener.open(request, timeout=180) as response, path.open("wb") as output:
+        total = 0
+        while True:
+            chunk = response.read(_DOWNLOAD_CHUNK_BYTES)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                raise RuntimeError(f"Runtime download exceeds the {max_bytes // (1024 * 1024)} MiB safety limit.")
+            output.write(chunk)
+
+
+def _sha512(path: Path) -> bytes:
+    h = hashlib.sha512()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.digest()
 
 
 def _sha256(path: Path) -> str:
@@ -116,7 +148,7 @@ def prepare(destination: Path) -> None:
         temp = Path(temp_name)
 
         node_archive = temp / NODE_ZIP_NAME
-        _download(NODE_URL, node_archive)
+        _download(NODE_URL, node_archive, max_bytes=MAX_NODE_ARCHIVE_BYTES)
         if _sha256(node_archive) != NODE_SHA256:
             raise RuntimeError("Node.js archive checksum verification failed.")
         node_extract = temp / "node"
@@ -129,7 +161,7 @@ def prepare(destination: Path) -> None:
             raise RuntimeError("Bundled Node runtime is incomplete.")
 
         metadata = temp / "omniroute-metadata.json"
-        _download(OMNIROUTE_METADATA_URL, metadata)
+        _download(OMNIROUTE_METADATA_URL, metadata, max_bytes=MAX_OMNI_METADATA_BYTES)
         registry = json.loads(metadata.read_text(encoding="utf-8"))
         if str(registry.get("version") or "") != OMNIROUTE_VERSION:
             raise RuntimeError("OmniRoute registry version did not match the pinned release.")
@@ -143,9 +175,12 @@ def prepare(destination: Path) -> None:
             raise RuntimeError("OmniRoute metadata did not provide an integrity-verifiable tarball.")
 
         tarball = temp / f"omniroute-{OMNIROUTE_VERSION}.tgz"
-        _download(tarball_url, tarball)
+        tarball_parsed = urlsplit(tarball_url)
+        if tarball_parsed.scheme != "https" or tarball_parsed.hostname != "registry.npmjs.org":
+            raise RuntimeError("OmniRoute tarball URL must remain on registry.npmjs.org over HTTPS.")
+        _download(tarball_url, tarball, max_bytes=MAX_OMNI_TARBALL_BYTES)
         expected_sha512 = base64.b64decode(integrity.removeprefix("sha512-"))
-        if hashlib.sha512(tarball.read_bytes()).digest() != expected_sha512:
+        if _sha512(tarball) != expected_sha512:
             raise RuntimeError("OmniRoute tarball integrity verification failed.")
 
         staging = temp / "runtime"
