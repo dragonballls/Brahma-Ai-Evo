@@ -199,3 +199,37 @@ if __name__ == "__main__":
         self.assertFalse(result["success"])
         self.assertEqual(result["status"], "existing-skill-failed")
         self.assertEqual(result["error"], "provider unavailable")
+
+
+    def test_malformed_forge_result_is_not_reported_as_success(self):
+        class Registry:
+            @classmethod
+            def initialize(cls):
+                pass
+
+            @classmethod
+            def find_matching_skill(cls, request):
+                return None
+
+            @classmethod
+            def has_tool(cls, name):
+                return False
+
+        class Forge:
+            @classmethod
+            def forge_skill(cls, request, context_hints="", max_repair_attempts=2):
+                return {"status": "generated-but-unverified", "name": "unsafe_partial"}
+
+        original_registry = universal_agent.DynamicToolRegistry
+        from core import skill_forge as skill_forge_module
+        original_forge = skill_forge_module.SkillForge
+        try:
+            universal_agent.DynamicToolRegistry = Registry
+            skill_forge_module.SkillForge = Forge
+            result = universal_agent.run("invent a capability")
+        finally:
+            universal_agent.DynamicToolRegistry = original_registry
+            skill_forge_module.SkillForge = original_forge
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["status"], "synthesis-failed")
