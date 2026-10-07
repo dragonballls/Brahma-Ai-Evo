@@ -118,9 +118,19 @@ def execute(**kwargs):
         plt.savefig(image_path, bbox_inches='tight', dpi=100, facecolor=fig.get_facecolor())
         plt.close(fig) # Close the figure to free memory
 
-        summary_text = f"Current price for {symbol}: {current_price:.2f} {currency}. Historical trend over {period} shown in the graph."
         if current_price is None:
             summary_text = f"Could not retrieve current price for {symbol}. Historical trend over {period} shown in the graph."
+        else:
+            try:
+                summary_text = (
+                    f"Current price for {symbol}: {float(current_price):.2f} {currency}. "
+                    f"Historical trend over {period} shown in the graph."
+                )
+            except (TypeError, ValueError):
+                summary_text = (
+                    f"Current price for {symbol} was returned in an invalid format. "
+                    f"Historical trend over {period} shown in the graph."
+                )
 
         return {
             "image_path": image_path,
