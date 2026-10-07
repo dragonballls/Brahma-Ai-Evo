@@ -109,3 +109,52 @@ def test_corrupt_memory_is_preserved_without_renaming_the_original(tmp_path, mon
     copies = list(tmp_path.glob("long_term.json.corrupt-*"))
     assert len(copies) == 1
     assert copies[0].read_text(encoding="utf-8") == raw
+
+
+def test_screen_processor_does_not_overwrite_corrupt_camera_config(tmp_path, monkeypatch):
+    from actions import screen_processor as sp
+
+    path = tmp_path / "api_config.json"
+    raw = "{broken"
+    path.write_text(raw, encoding="utf-8")
+    monkeypatch.setattr(sp, "API_CONFIG_PATH", path)
+
+    with pytest.raises(RuntimeError, match="corrupted"):
+        sp._get_camera_index()
+
+    assert path.read_text(encoding="utf-8") == raw
+
+
+def test_screen_processor_rejects_invalid_camera_config_schema(tmp_path, monkeypatch):
+    from actions import screen_processor as sp
+
+    path = tmp_path / "api_config.json"
+    path.write_text("[]", encoding="utf-8")
+    monkeypatch.setattr(sp, "API_CONFIG_PATH", path)
+
+    with pytest.raises(RuntimeError, match="invalid root schema"):
+        sp._get_camera_index()
+
+    assert path.read_text(encoding="utf-8") == "[]"
+
+
+def test_screen_processor_rejects_invalid_camera_index_without_autodetection(tmp_path, monkeypatch):
+    from actions import screen_processor as sp
+
+    path = tmp_path / "api_config.json"
+    path.write_text('{"camera_index": "not-an-int"}', encoding="utf-8")
+    monkeypatch.setattr(sp, "API_CONFIG_PATH", path)
+
+    camera_calls = []
+
+    class FakeCapture:
+        def __init__(self, *args, **kwargs):
+            camera_calls.append((args, kwargs))
+
+    monkeypatch.setattr(sp.cv2, "VideoCapture", FakeCapture)
+
+    with pytest.raises(RuntimeError, match="invalid camera_index"):
+        sp._get_camera_index()
+
+    assert camera_calls == []
+    assert path.read_text(encoding="utf-8") == '{"camera_index": "not-an-int"}'
