@@ -129,6 +129,7 @@ class UpdateChecker(QObject):
                 data = json.loads(raw.decode("utf-8"))
                 if isinstance(data, dict):
                     return data.get("sha")
+        except Exception as e:
             print(f"[Updater] Error fetching remote hash: {e}")
         return None
 
