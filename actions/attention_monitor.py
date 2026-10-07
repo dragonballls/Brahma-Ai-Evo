@@ -352,12 +352,18 @@ def _current_speech_generation() -> int:
 
 def _cleanup_current_audio() -> None:
     global _current_player_alias, _current_audio_path, _current_speech_proc
-    if _current_speech_proc is not None:
+    proc = _current_speech_proc
+    _current_speech_proc = None
+    if proc is not None:
         try:
-            _current_speech_proc.terminate()
+            proc.terminate()
+            proc.wait(timeout=1.5)
         except Exception:
-            pass
-        _current_speech_proc = None
+            try:
+                proc.kill()
+                proc.wait(timeout=1.5)
+            except Exception:
+                pass
 
     if _current_player_alias is not None:
         try:
@@ -379,49 +385,60 @@ def _cleanup_current_audio() -> None:
         _current_audio_path = None
 
 
-def _speak_sapi_male(text: str, *, rate: int = 0) -> None:
-    """Speaks using an offline native Windows male voice with SAPI rate control."""
+def _speak_sapi_male(text: str, *, rate: int = 0, generation: int | None = None) -> None:
+    """Speak offline through a cancellable hidden Windows process."""
+    global _current_speech_proc
+    text = str(text or "").strip()
+    if not text:
+        return
+    if generation is None:
+        generation = _current_speech_generation()
+    if generation != _current_speech_generation():
+        return
+
+    # System.Speech is part of the Windows PowerShell/.NET Framework runtime.
+    # Base64 keeps user text out of the command-line parser.
+    import base64
+    encoded_text = base64.b64encode(text.encode("utf-8")).decode("ascii")
+    bounded_rate = max(-10, min(10, int(rate)))
+    ps_script = (
+        "Add-Type -AssemblyName System.Speech; "
+        "$s=New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+        f"$s.Rate={bounded_rate}; "
+        "$voices=$s.GetInstalledVoices(); "
+        "foreach($v in $voices){$n=$v.VoiceInfo.Name.ToLowerInvariant();"
+        "if($n.Contains('george') -or $n.Contains('david') -or $n.Contains('mark')){"
+        "$s.SelectVoice($v.VoiceInfo.Name);break}}; "
+        f"$t=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded_text}')); "
+        "$s.Speak($t); $s.Dispose()"
+    )
+    encoded_script = base64.b64encode(ps_script.encode("utf-16le")).decode("ascii")
+    cmd = [
+        "powershell", "-NoProfile", "-NonInteractive",
+        "-EncodedCommand", encoded_script,
+    ]
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
+    proc = None
     try:
-        import win32com.client
-        import pythoncom
-        pythoncom.CoInitialize()
-        v = win32com.client.Dispatch("SAPI.SpVoice")
-        v.Volume = 100
-        try:
-            v.Rate = max(-10, min(10, int(rate)))
-        except Exception:
-            pass
-
-        # Prioritize Windows Speech OneCore male voices (e.g. George, David, Mark)
-        selected = False
-        try:
-            category = win32com.client.Dispatch("SAPI.SpObjectTokenCategory")
-            category.SetId(r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Speech_OneCore\Voices")
-            tokens = category.EnumerateTokens()
-            for i in range(tokens.Count):
-                token = tokens.Item(i)
-                desc = token.GetDescription().lower()
-                if any(m in desc for m in ("george", "david", "mark", "male", "guy")):
-                    v.Voice = token
-                    selected = True
-                    break
-        except Exception:
-            pass
-
-        # Fallback to standard SAPI voices if OneCore not available
-        if not selected:
-            voices = v.GetVoices()
-            for i in range(voices.Count):
-                token = voices.Item(i)
-                desc = token.GetDescription().lower()
-                if any(m in desc for m in ("david", "george", "mark", "male")):
-                    v.Voice = token
-                    selected = True
-                    break
-
-        v.Speak(text)
+        proc = subprocess.Popen(cmd, creationflags=flags)
+        _current_speech_proc = proc
+        return_code = proc.wait()
+        if _current_speech_proc is proc:
+            _current_speech_proc = None
+        if generation != _current_speech_generation():
+            return
+        if return_code != 0:
+            raise RuntimeError(f"Offline speech exited with code {return_code}.")
     except Exception as exc:
+        if generation != _current_speech_generation():
+            return
         print(f"[AttentionMonitor] Offline male speech failed: {exc}")
+    finally:
+        if _current_speech_proc is proc:
+            _current_speech_proc = None
+
+
 
 
 _speak_lock = threading.Lock()
@@ -459,7 +476,7 @@ def _speak_edge_native(
             from memory import config_manager
             cfg = config_manager.load_settings()
             if cfg.get("offline_mode_enabled", False):
-                _speak_sapi_male(text, rate=sapi_rate)
+                _speak_sapi_male(text, rate=sapi_rate, generation=generation)
                 return
         except Exception:
             pass
