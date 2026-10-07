@@ -509,9 +509,25 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
             self._save(replace(checkpoint, state="approved", promoted_sha=checkpoint.promoted_sha))
             return checkpoint.promoted_sha
         if remote_sha == checkpoint.baseline and local_sha == checkpoint.promoted_sha:
+            current = self._branch()
+            switched = self._git("switch", "main")
+            if switched.returncode != 0:
+                raise SelfCodingError(
+                    switched.stderr.strip()
+                    or "Unable to switch to main while restoring an unpublished promotion."
+                )
             reset = self._git("reset", "--hard", checkpoint.baseline)
             if reset.returncode != 0:
-                raise SelfCodingError(reset.stderr.strip() or "Unable to restore an unpublished promotion.")
+                self._git("switch", current)
+                raise SelfCodingError(
+                    reset.stderr.strip() or "Unable to restore an unpublished promotion."
+                )
+            switched_back = self._git("switch", current)
+            if switched_back.returncode != 0:
+                raise SelfCodingError(
+                    "Unpublished promotion was restored on main, but the checkpoint branch "
+                    "could not be restored; checkpoint remains in promoting state for recovery."
+                )
             self._save(replace(checkpoint, state="pending", promoted_sha=None))
             return self._approve_unlocked(checkpoint_id=checkpoint.checkpoint_id)
         raise SelfCodingError("Promotion state is ambiguous; refusing to mutate main further.")
