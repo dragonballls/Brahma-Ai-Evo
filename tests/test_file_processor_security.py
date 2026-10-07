@@ -261,6 +261,19 @@ def test_archive_runtime_rejects_member_emitting_more_bytes_than_declared():
         assert not (base / "out" / "small.txt").exists()
 
 
+def test_generated_output_requires_nonempty_regular_file(tmp_path):
+    from actions.file_processor import _verify_output_artifact
+
+    output = tmp_path / "result.bin"
+    with pytest.raises(RuntimeError, match="regular file"):
+        _verify_output_artifact(output)
+    output.write_bytes(b"ok")
+    assert _verify_output_artifact(output) == output
+    output.write_bytes(b"")
+    with pytest.raises(RuntimeError, match="empty"):
+        _verify_output_artifact(output)
+
+
 def test_secure_text_output_rejects_race_created_symlink(tmp_path, monkeypatch):
     from actions import file_processor
 
