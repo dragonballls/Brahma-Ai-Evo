@@ -792,22 +792,32 @@ def execute(**kwargs):
     assert "Sandbox static validation failed: Security Violation: prohibited call 'os.listdir'." in message
 
 
-def test_crucible_realpath_and_dynamic_path_queries_are_safely_confined():
+def test_crucible_rejects_unsafe_realpath_and_path_queries_before_execution():
     from core.skill_crucible import SkillCrucible
 
-    code = """
+    for call in ("os.path.realpath(outside)", "os.path.exists(outside)"):
+        code = f"""
 import os
 from pathlib import Path
 def execute(**kwargs):
     outside = Path.cwd().parent
+    return {call}
+"""
+        ok, message = SkillCrucible.validate_ast(code)
+        assert ok is False
+        assert "Security Violation: prohibited call 'os.path." in (message or "")
+
+    runtime_code = """
+from pathlib import Path
+def execute(**kwargs):
+    outside = Path.cwd().parent / "outside.txt"
     try:
-        os.path.realpath(outside)
-        os.path.exists(outside)
+        with open(outside, "r", encoding="utf-8") as handle:
+            return handle.read()
     except PermissionError as exc:
         return {"denied": str(exc)}
-    return {"denied": False}
 """
-    ok, message, telemetry = SkillCrucible.run_sandbox_test(code, [{"input": {}}])
+    ok, message, telemetry = SkillCrucible.run_sandbox_test(runtime_code, [{"input": {}}])
     assert ok is True, message
     assert telemetry["results"][0]["output"].startswith("{'denied':")
     assert "outside its temporary root" in telemetry["results"][0]["output"]
@@ -1578,8 +1588,8 @@ def test_executor_rejects_non_object_tool_parameters_before_dispatch():
 
 
 def test_action_result_failure_classifier_does_not_misclassify_empty_or_explicit_failures():
-    from main import _action_result_is_failure
-    assert _action_result_is_failure("") is True
-    assert _action_result_is_failure("Could not open the Gmail inbox.") is True
-    assert _action_result_is_failure("Gmail credentials not configured.") is True
-    assert _action_result_is_failure("No messages found matching query 'ALL'.") is False
+    from core.action_result import action_result_is_failure
+    assert action_result_is_failure("") is True
+    assert action_result_is_failure("Could not open the Gmail inbox.") is True
+    assert action_result_is_failure("Gmail credentials not configured.") is True
+    assert action_result_is_failure("No messages found matching query 'ALL'.") is False
