@@ -1,4 +1,4 @@
-from core.provider_policy import GEMINI, normalize_provider, is_local
+from core.provider_policy import GEMINI, normalize_provider, is_local, is_gemini
 from core.local_brain import DEFAULT_ENDPOINT as LOCAL_DEFAULT_ENDPOINT, DEFAULT_MODEL as LOCAL_DEFAULT_MODEL
 from core.local_endpoint import validate_local_endpoint
 import json
@@ -53,6 +53,11 @@ class UnifiedAIClient:
 
     def _is_local_provider(self) -> bool:
         return is_local(self._provider)
+
+    def _allow_direct_cloud_fallback(self) -> bool:
+        # A Gemini selection is fulfilled through OmniRoute. Never silently
+        # replace it with a direct OpenRouter request when the gateway fails.
+        return not is_gemini(self._provider)
 
     def reload_settings(self):
         try:
@@ -124,7 +129,8 @@ class UnifiedAIClient:
     def _gemini_text(self, prompt: str, system: str, max_tokens: int = 4096, temperature: float = 0.7) -> str:
         """Compatibility helper; all online text generation goes through OmniRoute."""
         return openrouter_client.chat(
-            prompt, system=system, model="auto", max_tokens=max_tokens, temperature=temperature
+            prompt, system=system, model="auto", max_tokens=max_tokens, temperature=temperature,
+            allow_direct_fallback=False,
         )
 
     def _gemini_json(
@@ -136,7 +142,8 @@ class UnifiedAIClient:
     ) -> dict:
         """Compatibility helper; structured cloud generation goes through OmniRoute."""
         return openrouter_client.chat_json(
-            prompt, system=system, model="auto", max_tokens=max_tokens
+            prompt, system=system, model="auto", max_tokens=max_tokens,
+            allow_direct_fallback=False,
         )
 
     def _gemini_vision(
@@ -150,7 +157,8 @@ class UnifiedAIClient:
     ) -> str:
         """Compatibility helper; cloud vision goes through OmniRoute."""
         return openrouter_client.vision(
-            prompt, image_b64, mime=mime, system=system, model="auto", max_tokens=max_tokens
+            prompt, image_b64, mime=mime, system=system, model="auto", max_tokens=max_tokens,
+            allow_direct_fallback=False,
         )
 
     def chat(self, prompt: str, system: str = "You are a helpful assistant.", history: Optional[list[dict]] = None, model: Optional[str] = None, max_tokens: int = 4096, temperature: float = 0.7) -> str:
@@ -169,7 +177,8 @@ class UnifiedAIClient:
         # routing, retries, and failover.
         return openrouter_client.chat(
             prompt, system=system, history=history, model=model or "auto",
-            max_tokens=max_tokens, temperature=temperature
+            max_tokens=max_tokens, temperature=temperature,
+            allow_direct_fallback=self._allow_direct_cloud_fallback(),
         )
 
     def chat_with_tools(
@@ -189,7 +198,8 @@ class UnifiedAIClient:
         return openrouter_client.chat_with_tools(
             messages=messages, tools=tools, tool_executor=tool_executor,
             model=model or "auto", max_tokens=max_tokens, temperature=temperature,
-            max_rounds=max_rounds
+            max_rounds=max_rounds,
+            allow_direct_fallback=self._allow_direct_cloud_fallback(),
         )
 
     def chat_json(self, prompt: str, system: str = "Return ONLY valid JSON.", model: Optional[str] = None, max_tokens: int = 4096) -> dict:
@@ -216,7 +226,10 @@ class UnifiedAIClient:
             if not isinstance(parsed, dict):
                 raise ValueError("Local model JSON response must be an object.")
             return parsed
-        return openrouter_client.chat_json(prompt, system, model or "auto", max_tokens)
+        return openrouter_client.chat_json(
+            prompt, system, model or "auto", max_tokens,
+            allow_direct_fallback=self._allow_direct_cloud_fallback(),
+        )
 
     def vision(self, prompt: str, image_b64: str, mime: str = "image/png", system: str = "Analyze the image.", model: Optional[str] = None, max_tokens: int = 1024) -> str:
         self.reload_settings()
@@ -235,7 +248,10 @@ class UnifiedAIClient:
             if result:
                 return result
             raise RuntimeError("Local AI vision request failed.")
-        return openrouter_client.vision(prompt, image_b64, mime, system, model or "auto", max_tokens)
+        return openrouter_client.vision(
+            prompt, image_b64, mime, system, model or "auto", max_tokens,
+            allow_direct_fallback=self._allow_direct_cloud_fallback(),
+        )
 
     def vision_from_file(self, prompt: str, image_path: str, system: str = "Analyze the image.", model: Optional[str] = None, max_tokens: int = 1024) -> str:
         self.reload_settings()
@@ -265,7 +281,10 @@ class UnifiedAIClient:
             if result:
                 return result
             raise RuntimeError("Local AI request failed.")
-        return openrouter_client.multi_turn(messages, model or "auto", max_tokens, temperature)
+        return openrouter_client.multi_turn(
+            messages, model or "auto", max_tokens, temperature,
+            allow_direct_fallback=self._allow_direct_cloud_fallback(),
+        )
 
 
     def intelligent_chat(
