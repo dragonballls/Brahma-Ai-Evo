@@ -200,7 +200,9 @@ class BrowserInstagramWorker(threading.Thread):
             ig_log("Playwright not installed; browser worker aborted.")
             return
 
+        _validate_private_storage_path(BROWSER_PROFILE_DIR, directory=True)
         BROWSER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+        _validate_private_storage_path(BROWSER_PROFILE_DIR, directory=True)
         ig_log("BrowserInstagramWorker starting Chromium engine...")
 
         with sync_playwright() as p:
@@ -359,36 +361,53 @@ class BrowserInstagramWorker(threading.Thread):
         if not box:
             raise RuntimeError("Could not find message input box on chat thread.")
 
-        box.click()
-        page.wait_for_timeout(400)
-        page.keyboard.type(message_text, delay=20)
-        page.wait_for_timeout(400)
-        page.keyboard.press("Enter")
-        page.wait_for_timeout(1500)
+        send_attempted = False
+        try:
+            box.click()
+            page.wait_for_timeout(400)
+            page.keyboard.type(message_text, delay=20)
+            page.wait_for_timeout(400)
+            send_attempted = True
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(1500)
 
-        cur_url = page.url
-        tid_match = re.search(r"/direct/t/([^/]+)", cur_url)
-        final_tid = tid_match.group(1) if tid_match else thread_id
-        browser_url = f"https://www.instagram.com/direct/t/{final_tid}/" if final_tid else cur_url
+            cur_url = page.url
+            tid_match = re.search(r"/direct/t/([^/]+)", cur_url)
+            final_tid = tid_match.group(1) if tid_match else thread_id
+            browser_url = f"https://www.instagram.com/direct/t/{final_tid}/" if final_tid else cur_url
 
-        if open_in_browser:
-            try:
-                webbrowser.open(browser_url)
-            except Exception as e:
-                ig_log(f"Browser launch notice: {e}")
+            if open_in_browser:
+                try:
+                    webbrowser.open(browser_url)
+                except Exception as e:
+                    ig_log(f"Browser launch notice: {e}")
 
-        return {
-            "success": False,
-            "status": "submitted",
-            "submitted": True,
-            "delivery_verified": False,
-            "error": "Instagram accepted the send interaction, but delivery was not independently verified.",
-            "error_code": "DELIVERY_UNVERIFIED",
-            "recipient": recipient,
-            "thread_id": final_tid,
-            "message": message_text,
-            "browser_url": browser_url,
-        }
+            return {
+                "success": False,
+                "status": "submitted",
+                "submitted": True,
+                "send_attempted": True,
+                "delivery_verified": False,
+                "error": "Instagram accepted the send interaction, but delivery was not independently verified.",
+                "error_code": "DELIVERY_UNVERIFIED",
+                "recipient": recipient,
+                "thread_id": final_tid,
+                "message": message_text,
+                "browser_url": browser_url,
+            }
+        except Exception as exc:
+            return {
+                "success": False,
+                "status": "unknown" if send_attempted else "failed",
+                "submitted": False,
+                "send_attempted": send_attempted,
+                "delivery_verified": False,
+                "error": f"Instagram send outcome is {'ambiguous' if send_attempted else 'not established'}: {exc}",
+                "error_code": "DELIVERY_UNKNOWN" if send_attempted else "SEND_FAILED",
+                "recipient": recipient,
+                "thread_id": thread_id,
+                "message": message_text,
+            }
 
 
     def _poll_inbox(self, ctx):
@@ -610,7 +629,10 @@ class InstagramService:
                 bw = self.get_browser_worker()
                 if bw:
                     ig_log(f"Dispatching send_dm via BrowserEngine to @{recipient}...")
-                    return bw.execute(bw.send_dm_action, recipient, message_text, open_in_browser)
+                    browser_result = bw.execute(bw.send_dm_action, recipient, message_text, open_in_browser)
+                    if isinstance(browser_result, dict) and browser_result.get("send_attempted"):
+                        return browser_result
+                    return browser_result
             except Exception as e:
                 ig_log(f"Browser send_dm error before delivery result: {e}. Attempting instagrapi fallback...")
 
@@ -624,24 +646,22 @@ class InstagramService:
             try:
                 cl.direct_send(message_text, thread_ids=[int(thread_id)])
             except Exception as e:
-                ig_log(f"direct_send by thread_id error: {e}. Trying user fallback...")
-                sent = False
-                threads = cl.direct_threads(amount=15)
-                for t in threads:
-                    if str(t.id) == str(thread_id) and t.users:
-                        u_name = t.users[0].username
-                        u_id = cl.user_id_from_username(u_name)
-                        cl.direct_send(message_text, user_ids=[u_id])
-                        sent = True
-                        break
-                if not sent:
-                    raise
+                ig_log(f"direct_send by thread_id outcome is ambiguous; refusing duplicate retry: {e}")
+                return {
+                    "success": False,
+                    "status": "unknown",
+                    "submitted": False,
+                    "send_attempted": True,
+                    "delivery_verified": False,
+                    "error": f"Instagram send outcome is ambiguous: {e}",
+                    "error_code": "DELIVERY_UNKNOWN",
+                    "recipient": recipient,
+                    "thread_id": thread_id,
+                    "message": message_text,
+                }
         else:
             try:
                 user_id = cl.user_id_from_username(recipient)
-                res = cl.direct_send(message_text, user_ids=[user_id])
-                if hasattr(res, "thread_id"):
-                    thread_id = str(res.thread_id)
             except Exception as e:
                 ig_log(f"Error resolving username {recipient}: {e}")
                 threads = cl.direct_threads(amount=15)
@@ -652,10 +672,43 @@ class InstagramService:
                             break
                     if thread_id:
                         break
-                if thread_id:
+                if not thread_id:
+                    raise RuntimeError(f"Could not find user @{recipient}: {e}")
+                try:
                     cl.direct_send(message_text, thread_ids=[int(thread_id)])
-                else:
-                    raise RuntimeError(f"Could not find or message user @{recipient}: {e}")
+                except Exception as send_exc:
+                    ig_log(f"Fallback thread send outcome is ambiguous; refusing duplicate retry: {send_exc}")
+                    return {
+                        "success": False,
+                        "status": "unknown",
+                        "submitted": False,
+                        "send_attempted": True,
+                        "delivery_verified": False,
+                        "error": f"Instagram send outcome is ambiguous: {send_exc}",
+                        "error_code": "DELIVERY_UNKNOWN",
+                        "recipient": recipient,
+                        "thread_id": thread_id,
+                        "message": message_text,
+                    }
+            else:
+                try:
+                    res = cl.direct_send(message_text, user_ids=[user_id])
+                    if hasattr(res, "thread_id"):
+                        thread_id = str(res.thread_id)
+                except Exception as send_exc:
+                    ig_log(f"direct_send outcome is ambiguous; refusing duplicate retry: {send_exc}")
+                    return {
+                        "success": False,
+                        "status": "unknown",
+                        "submitted": False,
+                        "send_attempted": True,
+                        "delivery_verified": False,
+                        "error": f"Instagram send outcome is ambiguous: {send_exc}",
+                        "error_code": "DELIVERY_UNKNOWN",
+                        "recipient": recipient,
+                        "thread_id": thread_id,
+                        "message": message_text,
+                    }
 
         browser_url = f"https://www.instagram.com/direct/t/{thread_id}/" if thread_id else "https://www.instagram.com/direct/inbox/"
         if open_in_browser:
@@ -1101,7 +1154,9 @@ def launch_browser_login():
     kill_browser_processes()
     print("Launching Chromium browser for Instagram login...")
     from playwright.sync_api import sync_playwright
+    _validate_private_storage_path(BROWSER_PROFILE_DIR, directory=True)
     BROWSER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    _validate_private_storage_path(BROWSER_PROFILE_DIR, directory=True)
     with sync_playwright() as p:
         ctx = p.chromium.launch_persistent_context(
             str(BROWSER_PROFILE_DIR),

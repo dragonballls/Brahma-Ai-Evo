@@ -83,3 +83,29 @@ def test_instagram_storage_rejects_symlinked_profile_parent(tmp_path):
         assert "parent" in str(exc).lower()
     else:
         raise AssertionError("Instagram browser profile under a symlinked parent must be rejected")
+
+
+def test_browser_send_exception_after_attempt_is_returned_as_ambiguous():
+    from actions.instagram_mcp import BrowserInstagramWorker
+
+    worker = BrowserInstagramWorker.__new__(BrowserInstagramWorker)
+    class FakeKeyboard:
+        def type(self, *_args, **_kwargs): pass
+        def press(self, *_args, **_kwargs): raise RuntimeError("browser send outcome unknown")
+    class FakePage:
+        url = "https://www.instagram.com/direct/t/123456789012345/"
+        def __init__(self):
+            self.keyboard = FakeKeyboard()
+        def wait_for_selector(self, *_args, **_kwargs): return object()
+        def wait_for_timeout(self, *_args, **_kwargs): pass
+        def goto(self, *_args, **_kwargs): pass
+        def query_selector_all(self, *_args, **_kwargs): return []
+    class Ctx:
+        pages=[FakePage()]
+        def cookies(self, *_args): return [{"name":"sessionid","value":"x"},{"name":"ds_user_id","value":"1"}]
+
+    result = worker.send_dm_action(Ctx(), "123456789012345", "hello", open_in_browser=False)
+    assert result["success"] is False
+    assert result["status"] == "unknown"
+    assert result["send_attempted"] is True
+    assert result["error_code"] == "DELIVERY_UNKNOWN"
