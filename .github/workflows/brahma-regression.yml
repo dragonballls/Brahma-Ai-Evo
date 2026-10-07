@@ -2,7 +2,7 @@ name: Brahma Evo Targeted Regression
 
 concurrency:
   group: brahma-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 on:
   push:
