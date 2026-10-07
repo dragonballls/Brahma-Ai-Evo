@@ -43,11 +43,11 @@ def get_live_weather(city: Optional[str] = None) -> Dict[str, Any]:
     fallback = {
         "status": "unavailable",
         "city": target_city or "Local Area",
-        "temp_c": 26,
-        "condition": "Clear",
-        "humidity": "65%",
-        "wind": "10 km/h",
-        "feels_like": 26,
+        "temp_c": None,
+        "condition": "Unavailable",
+        "humidity": None,
+        "wind": None,
+        "feels_like": None,
         "summary": "Weather telemetry temporarily offline.",
     }
 
@@ -57,7 +57,10 @@ def get_live_weather(city: Optional[str] = None) -> Dict[str, Any]:
             headers={"User-Agent": "curl/7.68.0"}
         )
         with urllib.request.urlopen(req, timeout=3.5) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            raw = resp.read(64 * 1024 + 1)
+            if len(raw) > 64 * 1024:
+                raise ValueError("Weather service response exceeded the safety limit.")
+            data = json.loads(raw.decode("utf-8"))
             current = data.get("current_condition", [{}])[0]
             nearest = data.get("nearest_area", [{}])[0]
 
