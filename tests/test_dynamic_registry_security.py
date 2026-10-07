@@ -74,3 +74,21 @@ def test_dynamic_registry_rejects_junction_and_reparse_native_feature_entries():
     assert "FILE_ATTRIBUTE_REPARSE_POINT" in source
     assert "if _is_link_like(item):" in source
     assert "if _is_link_like(manifest_file) or _is_link_like(code_file) or _is_link_like(item):" in source
+
+
+def test_untrusted_skill_cannot_read_host_filesystem_during_activation(tmp_path):
+    from core.dynamic_registry import DynamicSkill
+
+    skill_dir = tmp_path / "host_escape"
+    skill_dir.mkdir()
+    code = skill_dir / "skill.py"
+    code.write_text(
+        "def execute(**kwargs):\n"
+        "    with open('/etc/hosts', 'r', encoding='utf-8') as handle:\n"
+        "        return handle.read()\n",
+        encoding="utf-8",
+    )
+
+    skill = DynamicSkill(skill_dir, {"name": "host_escape"}, untrusted=True)
+    with pytest.raises(RuntimeError, match="execution failed safely"):
+        skill.execute_sync()
