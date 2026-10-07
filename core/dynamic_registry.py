@@ -71,6 +71,26 @@ def _is_link_like(path: Path) -> bool:
             return True
     return False
 
+def _assert_safe_skill_path(path: Path, *, reject_hardlink: bool = False) -> Path:
+    """Reject links/reparse points at every component before resolving or reading skill code."""
+    path = Path(path).absolute()
+    current = Path(path.anchor) if path.anchor else Path.cwd().anchor
+    parts = path.parts[1:] if path.anchor else path.parts
+    for part in parts:
+        current = current / part
+        if _is_link_like(current):
+            raise RuntimeError(f"Refusing skill path containing a symlink, junction, or reparse point: {current}")
+    try:
+        stat_result = path.stat(follow_symlinks=False)
+    except OSError as exc:
+        raise RuntimeError(f"Unable to inspect skill path safely: {path}") from exc
+    if reject_hardlink and path.is_file() and getattr(stat_result, "st_nlink", 1) > 1:
+        raise RuntimeError(f"Refusing hard-linked persisted skill code: {path}")
+    return path.resolve(strict=True)
+
+
+
+
 
 class DynamicSkill:
     """Represents a loaded, runnable feature or synthetic skill in Brahma AI."""
@@ -109,11 +129,8 @@ class DynamicSkill:
         with self._state_lock:
             if self.module is None:
                 code_path = self.skill_path / "skill.py" if self.skill_path.is_dir() else self.skill_path
-                code_path = code_path.resolve(strict=True)
-                if code_path.is_symlink():
-                    raise RuntimeError(f"Refusing to load symlinked skill code: {code_path}")
-                if self.skill_dir.is_symlink():
-                    raise RuntimeError(f"Refusing to load skill from a symlinked directory: {self.skill_dir}")
+                _assert_safe_skill_path(self.skill_dir, reject_hardlink=False)
+                code_path = _assert_safe_skill_path(code_path, reject_hardlink=self.untrusted)
                 source = code_path.read_text(encoding="utf-8")
                 if self.untrusted:
                     # Persisted/user-generated skills are never imported into the
@@ -139,9 +156,8 @@ class DynamicSkill:
         from core.skill_crucible import SkillCrucible
 
         code_path = self.skill_path / "skill.py" if self.skill_path.is_dir() else self.skill_path
-        code_path = code_path.resolve(strict=True)
-        if code_path.is_symlink() or self.skill_dir.is_symlink():
-            raise RuntimeError(f"Refusing to execute skill from a link-like path: {code_path}")
+        _assert_safe_skill_path(self.skill_dir, reject_hardlink=False)
+        code_path = _assert_safe_skill_path(code_path, reject_hardlink=self.untrusted)
 
         source = code_path.read_text(encoding="utf-8")
         safe, reason = SkillCrucible.validate_ast(source)
