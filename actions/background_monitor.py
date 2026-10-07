@@ -16,6 +16,7 @@ import socket
 from datetime import datetime
 from urllib.parse import urlsplit
 from actions.system_manager import get_system_health
+from core.network_safety import fetch_public_bytes
 
 _monitors = {}
 _monitor_lock = threading.Lock()
@@ -106,21 +107,36 @@ def _run_check(m_id, m):
                 
         elif m['type'] == 'crypto':
             # Target should be a coin id like 'bitcoin'
-            url = f"https://api.coingecko.com/api/v3/simple/price?ids={m['target']}&vs_currencies=usd"
-            resp = requests.get(url, timeout=5).json()
-            if m['target'] in resp:
-                price = resp[m['target']]['usd']
+            target = str(m.get("target") or "").strip().lower()
+            if not re.fullmatch(r"[a-z0-9_-]{1,64}", target):
+                raise ValueError("Crypto monitor target contains unsupported characters.")
+            url = f"https://api.coingecko.com/api/v3/simple/price?ids={target}&vs_currencies=usd"
+            status, raw = fetch_public_bytes(
+                url, timeout=5, max_response_bytes=256 * 1024,
+                headers={"Accept": "application/json"},
+            )
+            if status >= 400:
+                raise ValueError(f"Crypto monitor HTTP status {status}.")
+            resp = json.loads(raw.decode("utf-8"))
+            if not isinstance(resp, dict):
+                raise ValueError("Crypto monitor returned an invalid JSON object.")
+            if target in resp:
+                price = resp[target]["usd"]
                 # Condition: "above" or "below"
                 if m['condition'] == 'above' and price > m['threshold']:
-                    alert_msg = f"Alert: {m['target'].capitalize()} has gone above ${m['threshold']}. Current price is ${price}."
+                    alert_msg = f"Alert: {target.capitalize()} has gone above ${m['threshold']}. Current price is ${price}."
                 elif m['condition'] == 'below' and price < m['threshold']:
                     alert_msg = f"Alert: {m['target'].capitalize()} has dropped below ${m['threshold']}. Current price is ${price}."
                     
         elif m['type'] == 'website':
             try:
-                resp = requests.get(m['target'], timeout=5, allow_redirects=False)
-                if resp.status_code >= 400:
-                    alert_msg = f"Alert: Website {m['target']} is returning status code {resp.status_code}."
+                target_url = _validate_public_website_url(m["target"])
+                status = fetch_public_bytes(
+                    target_url, timeout=5, max_response_bytes=64 * 1024,
+                    headers={"Accept": "*/*"},
+                )[0]
+                if status >= 400:
+                    alert_msg = f"Alert: Website {m['target']} is returning status code {status}."
             except Exception:
                 alert_msg = f"Alert: Website {m['target']} appears to be down or unreachable."
 
