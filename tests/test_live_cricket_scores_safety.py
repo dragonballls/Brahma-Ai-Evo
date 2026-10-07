@@ -6,7 +6,10 @@ def test_live_cricket_network_failure_is_not_fabricated(monkeypatch):
     def fail(*_args, **_kwargs):
         raise OSError("network down")
 
-    monkeypatch.setattr(cricket.urllib.request, "urlopen", fail)
+    class Opener:
+        def open(self, *_args, **_kwargs):
+            fail()
+    monkeypatch.setattr(cricket.urllib.request, "build_opener", lambda *_args: Opener())
     result = cricket.execute()
     assert "error" in result
     assert result["matches"] == []
