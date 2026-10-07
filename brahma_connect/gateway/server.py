@@ -128,6 +128,36 @@ def _default_registry_path(base_dir: Path) -> Path:
     return Path(base_dir) / "config" / "brahma_connect" / "devices.json"
 
 
+def _read_config_json(path: Path, *, max_bytes: int = 4 * 1024 * 1024) -> dict[str, Any]:
+    if os.name == "nt":
+        from core.windows_file_safety import open_safe_file
+        fd, _final_path, info = open_safe_file(path, write=False)
+        if int(info.nNumberOfLinks) > 1:
+            os.close(fd)
+            raise OSError("Brahma Connect configuration has multiple hard links.")
+    else:
+        flags = os.O_RDONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        fd = os.open(path, flags)
+        if os.fstat(fd).st_nlink > 1:
+            os.close(fd)
+            raise OSError("Brahma Connect configuration has multiple hard links.")
+    try:
+        with os.fdopen(fd, "rb") as handle:
+            fd = -1
+            raw = handle.read(max_bytes + 1)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+    if len(raw) > max_bytes:
+        raise ValueError("Brahma Connect configuration exceeds the 4 MiB safety limit.")
+    data = json.loads(raw.decode("utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("Brahma Connect configuration has an invalid root schema.")
+    return data
+
+
 @dataclass(slots=True)
 class BrahmaGatewayConfig:
     host: str = "0.0.0.0"
@@ -159,7 +189,7 @@ class BrahmaGatewayConfig:
         config_path = _default_config_path(base_dir)
         if config_path.exists():
             try:
-                loaded = json.loads(config_path.read_text(encoding="utf-8"))
+                loaded = _read_config_json(config_path)
             except (OSError, UnicodeError, json.JSONDecodeError) as exc:
                 raise RuntimeError(
                     "Brahma Connect configuration is unreadable or corrupted."
