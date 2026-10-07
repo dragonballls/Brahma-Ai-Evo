@@ -163,22 +163,36 @@ class CallAssistant:
         return cls._active_instance
 
     def start(self):
-        """Answers the call and begins the AI Call Proxy conversation."""
-        CallAssistant._active_instance = self
-        self.is_active = True
+        """Answer the call only after Windows reports the answer action as confirmed."""
+        self.is_active = False
         self._stop_event.clear()
-
-        # Boost system audio and microphone gain, disable Windows ducking
-        self._orig_mic_level = _boost_system_audio_for_call()
 
         logger.info(f"[CallAssistant] Starting call proxy for {self.caller_name} on {self.app_name}")
 
-        # 1. Click accept to answer the call on Windows
+        # 1. Click accept to answer the call on Windows. Do not create an active
+        # AI session unless the underlying desktop action reports a confirmed answer.
         try:
             from actions.attention_monitor import handle_call_action
-            handle_call_action(self.event, "accept")
+            answer_result = str(handle_call_action(self.event, "accept") or "").strip()
+            answer_lower = answer_result.lower()
+            if (
+                not answer_result
+                or "could not confirm" in answer_lower
+                or answer_lower.startswith("tried to ")
+                or answer_lower.startswith("unknown ")
+                or answer_lower.startswith("no app")
+            ):
+                logger.warning(f"[CallAssistant] Call answer was not confirmed: {answer_result or 'no result'}")
+                return False
         except Exception as e:
-            logger.warning(f"[CallAssistant] Accept click notice: {e}")
+            logger.warning(f"[CallAssistant] Accept click failed: {e}")
+            return False
+
+        CallAssistant._active_instance = self
+        self.is_active = True
+
+        # Boost system audio and microphone gain, disable Windows ducking
+        self._orig_mic_level = _boost_system_audio_for_call()
 
         # 2. Show Call Screening UI HUD
         if self.ui and hasattr(self.ui, "show_call_screening"):
@@ -197,11 +211,12 @@ class CallAssistant:
         # 3. Launch the conversation thread
         self._loop_thread = threading.Thread(target=self._run_conversation, daemon=True, name="call-proxy")
         self._loop_thread.start()
+        return True
 
-    def take_over(self):
+    def take_over(self) -> bool:
         """User clicks 'Take Over' to jump into the call personally."""
         if not self.is_active:
-            return
+            return False
         self._user_took_over = True
         self.is_active = False
         self._stop_event.set()
@@ -219,11 +234,12 @@ class CallAssistant:
                 self.ui.hide_call_screening()
 
         CallAssistant._active_instance = None
+        return True
 
-    def hang_up(self, message: str = "Thank you for calling. I will relay your message immediately. Goodbye!"):
+    def hang_up(self, message: str = "Thank you for calling. I will relay your message immediately. Goodbye!") -> bool:
         """Ends the call politely and saves the call report."""
         if not self.is_active:
-            return
+            return False
         self.is_active = False
         self._stop_event.set()
 
@@ -604,6 +620,7 @@ purpose and whether they want to leave a message. Output only the spoken text.
         # Speak debriefing aloud to user
         spoken_debrief = f"Sir, I screened the call from {self.caller_name} on {self.app_name}. {summary}"
         self._speak(spoken_debrief)
+        return True
 
 
 def start_call_proxy(event: dict, ui: Any = None, speak_fn: Optional[Callable[[str], None]] = None) -> CallAssistant:
