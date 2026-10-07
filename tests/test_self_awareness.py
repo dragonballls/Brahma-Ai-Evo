@@ -1,6 +1,7 @@
 """Regression tests for functional self-awareness and entity grounding."""
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 import tempfile
@@ -71,7 +72,13 @@ class SelfAwarenessTests(unittest.TestCase):
 
     def test_module_has_no_background_worker_dependency(self):
         import core.self_model as module
-        self.assertFalse(hasattr(module, "threading"))
+        tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+        worker_names = {"Thread", "ThreadPoolExecutor"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr in worker_names:
+                self.fail(f"Self-awareness must not create background workers: {node.attr}")
+            if isinstance(node, ast.Name) and node.id in worker_names:
+                self.fail(f"Self-awareness must not create background workers: {node.id}")
 
 
     def test_feature_wrapper_exposes_identity_actions(self):
