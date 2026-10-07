@@ -769,13 +769,50 @@ class RuntimeConsistencyTests(unittest.TestCase):
         self.assertNotIn("headers=self._headers,", source)
 
     def test_openrouter_tool_responses_require_usable_content_or_calls(self):
-        source = self.read("or_client.py")
-        self.assertIn("tool-capable response had no choices; trying next model", source)
-        self.assertIn("tool-capable response had no usable content or tool calls; trying next model", source)
-        block = source[source.index("    def _call_tool_capable("):source.index("    def _call_omniroute_tool_capable(", source.index("    def _call_tool_capable("))]
-        self.assertIn("if not isinstance(data, dict):", block)
-        self.assertIn("if not isinstance(choices, list) or not choices:", block)
-        self.assertIn("return {}", block)
+        from unittest.mock import Mock, patch
+
+        from or_client import OpenRouterClient
+
+        client = OpenRouterClient.__new__(OpenRouterClient)
+        client._request_headers = lambda: {"Authorization": "Bearer test"}
+        client._is_rate_limited = lambda model: False
+        client._is_temporarily_failed = lambda model: False
+        client._mark_temporarily_failed = Mock()
+
+        response = Mock(status_code=200)
+        tools = [{
+            "name": "demo_tool",
+            "description": "demo",
+            "parameters": {"type": "object", "properties": {}},
+        }]
+        with (
+            patch("or_client.requests.post", return_value=response) as post,
+            patch("or_client._read_bounded_json", return_value={"choices": []}),
+        ):
+            result = client._call_tool_capable(
+                "demo-model",
+                [{"role": "user", "content": "hello"}],
+                tools,
+            )
+        self.assertEqual(result, {})
+        post.assert_called_once()
+        self.assertFalse(client._mark_temporarily_failed.called)
+
+        response = Mock(status_code=200)
+        with (
+            patch("or_client.requests.post", return_value=response),
+            patch(
+                "or_client._read_bounded_json",
+                return_value={"choices": [{"message": {"content": "", "tool_calls": []}}]},
+            ),
+        ):
+            result = client._call_tool_capable(
+                "demo-model",
+                [{"role": "user", "content": "hello"}],
+                tools,
+            )
+        self.assertEqual(result, {})
+        self.assertFalse(client._mark_temporarily_failed.called)
 
     def test_dashboard_encryption_contract_is_consistent(self):
         server = self.read("dashboard/server.py")
