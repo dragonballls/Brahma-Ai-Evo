@@ -40,6 +40,7 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
     SettingSpec("sound_effects_enabled", "Enable JARVIS interface sound effects.", "bool", aliases=("sound effects", "interface sounds", "ui sounds")),
     SettingSpec("sound_effects_volume", "Sound-effects volume percentage.", "number",  minimum=0, maximum=100, aliases=("sound effects volume", "ui volume")),
     SettingSpec("push_to_talk_enabled", "Enable push-to-talk voice operation.", "bool", aliases=("push to talk", "ptt")),
+    SettingSpec("allow_cloud_transcription", "Allow microphone speech to use network transcription when local transcription fails.", "bool", aliases=("cloud transcription", "online transcription", "network transcription")),
     SettingSpec("offline_mode_enabled", "Keep Brahma in offline/local mode.", "bool", aliases=("offline mode", "air gapped mode")),
     SettingSpec("intelligence_mode", "Conversational intelligence mode.", "choice", ("smart", "fast", "off"), aliases=("intelligence mode", "reasoning mode")),
     SettingSpec("intelligence_orchestration_enabled", "Enable multi-model reasoning and final synthesis.", "bool", aliases=("multi model reasoning", "multi model", "orchestration")),
