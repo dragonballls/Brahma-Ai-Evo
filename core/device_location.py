@@ -203,17 +203,17 @@ def _detect_via_ip_services() -> Optional[Dict[str, Any]]:
             if status >= 400:
                 raise RuntimeError(f"Location service returned HTTP {status}.")
             data = json.loads(raw.decode("utf-8"))
-                city = data.get(city_k)
-                if city and isinstance(city, str) and city.strip() and city.lower() != "none":
-                    return {
-                        "status": "success",
-                        "city": city.strip(),
-                        "region": data.get(reg_k),
-                        "country": data.get("country") or data.get("countryName"),
-                        "latitude": data.get(lat_k),
-                        "longitude": data.get(lon_k),
-                        "source": name,
-                    }
+            city = data.get(city_k)
+            if city and isinstance(city, str) and city.strip() and city.lower() != "none":
+                return {
+                    "status": "success",
+                    "city": city.strip(),
+                    "region": data.get(reg_k),
+                    "country": data.get("country") or data.get("countryName"),
+                    "latitude": data.get(lat_k),
+                    "longitude": data.get(lon_k),
+                    "source": name,
+                }
         except Exception:
             continue
 
