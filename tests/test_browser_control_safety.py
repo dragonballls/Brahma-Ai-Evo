@@ -245,3 +245,33 @@ def test_browser_localhost_alias_allows_local_https(monkeypatch):
     assert validate_browser_url("https://localhost:8443/health") == "https://localhost:8443/health"
     with pytest.raises(ValueError):
         validate_browser_url("https://127.0.0.1:8443/health")
+
+
+def test_browser_fill_form_rejects_partial_completion():
+    from actions.browser_control import _BrowserThread
+
+    class Element:
+        async def clear(self):
+            return None
+
+        async def type(self, *_args, **_kwargs):
+            raise RuntimeError("field unavailable")
+
+    class Locator:
+        def __init__(self, element):
+            self.first = element
+
+    class Page:
+        def locator(self, _selector):
+            return Locator(Element())
+
+    thread = _BrowserThread()
+    thread._get_page = lambda: None
+
+    async def fake_get_page():
+        return Page()
+
+    thread._get_page = fake_get_page
+    result = asyncio.run(thread._fill_form({"#name": "Alice"}))
+    assert result.startswith("Form fill failed:")
+    assert "Form filled:" not in result
