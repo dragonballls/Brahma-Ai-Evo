@@ -173,3 +173,54 @@ def test_recover_promoting_resets_main_not_checkpoint_branch():
     assert ("switch", "agent/checkpoint/original") in calls
     assert saved[-1].state == "pending"
     assert saved[-1].promoted_sha is None
+
+
+def test_partial_undo_failure_restores_approved_state(tmp_path):
+    promoted = "c" * 40
+    checkpoint = _checkpoint(state="approved", promoted_sha=promoted)
+    saved = []
+    calls = []
+    agent = object.__new__(SelfCodingAgent)
+    agent._load = lambda _checkpoint_id: checkpoint
+    agent._validate_checkpoint = lambda _checkpoint: None
+    agent.validate_repo = lambda: None
+    agent._branch = lambda: "main"
+    agent._save = lambda value: saved.append(value)
+
+    first_undo = "d" * 40
+    def fake_git(*args, **kwargs):
+        calls.append(args)
+        if args == ("fetch", "origin", "main"):
+            return _result(args)
+        if args == ("rev-parse", "refs/remotes/origin/main"):
+            return _result(args, stdout=promoted)
+        if args == ("rev-parse", "refs/heads/main"):
+            return _result(args, stdout=promoted)
+        if args == ("switch", "main"):
+            return _result(args)
+        if args == ("revert", "--no-edit", checkpoint.commits[-1]):
+            return _result(args)
+        if args == ("rev-parse", "HEAD"):
+            return _result(args, stdout=first_undo)
+        if args == ("reset", "--hard", promoted):
+            return _result(args)
+        if args == ("revert", "--no-edit", checkpoint.commits[0]):
+            return _result(args, returncode=1, stderr="conflict during second revert")
+        if args == ("revert", "--abort"):
+            return _result(args)
+        if args == ("switch", "main"):
+            return _result(args)
+        raise AssertionError(f"unexpected git call: {args}")
+
+    agent._git = fake_git
+
+    try:
+        agent._undo_unlocked(checkpoint.checkpoint_id)
+    except SelfCodingError as exc:
+        assert "second revert" in str(exc) or "Unable to revert" in str(exc)
+    else:
+        raise AssertionError("partial undo failure must not be reported as success")
+
+    assert ("reset", "--hard", promoted) in calls
+    assert saved[-1].state == "approved"
+    assert saved[-1].undo_commits == ()
