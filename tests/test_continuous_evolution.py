@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -130,6 +131,50 @@ class ContinuousEvolutionTests(unittest.TestCase):
             preview.assert_called_once()
             self.assertEqual(engine._state["candidates"][-1]["state"], "pending")
 
+
+    def test_state_save_uses_exclusive_temp_creation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = EvolutionEngine(tmp)
+            target = Path(tmp) / "evolution" / "state.json"
+            engine._state_path = target
+            seen = {}
+            real_open = os.open
+            import core.evolution_engine as module
+
+            def checked_open(path, flags, mode=0o666):
+                seen["flags"] = flags
+                return real_open(path, flags, mode)
+
+            with patch.object(module.os, "open", side_effect=checked_open):
+                engine._save_state()
+
+            self.assertTrue(seen["flags"] & os.O_EXCL)
+            self.assertTrue(target.exists())
+
+
+    def test_corrupt_evolution_state_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = EvolutionEngine(tmp)
+            engine._state_path = Path(tmp) / "evolution" / "state.json"
+            engine._state_path.parent.mkdir(parents=True, exist_ok=True)
+            engine._state_path.write_text("{broken", encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                engine._load_state()
+
+    def test_state_save_failure_rolls_back_in_memory_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = EvolutionEngine(tmp)
+            before = dict(engine._state)
+            with patch.object(engine, "_save_state", side_effect=RuntimeError("disk failure")):
+                with self.assertRaises(RuntimeError):
+                    engine._set_state(last_error="not persisted")
+            self.assertEqual(engine._state, before)
+
+    def test_offline_mode_fails_closed_when_settings_cannot_be_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = EvolutionEngine(tmp)
+            with patch("memory.config_manager.get_setting", side_effect=RuntimeError("corrupt settings")):
+                self.assertTrue(engine.offline_mode)
 
     def test_state_save_uses_exclusive_temp_creation(self):
         with tempfile.TemporaryDirectory() as tmp:
