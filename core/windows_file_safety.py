@@ -371,6 +371,12 @@ def rename(source: Path | str, destination: Path | str, *, source_identity=None)
     try:
         final_source = _final_path(source_handle)
         final_parent = _final_path(parent_handle)
+        requested_source = _win_path(source)
+        requested_parent = _win_path(destination_path.parent)
+        if os.path.normcase(final_source) != os.path.normcase(requested_source):
+            raise OSError("Refusing a rename through a reparse-point source path")
+        if os.path.normcase(final_parent) != os.path.normcase(requested_parent):
+            raise OSError("Refusing a rename through a reparse-point destination path")
         if not _is_under_home(final_source) or not _is_under_home(final_parent):
             raise OSError("Refusing a rename outside the user's home directory")
 

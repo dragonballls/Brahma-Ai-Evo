@@ -253,7 +253,12 @@ class DynamicToolRegistry:
         # User-generated code is treated as untrusted on every reload: keep it
         # inside the vault and re-run Crucible validation before importing it.
         if APPDATA_SKILLS_DIR.exists():
+            raw_vault = APPDATA_SKILLS_DIR.absolute()
             vault_root = APPDATA_SKILLS_DIR.resolve()
+            if os.path.normcase(os.path.normpath(str(vault_root))) != os.path.normcase(os.path.normpath(str(raw_vault))):
+                logger.warning("[Registry] Refusing a skill vault reached through a reparse/symlink path.")
+                cls._initialized = True
+                return count
             for item in APPDATA_SKILLS_DIR.iterdir():
                 if not item.is_dir() or item.name in cls._skills:
                     continue
@@ -533,14 +538,25 @@ class DynamicToolRegistry:
 
     @classmethod
     def toggle_skill(cls, name: str, active: Optional[bool] = None) -> bool:
-        """Enables or disables a synthetic skill without leaving memory/persistence split."""
+        """Enables or disables a persisted skill without mutating native repository files."""
         skill = cls.get_skill(name)
-        if not skill:
+        if not skill or not skill.skill_path.is_dir():
+            return False
+        try:
+            vault_root = APPDATA_SKILLS_DIR.resolve()
+            raw_vault = APPDATA_SKILLS_DIR.absolute()
+            if os.path.normcase(os.path.normpath(str(vault_root))) != os.path.normcase(os.path.normpath(str(raw_vault))):
+                return False
+            skill_root = skill.skill_path.resolve()
+            skill_root.relative_to(vault_root)
+            manifest_path = skill_root / "manifest.json"
+            if not manifest_path.is_file() or manifest_path.is_symlink():
+                return False
+        except (OSError, ValueError):
             return False
 
         with cls._registry_lock:
             new_status = not skill.active if active is None else bool(active)
-            manifest_path = skill.skill_dir / "manifest.json"
             updated_manifest = dict(skill.manifest)
             updated_manifest["active"] = new_status
             temp_path = manifest_path.with_name(
@@ -565,14 +581,21 @@ class DynamicToolRegistry:
 
     @classmethod
     def delete_skill(cls, name: str) -> bool:
-        """Permanently removes a synthetic skill."""
+        """Permanently removes only a persisted synthetic skill from the user skill vault."""
         skill = cls.get_skill(name)
-        if not skill:
+        if not skill or not skill.skill_path.is_dir():
             return False
 
         try:
-            if skill.skill_dir.exists():
-                shutil.rmtree(skill.skill_dir)
+            vault_root = APPDATA_SKILLS_DIR.resolve()
+            raw_vault = APPDATA_SKILLS_DIR.absolute()
+            if os.path.normcase(os.path.normpath(str(vault_root))) != os.path.normcase(os.path.normpath(str(raw_vault))):
+                return False
+            skill_root = skill.skill_path.resolve()
+            skill_root.relative_to(vault_root)
+            if skill_root == vault_root or skill_root.is_symlink():
+                return False
+            shutil.rmtree(skill_root)
             with cls._registry_lock:
                 if name in cls._skills:
                     del cls._skills[name]

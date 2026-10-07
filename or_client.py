@@ -735,7 +735,10 @@ class OpenRouterClient:
                 finish_reason = str(response.get("choices", [{}])[0].get("finish_reason") or "")
                 if finish_reason == "length":
                     continue
-                return "Task completed."
+                raise RuntimeError(
+                    "[OpenRouter] Tool-calling returned no usable final response; "
+                    "completion was not verified."
+                )
 
             assistant_message = {
                 "role": "assistant",
@@ -846,10 +849,13 @@ class OpenRouterClient:
         clean = clean.strip().rstrip("`").strip()
 
         try:
-            return json.loads(clean)
+            parsed = json.loads(clean)
         except json.JSONDecodeError as e:
             logger.error(f"[OpenRouter] JSON parse failed: {e}")
             raise ValueError("Local model returned unparseable JSON.") from e
+        if not isinstance(parsed, dict):
+            raise ValueError("Model JSON response must be an object.")
+        return parsed
 
     def vision(
         self,

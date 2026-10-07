@@ -32,8 +32,8 @@ def validate_fixed_https_url(url: str, allowed_hosts: Iterable[str]) -> str:
             address = ipaddress.ip_address(entry[4][0])
         except ValueError as exc:
             raise ValueError("Network destination returned an invalid address.") from exc
-        if not address.is_global:
-            raise ValueError("Network destination resolved to a non-global address.")
+        if address.is_multicast or not address.is_global:
+            raise ValueError("Network destination resolved to a non-global or multicast address.")
     return url
 
 
@@ -123,7 +123,7 @@ def fetch_public_bytes(
     candidates = []
     for entry in entries:
         address = ipaddress.ip_address(entry[4][0])
-        if address.is_global and entry[4][0] not in candidates:
+        if not address.is_multicast and address.is_global and entry[4][0] not in candidates:
             candidates.append(entry[4][0])
     if not candidates:
         raise ValueError("Public URL resolved only to non-global addresses.")
@@ -200,8 +200,8 @@ def download_public_to_file(
             candidates = []
             for entry in entries:
                 address = ipaddress.ip_address(entry[4][0])
-                if not address.is_global:
-                    raise ValueError("Public download host resolved to a non-global address.")
+                if address.is_multicast or not address.is_global:
+                    raise ValueError("Public download host resolved to a non-global or multicast address.")
                 if entry[4][0] not in candidates:
                     candidates.append(entry[4][0])
             if not candidates:
