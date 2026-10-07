@@ -35,7 +35,7 @@ _RELATIVE_MAP_KEYS = {
 }
 
 
-def _parse_date(raw: str) -> str:
+def _parse_date(raw: str) -> str | None:
 
     raw   = raw.strip()
     lower = raw.lower()
@@ -79,9 +79,8 @@ def _parse_date(raw: str) -> str:
                 year = today.year if month_num >= today.month else today.year + 1
                 return f"{year}-{month_num:02d}-{day:02d}"
 
-    # Last resort: today
-    print(f"[FlightFinder] ⚠️ Could not parse date '{raw}' — using today.")
-    return today.strftime("%Y-%m-%d")
+    print(f"[FlightFinder] ⚠️ Could not parse date '{raw}'.")
+    return None
 
 _CABIN_CODE: dict[str, str] = {
     "economy":  "1",
@@ -252,12 +251,26 @@ def _format_text_report(
 
     return "\n".join(lines)
 
+def _safe_filename_part(value: str, fallback: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value or "").strip())
+    cleaned = cleaned.strip(" ._-")[:48]
+    return cleaned or fallback
+
+
 def _save_to_desktop(content: str, origin: str, destination: str) -> str:
-    ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"flights_{origin}_{destination}_{ts}.txt".replace(" ", "_")
-    desktop  = Path.home() / "Desktop"
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    origin_part = _safe_filename_part(origin, "origin")
+    destination_part = _safe_filename_part(destination, "destination")
+    filename = f"flights_{origin_part}_{destination_part}_{ts}.txt"
+    desktop = (Path.home() / "Desktop").resolve()
     desktop.mkdir(parents=True, exist_ok=True)
-    filepath = desktop / filename
+    filepath = (desktop / filename).resolve()
+    try:
+        filepath.relative_to(desktop)
+    except ValueError as exc:
+        raise ValueError("Flight report path escaped Desktop.") from exc
+    if filepath.is_symlink() or (filepath.exists() and not filepath.is_file()):
+        raise ValueError("Flight report destination is unsafe.")
 
     filepath.write_text(content, encoding="utf-8")
     print(f"[FlightFinder] 💾 Saved: {filepath}")
@@ -278,12 +291,17 @@ def _save_to_desktop(content: str, origin: str, destination: str) -> str:
 def flight_finder(parameters: dict, player=None, speak=None) -> str:
     params = parameters or {}
 
-    origin      = params.get("origin",      "").strip()
-    destination = params.get("destination", "").strip()
-    date_raw    = params.get("date",        "").strip()
-    return_raw  = (params.get("return_date") or "").strip()
-    passengers  = max(1, int(params.get("passengers", 1)))
-    cabin       = params.get("cabin", "economy").strip().lower()
+    origin      = str(params.get("origin", "") or "").strip()
+    destination = str(params.get("destination", "") or "").strip()
+    date_raw    = str(params.get("date", "") or "").strip()
+    return_raw  = str(params.get("return_date") or "").strip()
+    try:
+        passengers = int(params.get("passengers", 1))
+    except (TypeError, ValueError):
+        return "Passenger count must be a whole number, sir."
+    if passengers < 1:
+        return "Passenger count must be at least 1, sir."
+    cabin       = str(params.get("cabin", "economy") or "economy").strip().lower()
     save        = bool(params.get("save", False))
 
     if not origin or not destination:
@@ -295,8 +313,12 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
     if cabin not in _CABIN_CODE:
         cabin = "economy"
 
-    date        = _parse_date(date_raw)
+    date = _parse_date(date_raw)
+    if date is None:
+        return f"I couldn't understand the departure date '{date_raw}', sir. Please provide a clear date."
     return_date = _parse_date(return_raw) if return_raw else None
+    if return_raw and return_date is None:
+        return f"I couldn't understand the return date '{return_raw}', sir. Please provide a clear date."
 
     if player:
         player.write_log(f"[FlightFinder] {origin} → {destination} on {date}")
