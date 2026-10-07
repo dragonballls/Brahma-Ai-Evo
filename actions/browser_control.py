@@ -297,7 +297,6 @@ class _BrowserThread:
                 )
             )
             await self._context.route("**/*", self._guard_request)
-            await self._context.route("**/*", self._guard_request)
 
         if self._page is None or self._page.is_closed():
             self._page = await self._context.new_page()
@@ -319,6 +318,7 @@ class _BrowserThread:
 
         is_http = parsed.scheme.lower() in {"http", "https"}
         if is_http:
+            from actions.playwright_mcp_client import validate_browser_url
             try:
                 validate_browser_url(url)
             except ValueError:
@@ -336,6 +336,7 @@ class _BrowserThread:
         elif resource_type == "document":
             # Top-level navigation to non-http(s) schemes is never part of the
             # public browser contract; reject before page content becomes visible.
+            from actions.playwright_mcp_client import validate_browser_url
             try:
                 validate_browser_url(url)
             except ValueError:
@@ -377,6 +378,7 @@ class _BrowserThread:
                     "Chrome/120.0.0.0 Safari/537.36"
                 )
             )
+            await self._context.route("**/*", self._guard_request)
         page = await self._context.new_page()
         if page not in self._pages:
             self._pages.append(page)
@@ -596,6 +598,148 @@ class _BrowserThread:
 
         return f"Could not find input: '{description}'"
 
+    async def _snapshot(self) -> str:
+        page = await self._get_page()
+        try:
+            text = await page.inner_text("body", timeout=10000)
+            return text[:12000] if text else ""
+        except Exception as exc:
+            return f"Snapshot unavailable: {exc}"
+
+    async def _find(self, text: str) -> str:
+        query = str(text or "").strip()
+        if not query:
+            return "Find requires text."
+        page = await self._get_page()
+        try:
+            count = await page.get_by_text(query, exact=False).count()
+            return f"Found {count} matching element(s) for '{query}'."
+        except Exception as exc:
+            return f"Find error: {exc}"
+
+    async def _hover(self, selector=None, text=None) -> str:
+        page = await self._get_page()
+        try:
+            if text:
+                await page.get_by_text(str(text), exact=False).first.hover(timeout=8000)
+                return f"Hovered: '{text}'"
+            if selector:
+                await page.locator(selector).first.hover(timeout=8000)
+                return f"Hovered: {selector}"
+            return "No selector or text provided."
+        except PlaywrightTimeout:
+            return "Element not found or not hoverable."
+        except Exception as exc:
+            return f"Hover error: {exc}"
+
+    async def _select_option(self, values: list[str], selector=None) -> str:
+        page = await self._get_page()
+        if not selector:
+            return "Select option requires a selector."
+        try:
+            await page.locator(selector).first.select_option(values=values, timeout=8000)
+            return f"Selected {len(values)} option(s)."
+        except Exception as exc:
+            return f"Select option error: {exc}"
+
+    def _safe_user_path(self, raw_path: str | Path) -> Path:
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute():
+            path = Path.cwd() / path
+        home = Path.home().resolve()
+        resolved = path.resolve(strict=False)
+        try:
+            resolved.relative_to(home)
+        except ValueError as exc:
+            raise ValueError("Browser file paths must stay inside the user's home directory.") from exc
+        current = Path(path.anchor) if path.anchor else Path(".")
+        parts = path.parts[1:] if path.anchor else path.parts
+        for part in parts:
+            current = current / part
+            if current.is_symlink():
+                raise ValueError("Browser file paths may not contain symlinked components.")
+            is_junction = getattr(current, "is_junction", None)
+            if is_junction is not None and is_junction():
+                raise ValueError("Browser file paths may not contain junctions.")
+        return resolved
+
+    async def _screenshot(self, output_path: str) -> str:
+        import os
+        import tempfile
+        target = self._safe_user_path(output_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.is_symlink() or (getattr(target, "is_junction", lambda: False)()):
+            return "Screenshot blocked: destination is a link/reparse point."
+        fd, tmp_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=str(target.parent))
+        os.close(fd)
+        try:
+            page = await self._get_page()
+            await page.screenshot(path=tmp_name)
+            os.replace(tmp_name, target)
+            return f"Screenshot saved: {target}"
+        except Exception as exc:
+            try:
+                Path(tmp_name).unlink(missing_ok=True)
+            except OSError:
+                pass
+            return f"Screenshot failed: {exc}"
+
+    async def _wait_for(self, text=None, time_ms=2000) -> str:
+        page = await self._get_page()
+        try:
+            if text:
+                await page.get_by_text(str(text), exact=False).first.wait_for(timeout=max(1, int(time_ms)))
+                return f"Found: {text}"
+            await asyncio.sleep(max(0, int(time_ms)) / 1000)
+            return f"Waited {int(time_ms)} ms."
+        except PlaywrightTimeout:
+            return f"Timed out waiting for: {text}"
+        except Exception as exc:
+            return f"Wait error: {exc}"
+
+    async def _handle_dialog(self, accept: bool = True, prompt_text=None) -> str:
+        page = await self._get_page()
+        async def _handler(dialog):
+            try:
+                if accept:
+                    await dialog.accept(prompt_text)
+                else:
+                    await dialog.dismiss()
+            except Exception:
+                pass
+        try:
+            page.once("dialog", _handler)
+            return "Dialog handler armed for the next browser dialog."
+        except Exception as exc:
+            return f"Dialog handler could not be armed: {exc}"
+
+    async def _file_upload(self, paths: list[str], selector=None) -> str:
+        if not paths:
+            return "File upload requires at least one path."
+        if not selector:
+            return "File upload requires a selector."
+        safe_paths = []
+        try:
+            for raw in paths:
+                candidate = self._safe_user_path(raw)
+                if not candidate.exists() or not candidate.is_file() or candidate.is_symlink():
+                    return f"File upload blocked: unsafe or missing file '{raw}'."
+                safe_paths.append(str(candidate))
+        except Exception as exc:
+            return f"File upload blocked: {exc}"
+        try:
+            page = await self._get_page()
+            await page.locator(selector).first.set_input_files(safe_paths, timeout=10000)
+            return f"Selected {len(safe_paths)} file(s) for upload."
+        except Exception as exc:
+            return f"File upload failed: {exc}"
+
+    async def _console_messages(self) -> str:
+        return "\n".join(self._console_log[-100:]) or "No console messages recorded."
+
+    async def _network_requests(self) -> str:
+        return "\n".join(self._network_log[-100:]) or "No network requests recorded."
+
     async def _shutdown_resources(self) -> None:
         await self._close_browser()
         if self._playwright:
@@ -609,6 +753,8 @@ class _BrowserThread:
             self._context = None
             self._page    = None
             self._pages   = []
+            self._network_log = []
+            self._console_log = []
 
         return "Browser closed."
 
