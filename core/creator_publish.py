@@ -54,13 +54,17 @@ def publish_project(
     if not credentials or not credentials.valid:
         secret = _secret_path()
         if not secret:
-            webbrowser.open("https://studio.youtube.com/")
+            opened = bool(webbrowser.open("https://studio.youtube.com/"))
             return {
                 "ok": False,
                 "mode": "studio_fallback",
                 "video": str(video),
                 "metadata": metadata,
-                "message": "Direct YouTube API credentials are not configured; YouTube Studio was opened with the package ready.",
+                "message": (
+                    "Direct YouTube API credentials are not configured; "
+                    + ("YouTube Studio was opened." if opened else "YouTube Studio could not be opened automatically.")
+                    + " The package is ready."
+                ),
             }
         flow = InstalledAppFlow.from_client_secrets_file(str(secret), SCOPES)
         credentials = flow.run_local_server(port=0, access_type="offline", prompt="consent")
@@ -92,7 +96,9 @@ def publish_project(
     response = None
     while response is None:
         _, response = request.next_chunk()
-    video_id = response.get("id")
+    video_id = response.get("id") if isinstance(response, dict) else None
+    if not video_id:
+        raise RuntimeError("YouTube upload returned no video ID; refusing to report a successful publish.")
     thumbnail = manifest.get("thumbnail_path")
     if video_id and thumbnail and Path(thumbnail).is_file():
         service.thumbnails().set(
