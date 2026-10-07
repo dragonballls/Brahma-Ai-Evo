@@ -30,9 +30,9 @@ SETTINGS_PATH = APP_SETTINGS_PATH
 # ==============================================================================
 
 _SAFE_BASH_PROGRAMS = {
-    "python", "python3", "pytest", "pip", "pip3", "uv", "ruff", "mypy", "pyright",
-    "node", "npm", "yarn", "pnpm", "bun", "deno", "git",
-    "cargo", "rustc", "go", "java", "javac", "gradle", "gradlew", "mvn",
+    "python", "python3", "pytest", "ruff", "mypy", "pyright",
+    "node", "deno", "git",
+    "cargo", "rustc", "go", "java", "javac",
     "dotnet", "msbuild", "cmake", "make", "gcc", "g++", "clang", "clang++",
 }
 _BLOCKED_COMMAND_INTERPRETERS = {

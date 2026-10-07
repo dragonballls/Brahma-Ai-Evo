@@ -7,11 +7,19 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-import pyautogui
-import pyperclip
+try:
+    import pyautogui
+except Exception:
+    pyautogui = None
 
-pyautogui.FAILSAFE = True
-pyautogui.PAUSE = 0.08
+try:
+    import pyperclip
+except Exception:
+    pyperclip = None
+
+if pyautogui is not None:
+    pyautogui.FAILSAFE = True
+    pyautogui.PAUSE = 0.08
 
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
@@ -26,9 +34,15 @@ def _normalize_path(value: str) -> Path | None:
     return path
 
 
+def _require_ui_automation():
+    if pyautogui is None:
+        raise RuntimeError("PyAutoGUI is unavailable in this environment.")
+
+
 def _open_app(app_name: str) -> bool:
     """Opens an app via Windows search."""
     try:
+        _require_ui_automation()
         pyautogui.press("win")
         time.sleep(0.4)
         pyautogui.write(app_name, interval=0.04)
@@ -79,6 +93,7 @@ def _open_instagram_post_dialog() -> None:
     webbrowser.open("https://www.instagram.com/create/select/")
     time.sleep(6.0)
 
+    _require_ui_automation()
     # Instagram usually shows a modal with "Select from computer".
     # Give it a few chances to focus that action without using the left nav.
     for _ in range(5):

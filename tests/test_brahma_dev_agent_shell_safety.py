@@ -76,6 +76,15 @@ def test_brahma_dev_agent_rejects_explicit_executable_paths(tmp_path):
     assert tools.bash("C:\\tools\\git.exe status").startswith("Error: executable paths")
 
 
+def test_brahma_dev_agent_blocks_package_manager_interpreters(tmp_path):
+    from actions.brahma_dev_agent import NativeTools
+
+    tools = NativeTools(tmp_path)
+    for command in ("npm run test", "pnpm run test", "yarn run test", "bun run test", "pip install demo"):
+        result = tools.bash(command)
+        assert result.startswith("Error: unsupported development executable")
+    assert "@" in "npm install @scope/package"
+
 def test_brahma_dev_agent_sanitizes_execution_override_environment():
     source = (ROOT / "actions" / "brahma_dev_agent.py").read_text(encoding="utf-8")
     assert 'if key.upper() not in _EXECUTION_ENV_OVERRIDES' in source

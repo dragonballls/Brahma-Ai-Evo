@@ -20,7 +20,7 @@ PROJECTS_DIR     = Path.home() / "Desktop" / "BrahmaProjects"
 MAX_FIX_ATTEMPTS = 5
 _SAFE_RUN_PROGRAMS = {
     "python", "python3", "pytest", "uvicorn", "ruff", "mypy",
-    "npm", "node", "npx", "cargo", "go", "dotnet", "java", "ruby", "php",
+    "node", "cargo", "go", "dotnet", "java", "ruby", "php",
 }
 _BLOCKED_RUN_FLAGS = {"-c", "--command", "--eval", "-e", "--execute", "--require", "--import"}
 _DEP_SPEC_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(?:\[[A-Za-z0-9_,.-]+\])?(?:\s*(?:==|>=|<=|~=|>|<|!=)\s*[A-Za-z0-9.*+!_-]+)?$")
