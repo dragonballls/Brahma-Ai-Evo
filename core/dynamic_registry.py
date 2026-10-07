@@ -21,6 +21,7 @@ import threading
 import sys
 import time
 import uuid
+import stat as _stat
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -62,7 +63,7 @@ def _is_link_like(path: Path) -> bool:
     if os.name == "nt":
         try:
             attrs = getattr(path.stat(follow_symlinks=False), "st_file_attributes", 0)
-            reparse = getattr(getattr(os, "stat", None), "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+            reparse = getattr(_stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
             if reparse and attrs & reparse:
                 return True
         except OSError:
