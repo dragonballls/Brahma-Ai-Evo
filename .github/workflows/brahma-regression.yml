@@ -118,6 +118,7 @@ jobs:
 
       - name: Run lifecycle and browser security regressions
         run: python -m pytest -q tests/test_task_queue_lifecycle.py tests/test_browser_control_safety.py tests/test_browser_pinned_proxy.py
+          tests/test_playwright_mcp_client.py
 
       - name: Run false-success action regressions
         run: python -m pytest -q tests/test_false_success_actions.py
