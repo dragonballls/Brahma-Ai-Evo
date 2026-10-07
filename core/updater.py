@@ -8,6 +8,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from core.runtime_paths import GITHUB_OWNER, GITHUB_REPOSITORY, GITHUB_BRANCH
 from core.network_safety import fetch_public_bytes
+from core.command_safety import resolve_git_executable
 
 class UpdateChecker(QObject):
     update_available_sig = pyqtSignal(str)
@@ -48,8 +49,9 @@ class UpdateChecker(QObject):
         if not remote_hash:
             return False
         try:
+            git = resolve_git_executable(self.base_dir)
             fetch = subprocess.run(
-                ["git", "fetch", "origin", self.branch, "--quiet"],
+                [git, "fetch", "origin", self.branch, "--quiet"],
                 cwd=self.base_dir,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
@@ -64,7 +66,7 @@ class UpdateChecker(QObject):
             if not local:
                 return False
             upstream = subprocess.run(
-                ["git", "rev-parse", f"origin/{self.branch}"],
+                [git, "rev-parse", f"origin/{self.branch}"],
                 cwd=self.base_dir,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
@@ -77,7 +79,7 @@ class UpdateChecker(QObject):
             if upstream.returncode != 0 or upstream.stdout.strip() != remote_hash:
                 return False
             ancestry = subprocess.run(
-                ["git", "merge-base", "--is-ancestor", local, remote_hash],
+                [git, "merge-base", "--is-ancestor", local, remote_hash],
                 cwd=self.base_dir,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
@@ -101,8 +103,9 @@ class UpdateChecker(QObject):
 
     def _get_local_hash(self):
         try:
+            git = resolve_git_executable(self.base_dir)
             output = subprocess.check_output(
-                ["git", "rev-parse", "HEAD"],
+                [git, "rev-parse", "HEAD"],
                 cwd=self.base_dir,
                 stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,
