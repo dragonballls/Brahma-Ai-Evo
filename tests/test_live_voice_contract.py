@@ -1,3 +1,4 @@
+import pytest
 """Regression tests for the Live-style duplex voice contract."""
 from __future__ import annotations
 
@@ -144,3 +145,76 @@ class LiveVoiceContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_microphone_transcription_does_not_use_cloud_without_explicit_permission(monkeypatch):
+    import sys
+    import types
+    import main
+
+    calls = {"sphinx": 0, "google": 0}
+
+    class AudioData:
+        pass
+
+    class Recognizer:
+        def __init__(self):
+            pass
+
+        def recognize_sphinx(self, _audio):
+            calls["sphinx"] += 1
+            raise RuntimeError("local recognizer unavailable")
+
+        def recognize_google(self, _audio):
+            calls["google"] += 1
+            return "cloud result"
+
+    monkeypatch.setitem(
+        sys.modules,
+        "speech_recognition",
+        types.SimpleNamespace(Recognizer=Recognizer, AudioData=lambda *args: AudioData()),
+    )
+
+    with pytest.raises(RuntimeError, match="cloud transcription is disabled"):
+        main._transcribe_microphone_pcm(
+            b"pcm",
+            16000,
+            offline_mode=False,
+            allow_cloud_transcription=False,
+        )
+    assert calls == {"sphinx": 1, "google": 0}
+
+
+def test_microphone_transcription_uses_cloud_only_when_explicitly_enabled(monkeypatch):
+    import sys
+    import types
+    import main
+
+    calls = {"sphinx": 0, "google": 0}
+
+    class Recognizer:
+        def recognize_sphinx(self, _audio):
+            calls["sphinx"] += 1
+            raise RuntimeError("local recognizer unavailable")
+
+        def recognize_google(self, _audio):
+            calls["google"] += 1
+            return "cloud result"
+
+    monkeypatch.setitem(
+        sys.modules,
+        "speech_recognition",
+        types.SimpleNamespace(
+            Recognizer=Recognizer,
+            AudioData=lambda *args: object(),
+        ),
+    )
+
+    result = main._transcribe_microphone_pcm(
+        b"pcm",
+        16000,
+        offline_mode=False,
+        allow_cloud_transcription=True,
+    )
+    assert result == "cloud result"
+    assert calls == {"sphinx": 1, "google": 1}
