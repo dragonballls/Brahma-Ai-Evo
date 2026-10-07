@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -168,3 +169,66 @@ def test_list_files_does_not_build_unbounded_result_list(tmp_path, monkeypatch):
     result = file_controller.list_files(str(tmp_path))
     assert "showing first 500 of 700 items" in result
     assert result.count("📄") <= 500
+
+
+def test_write_file_rejects_symlink_replacement_before_secure_open(tmp_path, monkeypatch):
+    from actions import file_controller
+
+    target = tmp_path / "victim.txt"
+    outside = tmp_path / "outside.txt"
+    backup = tmp_path / "original.txt"
+    target.write_text("original", encoding="utf-8")
+    outside.write_text("keep", encoding="utf-8")
+    monkeypatch.setattr(file_controller, "_SAFE_ROOTS", [tmp_path])
+    real_open = file_controller.os.open
+    swapped = {"done": False}
+
+    def race_open(path_value, flags, mode=0o777, *, dir_fd=None):
+        if (
+            dir_fd is not None
+            and path_value == target.name
+            and not swapped["done"]
+            and flags & getattr(os, "O_NOFOLLOW", 0)
+        ):
+            swapped["done"] = True
+            target.replace(backup)
+            target.symlink_to(outside)
+        return real_open(path_value, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(file_controller.os, "open", race_open)
+    result = file_controller.write_file(str(tmp_path), target.name, "malicious")
+    assert "could not write file" in result.lower()
+    assert outside.read_text(encoding="utf-8") == "keep"
+
+
+def test_write_file_rejects_hardlink_replacement_before_secure_write(tmp_path, monkeypatch):
+    from actions import file_controller
+
+    if os.name == "nt":
+        pytest.skip("Descriptor-relative hard-link race test targets POSIX openat semantics.")
+
+    target = tmp_path / "victim.txt"
+    outside = tmp_path / "outside.txt"
+    backup = tmp_path / "original.txt"
+    target.write_text("original", encoding="utf-8")
+    outside.write_text("keep", encoding="utf-8")
+    monkeypatch.setattr(file_controller, "_SAFE_ROOTS", [tmp_path])
+    real_open = file_controller.os.open
+    swapped = {"done": False}
+
+    def race_open(path_value, flags, mode=0o777, *, dir_fd=None):
+        if (
+            dir_fd is not None
+            and path_value == target.name
+            and not swapped["done"]
+            and flags & getattr(os, "O_NOFOLLOW", 0)
+        ):
+            swapped["done"] = True
+            target.replace(backup)
+            os.link(outside, target)
+        return real_open(path_value, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(file_controller.os, "open", race_open)
+    result = file_controller.write_file(str(tmp_path), target.name, "malicious")
+    assert "could not write file" in result.lower()
+    assert outside.read_text(encoding="utf-8") == "keep"
