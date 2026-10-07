@@ -78,10 +78,7 @@ def test_approve_push_failure_preserves_promoting_state_for_recovery():
 def test_undo_metadata_failure_after_publish_preserves_recovery_state():
     promoted = "c" * 40
     undo_tip = "d" * 40
-    checkpoint = replace(
-        _checkpoint(state="approved", promoted_sha=promoted),
-        commits=("b" * 40, "e" * 40),
-    )
+    checkpoint = _checkpoint(state="approved", promoted_sha=promoted)
     saved = []
     calls = []
     agent = object.__new__(SelfCodingAgent)
@@ -288,7 +285,10 @@ def test_recover_promoting_resets_main_not_checkpoint_branch():
 
 def test_partial_undo_failure_restores_approved_state(tmp_path):
     promoted = "c" * 40
-    checkpoint = _checkpoint(state="approved", promoted_sha=promoted)
+    checkpoint = replace(
+        _checkpoint(state="approved", promoted_sha=promoted),
+        commits=("b" * 40, "e" * 40),
+    )
     saved = []
     calls = []
     agent = object.__new__(SelfCodingAgent)
