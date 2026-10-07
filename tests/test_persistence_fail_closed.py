@@ -248,3 +248,42 @@ def test_config_atomic_writer_uses_exclusive_temp_creation(monkeypatch, tmp_path
     cm.save_settings({"race_test": "ok"})
     assert seen["flags"] & cm.os.O_EXCL
     assert target.exists()
+
+
+def test_settings_safe_read_refuses_symlink_without_following_it(tmp_path, monkeypatch):
+    import os
+    import memory.config_manager as config_manager
+
+    real = tmp_path / "real.json"
+    real.write_text('{"secret":"keep"}', encoding="utf-8")
+    link = tmp_path / "app_settings.json"
+    try:
+        os.symlink(real, link)
+    except (OSError, NotImplementedError):
+        pytest.skip("Symlink support unavailable")
+
+    monkeypatch.setattr(config_manager, "SETTINGS_FILE", link)
+    monkeypatch.setattr(config_manager, "CONFIG_DIR", tmp_path)
+    config_manager._SETTINGS_CACHE = None
+
+    with pytest.raises(RuntimeError, match="symlink"):
+        config_manager.load_settings()
+    assert real.read_text(encoding="utf-8") == '{"secret":"keep"}'
+
+
+def test_memory_safe_read_refuses_symlink_without_following_it(tmp_path, monkeypatch):
+    import os
+    import memory.memory_manager as mm
+
+    real = tmp_path / "real.json"
+    real.write_text('{"identity":{"name":{"value":"keep"}}}', encoding="utf-8")
+    link = tmp_path / "long_term.json"
+    try:
+        os.symlink(real, link)
+    except (OSError, NotImplementedError):
+        pytest.skip("Symlink support unavailable")
+
+    monkeypatch.setattr(mm, "MEMORY_PATH", link)
+    with pytest.raises(RuntimeError, match="symlink"):
+        mm.load_memory()
+    assert real.read_text(encoding="utf-8") == '{"identity":{"name":{"value":"keep"}}}'
