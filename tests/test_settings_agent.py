@@ -68,6 +68,17 @@ class ConversationalSettingsTests(unittest.TestCase):
         self.assertEqual(result["changed"][0]["new"], 42)
         self.assertEqual(settings_agent.load_settings()["sound_effects_volume"], 42)
 
+    @patch("llm_client.client.intelligent_json")
+    def test_llm_interpreter_builds_json_prompt(self, intelligent_json):
+        intelligent_json.return_value = {
+            "patches": [{"key": "push_to_talk_enabled", "value": True}],
+        }
+        patches = settings_agent._llm_plan("configure voice control the way I described")
+        self.assertEqual(patches, [{"key": "push_to_talk_enabled", "value": True}])
+        prompt = intelligent_json.call_args.args[0]
+        self.assertIn('"patches"', prompt)
+        self.assertIn('"push_to_talk_enabled"', prompt)
+
     @patch("core.settings_agent._llm_plan")
     def test_unknown_request_falls_back_to_interpreter(self, llm_plan):
         llm_plan.return_value = [{"key": "push_to_talk_enabled", "value": True}]
