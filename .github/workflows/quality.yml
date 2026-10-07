@@ -45,6 +45,20 @@ jobs:
       - name: Run follow-up audit regressions
         run: python -m pytest -q tests/test_followup_audits.py
 
+      - name: Run audit-added standalone regressions
+        run: >
+          python -m pytest -q
+          tests/test_memory_persistence.py
+          tests/test_dashboard_security.py
+          tests/test_unlock_device.py
+          tests/test_llm_local_network_safety.py
+          tests/test_calendar_scheduler.py
+          tests/test_globe_performance.py
+          tests/test_dynamic_registry_security.py
+          tests/test_network_safety.py
+          tests/test_network_download_safety.py
+          tests/test_windows_file_safety.py
+
   parallel-regressions:
     runs-on: windows-latest
     strategy:
