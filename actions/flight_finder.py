@@ -41,8 +41,11 @@ def _parse_date(raw: str) -> str | None:
     lower = raw.lower()
     today = datetime.now()
 
-    if re.match(r"\d{4}-\d{2}-\d{2}", raw):
-        return raw
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+        try:
+            return datetime.strptime(raw, "%Y-%m-%d").strftime("%Y-%m-%d")
+        except ValueError:
+            return None
     for fmt in ("%d/%m/%Y", "%m/%d/%Y", "%d.%m.%Y", "%d-%m-%Y"):
         try:
             return datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
@@ -67,8 +70,11 @@ def _parse_date(raw: str) -> str | None:
             system="You are a date converter. Return only the YYYY-MM-DD string."
         )
         result = result.strip()
-        if re.match(r"\d{4}-\d{2}-\d{2}", result):
-            return result
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", result):
+            try:
+                return datetime.strptime(result, "%Y-%m-%d").strftime("%Y-%m-%d")
+            except ValueError:
+                pass
     except Exception as e:
         print(f"[FlightFinder] ⚠️ date parse failed: {e}")
     for month_name, month_num in _MONTH_MAP.items():
