@@ -4807,14 +4807,8 @@ class BrahmaLive:
             app_settings = config_manager.load_settings()
             configured_provider = validate_provider(app_settings.get("default_ai_provider", "Gemini"))
             local_model_target = app_settings.get("local_ai_model", "qwen2.5:3b")
-            offline_setting = app_settings.get("offline_mode_enabled", False)
-            if not isinstance(offline_setting, bool):
-                raise RuntimeError("Offline-mode setting is invalid; refusing to route the request.")
-            is_offline_mode = offline_setting
-            auto_switch_setting = app_settings.get("auto_provider_switch", True)
-            if not isinstance(auto_switch_setting, bool):
-                raise RuntimeError("Provider-switch setting is invalid; refusing automatic provider fallback.")
-            auto_provider_switch = auto_switch_setting
+            is_offline_mode = config_manager.get_boolean_setting("offline_mode_enabled", False)
+            auto_provider_switch = config_manager.get_boolean_setting("auto_provider_switch", True)
 
             is_cloud_gemini = is_gemini(configured_provider)
             is_cloud_openrouter = is_openrouter(configured_provider)
@@ -7974,13 +7968,10 @@ def _main_impl():
             _startup_log("runner test mode complete; voice runtime intentionally bypassed")
             return
         selected_settings = config_manager.load_settings()
-        selected_provider = normalize_provider(
+        selected_provider = validate_provider(
             selected_settings.get("default_ai_provider", "Gemini")
         )
-        offline_setting = selected_settings.get("offline_mode_enabled", False)
-        if not isinstance(offline_setting, bool):
-            raise RuntimeError("Offline-mode setting is invalid; refusing to start network-capable voice behavior.")
-        offline_mode = offline_setting
+        offline_mode = config_manager.get_boolean_setting("offline_mode_enabled", False)
         gemini_voice_ready = _has_gemini_voice_credentials()
 
         # Gemini Live provides the full-duplex native-audio experience when its
