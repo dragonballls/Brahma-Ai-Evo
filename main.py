@@ -2114,7 +2114,7 @@ TOOL_DECLARATIONS = [
             "Full Google Workspace MCP for Gmail, Calendar, and Google Drive automation. "
             "Supports: reading unread emails, listing inbox, searching emails, sending emails; "
             "listing calendar events, adding calendar events; "
-            "searching Drive files, reading Drive files, and uploading files to Google Drive."
+            "searching Drive files, reading Drive files, and copying files into local Brahma Workspace staging (not Google Drive cloud upload)."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -2125,7 +2125,7 @@ TOOL_DECLARATIONS = [
                 },
                 "action": {
                     "type": "STRING",
-                    "description": "gmail actions: 'list', 'unread', 'read', 'search', 'send' | calendar actions: 'list', 'add' | drive actions: 'list', 'search', 'read', 'upload'"
+                    "description": "gmail actions: 'list', 'unread', 'read', 'search', 'send' | calendar actions: 'list', 'add' | drive actions: 'list', 'search', 'read', 'upload' (upload currently means local Brahma Workspace staging)."
                 },
                 "to": {
                     "type": "STRING",
