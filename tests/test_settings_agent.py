@@ -56,6 +56,12 @@ class ConversationalSettingsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             settings_agent.validate("sound_effects_volume", 140)
 
+    def test_validation_rejects_nonfinite_numeric_values(self):
+        with self.assertRaises(ValueError):
+            settings_agent.validate("sound_effects_volume", float("nan"))
+        with self.assertRaises(ValueError):
+            settings_agent.validate("sound_effects_volume", float("inf"))
+
     def test_apply_persists_and_reports_changes(self):
         result = settings_agent.apply("set sound effects volume to 42")
         self.assertTrue(result["ok"])
