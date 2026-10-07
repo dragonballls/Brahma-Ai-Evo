@@ -16,7 +16,14 @@ def test_windows_handle_file_roundtrip_and_rename(tmp_path):
     text, size = winfs.read_text(source, max_chars=100)
     assert text == "alpha"
     assert size == len("alpha")
-    winfs.write_text(source, "beta", expected_identity=None)
+    first_fd, _final, first_info = winfs.open_safe_file(source, write=True)
+    os.close(first_fd)
+    identity = (
+        int(first_info.dwVolumeSerialNumber),
+        int(first_info.nFileIndexHigh),
+        int(first_info.nFileIndexLow),
+    )
+    winfs.write_text(source, "beta", expected_identity=identity)
     winfs.rename(source, renamed)
 
     text, _ = winfs.read_text(renamed, max_chars=100)
