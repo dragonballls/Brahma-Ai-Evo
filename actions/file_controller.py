@@ -272,10 +272,10 @@ def _secure_write_text(target: Path, content: str, *, append: bool = False, expe
             flags = os.O_WRONLY | os.O_NOFOLLOW
             if expected_identity is None:
                 flags |= os.O_CREAT | os.O_EXCL
+            elif append:
+                flags |= os.O_APPEND
             else:
                 flags |= os.O_TRUNC
-                if append:
-                    flags |= os.O_APPEND
             fd = os.open(leaf, flags, 0o600, dir_fd=parent_fd)
             try:
                 if expected_identity is not None:
@@ -406,7 +406,7 @@ def create_file(path: str, name: str = "", content: str = "") -> str:
                 expected_identity = (int(stat.st_dev), int(stat.st_ino))
             except Exception as exc:
                 return f"Could not create file: existing target '{target.name}' could not be read safely: {exc}"
-        _secure_write_text(target, content, append=False)
+        _secure_write_text(target, content, append=False, expected_identity=expected_identity)
         expected_after = _fingerprint(target)
         if expected_after is None:
             return f"Could not create file: unable to verify the created file safely."
