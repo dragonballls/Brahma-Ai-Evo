@@ -23,7 +23,7 @@ from typing import Dict, Any
 def execute(**kwargs) -> Dict[str, Any]:
     """Tests internet download and upload speed and latency, and generates a visual speed gauge card on screen."""
     try:
-        st = speedtest.Speedtest()
+        st = speedtest.Speedtest(timeout=10)
         st.get_best_server()
         download_speed = st.download() / 1_000_000  # Convert to Mbps
         upload_speed = st.upload() / 1_000_000  # Convert to Mbps

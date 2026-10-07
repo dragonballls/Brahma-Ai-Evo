@@ -190,6 +190,8 @@ class OpenRouterClient:
         omni_key = os.environ.get("BRAHMA_OMNIROUTE_API_KEY", "").strip()
         if omni_key:
             headers["Authorization"] = f"Bearer {omni_key}"
+
+        response = None
         try:
             response = requests.post(
                 self._omniroute.base_url + "/chat/completions",
@@ -205,7 +207,7 @@ class OpenRouterClient:
             if response.status_code != 200:
                 logger.warning(f"[OmniRoute] HTTP {response.status_code}; using direct provider fallback")
                 return None
-            data = response.json()
+            data = _read_bounded_json(response)
             content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
             if isinstance(content, list):
                 content = "".join(
@@ -217,6 +219,12 @@ class OpenRouterClient:
         except Exception as exc:
             logger.warning(f"[OmniRoute] request failed; using direct provider fallback: {exc}")
             return None
+        finally:
+            if response is not None:
+                try:
+                    response.close()
+                except Exception:
+                    pass
 
     def _refresh_credentials(self) -> str:
         """Refresh the current credential without mutating shared request headers."""
@@ -261,6 +269,7 @@ class OpenRouterClient:
             )
 
         for attempt in range(1, MAX_RETRIES_PER_MODEL + 1):
+            resp = None
             try:
                 resp = requests.post(
                     API_URL,
@@ -296,7 +305,7 @@ class OpenRouterClient:
                     return None
 
                 if resp.status_code == 200:
-                    data    = _read_bounded_json(resp)
+                    data = _read_bounded_json(resp)
                     content = (
                         data.get("choices", [{}])[0]
                             .get("message", {})
@@ -308,7 +317,6 @@ class OpenRouterClient:
                     f"[OpenRouter] {model} → HTTP {resp.status_code} "
                     f"(attempt {attempt}/{MAX_RETRIES_PER_MODEL})"
                 )
-
             except requests.exceptions.Timeout:
                 logger.warning(
                     f"[OpenRouter] {model} → Timeout "
@@ -322,6 +330,12 @@ class OpenRouterClient:
                 logger.error(f"[OpenRouter] {model} → Unexpected error: {e}")
                 if attempt == MAX_RETRIES_PER_MODEL:
                     self._mark_temporarily_failed(model)
+            finally:
+                if resp is not None:
+                    try:
+                        resp.close()
+                    except Exception:
+                        pass
 
             if attempt < MAX_RETRIES_PER_MODEL:
                 time.sleep(RETRY_DELAY)
@@ -438,6 +452,7 @@ class OpenRouterClient:
             "tool_choice": "auto",
         }
         for attempt in range(1, MAX_RETRIES_PER_MODEL + 1):
+            resp = None
             try:
                 resp = requests.post(
                     API_URL,
@@ -445,6 +460,7 @@ class OpenRouterClient:
                     json=payload,
                     timeout=REQUEST_TIMEOUT,
                     allow_redirects=False,
+                    stream=True,
                 )
                 if resp.status_code == 401:
                     raise PermissionError("[OpenRouter] Authentication failed.")
@@ -465,8 +481,6 @@ class OpenRouterClient:
                     return {}
                 if resp.status_code == 200:
                     data = _read_bounded_json(resp)
-                    if not isinstance(data, dict):
-                        return {}
                     choices = data.get("choices")
                     if not isinstance(choices, list) or not choices:
                         logger.warning("[OpenRouter] tool-capable response had no choices; trying next model")
@@ -495,6 +509,12 @@ class OpenRouterClient:
                 logger.error(f"[OpenRouter] tool-capable {model} failed: {exc}")
                 if attempt == MAX_RETRIES_PER_MODEL:
                     self._mark_temporarily_failed(model)
+            finally:
+                if resp is not None:
+                    try:
+                        resp.close()
+                    except Exception:
+                        pass
             if attempt < MAX_RETRIES_PER_MODEL:
                 time.sleep(RETRY_DELAY)
             else:
@@ -540,6 +560,7 @@ class OpenRouterClient:
                 "tools": normalized_tools,
                 "tool_choice": "auto",
             }
+            response = None
             try:
                 response = requests.post(
                     self._omniroute.base_url + "/chat/completions",
@@ -547,91 +568,98 @@ class OpenRouterClient:
                     json=payload,
                     timeout=REQUEST_TIMEOUT,
                     allow_redirects=False,
+                    stream=True,
                 )
+
+                if response.status_code in {401, 403, 404, 429, 500, 502, 503, 504}:
+                    logger.warning(
+                        f"[OmniRoute] tool request HTTP {response.status_code}; "
+                        "using direct provider fallback"
+                    )
+                    return None
+                if response.status_code != 200:
+                    logger.warning(
+                        f"[OmniRoute] tool request unexpected HTTP {response.status_code}; "
+                        "using direct provider fallback"
+                    )
+                    return None
+
+                try:
+                    data = _read_bounded_json(response)
+                except Exception as exc:
+                    logger.warning(f"[OmniRoute] invalid/bounded tool response JSON: {exc}")
+                    return None
+
+                message = data.get("choices", [{}])[0].get("message", {}) or {}
+                content = message.get("content", "")
+                if isinstance(content, list):
+                    content = "".join(
+                        str(item.get("text", ""))
+                        for item in content
+                        if isinstance(item, dict) and item.get("text")
+                    )
+
+                tool_calls = message.get("tool_calls") or []
+                if not tool_calls:
+                    text_value = str(content or "").strip()
+                    if text_value:
+                        return text_value
+                    finish_reason = str(
+                        data.get("choices", [{}])[0].get("finish_reason") or ""
+                    )
+                    if finish_reason == "length":
+                        continue
+                    return None
+
+                normalized_messages.append({
+                    "role": "assistant",
+                    "content": content,
+                    "tool_calls": tool_calls,
+                })
+
+                for index, call in enumerate(tool_calls):
+                    fn = call.get("function", {}) if isinstance(call, dict) else {}
+                    name = str(fn.get("name") or "").strip()
+                    raw_args = fn.get("arguments", {})
+                    if isinstance(raw_args, str):
+                        try:
+                            args = json.loads(raw_args) if raw_args.strip() else {}
+                            result = None
+                        except json.JSONDecodeError as exc:
+                            args = {}
+                            result = f"Tool arguments were invalid JSON: {exc}"
+                    elif isinstance(raw_args, dict):
+                        args = raw_args
+                        result = None
+                    else:
+                        args = {}
+                        result = "The model returned invalid tool arguments."
+
+                    if not name:
+                        result = "The model returned a tool call without a name."
+                    elif name not in declared_names:
+                        result = f"The model requested an undeclared tool: {name}."
+                    elif result is None:
+                        try:
+                            result = tool_executor(name, args)
+                        except Exception as exc:
+                            result = f"Tool '{name}' failed: {exc}"
+
+                    call_id = str(call.get("id") or f"omni_tool_{round_index}_{index}")
+                    normalized_messages.append({
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": str(result),
+                    })
             except Exception as exc:
                 logger.warning(f"[OmniRoute] tool request failed; using direct provider fallback: {exc}")
                 return None
-
-            if response.status_code in {401, 403, 404, 429, 500, 502, 503, 504}:
-                logger.warning(
-                    f"[OmniRoute] tool request HTTP {response.status_code}; "
-                    "using direct provider fallback"
-                )
-                return None
-            if response.status_code != 200:
-                logger.warning(
-                    f"[OmniRoute] tool request unexpected HTTP {response.status_code}; "
-                    "using direct provider fallback"
-                )
-                return None
-
-            try:
-                data = _read_bounded_json(response)
-            except Exception as exc:
-                logger.warning(f"[OmniRoute] invalid/bounded tool response JSON: {exc}")
-                return None
-
-            message = data.get("choices", [{}])[0].get("message", {}) or {}
-            content = message.get("content", "")
-            if isinstance(content, list):
-                content = "".join(
-                    str(item.get("text", ""))
-                    for item in content
-                    if isinstance(item, dict) and item.get("text")
-                )
-
-            tool_calls = message.get("tool_calls") or []
-            if not tool_calls:
-                text = str(content or "").strip()
-                if text:
-                    return text
-                finish_reason = str(
-                    data.get("choices", [{}])[0].get("finish_reason") or ""
-                )
-                if finish_reason == "length":
-                    continue
-                return None
-
-            normalized_messages.append({
-                "role": "assistant",
-                "content": content,
-                "tool_calls": tool_calls,
-            })
-
-            for index, call in enumerate(tool_calls):
-                fn = call.get("function", {}) if isinstance(call, dict) else {}
-                name = str(fn.get("name") or "").strip()
-                raw_args = fn.get("arguments", {})
-                if isinstance(raw_args, str):
+            finally:
+                if response is not None:
                     try:
-                        args = json.loads(raw_args) if raw_args.strip() else {}
-                        result = None
-                    except json.JSONDecodeError as exc:
-                        args = {}
-                        result = f"Tool arguments were invalid JSON: {exc}"
-                elif isinstance(raw_args, dict):
-                    args = raw_args
-                    result = None
-                else:
-                    args = {}
-                    result = "The model returned invalid tool arguments."
-
-                if not name:
-                    result = "The model returned a tool call without a name."
-                elif name not in declared_names:
-                    result = f"The model requested an undeclared tool: {name}."
-                elif result is None:
-                    try:
-                        result = tool_executor(name, args)
-                    except Exception as exc:
-                        result = f"Tool '{name}' failed: {exc}"
-
-                call_id = str(call.get("id") or f"omni_tool_{round_index}_{index}")
-                normalized_messages.append({
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "content": str(result),
-                })
+                        response.close()
+                    except Exception:
+                        pass
 
         return None
 

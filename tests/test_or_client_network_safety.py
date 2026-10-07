@@ -38,3 +38,23 @@ def test_llm_response_reader_rejects_non_object_json():
     else:
         raise AssertionError("non-object JSON must be rejected")
     assert response.closed
+
+
+def test_openrouter_direct_request_uses_streaming_and_closes_on_error(monkeypatch):
+    response = FakeResponse([b'{"error":"bad"}'], status=500)
+
+    monkeypatch.setattr(or_client.requests, "post", lambda *args, **kwargs: response)
+
+    client = or_client.OpenRouterClient()
+    monkeypatch.setattr(client, "_request_headers", lambda: {"Authorization": "Bearer test"})
+    monkeypatch.setattr(client, "_is_rate_limited", lambda _model: False)
+    monkeypatch.setattr(client, "_is_temporarily_failed", lambda _model: False)
+
+    result = client._call(
+        "model/test",
+        [{"role": "user", "content": "x"}],
+        max_tokens=1,
+    )
+
+    assert result is None
+    assert response.closed
