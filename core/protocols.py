@@ -81,12 +81,21 @@ class ProtocolEngine:
         """
         Frees memory and sets Windows to High/Ultimate Performance power plan.
         """
-        # Set Windows Power Plan to High Performance if on Windows
+        if sys.platform != "win32":
+            raise RuntimeError("Redline protocol requires Windows.")
+        # GUID for High Performance: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
         try:
-            # GUID for High Performance: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
-            subprocess.run(["powercfg", "/setactive", "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"], capture_output=True)
-        except Exception:
-            pass
+            powercfg = subprocess.run(
+                ["powercfg", "/setactive", "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError as exc:
+            raise RuntimeError(f"Unable to run powercfg: {exc}") from exc
+        if powercfg.returncode != 0:
+            detail = (powercfg.stderr or powercfg.stdout or "").strip()
+            raise RuntimeError(f"High Performance power plan was not applied{': ' + detail if detail else '.'}")
 
         # Memory compaction / purge idle working sets
         ram_before = psutil.virtual_memory().percent
@@ -106,17 +115,20 @@ class ProtocolEngine:
         Instantly locks Windows session and mutes speakers.
         """
         # Mute audio via Windows master volume key simulation
-        if user32:
-            VK_VOLUME_MUTE = 0xAD
-            KEYEVENTF_KEYUP = 0x0002
-            user32.keybd_event(VK_VOLUME_MUTE, 0, 0, 0)
-            user32.keybd_event(VK_VOLUME_MUTE, 0, KEYEVENTF_KEYUP, 0)
+        if not user32:
+            raise RuntimeError("Lockdown protocol requires Windows.")
+        VK_VOLUME_MUTE = 0xAD
+        KEYEVENTF_KEYUP = 0x0002
+        user32.keybd_event(VK_VOLUME_MUTE, 0, 0, 0)
+        user32.keybd_event(VK_VOLUME_MUTE, 0, KEYEVENTF_KEYUP, 0)
 
-            # Lock the workstation
-            user32.LockWorkStation()
-            return "Protocol Lockdown triggered. Workstation locked and master audio muted."
-        
-        return "Lockdown failed: Non-windows environment."
+        # LockWorkStation returns TRUE when Windows accepted the lock request.
+        # It does not expose remote proof that the workstation has finished locking,
+        # so do not claim the final locked state as verified.
+        locked_request = bool(user32.LockWorkStation())
+        if not locked_request:
+            raise RuntimeError("Windows rejected the workstation lock request.")
+        return "Protocol Lockdown request accepted by Windows; final lock/mute state is not independently observable."
 
     # ── PROTOCOL: NIGHTFALL (WRAP UP DAY) ────────────────────────────────
     def execute_nightfall(self, params: Dict[str, Any]) -> str:
@@ -124,7 +136,7 @@ class ProtocolEngine:
         Sets assistant to casual/night mode, switches theme if available, and gives a closing debrief.
         """
         identity.set_behavior_mode("minimal")
-        return "Protocol Nightfall initialized. Work sessions logged. System ready for standby."
+        return "Protocol Nightfall initialized. Minimal behavior mode enabled; no session-log entry was claimed."
 
 
 # Global singleton instance
