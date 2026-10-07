@@ -51,6 +51,51 @@ async function ensureActiveDevice(preferredDeviceId?: string): Promise<string> {
   return target.id;
 }
 
+async function verifyPlayback(
+  spotifyApi: Awaited<ReturnType<typeof import('./utils.js').createSpotifyApi>>,
+  spotifyUri: string | undefined,
+  resolvedType: string | undefined,
+  deviceId: string,
+): Promise<void> {
+  let lastState: any = null;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    lastState = await spotifyApi.player.getPlaybackState();
+
+    if (lastState?.is_playing === true) {
+      const actualDeviceId = lastState.device?.id;
+      if (actualDeviceId && actualDeviceId !== deviceId) {
+        throw new Error('Spotify playback started on an unexpected device.');
+      }
+
+      if (resolvedType === 'track' && spotifyUri) {
+        const expectedId = spotifyUri.split(':').pop();
+        const actualId = lastState.item?.id;
+        if (expectedId && actualId !== expectedId) {
+          throw new Error('Spotify playback started with a different track.');
+        }
+      } else if (spotifyUri && ['album', 'artist', 'playlist'].includes(resolvedType || '')) {
+        const contextUri = lastState.context?.uri;
+        if (contextUri && contextUri !== spotifyUri) {
+          throw new Error('Spotify playback started with a different context.');
+        }
+      }
+      return;
+    }
+
+    if (attempt < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+  }
+
+  const current = lastState?.item?.name
+    ? ` Current item: "${lastState.item.name}".`
+    : '';
+  throw new Error(
+    `Spotify accepted the playback request, but playback could not be verified.${current}`,
+  );
+}
+
 const playMusic = defineTool({
   name: 'playMusic',
   description:
@@ -119,6 +164,7 @@ const playMusic = defineTool({
       await handleSpotifyRequest(async (spotifyApi) => {
         if (!spotifyUri) {
           await spotifyApi.player.startResumePlayback(activeDeviceId);
+          await verifyPlayback(spotifyApi, spotifyUri, resolvedType, activeDeviceId);
           return;
         }
         if (resolvedType === 'track') {
@@ -138,6 +184,7 @@ const playMusic = defineTool({
             offset !== undefined ? { position: offset } : undefined,
           );
         }
+        await verifyPlayback(spotifyApi, spotifyUri, resolvedType, activeDeviceId);
       });
 
       return {
