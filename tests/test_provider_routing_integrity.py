@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -69,6 +69,58 @@ def test_provider_preserving_tool_calls_refuse_direct_openrouter_fallback(monkey
         )
 
     direct.assert_not_called()
+
+
+def test_omniroute_request_pins_explicit_provider(monkeypatch):
+    client = object.__new__(OpenRouterClient)
+    client._omniroute = Mock()
+    client._omniroute.ensure_ready.return_value = True
+    client._omniroute.base_url = "http://127.0.0.1:8765"
+    response = Mock()
+    response.status_code = 200
+    response.iter_content.return_value = [
+        b'{"choices":[{"message":{"content":"provider-pinned"}}]}'
+    ]
+    with patch("or_client.requests.post", return_value=response) as post:
+        result = client._call_omniroute(
+            [{"role": "user", "content": "hello"}],
+            model="auto",
+            provider="Gemini",
+        )
+    assert result == "provider-pinned"
+    headers = post.call_args.kwargs["headers"]
+    assert headers["X-OmniRoute-Provider"] == "gemini"
+
+
+def test_unified_client_provider_override_controls_omniroute_and_direct_fallback(monkeypatch):
+    client = UnifiedAIClient.__new__(UnifiedAIClient)
+    monkeypatch.setattr(client, "reload_settings", lambda: None)
+    client._provider = GEMINI
+    with patch("llm_client.openrouter_client.chat", return_value="OpenRouter answer") as routed:
+        assert client.chat("hello", provider="OpenRouter") == "OpenRouter answer"
+    assert routed.call_args.kwargs["provider"] == "openrouter"
+    assert routed.call_args.kwargs["allow_direct_fallback"] is True
+
+    with patch("llm_client.openrouter_client.chat", return_value="Gemini answer") as routed:
+        assert client.chat("hello", provider="Gemini") == "Gemini answer"
+    assert routed.call_args.kwargs["provider"] == "gemini"
+    assert routed.call_args.kwargs["allow_direct_fallback"] is False
+
+
+def test_unified_client_tool_provider_override_is_forwarded(monkeypatch):
+    client = UnifiedAIClient.__new__(UnifiedAIClient)
+    monkeypatch.setattr(client, "reload_settings", lambda: None)
+    client._provider = GEMINI
+    with patch("llm_client.openrouter_client.chat_with_tools", return_value="done") as routed:
+        result = client.chat_with_tools(
+            [{"role": "user", "content": "do it"}],
+            [{"name": "safe", "description": "safe", "parameters": {"type": "object", "properties": {}}}],
+            Mock(),
+            provider="OpenRouter",
+        )
+    assert result == "done"
+    assert routed.call_args.kwargs["provider"] == "openrouter"
+    assert routed.call_args.kwargs["allow_direct_fallback"] is True
 
 
 def test_unified_client_only_allows_direct_cloud_fallback_for_openrouter(monkeypatch):
