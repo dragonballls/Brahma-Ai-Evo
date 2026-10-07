@@ -8,11 +8,13 @@ import sys
 from pathlib import Path
 
 from core.runtime_paths import GITHUB_BRANCH as BRANCH, GITHUB_REMOTE as REMOTE
+from core.command_safety import resolve_git_executable
 
 
 def _run_git(base_dir: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    git = resolve_git_executable(base_dir)
     return subprocess.run(
-        ["git", *args],
+        [git, *args],
         cwd=base_dir,
         capture_output=True,
         text=True,
