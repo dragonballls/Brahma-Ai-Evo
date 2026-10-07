@@ -233,3 +233,15 @@ def test_guarded_browser_context_disables_service_workers_before_request_routing
     assert context.kwargs["service_workers"] == "block"
     assert context.route_args[0] == "**/*"
     assert context.route_args[1].__func__ is _BrowserThread._guard_request
+
+
+def test_browser_localhost_alias_allows_local_https(monkeypatch):
+    from actions.playwright_mcp_client import validate_browser_url
+
+    monkeypatch.setattr(
+        "socket.getaddrinfo",
+        lambda *args, **kwargs: [(2, 1, 6, "", ("127.0.0.1", 443))],
+    )
+    assert validate_browser_url("https://localhost:8443/health") == "https://localhost:8443/health"
+    with pytest.raises(ValueError):
+        validate_browser_url("https://127.0.0.1:8443/health")

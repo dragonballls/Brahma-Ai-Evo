@@ -74,6 +74,7 @@ def _validate_browser_hostname(hostname: str, *, scheme: str) -> str:
         raise ValueError(f"Browser navigation to host '{host}' is outside the configured allowlist.")
 
     local_host = _is_local_browser_host(host)
+    local_hostname_alias = host in _LOCAL_BROWSER_HOSTS or host.endswith(".localhost")
     if scheme == "http" and not local_host:
         raise ValueError("Plain HTTP browser navigation is limited to explicit local/loopback hosts.")
 
@@ -89,6 +90,13 @@ def _validate_browser_hostname(hostname: str, *, scheme: str) -> str:
             raise ValueError(f"Browser hostname '{host}' could not be resolved safely.") from exc
         if not addresses:
             raise ValueError(f"Browser hostname '{host}' did not resolve to any address.")
+
+    if local_hostname_alias:
+        if not all(address.is_loopback for address in addresses):
+            raise ValueError(
+                f"Browser navigation to host '{host}' resolves outside loopback."
+            )
+        return host
 
     if local_host and scheme == "http":
         if not all(address.is_loopback for address in addresses):
