@@ -753,24 +753,27 @@ class BrahmaGateway:
             record = self.device_manager.get(device_id)
             if record is None:
                 return JSONResponse({"ok": False, "error": "Device not found."}, status_code=404)
-            connection = await self.hub.get(device_id)
-            if connection is not None:
-                try:
-                    closed = await self.hub.close_device(device_id, reason="Device forgotten")
-                except Exception:
-                    closed = False
-                if not closed:
-                    return JSONResponse(
-                        {"ok": False, "error": "Unable to close the active device connection; device was not forgotten.", "error_code": "DISCONNECT_FAILED"},
-                        status_code=503,
-                    )
             if not self.device_manager.remove(device_id):
                 return JSONResponse(
                     {"ok": False, "error": "Device could not be forgotten because persistence failed.", "error_code": "PERSISTENCE_FAILED"},
                     status_code=500,
                 )
-            self._append_log("DEVICE_FORGOTTEN", device_id=device_id)
-            return {"ok": True}
+            connection_state = await self.hub.invalidate_device(
+                device_id,
+                reason="Device forgotten",
+            )
+            self._append_log(
+                "DEVICE_FORGOTTEN",
+                device_id=device_id,
+                connection_found=connection_state["found"],
+                connection_closed=connection_state["closed"],
+            )
+            return {
+                "ok": True,
+                "forgotten": True,
+                "connection_found": connection_state["found"],
+                "connection_closed": connection_state["closed"],
+            }
 
         @app.get("/gateway/logs")
         async def logs(req: Request):
