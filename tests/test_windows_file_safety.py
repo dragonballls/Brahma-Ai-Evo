@@ -117,6 +117,6 @@ def test_windows_rename_refuses_reparse_parent(tmp_path):
         link.symlink_to(real, target_is_directory=True)
     except (OSError, NotImplementedError):
         pytest.skip("Directory symlinks are unavailable on this Windows runner.")
-    with pytest.raises(OSError, match="reparse-point"):
+    with pytest.raises(OSError, match=r"reparse[ -]point"):
         winfs.rename(source, link / "renamed.txt")
     assert source.exists()

@@ -92,9 +92,9 @@ def test_globe_window_lifecycle_events():
 def test_globe_radar_enable_requires_live_timestamp(monkeypatch):
     from core import globe_window
     monkeypatch.setattr(globe_window, "fetch_radar_timestamp", lambda: None)
-    bridge = object.__new__(globe_window.GlobeWindow)
+    bridge = object()
     with pytest.raises(RuntimeError, match="radar was not enabled"):
-        bridge.toggle_weather_radar(True)
+        globe_window.GlobeWindow.toggle_weather_radar(bridge, True)
 
 
 def test_globe_radar_web_state_does_not_claim_active_on_fetch_failure():

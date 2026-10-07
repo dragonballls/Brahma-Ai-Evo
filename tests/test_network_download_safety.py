@@ -63,7 +63,7 @@ def test_download_public_to_file_require_https_rejects_downgrade_redirect(monkey
         "getaddrinfo",
         lambda *args, **kwargs: [(2, 1, 6, "", ("93.184.216.34", 443))],
     )
-    monkeypatch.setattr(http.client, "HTTPConnection", FakeConnection)
+    monkeypatch.setattr(network_safety, "_PinnedHTTPSConnection", FakeConnection)
 
     with pytest.raises(ValueError, match="downgraded"):
         network_safety.download_public_to_file(

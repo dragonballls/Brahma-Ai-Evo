@@ -24,8 +24,8 @@ def test_dynamic_registry_rejects_symlinked_native_features():
     source = (ROOT / "core" / "dynamic_registry.py").read_text(encoding="utf-8")
     start = source.index("for item in sorted(FEATURES_DIR.iterdir()")
     block = source[start:source.index("# Case A: Single Python module", start)]
-    assert "if item.is_symlink():" in block
-    assert "Refusing symlinked feature entry" in block
+    assert "if _is_link_like(item):" in block
+    assert "Refusing symlinked/junction/reparse feature entry" in block
 
 
 def test_untrusted_skill_executes_validated_source_bytes_after_replacement_race(tmp_path, monkeypatch):

@@ -126,7 +126,7 @@ def fetch_public_bytes(
         if not address.is_multicast and address.is_global and entry[4][0] not in candidates:
             candidates.append(entry[4][0])
     if not candidates:
-        raise ValueError("Public URL resolved only to non-global addresses.")
+        raise ValueError("Public URL resolved only to non-global or multicast addresses.")
 
     request_path = parsed.path or "/"
     if parsed.query:

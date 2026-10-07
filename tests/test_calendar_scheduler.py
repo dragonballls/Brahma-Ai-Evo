@@ -27,10 +27,12 @@ def test_calendar_duration_and_event_count_are_bounded():
 
 def test_calendar_ics_fields_are_escaped():
     source = (ROOT / "actions" / "calendar_scheduler.py").read_text(encoding="utf-8")
+    export_start = source.index('elif action in ("export_ics", "export")')
+    export_block = source[export_start:source.index('return f"Exported calendar events', export_start)]
     assert "def _ics_escape" in source
-    assert '_ics_escape(ev.get("title"))' in source
-    assert '_ics_escape(ev.get("description", \'\'))' in source
-    assert '_ics_escape(ev.get("location", \'\'))' in source
+    assert 'SUMMARY:{_ics_escape(ev.get("title"))}' in export_block
+    assert 'DESCRIPTION:{_ics_escape(ev.get("description", \'\'))}' in export_block
+    assert 'LOCATION:{_ics_escape(ev.get("location", \'\'))}' in export_block
 
 
 def test_calendar_title_is_bounded_and_export_is_atomic():
