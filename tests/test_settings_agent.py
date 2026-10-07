@@ -68,6 +68,13 @@ class ConversationalSettingsTests(unittest.TestCase):
         config_manager.save_settings({"allow_cloud_transcription": True})
         self.assertTrue(config_manager.get_cloud_transcription_enabled())
 
+    def test_boolean_settings_reject_non_boolean_persisted_values(self):
+        config_manager.save_settings({"offline_mode_enabled": "false"})
+        with self.assertRaises(RuntimeError):
+            config_manager.get_boolean_setting("offline_mode_enabled", False)
+        config_manager.save_settings({"offline_mode_enabled": False})
+        self.assertFalse(config_manager.get_boolean_setting("offline_mode_enabled", False))
+
     def test_apply_persists_and_reports_changes(self):
         result = settings_agent.apply("set sound effects volume to 42")
         self.assertTrue(result["ok"])
