@@ -164,8 +164,9 @@ except Exception:
             text=True,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
-        if verification.returncode != 0:
-            verify_err = verification.stderr.strip() or verification.stdout.strip()
+        verification_text = (verification.stdout or "").strip()
+        if verification.returncode != 0 or task_name not in verification_text:
+            verify_err = verification.stderr.strip() or verification_text or "task was not present in the scheduler query result"
             print(f"[Reminder] ❌ scheduled task verification failed: {verify_err}")
             cleanup = subprocess.run(
                 ["schtasks", "/Delete", "/TN", task_name, "/F"],
