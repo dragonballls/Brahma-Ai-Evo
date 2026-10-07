@@ -1,5 +1,6 @@
 from core.user_paths import get_user_data_dir
 from core.runtime_paths import API_CONFIG_PATH
+from core.command_safety import CommandSafetyError, hidden_creationflags, resolve_trusted_executable
 # actions/spotify_controller.py
 """
 Universal Music & Spotify Controller for Brahma AI.
@@ -16,6 +17,8 @@ import shutil
 import subprocess
 import sys
 import threading
+import queue
+import uuid
 import time
 import urllib.parse
 from pathlib import Path
@@ -26,6 +29,9 @@ SPOTIFY_CONFIG_PATH = get_user_data_dir() / "config" / "spotify-config.json"
 MCP_SERVER_DIR = Path(__file__).resolve().parent / "spotify_mcp_server"
 MCP_BUILD_INDEX = MCP_SERVER_DIR / "build" / "index.js"
 MCP_BUILD_AUTH = MCP_SERVER_DIR / "build" / "auth.js"
+
+_MAX_SPOTIFY_MCP_RESPONSE_BYTES = 64 * 1024
+_SPOTIFY_MCP_RESPONSE_TIMEOUT_SECONDS = 10
 
 PLUGIN = {
     "name": "spotify_controller",
@@ -145,21 +151,13 @@ def _press_media_key(key_name: str) -> bool:
 def _scrape_direct_playable_url(query: str) -> str | None:
     """Finds direct playable audio track link to ensure 100% guaranteed instant sound."""
     try:
-        import requests
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            "Accept-Language": "en-US,en;q=0.9",
-        }
+        from actions.youtube_video import _get_youtube_text
         clean_q = query.replace("on spotify", "").replace("spotify", "").strip()
         search_url = f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(clean_q + ' audio')}&sp=EgIQAQ%3D%3D"
-        r = requests.get(search_url, headers=headers, timeout=6)
-        video_ids = re.findall(r'"videoId":"([A-Za-z0-9_-]{11})"', r.text)
+        html = _get_youtube_text(search_url, timeout=6)
+        video_ids = re.findall(r'"videoId":"([A-Za-z0-9_-]{11})"', html)
         for vid in video_ids:
-            if f'/shorts/{vid}' not in r.text:
+            if f'/shorts/{vid}' not in html:
                 return f"https://www.youtube.com/watch?v={vid}&autoplay=1"
     except Exception as e:
         print(f"[Music] Direct scrape error: {e}")
@@ -346,25 +344,34 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
 
 
 def get_spotify_config() -> dict:
+    if not SPOTIFY_CONFIG_PATH.exists():
+        return {}
+    if SPOTIFY_CONFIG_PATH.is_symlink():
+        raise RuntimeError("Spotify configuration file must not be a symlink.")
+    if not SPOTIFY_CONFIG_PATH.is_file():
+        raise RuntimeError("Spotify configuration path is not a regular file.")
     try:
-        if SPOTIFY_CONFIG_PATH.exists():
-            return json.loads(SPOTIFY_CONFIG_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        pass
-    return {}
+        data = json.loads(SPOTIFY_CONFIG_PATH.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Spotify configuration is corrupted; refusing to ignore it.") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError("Spotify configuration has an invalid root schema.")
+    return data
 
 
 def is_spotify_configured() -> bool:
-    try:
-        data = get_spotify_config()
-        return bool(data.get("clientId") and data.get("clientSecret"))
-    except Exception:
-        return False
+    data = get_spotify_config()
+    return bool(data.get("clientId") and data.get("clientSecret"))
 
 
 def save_spotify_credentials(client_id: str, client_secret: str) -> bool:
     try:
         SPOTIFY_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        if SPOTIFY_CONFIG_PATH.is_symlink():
+            raise RuntimeError("Spotify configuration file must not be a symlink.")
+        if SPOTIFY_CONFIG_PATH.exists() and not SPOTIFY_CONFIG_PATH.is_file():
+            raise RuntimeError("Spotify configuration path is not a regular file.")
+
         data = get_spotify_config()
         if data.get("clientId") != client_id.strip():
             data.pop("accessToken", None)
@@ -375,7 +382,18 @@ def save_spotify_credentials(client_id: str, client_secret: str) -> bool:
             "clientSecret": client_secret.strip(),
             "redirectUri": "http://127.0.0.1:8888/callback",
         })
-        SPOTIFY_CONFIG_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+        temp = SPOTIFY_CONFIG_PATH.with_name(
+            f".{SPOTIFY_CONFIG_PATH.name}.{uuid.uuid4().hex}.tmp"
+        )
+        try:
+            temp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            os.replace(temp, SPOTIFY_CONFIG_PATH)
+        finally:
+            try:
+                temp.unlink(missing_ok=True)
+            except OSError:
+                pass
         return True
     except Exception:
         return False
@@ -383,33 +401,97 @@ def save_spotify_credentials(client_id: str, client_secret: str) -> bool:
 
 def clear_spotify_credentials() -> bool:
     try:
-        if SPOTIFY_CONFIG_PATH.exists():
-            SPOTIFY_CONFIG_PATH.unlink()
+        if not SPOTIFY_CONFIG_PATH.exists():
+            return True
+        if SPOTIFY_CONFIG_PATH.is_symlink() or not SPOTIFY_CONFIG_PATH.is_file():
+            return False
+        SPOTIFY_CONFIG_PATH.unlink()
         return True
     except Exception:
         return False
 
 
+def _resolve_spotify_node() -> str:
+    try:
+        return resolve_trusted_executable(
+            "node",
+            BASE_DIR,
+            windows_name="node.exe",
+        )
+    except CommandSafetyError:
+        raise
+
+
+def _read_mcp_response_with_timeout(process: subprocess.Popen, timeout: float = _SPOTIFY_MCP_RESPONSE_TIMEOUT_SECONDS) -> dict:
+    if process.stdout is None:
+        raise RuntimeError("Spotify MCP response stream is unavailable.")
+
+    result_queue: queue.Queue = queue.Queue(maxsize=1)
+
+    def reader() -> None:
+        try:
+            chunks: list[str] = []
+            total = 0
+            while True:
+                char = process.stdout.read(1)
+                if char == "":
+                    raise RuntimeError("Spotify MCP closed its response stream.")
+                chunks.append(char)
+                total += len(char.encode("utf-8", errors="replace"))
+                if total > _MAX_SPOTIFY_MCP_RESPONSE_BYTES:
+                    raise RuntimeError("Spotify MCP response exceeded the safety limit.")
+                if char == "\n":
+                    payload = json.loads("".join(chunks))
+                    if not isinstance(payload, dict):
+                        raise RuntimeError("Spotify MCP returned an invalid response object.")
+                    result_queue.put(payload)
+                    return
+        except Exception as exc:
+            result_queue.put(exc)
+
+    threading.Thread(target=reader, daemon=True).start()
+    try:
+        result = result_queue.get(timeout=timeout)
+    except queue.Empty as exc:
+        raise TimeoutError("Spotify MCP response timed out.") from exc
+    if isinstance(result, Exception):
+        raise result
+    return result
+
+
 def _spotify_mcp_call(tool_name: str, arguments: dict | None = None) -> dict:
-    if not MCP_BUILD_INDEX.exists():
+    if not MCP_BUILD_INDEX.exists() or not MCP_BUILD_INDEX.is_file():
         return {"success": False, "error": "Spotify MCP server is not built."}
+    try:
+        node = _resolve_spotify_node()
+    except CommandSafetyError as exc:
+        return {"success": False, "error": str(exc)}
+
     env = os.environ.copy()
     env["SPOTIFY_CONFIG_PATH"] = str(SPOTIFY_CONFIG_PATH.resolve())
     process = None
     try:
         process = subprocess.Popen(
-            ["node", str(MCP_BUILD_INDEX.resolve())], cwd=str(MCP_SERVER_DIR.resolve()), env=env,
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            text=True, encoding="utf-8", bufsize=1,
+            [node, str(MCP_BUILD_INDEX.resolve())],
+            cwd=str(MCP_SERVER_DIR.resolve()),
+            env=env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            bufsize=1,
+            creationflags=hidden_creationflags(),
         )
+        if process.poll() is not None:
+            return {"success": False, "error": "Spotify MCP server exited immediately."}
 
         def request(payload: dict) -> dict:
+            if process.stdin is None:
+                raise RuntimeError("Spotify MCP request stream is unavailable.")
             process.stdin.write(json.dumps(payload) + "\n")
             process.stdin.flush()
-            response = process.stdout.readline()
-            if not response:
-                raise RuntimeError("Spotify MCP closed its response stream.")
-            return json.loads(response)
+            return _read_mcp_response_with_timeout(process)
 
         init = request({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
             "protocolVersion": "2024-11-05", "capabilities": {},
@@ -417,16 +499,29 @@ def _spotify_mcp_call(tool_name: str, arguments: dict | None = None) -> dict:
         }})
         if "error" in init:
             return {"success": False, "error": init["error"].get("message", "Spotify MCP initialization failed.")}
+        if init.get("jsonrpc") != "2.0":
+            return {"success": False, "error": "Spotify MCP returned an invalid initialize response."}
+
+        if process.stdin is None:
+            raise RuntimeError("Spotify MCP request stream is unavailable.")
         process.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n")
         process.stdin.flush()
         response = request({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
             "name": tool_name, "arguments": arguments or {},
         }})
         if "error" in response:
-            return {"success": False, "error": response["error"].get("message", "Spotify MCP call failed.")}
-        result = response.get("result", {})
-        output = "\n".join(item.get("text", "") for item in result.get("content", []) if isinstance(item, dict) and item.get("type") == "text")
-        return {"success": not result.get("isError", False), "output": output}
+            error = response["error"]
+            return {"success": False, "error": error.get("message", "Spotify MCP call failed.") if isinstance(error, dict) else "Spotify MCP call failed."}
+        result = response.get("result")
+        if not isinstance(result, dict):
+            return {"success": False, "error": "Spotify MCP returned an invalid result object."}
+        output_parts = [
+            item.get("text", "")
+            for item in result.get("content", [])
+            if isinstance(item, dict) and item.get("type") == "text"
+        ]
+        output = "\n".join(str(item) for item in output_parts)
+        return {"success": result.get("isError") is not True, "output": output}
     except Exception as exc:
         return {"success": False, "error": str(exc)}
     finally:
@@ -437,9 +532,9 @@ def _spotify_mcp_call(tool_name: str, arguments: dict | None = None) -> dict:
             except Exception:
                 try:
                     process.kill()
+                    process.wait(timeout=2)
                 except Exception:
                     pass
-
 
 def _spotify_mcp_action(parameters: dict) -> str:
     action = str(parameters.get("action", "search_play")).lower().strip()
@@ -450,10 +545,24 @@ def _spotify_mcp_action(parameters: dict) -> str:
             return "Add Spotify clientId and clientSecret to the local spotify-config.json before authenticating."
         if not MCP_BUILD_AUTH.exists():
             return "Spotify MCP auth helper is not built."
-        env = os.environ.copy()
-        env["SPOTIFY_CONFIG_PATH"] = str(SPOTIFY_CONFIG_PATH.resolve())
-        subprocess.Popen(["node", str(MCP_BUILD_AUTH.resolve())], cwd=str(MCP_SERVER_DIR.resolve()), env=env)
-        return "Started Spotify authorization in your browser."
+        try:
+            node = _resolve_spotify_node()
+            env = os.environ.copy()
+            env["SPOTIFY_CONFIG_PATH"] = str(SPOTIFY_CONFIG_PATH.resolve())
+            process = subprocess.Popen(
+                [node, str(MCP_BUILD_AUTH.resolve())],
+                cwd=str(MCP_SERVER_DIR.resolve()),
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=hidden_creationflags(),
+            )
+            if process.poll() is not None:
+                return "Spotify authorization failed to start."
+            return "Started Spotify authorization process."
+        except (CommandSafetyError, OSError) as exc:
+            return f"Spotify authorization failed to start: {exc}"
     if not is_spotify_configured():
         return "Spotify MCP is not configured. Add clientId and clientSecret to the local spotify-config.json, then authenticate."
 
