@@ -75,3 +75,27 @@ def execute(**kwargs):
     for code in payloads:
         ok, reason = SkillCrucible.validate_ast(code)
         assert not ok, (reason, code)
+
+
+def test_crucible_rejects_indirect_getattr_and_builtins_lookup():
+    payloads = [
+        """
+import os
+def helper():
+    return os
+g = getattr
+def execute(**kwargs):
+    return g(helper(), "system")("echo escape")
+""",
+        """
+def execute(**kwargs):
+    return __builtins__["eval"]("2 + 2")
+""",
+        """
+def execute(**kwargs):
+    return __builtins__["__import__"]("os").system("echo escape")
+""",
+    ]
+    for code in payloads:
+        ok, reason = SkillCrucible.validate_ast(code)
+        assert not ok, (reason, code)
