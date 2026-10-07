@@ -171,6 +171,7 @@ def download_public_to_file(
     headers: dict[str, str] | None = None,
     allowed_redirect_hosts: Iterable[str] | None = None,
     max_redirects: int = 3,
+    require_https: bool = False,
 ) -> int:
     """Stream a pinned HTTP(S) response into a caller-owned file object."""
     current = str(url or "").strip()
@@ -182,7 +183,7 @@ def download_public_to_file(
         parsed = urllib.parse.urlsplit(current)
         scheme = parsed.scheme.lower()
         host = (parsed.hostname or "").rstrip(".").lower()
-        if scheme not in {"http", "https"} or not host:
+        if scheme not in {"http", "https"} or not host or (require_https and scheme != "https"):
             raise ValueError("Public download URL must be an absolute HTTP(S) URL.")
         if parsed.username or parsed.password:
             raise ValueError("Public download URL may not contain embedded credentials.")
@@ -234,6 +235,9 @@ def download_public_to_file(
                 if not next_host or next_host not in redirect_hosts:
                     raise ValueError("Public download redirect destination is outside the approved host policy.")
                 next_scheme = urllib.parse.urlsplit(next_url).scheme.lower()
+                if require_https and next_scheme != "https":
+                    raise ValueError("Public download redirect downgraded transport below HTTPS.")
+
                 if next_host != host or next_scheme != scheme:
                     request_headers.pop("Authorization", None)
                     request_headers.pop("Proxy-Authorization", None)
