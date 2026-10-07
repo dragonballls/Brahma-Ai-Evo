@@ -22,6 +22,32 @@ def _secret_path() -> Path | None:
     ]
     return next((x.resolve() for x in candidates if x.is_file()), None)
 
+def _save_token(path: Path, credentials: Any) -> None:
+    """Persist the OAuth token without following a replace-time symlink."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_name = None
+    try:
+        fd, temp_name = __import__("tempfile").mkstemp(
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=str(path.parent),
+        )
+        raw = credentials.to_json().encode("utf-8")
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if os.name != "nt":
+            os.chmod(temp_name, 0o600)
+        os.replace(temp_name, path)
+        temp_name = None
+    finally:
+        if temp_name:
+            try:
+                Path(temp_name).unlink(missing_ok=True)
+            except OSError:
+                pass
+
 def publish_project(
     manifest: dict[str, Any],
     *,
@@ -68,8 +94,7 @@ def publish_project(
             }
         flow = InstalledAppFlow.from_client_secrets_file(str(secret), SCOPES)
         credentials = flow.run_local_server(port=0, access_type="offline", prompt="consent")
-        token_path.parent.mkdir(parents=True, exist_ok=True)
-        token_path.write_text(credentials.to_json(), encoding="utf-8")
+        _save_token(token_path, credentials)
 
     service = build("youtube", "v3", credentials=credentials)
     description = str(metadata.get("description") or "")
