@@ -12,11 +12,9 @@ FEATURE_METADATA = {
     "active": True
 }
 
-import ipaddress
 import json
 import math
 import os
-import socket
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -38,16 +36,10 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 
 def _validate_remote_host(url: str) -> None:
+    """Validate the fixed flight service host without performing a second DNS lookup."""
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme != "https" or parsed.hostname not in _ALLOWED_REMOTE_HOSTS:
         raise ValueError("Flight-radar remote host is not allowed.")
-    addresses = socket.getaddrinfo(parsed.hostname, 443, type=socket.SOCK_STREAM)
-    if not addresses:
-        raise ValueError("Flight-radar remote host did not resolve.")
-    for entry in addresses:
-        ip = ipaddress.ip_address(entry[4][0])
-        if not ip.is_global:
-            raise ValueError("Flight-radar remote host resolved to a non-global address.")
 
 
 def _fetch_json(url: str, timeout: float) -> dict:
