@@ -122,3 +122,41 @@ def test_mobile_autopilot_dimension_validation_is_exercised_at_runtime():
         "screen_height": 2400,
         "nodes": [],
     }) == (1080, 2400)
+
+
+def test_mobile_autopilot_never_reports_success_after_cancellation_is_observed_post_dispatch():
+    import importlib
+    import json
+    from unittest.mock import patch
+
+    module = importlib.import_module("actions.mobile_autopilot")
+    parameters = {
+        "target": "phone-1",
+        "instruction": "tap search",
+        "timeout_seconds": 5,
+    }
+
+    def execute(command):
+        if command["action"] == "ui_dump":
+            return {
+                "success": True,
+                "data": {
+                    "screen_width": 1080,
+                    "screen_height": 2400,
+                    "nodes": [{
+                        "bounds": [0, 0, 100, 100],
+                        "is_clickable": True,
+                        "text": "Search",
+                    }],
+                },
+            }
+        parameters["cancelled"] = True
+        return {"success": True, "data": {"clicked": True}}
+
+    with patch.object(module, "connect_execute", side_effect=execute),          patch("core.gemini_runtime.generate_json", return_value={
+             "action": "tap", "x": 50, "y": 50, "reason": "Tap search"
+         }),          patch.object(module.time, "sleep", return_value=None):
+        result = json.loads(module.mobile_autopilot(parameters))
+
+    assert result["success"] is False
+    assert "after remote action dispatch" in result["error"]
