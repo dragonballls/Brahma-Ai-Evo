@@ -214,14 +214,22 @@ class IntelligenceOrchestrator:
         if p=="maintenance":return ("systems diagnostician","independent verifier")
         if p=="vision":return ("visual analyst","independent visual verifier")
         return ("primary reasoner","critical reasoner")
-    def _call(self,prompt:str,system:str,model:str,max_tokens:int,temp:float,history=None)->str:
-        return cloud_client.chat(prompt=prompt,system=system,history=history,model=model,max_tokens=max_tokens,temperature=temp)
+    def _call(self,prompt:str,system:str,model:str,max_tokens:int,temp:float,history=None,*,allow_direct_fallback:bool=False)->str:
+        return cloud_client.chat(
+            prompt=prompt,
+            system=system,
+            history=history,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temp,
+            allow_direct_fallback=allow_direct_fallback,
+        )
     def respond(self,prompt:str,*,system="You are Brahma Evo, a precise and helpful assistant.",history=None,context="",profile=None)->str:
         prompt=(prompt or "").strip()
         if not prompt:raise ValueError("A prompt is required.")
         c=load_config()
         if not bool(c.get("enabled",True)) or not allowed():
-            return self._call(prompt,system,"auto",4096,0.5,history)
+            return self._call(prompt,system,"auto",4096,0.5,history,allow_direct_fallback=True)
         p=profile_for(prompt,profile,c); pc=self._cfg(p,c); count=int(pc.get("specialists",0))
         panel=_ensemble_models(c,pc,p) if p != "fast" else []
         if panel:
@@ -405,7 +413,14 @@ class IntelligenceOrchestrator:
             log.warning("synthesis failed: %s",e); return usable[0]
     def respond_json(self,prompt:str,*,system="Return ONLY valid JSON.",profile="smart",max_tokens=8192)->dict[str,Any]:
         c=load_config()
-        if not bool(c.get("enabled",True)) or not allowed():return cloud_client.chat_json(prompt,system=system,model="auto",max_tokens=max_tokens)
+        if not bool(c.get("enabled",True)) or not allowed():
+            return cloud_client.chat_json(
+                prompt=prompt,
+                system=system,
+                model="auto",
+                max_tokens=max_tokens,
+                allow_direct_fallback=True,
+            )
         pc=self._cfg(profile,c)
         panel=_ensemble_models(c,pc,profile) if profile != "fast" else []
         if panel:
@@ -419,6 +434,7 @@ class IntelligenceOrchestrator:
                         prompt=f"{prompt}\n\nSpecialist role: {role}.\nReturn ONLY one valid JSON object. Solve independently and do not discuss other models.",
                         system=system+" You are an independent structured-reasoning specialist.",
                         model=model,max_tokens=max_tokens,temperature=float(pc.get("temperature",0.2)),
+                        allow_direct_fallback=False,
                     )]=(index,provider,model)
                 drafts=[]
                 for future in as_completed(futures):
@@ -435,6 +451,7 @@ class IntelligenceOrchestrator:
                     prompt=f"Task:\n{prompt}\n\nIndependent structured drafts:\n{evidence}",
                     system=system+" Reconcile contradictions and return ONLY one valid JSON object.",
                     model=judge_model,max_tokens=max_tokens,temperature=0.1,
+                    allow_direct_fallback=False,
                 )
                 clean=str(raw or "").strip()
                 if clean.startswith("```"):
@@ -449,15 +466,37 @@ class IntelligenceOrchestrator:
                     log.debug("structured ensemble judge returned invalid JSON; falling back")
         pc=self._cfg(profile,c); count=min(max(1,int(pc.get("specialists",1))),int(c.get("max_specialists",2)),max(1,int(c.get("parallel_workers",4))))
         model=str(pc.get("model","auto/smart")); roles=self._roles(profile)[:count]; drafts=[]
-        def task(i,role):return i,cloud_client.chat(prompt=f"{prompt}\n\nRole: {role}\nReturn ONLY valid JSON.",system=system+" Return one valid JSON object.",model=model,max_tokens=max_tokens,temperature=float(pc.get("temperature",0.2)))
+        def task(i,role):
+            return i,cloud_client.chat(
+                prompt=f"{prompt}\n\nRole: {role}\nReturn ONLY valid JSON.",
+                system=system+" Return one valid JSON object.",
+                model=model,
+                max_tokens=max_tokens,
+                temperature=float(pc.get("temperature",0.2)),
+                allow_direct_fallback=False,
+            )
         with ThreadPoolExecutor(max_workers=count) as ex:
             fs=[ex.submit(task,i,r) for i,r in enumerate(roles,1)]
             for f in as_completed(fs):
                 try:drafts.append(f.result())
                 except Exception as e:log.warning("JSON specialist failed: %s",e)
-        if not drafts:return cloud_client.chat_json(prompt,system=system,model=model,max_tokens=max_tokens)
+        if not drafts:
+            return cloud_client.chat_json(
+                prompt=prompt,
+                system=system,
+                model=model,
+                max_tokens=max_tokens,
+                allow_direct_fallback=False,
+            )
         drafts.sort(key=lambda x:x[0]); evidence="\n\n".join(f"=== Draft {i} ===\n{trim(v,14000)}" for i,v in drafts)
-        raw=cloud_client.chat(prompt=f"Task:\n{prompt}\n\nIndependent drafts:\n{evidence}",system=system+" Reconcile the drafts and return ONLY one valid JSON object.",model=str(pc.get("synthesis_model","auto/smart")),max_tokens=max_tokens,temperature=0.15)
+        raw=cloud_client.chat(
+            prompt=f"Task:\n{prompt}\n\nIndependent drafts:\n{evidence}",
+            system=system+" Reconcile the drafts and return ONLY one valid JSON object.",
+            model=str(pc.get("synthesis_model","auto/smart")),
+            max_tokens=max_tokens,
+            temperature=0.15,
+            allow_direct_fallback=False,
+        )
         clean=raw.strip()
         if clean.startswith("```"):
             parts=clean.split("```"); clean=parts[1] if len(parts)>1 else clean
@@ -468,7 +507,12 @@ class IntelligenceOrchestrator:
                 raise ValueError("structured synthesis returned a non-object JSON value")
             return parsed
         except (json.JSONDecodeError, ValueError):
-            return cloud_client.chat_json(prompt,system=system,model=model,max_tokens=max_tokens)
-        except json.JSONDecodeError:return cloud_client.chat_json(prompt,system=system,model=model,max_tokens=max_tokens)
+            return cloud_client.chat_json(
+                prompt=prompt,
+                system=system,
+                model=model,
+                max_tokens=max_tokens,
+                allow_direct_fallback=False,
+            )
 
 orchestrator=IntelligenceOrchestrator()
