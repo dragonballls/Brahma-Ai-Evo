@@ -145,6 +145,16 @@ def get_setting(key: str, default: Any = None) -> Any:
     return load_settings().get(key, default)
 
 
+def get_boolean_setting(key: str, default: bool = False) -> bool:
+    """Read a persisted boolean without coercing malformed values into truthy state."""
+    if not isinstance(default, bool):
+        raise TypeError("boolean setting default must be a bool")
+    value = get_setting(key, default)
+    if not isinstance(value, bool):
+        raise RuntimeError(f"Setting '{key}' must be a boolean value.")
+    return value
+
+
 def set_setting(key: str, value: Any) -> None:
     save_settings({key: value})
 
