@@ -2,10 +2,12 @@ import asyncio
 import atexit
 import threading
 import concurrent.futures
+import ipaddress
 import platform
 import shutil
 import subprocess
 from pathlib import Path
+from urllib.parse import urlsplit
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 
 
@@ -179,6 +181,9 @@ class _BrowserThread:
         self._channel    = None
         self._is_opera   = False
         self._startup_error = None
+        self._network_log = []
+        self._console_log = []
+        self._active_dialog_handler = None
 
     def start(self) -> bool:
         if self._thread and self._thread.is_alive():
@@ -291,13 +296,75 @@ class _BrowserThread:
                     "Chrome/120.0.0.0 Safari/537.36"
                 )
             )
+            await self._context.route("**/*", self._guard_request)
+            await self._context.route("**/*", self._guard_request)
 
         if self._page is None or self._page.is_closed():
             self._page = await self._context.new_page()
             if self._page not in self._pages:
                 self._pages.append(self._page)
+            self._record_page(self._page)
 
         return self._page
+
+    async def _guard_request(self, route, request) -> None:
+        """Enforce Brahma's browser network policy before request bytes are received."""
+        from urllib.parse import urlsplit
+        url = str(request.url or "")
+        resource_type = str(getattr(request, "resource_type", "") or "")
+        parsed = urlsplit(url)
+        if parsed.username or parsed.password:
+            await route.abort("blockedbyclient")
+            return
+
+        is_http = parsed.scheme.lower() in {"http", "https"}
+        if is_http:
+            try:
+                validate_browser_url(url)
+            except ValueError:
+                await route.abort("blockedbyclient")
+                return
+
+            redirected_from = getattr(request, "redirected_from", None)
+            if redirected_from is not None:
+                previous = urlsplit(str(getattr(redirected_from, "url", "") or ""))
+                previous_host = (previous.hostname or "").rstrip(".").lower()
+                current_host = (parsed.hostname or "").rstrip(".").lower()
+                if previous_host and current_host and previous_host != current_host:
+                    await route.abort("blockedbyclient")
+                    return
+        elif resource_type == "document":
+            # Top-level navigation to non-http(s) schemes is never part of the
+            # public browser contract; reject before page content becomes visible.
+            try:
+                validate_browser_url(url)
+            except ValueError:
+                await route.abort("blockedbyclient")
+                return
+        elif parsed.scheme.lower() in {"file", "javascript", "vbscript", "chrome", "chrome-extension", "edge", "ms-browser-extension"}:
+            await route.abort("blockedbyclient")
+            return
+
+        try:
+            await route.continue_()
+        except Exception:
+            try:
+                await route.abort("failed")
+            except Exception:
+                pass
+
+    def _record_page(self, page) -> None:
+        try:
+            page.on("request", lambda req: self._network_log.append(
+                f"{getattr(req, 'method', 'GET')} {getattr(req, 'resource_type', '')} {str(getattr(req, 'url', ''))[:500]}"
+            ))
+            page.on("console", lambda msg: self._console_log.append(
+                f"{getattr(msg, 'type', '')}: {str(getattr(msg, 'text', ''))[:1000]}"
+            ))
+            self._network_log = self._network_log[-200:]
+            self._console_log = self._console_log[-200:]
+        except Exception:
+            pass
 
     async def _new_tab(self, url: str | None = None) -> str:
         await self._launch_browser_if_needed()
@@ -313,6 +380,7 @@ class _BrowserThread:
         page = await self._context.new_page()
         if page not in self._pages:
             self._pages.append(page)
+        self._record_page(page)
         self._page = page
         if url:
             return await self._go_to(url)
@@ -386,7 +454,20 @@ class _BrowserThread:
         page = await self._get_page()
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=15000)
-            return f"Opened: {page.url}"
+            final_url = str(page.url or "")
+            if final_url:
+                final_parts = urlsplit(final_url)
+                requested_parts = urlsplit(url)
+                if final_parts.hostname and requested_parts.hostname:
+                    requested_host = requested_parts.hostname.rstrip(".").lower()
+                    final_host = final_parts.hostname.rstrip(".").lower()
+                    if requested_host != final_host:
+                        return f"Navigation blocked: redirect changed host from {requested_host} to {final_host}."
+                try:
+                    validate_browser_url(final_url)
+                except ValueError as exc:
+                    return f"Navigation blocked: final destination rejected by browser policy: {exc}"
+            return f"Opened: {final_url or url}"
         except PlaywrightTimeout:
             return f"Timeout loading: {url}"
         except Exception as e:
@@ -660,192 +741,79 @@ def browser_control(
     if action in {"evaluate", "eval", "run_code", "execute"}:
         return "Unsupported browser action: arbitrary code execution is not exposed through the public browser-control contract."
 
-    # Try Microsoft Playwright MCP first
+    # Use Brahma's guarded native Playwright backend for all public browser actions.
+    # The upstream MCP server cannot enforce redirect/network security boundaries.
     try:
-        mcp = get_playwright_mcp_client()
-
+        _ensure_started()
         if action in {"go_to", "navigate"}:
-            url = parameters.get("url", "").strip()
+            url = str(parameters.get("url", "") or "").strip()
             if not url and parameters.get("query"):
-                return browser_control({**parameters, "action": "search"}, response, player, session_memory)
-            result = mcp.navigate(url)
-
-        elif action == "search":
-            query = parameters.get("query", "").strip()
-            engine = parameters.get("engine", "google").lower()
-            engines = {
-                "google":     f"https://www.google.com/search?q={query.replace(' ', '+')}",
-                "bing":       f"https://www.bing.com/search?q={query.replace(' ', '+')}",
-                "duckduckgo": f"https://duckduckgo.com/?q={query.replace(' ', '+')}",
-            }
-            url = engines.get(engine, engines["google"])
-            result = mcp.navigate(url)
-
+                action = "search"
+            else:
+                result = _bt.run(_bt._go_to(url))
+        if action == "search":
+            result = _bt.run(_bt._search(parameters.get("query", ""), parameters.get("engine", "google")))
         elif action in {"click", "smart_click"}:
-            element = parameters.get("element")
-            selector = parameters.get("selector")
-            text = parameters.get("text") or parameters.get("description")
-            if not element and not selector and text:
-                selector = f"text={text}"
-            result = mcp.click(element=element, selector=selector)
-
+            result = _bt.run(_bt._smart_click(parameters.get("description") or parameters.get("text") or "")) if not parameters.get("selector") else _bt.run(_bt._click(selector=parameters.get("selector")))
         elif action in {"hover", "smart_hover"}:
-            element = parameters.get("element")
-            selector = parameters.get("selector")
-            text = parameters.get("text") or parameters.get("description")
-            if not element and not selector and text:
-                selector = f"text={text}"
-            result = mcp.hover(element=element, selector=selector)
-
+            result = _bt.run(_bt._hover(selector=parameters.get("selector"), text=parameters.get("text") or parameters.get("description")))
         elif action in {"type", "smart_type"}:
-            element = parameters.get("element")
-            selector = parameters.get("selector")
-            text = str(parameters.get("text", ""))
-            desc = parameters.get("description")
-            if not element and not selector and desc:
-                selector = f"input[placeholder*='{desc}'], [aria-label*='{desc}'], textarea"
-            result = mcp.type_text(text=text, element=element, selector=selector)
-
+            if action == "smart_type" or parameters.get("description"):
+                result = _bt.run(_bt._smart_type(parameters.get("description") or parameters.get("text", ""), parameters.get("text", "")))
+            else:
+                result = _bt.run(_bt._type(selector=parameters.get("selector"), text=parameters.get("text", "")))
         elif action == "press":
-            result = mcp.press_key(parameters.get("key", "Enter"))
-
+            result = _bt.run(_bt._press(parameters.get("key", "Enter")))
         elif action == "scroll":
-            direction = parameters.get("direction", "down")
-            amount = int(parameters.get("amount", 500))
-            y = amount if direction == "down" else -amount
-            result = mcp.evaluate(f"window.scrollBy(0, {y}); 'Scrolled {direction}'")
-
+            result = _bt.run(_bt._scroll(direction=parameters.get("direction", "down"), amount=int(parameters.get("amount", 500))))
         elif action in {"snapshot", "inspect"}:
-            result = mcp.snapshot()
-
+            result = _bt.run(_bt._snapshot())
         elif action == "find":
-            query = parameters.get("query") or parameters.get("text") or ""
-            result = mcp.find(query)
-
+            result = _bt.run(_bt._find(parameters.get("query") or parameters.get("text") or ""))
         elif action == "get_text":
-            result = mcp.evaluate("document.body ? document.body.innerText.substring(0, 4000) : ''")
-            if not result or result == "''":
-                result = mcp.snapshot()
-
+            result = _bt.run(_bt._get_text())
         elif action in {"screenshot", "take_screenshot"}:
             out_dir = Path.home() / "Desktop" / "BrahmaAI"
             out_dir.mkdir(parents=True, exist_ok=True)
-            custom_path = parameters.get("path")
-            if not custom_path:
-                custom_path = str(out_dir / f"browser_screenshot_{int(time.time())}.png")
-            result = mcp.take_screenshot(custom_path)
-
+            custom_path = parameters.get("path") or str(out_dir / f"browser_screenshot_{int(time.time())}.png")
+            result = _bt.run(_bt._screenshot(custom_path))
         elif action == "fill_form":
-            raw_fields = parameters.get("fields", {})
-            fields_list = []
-            if isinstance(raw_fields, dict):
-                for k, v in raw_fields.items():
-                    fields_list.append({"element": k, "value": str(v)})
-            elif isinstance(raw_fields, list):
-                fields_list = raw_fields
-            result = mcp.fill_form(fields_list)
-
+            result = _bt.run(_bt._fill_form(parameters.get("fields", {})))
         elif action == "select_option":
             vals = parameters.get("values") or [parameters.get("value")]
-            result = mcp.select_option(
-                values=[str(v) for v in vals if v],
-                element=parameters.get("element"),
-                selector=parameters.get("selector")
-            )
-
+            result = _bt.run(_bt._select_option([str(v) for v in vals if v], selector=parameters.get("selector")))
         elif action in {"tabs", "list_tabs"}:
-            result = mcp.tabs(action="list")
-
+            result = _bt.run(_bt._list_tabs())
         elif action in {"open_tab", "new_tab"}:
-            mcp.tabs(action="new")
-            url = parameters.get("url")
-            if url:
-                result = mcp.navigate(url)
-            else:
-                result = "Opened new tab."
-
+            result = _bt.run(_bt._new_tab(parameters.get("url")))
         elif action == "switch_tab":
-            idx = int(parameters.get("tab", 1))
-            result = mcp.tabs(action="select", index=idx)
-
+            result = _bt.run(_bt._switch_tab(int(parameters.get("tab", 1))))
         elif action == "back":
-            result = mcp.navigate_back()
-
+            result = _bt.run(_bt._back())
         elif action == "forward":
-            result = mcp.evaluate("window.history.forward(); 'Forward navigated'")
-
+            result = _bt.run(_bt._forward())
         elif action in {"refresh", "reload"}:
-            result = mcp.evaluate("window.location.reload(); 'Page reloaded'")
-
+            result = _bt.run(_bt._reload())
         elif action in {"wait_for", "wait"}:
             text = parameters.get("text")
             t_ms = parameters.get("time_ms") or parameters.get("time")
-            result = mcp.wait_for(text=text, time_ms=int(t_ms) if t_ms else 2000)
-
+            result = _bt.run(_bt._wait_for(text=text, time_ms=int(t_ms) if t_ms else 2000))
         elif action in {"dialog", "handle_dialog"}:
-            accept = parameters.get("accept", True)
-            p_text = parameters.get("prompt_text")
-            result = mcp.handle_dialog(accept=accept, prompt_text=p_text)
-
+            result = _bt.run(_bt._handle_dialog(
+                accept=bool(parameters.get("accept", True)),
+                prompt_text=parameters.get("prompt_text"),
+            ))
         elif action in {"upload", "file_upload"}:
-            paths = parameters.get("paths") or [parameters.get("path")]
-            paths = [str(p) for p in paths if p]
-            result = mcp.file_upload(
-                paths=paths,
-                element=parameters.get("element"),
-                selector=parameters.get("selector")
-            )
-
+            paths = [str(p) for p in (parameters.get("paths") or [parameters.get("path")]) if p]
+            result = _bt.run(_bt._file_upload(paths, selector=parameters.get("selector")))
         elif action == "console":
-            result = mcp.console_messages()
-
+            result = _bt.run(_bt._console_messages())
         elif action == "network":
-            result = mcp.network_requests()
-
+            result = _bt.run(_bt._network_requests())
         elif action == "close":
-            result = mcp.close()
-
-        else:
-            result = f"Unknown action: {action}"
-
-    except Exception as mcp_err:
-        _log(f"[Browser] ⚠️ MCP server issue ({mcp_err}) — falling back to native browser thread")
-        # Legacy Fallback
-        try:
-            _ensure_started()
-            if action in {"go_to", "navigate"}:
-                result = _bt.run(_bt._go_to(parameters.get("url", "")))
-            elif action == "search":
-                result = _bt.run(_bt._search(parameters.get("query", ""), parameters.get("engine", "google")))
-            elif action == "click":
-                result = _bt.run(_bt._click(selector=parameters.get("selector"), text=parameters.get("text")))
-            elif action == "type":
-                result = _bt.run(_bt._type(selector=parameters.get("selector"), text=parameters.get("text", "")))
-            elif action == "scroll":
-                result = _bt.run(_bt._scroll(direction=parameters.get("direction", "down"), amount=parameters.get("amount", 500)))
-            elif action == "fill_form":
-                result = _bt.run(_bt._fill_form(parameters.get("fields", {})))
-            elif action == "get_text":
-                result = _bt.run(_bt._get_text())
-            elif action == "press":
-                result = _bt.run(_bt._press(parameters.get("key", "Enter")))
-            elif action in {"open_tab", "new_tab"}:
-                result = _bt.run(_bt._new_tab(parameters.get("url")))
-            elif action == "switch_tab":
-                result = _bt.run(_bt._switch_tab(int(parameters.get("tab", 1))))
-            elif action == "list_tabs":
-                result = _bt.run(_bt._list_tabs())
-            elif action == "back":
-                result = _bt.run(_bt._back())
-            elif action in {"refresh", "reload"}:
-                result = _bt.run(_bt._reload())
-            elif action == "close":
-                result = _bt.run(_bt._close_browser())
-            else:
-                result = f"Legacy fallback could not handle action: {action}"
-        except Exception as leg_err:
-            result = f"Browser error: {leg_err}"
-
+            result = _bt.run(_bt._close_browser())
+    except Exception as browser_err:
+        result = f"Browser error: {browser_err}"
     # Safe log printing without Windows charmap crashes
     safe_res = str(result).encode("ascii", "replace").decode("ascii")
     _log(f"[Browser] {safe_res[:100]}")
