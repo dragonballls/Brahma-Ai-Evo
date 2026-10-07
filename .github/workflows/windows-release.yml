@@ -41,16 +41,23 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
+          if ($LASTEXITCODE -ne 0) { throw "pip self-upgrade failed with exit code $LASTEXITCODE." }
           python -m pip install --prefer-binary -r requirements.txt
+          if ($LASTEXITCODE -ne 0) { throw "Runtime dependency installation failed with exit code $LASTEXITCODE." }
           python -m pip install pyinstaller==6.22.3 pytest
+          if ($LASTEXITCODE -ne 0) { throw "Packaging dependency installation failed with exit code $LASTEXITCODE." }
           python -m pip check
+          if ($LASTEXITCODE -ne 0) { throw "pip check failed with exit code $LASTEXITCODE." }
 
       - name: Run fast repository regression gate
         shell: pwsh
         run: |
           python -m compileall -q actions agent core features memory plugins smart_home main.py llm_client.py or_client.py ui.py
+          if ($LASTEXITCODE -ne 0) { throw "Python compilation failed with exit code $LASTEXITCODE." }
           python -m unittest -q tests.test_repository_integrity tests.test_runtime_consistency tests.test_conversation_delivery tests.test_brahma_connect
+          if ($LASTEXITCODE -ne 0) { throw "Fast repository regression gate failed with exit code $LASTEXITCODE." }
           python -m pytest -q tests/test_followup_audits.py tests/test_browser_pinned_proxy.py
+          if ($LASTEXITCODE -ne 0) { throw "Browser/follow-up regressions failed with exit code $LASTEXITCODE." }
 
       - name: Restore cached OmniRoute runtime
         id: omni-cache
@@ -64,6 +71,7 @@ jobs:
         shell: pwsh
         run: |
           python scripts/prepare_omniroute_runtime.py build_vendor/omniroute_runtime
+          if ($LASTEXITCODE -ne 0) { throw "OmniRoute runtime preparation failed with exit code $LASTEXITCODE." }
 
       - name: Verify cached or prepared OmniRoute runtime
         shell: pwsh
@@ -76,6 +84,7 @@ jobs:
           if (-not (Test-Path "build_vendor/omniroute_runtime/node.exe")) { throw "Bundled Node runtime missing." }
           if (-not (Test-Path "build_vendor/omniroute_runtime/node_modules/omniroute/bin/omniroute.mjs")) { throw "Bundled OmniRoute entrypoint missing." }
           python -c "from pathlib import Path; import sys; root=Path('build_vendor/omniroute_runtime'); sys.path.insert(0, str(Path('.').resolve())); from scripts.prepare_omniroute_runtime import _healthy; raise SystemExit(0 if _healthy(root) else 1)"
+          if ($LASTEXITCODE -ne 0) { throw "Bundled OmniRoute runtime health verification failed with exit code $LASTEXITCODE." }
 
       - name: Cache verified OmniRoute runtime
         if: ${{ success() && steps.omni-cache.outputs.cache-hit != 'true' }}
@@ -125,14 +134,14 @@ jobs:
         shell: pwsh
         run: |
           python scripts/pack_windows_payload.py dist/BrahmaEvo dist/BrahmaEvoPayload.zip
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($LASTEXITCODE -ne 0) { throw "Windows payload packaging failed with exit code $LASTEXITCODE." }
           if (-not (Test-Path "dist/BrahmaEvoPayload.zip")) { throw "BrahmaEvoPayload.zip was not produced." }
 
       - name: Verify packed Brahma Evo payload
         shell: pwsh
         run: |
           python scripts/pack_windows_payload.py dist/BrahmaEvo dist/BrahmaEvoPayload.zip --verify
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($LASTEXITCODE -ne 0) { throw "Windows payload verification failed with exit code $LASTEXITCODE." }
 
       - name: Cache verified Brahma Evo payload
         if: ${{ success() && steps.payload-cache.outputs.cache-hit != 'true' }}
