@@ -114,5 +114,24 @@ class CreatorStudioTests(unittest.TestCase):
             self.assertEqual(loaded["project_id"], "abc")
 
 
+    def test_youtube_publish_proof_helpers_are_fail_closed(self):
+        from core import creator_publish
+
+        self.assertEqual(
+            creator_publish._studio_fallback_message(True),
+            "Direct YouTube API credentials are not configured; YouTube Studio was opened. The package is ready.",
+        )
+        self.assertIn(
+            "could not be opened automatically",
+            creator_publish._studio_fallback_message(False),
+        )
+        with self.assertRaises(RuntimeError):
+            creator_publish._extract_uploaded_video_id({})
+        self.assertEqual(
+            creator_publish._extract_uploaded_video_id({"id": 12345}),
+            "12345",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
