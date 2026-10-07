@@ -70,7 +70,7 @@ def test_dynamic_registry_rejects_native_feature_deletion():
 def test_dynamic_registry_rejects_junction_and_reparse_native_feature_entries():
     source = (ROOT / "core" / "dynamic_registry.py").read_text(encoding="utf-8")
     assert "def _is_link_like(path: Path) -> bool:" in source
-    assert "is_junction = getattr(path, "is_junction", None)" in source
+    assert 'is_junction = getattr(path, "is_junction", None)' in source
     assert "FILE_ATTRIBUTE_REPARSE_POINT" in source
     assert "if _is_link_like(item):" in source
     assert "if _is_link_like(manifest_file) or _is_link_like(code_file) or _is_link_like(item):" in source
