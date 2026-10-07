@@ -147,7 +147,7 @@ class LearnedRulesEngine:
                         except OSError:
                             pass
                     raise
-                finally
+                finally:
                     try:
                         temp.unlink(missing_ok=True)
                     except OSError:
