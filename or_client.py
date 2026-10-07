@@ -205,7 +205,7 @@ class OpenRouterClient:
                 logger.warning("[OmniRoute] Authenticated request was redirected; refusing credential forwarding.")
                 return None
             if response.status_code != 200:
-                logger.warning(f"[OmniRoute] HTTP {response.status_code}; using direct provider fallback")
+                logger.warning(f"[OmniRoute] HTTP {response.status_code}; gateway request unavailable")
                 return None
             data = _read_bounded_json(response)
             content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
@@ -217,7 +217,7 @@ class OpenRouterClient:
                 )
             return str(content).strip() if content else None
         except Exception as exc:
-            logger.warning(f"[OmniRoute] request failed; using direct provider fallback: {exc}")
+            logger.warning(f"[OmniRoute] request failed; gateway request unavailable: {exc}")
             return None
         finally:
             if response is not None:
@@ -677,6 +677,7 @@ class OpenRouterClient:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
         max_rounds: int = 6,
+        allow_direct_fallback: bool = True,
     ) -> str:
         """Run a bounded OmniRoute-first tool-calling conversation with direct fallback."""
         omni_result = self._call_omniroute_tool_capable(
@@ -690,6 +691,10 @@ class OpenRouterClient:
         )
         if omni_result:
             return omni_result
+        if not allow_direct_fallback:
+            raise RuntimeError(
+                "[OmniRoute] Provider-preserving request failed; automatic direct-provider fallback is disabled."
+            )
 
         normalized_messages = [dict(message) for message in messages]
         normalized_tools = self._normalize_tools(tools)
@@ -801,6 +806,7 @@ class OpenRouterClient:
         model: Optional[str] = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
+        allow_direct_fallback: bool = True,
     ) -> str:
         messages = [{"role": "system", "content": system}]
         if history:
@@ -815,6 +821,10 @@ class OpenRouterClient:
         )
         if omni_result:
             return omni_result
+        if not allow_direct_fallback:
+            raise RuntimeError(
+                "[OmniRoute] Provider-preserving request failed; automatic direct-provider fallback is disabled."
+            )
         return self._call_with_fallback(
             TEXT_MODELS, messages, model, max_tokens, temperature
         )
@@ -828,6 +838,7 @@ class OpenRouterClient:
         ),
         model: Optional[str] = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        allow_direct_fallback: bool = True,
     ) -> dict:
         messages = [
             {"role": "system", "content": system},
@@ -841,6 +852,10 @@ class OpenRouterClient:
             response_format={"type": "json_object"},
         )
         if not raw:
+            if not allow_direct_fallback:
+                raise RuntimeError(
+                    "[OmniRoute] Provider-preserving structured request failed; automatic direct-provider fallback is disabled."
+                )
             raw = self._call_with_fallback(
                 TEXT_MODELS, messages, model, max_tokens, temperature=0.2
             )
@@ -870,6 +885,7 @@ class OpenRouterClient:
         system: str = "Analyze the image and describe what you see clearly and concisely.",
         model: Optional[str] = None,
         max_tokens: int = 1024,
+        allow_direct_fallback: bool = True,
     ) -> str:
         messages = [
             {"role": "system", "content": system},
@@ -894,6 +910,10 @@ class OpenRouterClient:
         )
         if omni_result:
             return omni_result
+        if not allow_direct_fallback:
+            raise RuntimeError(
+                "[OmniRoute] Provider-preserving vision request failed; automatic direct-provider fallback is disabled."
+            )
         return self._call_with_fallback(
             VISION_MODELS, messages, model, max_tokens, temperature=0.2
         )
@@ -927,6 +947,7 @@ class OpenRouterClient:
         model: Optional[str] = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
+        allow_direct_fallback: bool = True,
     ) -> str:
     
         omni_result = self._call_omniroute(
@@ -937,6 +958,10 @@ class OpenRouterClient:
         )
         if omni_result:
             return omni_result
+        if not allow_direct_fallback:
+            raise RuntimeError(
+                "[OmniRoute] Provider-preserving multi-turn request failed; automatic direct-provider fallback is disabled."
+            )
         return self._call_with_fallback(
             TEXT_MODELS, messages, model, max_tokens, temperature
         )
