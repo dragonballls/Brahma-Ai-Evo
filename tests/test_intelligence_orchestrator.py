@@ -11,6 +11,7 @@ class IntelligenceOrchestratorTests(unittest.TestCase):
         self.assertEqual(profile_for("What does capitalization mean?", None, cfg), "smart")
         self.assertEqual(profile_for("Please debug this Python function.", None, cfg), "coding")
         self.assertEqual(profile_for("Look at this image.", None, cfg), "vision")
+        self.assertEqual(profile_for("Please decode this value.", None, cfg), "smart")
 
 
     def test_simple_request_uses_fast_single_call(self):
