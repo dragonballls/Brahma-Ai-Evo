@@ -531,3 +531,42 @@ def test_instagram_reply_handler_does_not_claim_success_for_unverified_send():
     assert "delivery was not independently verified" in block
     assert "Successfully sent manual reply" not in block
     assert 'if isinstance(send_result, dict) and send_result.get("delivery_verified") is True' in block
+
+
+def test_redline_protocol_rejects_powercfg_failure(monkeypatch):
+    import core.protocols as protocol_module
+    monkeypatch.setattr(protocol_module.sys, "platform", "win32")
+    result = type(
+        "Completed",
+        (),
+        {"returncode": 1, "stdout": "", "stderr": "Access is denied"},
+    )()
+    monkeypatch.setattr(protocol_module.subprocess, "run", lambda *args, **kwargs: result)
+    response = protocol_module.protocols.execute("redline")
+    assert response["success"] is False
+    assert "power plan" in response["error"].casefold()
+    assert "active" not in response.get("result", "").casefold()
+
+
+def test_lockdown_protocol_does_not_claim_verified_lock_or_mute(monkeypatch):
+    import core.protocols as protocol_module
+
+    class User32:
+        def keybd_event(self, *args):
+            return 1
+
+        def LockWorkStation(self):
+            return 1
+
+    monkeypatch.setattr(protocol_module, "user32", User32())
+    response = protocol_module.protocols.execute("lockdown")
+    assert response["success"] is True
+    assert "accepted" in response["result"].casefold()
+    assert "workstation locked" not in response["result"].casefold()
+    assert "master audio muted" not in response["result"].casefold()
+
+
+def test_nightfall_protocol_does_not_claim_missing_session_log():
+    response = protocol_module.protocols.execute("nightfall")
+    assert response["success"] is True
+    assert "work sessions logged" not in response["result"].casefold()
