@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import socket
 import threading
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -152,8 +154,20 @@ class BrahmaGatewayConfig:
     def save(self) -> None:
         if self.config_path is None:
             return
+        if self.config_path.is_symlink():
+            raise RuntimeError("Brahma Connect configuration path must not be a symlink.")
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        self.config_path.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
+        temp = self.config_path.with_name(
+            f".{self.config_path.name}.{uuid.uuid4().hex}.tmp"
+        )
+        try:
+            temp.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
+            os.replace(temp, self.config_path)
+        finally:
+            try:
+                temp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 class BrahmaGateway:

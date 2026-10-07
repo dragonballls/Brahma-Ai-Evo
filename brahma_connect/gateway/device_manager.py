@@ -45,8 +45,9 @@ class DeviceManager:
                     raise RuntimeError(
                         "Device registry is corrupted and could not be quarantined safely."
                     ) from quarantine_exc
-                self._devices = {}
-                return
+                raise RuntimeError(
+                    "Device registry is corrupted; the original was quarantined."
+                ) from exc
             except OSError as exc:
                 raise RuntimeError(
                     "Device registry could not be read safely; refusing to overwrite it."
@@ -58,8 +59,9 @@ class DeviceManager:
                     raise RuntimeError(
                         "Device registry has an invalid schema and could not be quarantined safely."
                     ) from quarantine_exc
-                self._devices = {}
-                return
+                raise RuntimeError(
+                    "Device registry has an invalid root schema; the original was quarantined."
+                )
             devices = raw.get("devices", raw)
             if not isinstance(devices, dict):
                 try:
@@ -68,8 +70,9 @@ class DeviceManager:
                     raise RuntimeError(
                         "Device registry has an invalid devices schema and could not be quarantined safely."
                     ) from quarantine_exc
-                self._devices = {}
-                return
+                raise RuntimeError(
+                    "Device registry has an invalid devices schema; the original was quarantined."
+                )
             loaded: dict[str, DeviceRecord] = {}
             for device_id, item in (devices or {}).items():
                 try:

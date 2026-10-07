@@ -354,6 +354,8 @@ class SkillCrucible:
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
+                    if alias.name in BANNED_IMPORT_PATHS:
+                        return False, f"Security Violation: prohibited import '{alias.name}'."
                     root = alias.name.split(".")[0]
                     if root in BANNED_IMPORT_MODULES:
                         return False, f"Security Violation: prohibited import '{root}'."
