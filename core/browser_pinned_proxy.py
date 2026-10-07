@@ -394,6 +394,7 @@ class _Handler(socketserver.BaseRequestHandler):
             upstream = socket.create_connection((ip, port), timeout=15)
         except OSError as exc:
             raise _ProxyUpstreamError() from exc
+        self.server.register_socket(upstream)
         try:
             sock.sendall(
                 b"HTTP/1.1 200 Connection Established\r\n"
@@ -404,6 +405,7 @@ class _Handler(socketserver.BaseRequestHandler):
                 upstream.sendall(initial)
             self._relay(sock, upstream)
         finally:
+            self.server.unregister_socket(upstream)
             try:
                 upstream.close()
             except OSError:
@@ -515,6 +517,7 @@ class _Handler(socketserver.BaseRequestHandler):
             upstream = socket.create_connection((ip, port), timeout=15)
         except OSError as exc:
             raise _ProxyUpstreamError() from exc
+        self.server.register_socket(upstream)
         try:
             upstream.sendall(request_bytes)
             self._upstream_request_started = True
@@ -522,6 +525,7 @@ class _Handler(socketserver.BaseRequestHandler):
                 upstream.sendall(initial)
             self._relay(sock, upstream, validate_http_response=True)
         finally:
+            self.server.unregister_socket(upstream)
             try:
                 upstream.close()
             except OSError:
