@@ -98,7 +98,7 @@ class SmartHomeService:
 
     def connect_devices(self, provider_key: str, account_label: str, credentials: dict[str, Any],
                         external_ids: list[str]) -> list[dict[str, Any]]:
-        provider = self._registry.get(provider_key)
+        provider = self._require_available_provider(provider_key)
         auth = provider.authenticate(credentials)
         discovered = provider.discover_devices(auth["credentials"])
         selected = [device for device in discovered if str(device["external_id"]) in set(external_ids)]
