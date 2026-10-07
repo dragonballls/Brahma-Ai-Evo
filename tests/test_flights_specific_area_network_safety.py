@@ -66,3 +66,21 @@ def test_flight_radar_fetch_rejects_non_global_dns_before_request(monkeypatch):
             "https://opensky-network.org/api/states/all",
             timeout=8,
         )
+
+
+def test_flight_date_parser_rejects_unparseable_date_instead_of_using_today():
+    from actions.flight_finder import _parse_date
+    assert _parse_date("not-a-real-date") is None
+
+
+def test_flight_search_rejects_malformed_passenger_count():
+    from actions.flight_finder import flight_finder
+    result = flight_finder({"origin": "LAX", "destination": "JFK", "date": "tomorrow", "passengers": "many"})
+    assert "Passenger count must be a whole number" in result
+
+
+def test_flight_report_filename_parts_cannot_escape_desktop():
+    from actions.flight_finder import _safe_filename_part
+    assert "/" not in _safe_filename_part("../../escape", "origin")
+    assert "\\" not in _safe_filename_part(r"..\..\escape", "origin")
+    assert _safe_filename_part("   ", "origin") == "origin"
