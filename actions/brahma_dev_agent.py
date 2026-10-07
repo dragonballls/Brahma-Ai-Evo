@@ -47,6 +47,10 @@ _GIT_EXECUTION_OVERRIDE_FLAGS = {
     "-u", "--upload-pack", "--upload-pack=", "--receive-pack", "--receive-pack=",
     "-c", "--config", "--config-env", "--exec-path", "--exec-path=", "--exec-path",
 }
+_GIT_READONLY_SUBCOMMANDS = frozenset({
+    "status", "diff", "log", "show", "rev-parse", "rev-list", "ls-files", "grep",
+    "describe", "cat-file", "count-objects", "shortlog",
+})
 _EXECUTION_ENV_OVERRIDES = {
     "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "PYTHONINSPECT",
     "NODE_OPTIONS", "NODE_PATH",
@@ -136,6 +140,14 @@ class NativeTools:
             for part in parts[1:]
         ):
             return "Error: Git execution/configuration overrides are not permitted."
+
+        if executable == "git":
+            subcommands = [part.casefold() for part in parts[1:] if not part.startswith("-")]
+            if not subcommands or subcommands[0] not in _GIT_READONLY_SUBCOMMANDS:
+                return (
+                    "Error: developer Git access is read-only; repository mutation "
+                    "must remain under the outer checkpoint controller."
+                )
 
         if any(flag in _BLOCKED_EVAL_FLAGS for flag in lowered):
             return "Error: interpreter evaluation flags are not permitted."
@@ -606,7 +618,8 @@ class BrahmaDevAgent:
         self.github_inspected_repos: set[str] = set()
         self.github_candidate_repos: set[str] = set()
         self.github_required_sources = 0
-        self.verification_evidence = []
+        self.verification_evidence: list[dict[str, Any]] = []
+        self._mutation_generation = 0
 
     def _on_action(self, msg: str):
         if self.speak:
@@ -664,8 +677,22 @@ class BrahmaDevAgent:
             return f"Error: Tool '{name}' is not recognized. Available: Bash, FileRead, FileWrite, FileEdit, Glob, Grep, GitHubSearch, GitHubRead, GitHubRepo."
         try:
             result = func(args)
-            if self._is_verification_command(name, args) and not str(result).lstrip().casefold().startswith("error:"):
-                self.verification_evidence.append(str(args.get("command") or "").strip())
+            failed = str(result).lstrip().casefold().startswith("error:")
+            if key in {"filewrite", "fileedit"} and not failed:
+                self._mutation_generation += 1
+            elif key == "bash" and not self._is_verification_command(name, args):
+                # A non-verification command may have changed the workspace (build output,
+                # generated files, Git metadata, or an external side effect). Require a
+                # fresh authoritative verification afterward rather than trusting stale evidence.
+                self._mutation_generation += 1
+
+            if self._is_verification_command(name, args) and not failed:
+                self.verification_evidence.append(
+                    {
+                        "command": str(args.get("command") or "").strip(),
+                        "generation": self._mutation_generation,
+                    }
+                )
             return result
         except Exception as e:
             return f"Error executing {name}: {e}"
@@ -745,6 +772,7 @@ class BrahmaDevAgent:
         self.github_candidate_repos.clear()
         self.github_required_sources = 0
         self.verification_evidence.clear()
+        self._mutation_generation = 0
         self.history = [
             {"role": "system", "content": BRAHMA_DEV_SYSTEM_PROMPT + system_info},
             {"role": "user", "content": user_instruction},
@@ -773,6 +801,12 @@ class BrahmaDevAgent:
                 final_response = clean_reply if clean_reply else reply
                 if not self.verification_evidence:
                     return "Error: Developer task incomplete: no independent build/test verification was recorded after the requested changes."
+                latest = self.verification_evidence[-1]
+                if int(latest.get("generation", -1)) != self._mutation_generation:
+                    return (
+                        "Error: Developer task incomplete: repository changes occurred after the last "
+                        "authoritative verification; a fresh build/test verification is required."
+                    )
                 break
 
             # Execute tool calls
