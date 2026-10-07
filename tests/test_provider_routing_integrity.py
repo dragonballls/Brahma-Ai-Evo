@@ -172,6 +172,25 @@ def test_specialized_gemini_paths_fail_closed_when_openrouter_is_selected(monkey
         _gemini_api_key()
 
 
+def test_auto_heal_does_not_bypass_selected_provider_with_direct_openrouter_fallback(monkeypatch):
+    import or_client
+    from actions.auto_heal_engine import AutoHealEngine
+
+    with patch(
+        "llm_client.client.chat",
+        side_effect=RuntimeError("OmniRoute unavailable"),
+    ):
+        direct = Mock(side_effect=AssertionError("auto-heal must not bypass the selected provider"))
+        monkeypatch.setattr(or_client, "chat", direct)
+        result = AutoHealEngine._synthesize_patch_code(
+            "actions/example.py", 10, "RuntimeError", "boom", "value = 1",
+        )
+
+    assert result["success"] is False
+    assert "All unified AI synthesis backends failed" in result["error"]
+    direct.assert_not_called()
+
+
 def test_intelligence_orchestrator_is_provider_preserving_by_default():
     source = IntelligenceOrchestrator._call.__kwdefaults__
     # The public orchestrator helper intentionally defaults to no direct provider switch.

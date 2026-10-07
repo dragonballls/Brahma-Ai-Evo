@@ -643,26 +643,6 @@ Do NOT include markdown fences outside the JSON. Return only the valid JSON obje
         except Exception as u_err:
             logger.warning(f"[AutoHeal] Unified AI/OmniRoute synthesis failed: {u_err}")
 
-        # 2. Direct OpenRouter fallback preserves recovery when OmniRoute is
-        # unavailable or its embedded runtime is not healthy.
-        try:
-            import or_client
-            resp_text = or_client.chat(
-                prompt,
-                system="You are an expert Python auto-patching engineer. Return strict JSON.",
-                model="auto",
-                max_tokens=4096,
-                temperature=0.1,
-            )
-            clean_json = re.sub(r"^```[a-zA-Z]*\\n?", "", resp_text.strip())
-            clean_json = re.sub(r"\\n?```$", "", clean_json).strip()
-            data = json.loads(clean_json)
-            if "target_chunk" in data and "replacement_chunk" in data:
-                data["success"] = True
-                return data
-        except Exception as or_err:
-            logger.warning(f"[AutoHeal] OpenRouter fallback failed: {or_err}")
-
         # OmniRoute/unified cloud plus its bounded provider fallback is the complete
         # recovery path. Do not create a second direct Gemini client here; that would
         # bypass the canonical provider and credential-routing contract.
