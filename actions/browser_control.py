@@ -706,7 +706,11 @@ class _BrowserThread:
         try:
             page = await self._get_page()
             await page.screenshot(path=tmp_name)
+            if not Path(tmp_name).is_file() or Path(tmp_name).stat().st_size <= 0:
+                raise RuntimeError("Browser screenshot artifact was not created or is empty.")
             os.replace(tmp_name, target)
+            if target.is_symlink() or not target.is_file() or target.stat().st_size <= 0:
+                raise RuntimeError("Browser screenshot artifact could not be verified after save.")
             return f"Screenshot saved: {target}"
         except Exception as exc:
             try:
