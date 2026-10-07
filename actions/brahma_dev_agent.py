@@ -766,7 +766,10 @@ class BrahmaDevAgent:
             self.history.append({"role": "user", "content": observation_block})
 
         if not final_response:
-            final_response = "Completed developer task after max iterations. Please check your workspace."
+            final_response = (
+                "Developer task incomplete: the iteration limit was reached before the agent "
+                "produced a verified final result. Review the workspace and rerun the task."
+            )
         return final_response
 
 def run_dev_agent(parameters: dict[str, Any], speak: Optional[Callable[[str], None]] = None) -> str:
