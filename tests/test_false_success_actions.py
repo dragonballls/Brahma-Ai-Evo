@@ -71,6 +71,68 @@ def test_upload_video_rejects_browser_launch_failure():
     assert "No upload was performed" in result
 
 
+def test_instagram_upload_success_does_not_claim_browser_open_verification(monkeypatch, tmp_path):
+    from actions import send_message
+
+    media = tmp_path / "photo.jpg"
+    media.write_bytes(b"image")
+
+    fake_service = type(
+        "Service",
+        (),
+        {
+            "post_photo": lambda self, path, caption="", open_in_browser=True: {
+                "success": True,
+                "status": "success",
+                "post_url": "https://instagram.example/p/abc",
+            }
+        },
+    )()
+    monkeypatch.setattr(
+        "actions.instagram_mcp.InstagramService.instance",
+        lambda: fake_service,
+    )
+    result = send_message._upload_instagram_media(str(media), caption="hello")
+    assert "published" in result.lower()
+    assert "opened in browser" not in result.lower()
+    assert "not independently verified" in result.lower()
+
+
+def test_email_browser_compose_does_not_claim_page_open_verified(monkeypatch):
+    from actions import send_message
+
+    monkeypatch.setattr(send_message.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(send_message.webbrowser if hasattr(send_message, "webbrowser") else __import__("webbrowser"), "open", lambda _url: True)
+    # Import-local webbrowser is patched explicitly because the action imports it inside the function.
+    import webbrowser
+    monkeypatch.setattr(webbrowser, "open", lambda _url: True)
+    monkeypatch.setattr(send_message.psutil if hasattr(send_message, "psutil") else __import__("psutil"), "process_iter", lambda *_args, **_kwargs: [])
+    result = send_message._send_email_via_browser("gmail", "test@example.com", "hello")
+    assert "page load was not independently verified" in result.lower()
+    assert "opened gmail" not in result.lower()
+
+
+def test_instagram_unverified_delivery_is_not_reported_as_delivered(monkeypatch):
+    from actions import send_message
+
+    class Service:
+        def send_dm(self, receiver, message, open_in_browser=True):
+            return {
+                "success": False,
+                "status": "submitted",
+                "submitted": True,
+                "delivery_verified": False,
+                "error": "accepted but unverified",
+            }
+
+    monkeypatch.setattr(
+        "actions.instagram_mcp.InstagramService.instance", lambda: Service()
+    )
+    result = send_message._send_instagram("user", "hello")
+    assert "delivered" not in result.lower()
+    assert "not independently verified" in result.lower()
+
+
 def test_upload_video_success_language_does_not_claim_an_automatic_upload():
     from actions import upload_video
     from tempfile import TemporaryDirectory
