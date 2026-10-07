@@ -401,7 +401,7 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
         if status.stdout.strip():
             raise SelfCodingError(
                 "Rollback refused because the checkpoint branch has uncommitted changes; "
-                "refusing destructive reset."
+                "preserved untracked or working-tree changes and refused destructive reset."
             )
 
         reset = self._git("reset", "--hard", baseline)

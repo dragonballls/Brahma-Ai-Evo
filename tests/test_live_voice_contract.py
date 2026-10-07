@@ -1,6 +1,6 @@
-import pytest
 """Regression tests for the Live-style duplex voice contract."""
 from __future__ import annotations
+import pytest
 
 import ast
 from pathlib import Path

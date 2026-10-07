@@ -64,6 +64,8 @@ kernel32.CreateFileW.argtypes = [
     ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p,
 ]
 kernel32.CreateFileW.restype = ctypes.c_void_p
+kernel32.GetLongPathNameW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_ulong]
+kernel32.GetLongPathNameW.restype = ctypes.c_ulong
 kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
 kernel32.CloseHandle.restype = ctypes.c_int
 kernel32.GetFinalPathNameByHandleW.argtypes = [
@@ -86,6 +88,38 @@ kernel32.SetFileInformationByHandle.restype = ctypes.c_int
 
 def _win_path(path: Path | str) -> str:
     return str(Path(path).expanduser().absolute())
+
+
+def _get_long_path(path: str) -> str:
+    """Return the long lexical form of an existing Windows path when available."""
+    size = 512
+    while size <= 32768:
+        buffer = ctypes.create_unicode_buffer(size)
+        result = kernel32.GetLongPathNameW(path, buffer, size)
+        if result == 0:
+            return path
+        if result < size:
+            return buffer.value
+        size = max(size * 2, result + 1)
+    return path
+
+
+def _comparison_path(path: Path | str) -> str:
+    """Normalize short-name aliases without resolving reparse targets."""
+    absolute = _win_path(path)
+    if os.path.exists(absolute):
+        lexical = _get_long_path(absolute)
+    else:
+        parent, leaf = os.path.split(absolute)
+        if parent and os.path.exists(parent):
+            lexical = os.path.join(_get_long_path(parent), leaf)
+        else:
+            lexical = absolute
+    return os.path.normcase(os.path.normpath(lexical))
+
+
+def _same_path(left: Path | str, right: Path | str) -> bool:
+    return _comparison_path(left) == _comparison_path(right)
 
 
 def _strip_device_prefix(path: str) -> str:
@@ -183,7 +217,7 @@ def ensure_directory(path: Path | str) -> bool:
         raise OSError(ctypes.get_last_error(), f"CreateFileW failed for directory {target}")
     try:
         final = _final_path(handle)
-        if os.path.normcase(final) != os.path.normcase(_win_path(target)):
+        if not _same_path(final, target):
             raise OSError("Directory reached through a reparse-point path component")
         info = _handle_info(handle)
         _reject_reparse(handle, info)
@@ -235,7 +269,7 @@ def open_safe_file(
 
     try:
         final = _final_path(handle)
-        if os.path.normcase(final) != os.path.normcase(_win_path(path)):
+        if not _same_path(final, path):
             raise OSError("Refusing a file reached through a reparse-point path component")
         if not _is_under_home(final):
             raise OSError("Refusing a file whose final handle path is outside the user's home directory")
@@ -322,6 +356,8 @@ def unlink(path: Path | str, *, expected_identity=None) -> None:
         raise OSError(ctypes.get_last_error(), f"CreateFileW failed for {path}")
     try:
         final = _final_path(handle)
+        if not _same_path(final, path):
+            raise OSError("Refusing a delete through a reparse-point path component")
         if not _is_under_home(final):
             raise OSError("Refusing to delete a file outside the user's home directory")
         info = _handle_info(handle)
@@ -373,9 +409,9 @@ def rename(source: Path | str, destination: Path | str, *, source_identity=None)
         final_parent = _final_path(parent_handle)
         requested_source = _win_path(source)
         requested_parent = _win_path(destination_path.parent)
-        if os.path.normcase(final_source) != os.path.normcase(requested_source):
+        if not _same_path(final_source, requested_source):
             raise OSError("Refusing a rename through a reparse-point source path")
-        if os.path.normcase(final_parent) != os.path.normcase(requested_parent):
+        if not _same_path(final_parent, requested_parent):
             raise OSError("Refusing a rename through a reparse-point destination path")
         if not _is_under_home(final_source) or not _is_under_home(final_parent):
             raise OSError("Refusing a rename outside the user's home directory")

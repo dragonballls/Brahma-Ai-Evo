@@ -244,7 +244,7 @@ def _llm_plan(request: str) -> list[dict[str, Any]]:
 
     prompt = (
         "Map the user's natural-language settings request to zero or more settings from this allowlist. "
-        "Return valid JSON with a patches array and an optional needs_clarification boolean. "
+        "Return valid JSON matching exactly this top-level shape: {\"patches\": [], \"needs_clarification\": false}. "
         "Never invent keys. Use the exact setting key names. Convert on/off to booleans and numeric values to numbers. "
         "Do not make changes outside this catalog. If the user asks for an unsupported or genuinely ambiguous setting, "
         "return an empty patch list.\n\n"

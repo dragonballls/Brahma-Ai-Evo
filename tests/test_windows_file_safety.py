@@ -32,6 +32,26 @@ def test_windows_handle_file_roundtrip_and_rename(tmp_path):
     assert renamed.exists()
 
 
+def test_windows_compare_accepts_short_name_alias(tmp_path):
+    import ctypes
+    from core import windows_file_safety as winfs
+
+    target = tmp_path / "short_alias.txt"
+    target.write_text("short-name", encoding="utf-8")
+
+    get_short = ctypes.windll.kernel32.GetShortPathNameW
+    get_short.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+    get_short.restype = ctypes.c_uint32
+    buffer = ctypes.create_unicode_buffer(32768)
+    length = get_short(str(tmp_path), buffer, len(buffer))
+    if not length or buffer.value == str(tmp_path):
+        pytest.skip("This Windows volume does not expose a distinct 8.3 path alias.")
+
+    alias = Path(buffer.value) / target.name
+    text, _ = winfs.read_text(alias, max_chars=100)
+    assert text == "short-name"
+
+
 def test_windows_handle_file_refuses_reparse_leaf(tmp_path):
     from core import windows_file_safety as winfs
 

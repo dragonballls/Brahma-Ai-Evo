@@ -197,7 +197,7 @@ def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
             if len(result) > 500 and params.get("save", True):
                 out = _output_path(path, "result", ".txt")
                 _secure_write_new_text(out, result)
-        _verify_output_artifact(out)
+                _verify_output_artifact(out)
                 return f"{result[:300]}...\n\nFull result saved to: {out}"
             return result
         except Exception as e:
