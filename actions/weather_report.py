@@ -3,6 +3,7 @@
 import json
 import urllib.request
 import webbrowser
+from core.network_safety import open_fixed_https, read_bounded
 from urllib.parse import quote_plus
 from typing import Dict, Any, Optional
 
@@ -52,14 +53,16 @@ def get_live_weather(city: Optional[str] = None) -> Dict[str, Any]:
     }
 
     try:
-        req = urllib.request.Request(
+        from urllib.parse import urlsplit
+        if urlsplit(url).hostname not in {"wttr.in", "www.wttr.in"}:
+            raise ValueError("Weather destination is outside the fixed host policy.")
+        with open_fixed_https(
             url,
-            headers={"User-Agent": "curl/7.68.0"}
-        )
-        with urllib.request.urlopen(req, timeout=3.5) as resp:
-            raw = resp.read(64 * 1024 + 1)
-            if len(raw) > 64 * 1024:
-                raise ValueError("Weather service response exceeded the safety limit.")
+            allowed_hosts={"wttr.in", "www.wttr.in"},
+            timeout=3.5,
+            headers={"User-Agent": "curl/7.68.0"},
+        ) as resp:
+            raw = read_bounded(resp, 64 * 1024)
             data = json.loads(raw.decode("utf-8"))
 
             if not isinstance(data, dict):
