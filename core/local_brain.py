@@ -247,7 +247,10 @@ class LocalBrain:
             headers={"Content-Type": "application/json"},
         )
         with urllib.request.urlopen(req, timeout=90.0) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+            payload = json.loads(resp.read().decode("utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("Local model response must be a JSON object.")
+            return payload
 
 
 # Global singleton instance

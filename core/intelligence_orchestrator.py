@@ -459,7 +459,13 @@ class IntelligenceOrchestrator:
         if clean.startswith("```"):
             parts=clean.split("```"); clean=parts[1] if len(parts)>1 else clean
             if clean.lstrip().startswith("json"):clean=clean.lstrip()[4:]
-        try:return json.loads(clean.strip().strip("`"))
+        try:
+            parsed=json.loads(clean.strip().strip("`"))
+            if not isinstance(parsed,dict):
+                raise ValueError("structured synthesis returned a non-object JSON value")
+            return parsed
+        except (json.JSONDecodeError, ValueError):
+            return cloud_client.chat_json(prompt,system=system,model=model,max_tokens=max_tokens)
         except json.JSONDecodeError:return cloud_client.chat_json(prompt,system=system,model=model,max_tokens=max_tokens)
 
 orchestrator=IntelligenceOrchestrator()
