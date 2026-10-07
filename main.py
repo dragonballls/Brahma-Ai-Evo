@@ -224,6 +224,27 @@ def _has_gemini_voice_credentials() -> bool:
     except Exception:
         return False
 
+def _transcribe_microphone_pcm(
+    pcm_bytes: bytes,
+    sample_rate: int,
+    *,
+    offline_mode: bool,
+    allow_cloud_transcription: bool,
+) -> str:
+    """Transcribe one captured microphone utterance without implicit network fallback."""
+    import speech_recognition as sr
+
+    recognizer = sr.Recognizer()
+    audio_data = sr.AudioData(pcm_bytes, sample_rate, 2)
+    try:
+        return str(recognizer.recognize_sphinx(audio_data) or "").strip()
+    except Exception as local_exc:
+        if offline_mode or not allow_cloud_transcription:
+            raise RuntimeError(
+                "Local speech recognition unavailable; cloud transcription is disabled."
+            ) from local_exc
+        return str(recognizer.recognize_google(audio_data) or "").strip()
+
 
 def _is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -6934,41 +6955,19 @@ class BrahmaLive:
                                 if len(captured) > (SEND_SAMPLE_RATE * 2 * 0.5):
                                     def _process_local_speech(pcm_bytes):
                                         try:
-                                            import speech_recognition as sr
-                                            recognizer = sr.Recognizer()
-                                            audio_data = sr.AudioData(pcm_bytes, SEND_SAMPLE_RATE, 2)
-                                            text_cmd = ""
-                                            try:
-                                                # Keep local-provider voice local unless cloud transcription
-                                                # has been explicitly enabled by the user.
-                                                text_cmd = recognizer.recognize_sphinx(audio_data)
-                                            except Exception as local_exc:
-                                                if (
-                                                    bool(app_cfg.get("offline_mode_enabled", False))
-                                                    or not allow_cloud_transcription
-                                                ):
-                                                    self.ui.write_log(
-                                                        f"ERR: Local speech recognition unavailable: {local_exc}. "
-                                                        + (
-                                                            "Cloud transcription is disabled; enable it explicitly "
-                                                            "if network transcription is desired."
-                                                            if not allow_cloud_transcription
-                                                            else "Use text input or install the bundled PocketSphinx dependency."
-                                                        )
-                                                    )
-                                                    return
-                                                self.ui.write_log(
-                                                    "SYS: Local speech recognition failed; using explicitly enabled cloud transcription."
-                                                )
-                                                text_cmd = recognizer.recognize_google(audio_data)
+                                            text_cmd = _transcribe_microphone_pcm(
+                                                pcm_bytes,
+                                                SEND_SAMPLE_RATE,
+                                                offline_mode=bool(app_cfg.get("offline_mode_enabled", False)),
+                                                allow_cloud_transcription=allow_cloud_transcription,
+                                            )
                                             if text_cmd and len(text_cmd.strip()) > 1:
                                                 print(f"[Local AI Voice] 🎙️ Heard: {text_cmd}")
                                                 self._on_text_command(text_cmd, source="mic")
                                         except Exception as exc:
-                                            if bool(app_cfg.get("offline_mode_enabled", False)):
-                                                self.ui.write_log(
-                                                    f"ERR: Local microphone transcription failed: {exc}"
-                                                )
+                                            self.ui.write_log(
+                                                f"ERR: Local microphone transcription failed: {exc}"
+                                            )
 
                                     threading.Thread(target=_process_local_speech, args=(captured,), daemon=True).start()
 
