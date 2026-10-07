@@ -307,6 +307,39 @@ def _secure_write_text(target: Path, content: str, *, append: bool = False, expe
         os.fsync(handle.fileno())
 
 
+def _secure_read_text(target: Path, max_chars: int, *, expected_identity=None) -> tuple[str, int]:
+    """Read a validated text file without following a raced leaf on POSIX."""
+    target = Path(target).absolute()
+    if os.name != "nt" and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY"):
+        parent_fd = _secure_parent_fd(target.parent)
+        if parent_fd is None:
+            raise RuntimeError("Secure parent descriptor could not be opened.")
+        try:
+            fd = os.open(target.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent_fd)
+            try:
+                opened = os.fstat(fd)
+                actual_identity = (int(opened.st_dev), int(opened.st_ino))
+                if expected_identity is not None and tuple(expected_identity) != actual_identity:
+                    raise RuntimeError("Target changed identity before secure read; refusing access.")
+                with os.fdopen(fd, "r", encoding="utf-8", errors="ignore") as handle:
+                    fd = -1
+                    content = handle.read(max_chars + 1)
+                return content, int(opened.st_size)
+            finally:
+                if fd >= 0:
+                    os.close(fd)
+        finally:
+            os.close(parent_fd)
+
+    if _is_link_like(target):
+        raise RuntimeError("Target is a link/reparse point.")
+    if expected_identity is not None:
+        current = _fingerprint(target)
+        if current is None or tuple(expected_identity) != tuple(current[1:3]):
+            raise RuntimeError("Target changed identity before read; refusing access.")
+    return target.read_text(encoding="utf-8", errors="ignore")[:max_chars + 1], int(target.stat().st_size)
+
+
 def _secure_unlink(target: Path) -> None:
     """Remove only the named leaf under a validated parent directory."""
     target = Path(target).absolute()
@@ -589,9 +622,13 @@ def read_file(path: str, name: str = "", max_chars: int = 4000) -> str:
         except (TypeError, ValueError):
             return "Could not read file: max_chars must be a positive integer."
         try:
-            total_bytes = target.stat().st_size
-            with target.open("r", encoding="utf-8", errors="ignore") as handle:
-                content = handle.read(max_chars + 1)
+            stat_result = target.stat(follow_symlinks=False)
+            expected_identity = (int(stat_result.st_dev), int(stat_result.st_ino))
+            content, total_bytes = _secure_read_text(
+                target,
+                max_chars,
+                expected_identity=expected_identity,
+            )
         except OSError as exc:
             return f"Could not read file: {exc}"
         if len(content) > max_chars:
