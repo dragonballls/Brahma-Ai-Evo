@@ -316,6 +316,8 @@ def test_partial_undo_failure_restores_approved_state(tmp_path):
             return _result(args, stdout=first_undo)
         if args == ("reset", "--hard", promoted):
             return _result(args)
+        if args == ("status", "--porcelain"):
+            return _result(args, stdout="")
         if args == ("revert", "--abort"):
             return _result(args)
         raise AssertionError(f"unexpected git call: {args}")
