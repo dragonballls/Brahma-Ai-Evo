@@ -228,22 +228,20 @@ def test_call_audio_transcription_refuses_selected_openrouter(monkeypatch):
     try:
         with patch.dict(sys.modules, {"sounddevice": fake_sounddevice, "numpy": fake_numpy}):
             module = importlib.import_module("actions.call_assistant")
-        CallAssistant = module.CallAssistant
 
-    calls = {"create_model": 0}
+        calls = {"create_model": 0}
 
-    def reject(_provider, _capability):
-        raise RuntimeError("Call audio transcription requires the Google Gemini provider")
+        def reject(_provider, _capability):
+            raise RuntimeError("Call audio transcription requires the Google Gemini provider")
 
-    monkeypatch.setattr("core.provider_policy.require_provider", reject)
+        monkeypatch.setattr("core.provider_policy.require_provider", reject)
 
-    def forbidden(*_args, **_kwargs):
-        calls["create_model"] += 1
-        raise AssertionError("Call transcription must stop before Gemini client creation")
+        def forbidden(*_args, **_kwargs):
+            calls["create_model"] += 1
+            raise AssertionError("Call transcription must stop before Gemini client creation")
 
-    monkeypatch.setattr("core.gemini_runtime.create_model", forbidden)
-
-        assistant = object.__new__(CallAssistant)
+        monkeypatch.setattr("core.gemini_runtime.create_model", forbidden)
+        assistant = object.__new__(module.CallAssistant)
         assert assistant._transcribe_audio(b"wav") == ""
         assert calls["create_model"] == 0
     finally:
@@ -254,6 +252,7 @@ def test_call_audio_transcription_refuses_selected_openrouter(monkeypatch):
 
 def test_screen_live_vision_refuses_selected_openrouter(monkeypatch):
     import asyncio
+
     original = sys.modules.pop("actions.screen_processor", None)
     fake_cv2 = pytypes.ModuleType("cv2")
     fake_mss = pytypes.ModuleType("mss")
@@ -265,25 +264,31 @@ def test_screen_live_vision_refuses_selected_openrouter(monkeypatch):
     fake_google = pytypes.ModuleType("google")
     fake_google.__path__ = []
     fake_genai = pytypes.ModuleType("google.genai")
-    fake_genai.Client = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("Gemini client must not be created"))
+    fake_genai.Client = lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("Gemini client must not be created")
+    )
     fake_genai_types = pytypes.ModuleType("google.genai.types")
     fake_genai.types = fake_genai_types
     fake_google.genai = fake_genai
+
     try:
         with patch.dict(sys.modules, {
-            "cv2": fake_cv2, "mss": fake_mss, "mss.tools": fake_mss_tools,
-            "sounddevice": fake_sd, "numpy": fake_np,
-            "google": fake_google, "google.genai": fake_genai,
+            "cv2": fake_cv2,
+            "mss": fake_mss,
+            "mss.tools": fake_mss_tools,
+            "sounddevice": fake_sd,
+            "numpy": fake_np,
+            "google": fake_google,
+            "google.genai": fake_genai,
             "google.genai.types": fake_genai_types,
         }):
             module = importlib.import_module("actions.screen_processor")
-        _LiveSession = module._LiveSession
 
-    def reject(_provider, _capability):
-        raise RuntimeError("Screen vision Live requires the Google Gemini provider")
+        def reject(_provider, _capability):
+            raise RuntimeError("Screen vision Live requires the Google Gemini provider")
 
-    monkeypatch.setattr("core.provider_policy.require_provider", reject)
-        session = _LiveSession()
+        monkeypatch.setattr("core.provider_policy.require_provider", reject)
+        session = module._LiveSession()
         with pytest.raises(RuntimeError, match="Screen vision Live requires"):
             asyncio.run(session._main())
     finally:
