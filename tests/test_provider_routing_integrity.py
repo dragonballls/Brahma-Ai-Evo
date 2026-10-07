@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import importlib
+import sys
+import types as pytypes
 from unittest.mock import Mock, patch
 
 import pytest
@@ -173,22 +176,24 @@ def test_specialized_gemini_paths_fail_closed_when_openrouter_is_selected(monkey
 
 
 def test_auto_heal_does_not_bypass_selected_provider_with_direct_openrouter_fallback(monkeypatch):
-    import or_client
     from actions.auto_heal_engine import AutoHealEngine
+    import inspect
+    import llm_client
 
     with patch(
         "llm_client.client.chat",
         side_effect=RuntimeError("OmniRoute unavailable"),
-    ):
-        direct = Mock(side_effect=AssertionError("auto-heal must not bypass the selected provider"))
-        monkeypatch.setattr(or_client, "chat", direct)
+    ) as unified:
         result = AutoHealEngine._synthesize_patch_code(
             "actions/example.py", 10, "RuntimeError", "boom", "value = 1",
         )
 
+    assert unified.called
     assert result["success"] is False
     assert "All unified AI synthesis backends failed" in result["error"]
-    direct.assert_not_called()
+    source = inspect.getsource(AutoHealEngine._synthesize_patch_code)
+    assert "from or_client import chat" not in source
+    assert "or_client.chat(" not in source
 
 
 def test_web_search_compare_fallback_does_not_claim_gemini_success(monkeypatch, capsys):
@@ -217,7 +222,13 @@ def test_web_search_compare_fallback_does_not_claim_gemini_success(monkeypatch, 
 
 
 def test_call_audio_transcription_refuses_selected_openrouter(monkeypatch):
-    from actions.call_assistant import CallAssistant
+    original = sys.modules.pop("actions.call_assistant", None)
+    fake_sounddevice = pytypes.ModuleType("sounddevice")
+    fake_numpy = pytypes.ModuleType("numpy")
+    try:
+        with patch.dict(sys.modules, {"sounddevice": fake_sounddevice, "numpy": fake_numpy}):
+            module = importlib.import_module("actions.call_assistant")
+        CallAssistant = module.CallAssistant
 
     calls = {"create_model": 0}
 
@@ -232,22 +243,53 @@ def test_call_audio_transcription_refuses_selected_openrouter(monkeypatch):
 
     monkeypatch.setattr("core.gemini_runtime.create_model", forbidden)
 
-    assistant = object.__new__(CallAssistant)
-    assert assistant._transcribe_audio(b"wav") == ""
-    assert calls["create_model"] == 0
+        assistant = object.__new__(CallAssistant)
+        assert assistant._transcribe_audio(b"wav") == ""
+        assert calls["create_model"] == 0
+    finally:
+        sys.modules.pop("actions.call_assistant", None)
+        if original is not None:
+            sys.modules["actions.call_assistant"] = original
 
 
 def test_screen_live_vision_refuses_selected_openrouter(monkeypatch):
     import asyncio
-    from actions.screen_processor import _LiveSession
+    original = sys.modules.pop("actions.screen_processor", None)
+    fake_cv2 = pytypes.ModuleType("cv2")
+    fake_mss = pytypes.ModuleType("mss")
+    fake_mss.__path__ = []
+    fake_mss_tools = pytypes.ModuleType("mss.tools")
+    fake_mss.tools = fake_mss_tools
+    fake_sd = pytypes.ModuleType("sounddevice")
+    fake_np = pytypes.ModuleType("numpy")
+    fake_google = pytypes.ModuleType("google")
+    fake_google.__path__ = []
+    fake_genai = pytypes.ModuleType("google.genai")
+    fake_genai.Client = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("Gemini client must not be created"))
+    fake_genai_types = pytypes.ModuleType("google.genai.types")
+    fake_genai.types = fake_genai_types
+    fake_google.genai = fake_genai
+    try:
+        with patch.dict(sys.modules, {
+            "cv2": fake_cv2, "mss": fake_mss, "mss.tools": fake_mss_tools,
+            "sounddevice": fake_sd, "numpy": fake_np,
+            "google": fake_google, "google.genai": fake_genai,
+            "google.genai.types": fake_genai_types,
+        }):
+            module = importlib.import_module("actions.screen_processor")
+        _LiveSession = module._LiveSession
 
     def reject(_provider, _capability):
         raise RuntimeError("Screen vision Live requires the Google Gemini provider")
 
     monkeypatch.setattr("core.provider_policy.require_provider", reject)
-    session = _LiveSession()
-    with pytest.raises(RuntimeError, match="Screen vision Live requires"):
-        asyncio.run(session._main())
+        session = _LiveSession()
+        with pytest.raises(RuntimeError, match="Screen vision Live requires"):
+            asyncio.run(session._main())
+    finally:
+        sys.modules.pop("actions.screen_processor", None)
+        if original is not None:
+            sys.modules["actions.screen_processor"] = original
 
 
 def test_specialized_gemini_generation_modules_refuse_selected_openrouter(monkeypatch):
