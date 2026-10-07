@@ -87,3 +87,27 @@ def test_windows_startfile_reports_submission_not_completion(tmp_path, monkeypat
 
     result = cmd._open_target(f"open {target}")
     assert result == f"Open request submitted for {target}."
+
+
+def test_update_checker_uses_trusted_git_executable(monkeypatch, tmp_path):
+    import subprocess
+    from core import updater
+
+    checker = object.__new__(updater.UpdateChecker)
+    checker.base_dir = tmp_path
+
+    calls = []
+
+    monkeypatch.setattr(
+        updater,
+        "resolve_git_executable",
+        lambda repo: (calls.append(repo) or str(tmp_path / "trusted-git.exe")),
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "check_output",
+        lambda argv, **kwargs: b"abc123\n",
+    )
+
+    assert checker._get_local_hash() == "abc123"
+    assert calls == [tmp_path]
