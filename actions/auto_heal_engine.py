@@ -225,7 +225,9 @@ class SafetySandbox:
                 data = json.load(f)
             if not isinstance(data, list):
                 raise ValueError("Patch history root must be a JSON list.")
-            return [item for item in data if isinstance(item, dict)]
+            if any(not isinstance(item, dict) for item in data):
+                raise ValueError("Patch history contains malformed non-object entries.")
+            return data
         except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
             quarantine = PATCH_HISTORY_FILE.with_name(
                 f"{PATCH_HISTORY_FILE.name}.corrupt-{time.time_ns()}-{uuid.uuid4().hex[:8]}"
