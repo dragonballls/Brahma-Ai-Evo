@@ -4458,20 +4458,24 @@ class BrahmaLive:
                     quoted_subject = urllib.parse.quote("Message from Brahma Evo")
                     quoted_body = urllib.parse.quote(self._email_message)
                     url = f"https://mail.google.com/mail/?view=cm&fs=1&to={quoted_recipient}&su={quoted_subject}&body={quoted_body}"
-                    
-                    # Use webbrowser to naturally open a new tab in the already running Chrome window
-                    import webbrowser
-                    webbrowser.open(url)
-
                 elif "outlook" in app_lower:
                     url = f"https://outlook.live.com/default/?path=/mail/action/compose&to={quoted_recipient}&subject={quoted_subject}&body={quoted_body}"
-                    webbrowser.open(url)
                 else:
                     url = f"mailto:{quoted_recipient}?subject={quoted_subject}&body={quoted_body}"
-                    webbrowser.open(url)
-                
+
+                launched = bool(webbrowser.open(url))
+                if not launched:
+                    raise RuntimeError(
+                        "The email compose link could not be handed to the system browser. "
+                        "No email was sent or independently verified."
+                    )
+
                 try:
-                    self.ui.finish_task_workspace("Email composed successfully.", "Composed", 100)
+                    self.ui.finish_task_workspace(
+                        "Email compose link launch was requested; email sending was not independently verified.",
+                        "Compose launch requested",
+                        90,
+                    )
                 except Exception:
                     pass
             except Exception as e:
