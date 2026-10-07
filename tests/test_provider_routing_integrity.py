@@ -177,3 +177,34 @@ def test_intelligence_orchestrator_is_provider_preserving_by_default():
     # The public orchestrator helper intentionally defaults to no direct provider switch.
     assert source is not None
     assert source["allow_direct_fallback"] is False
+
+
+def test_video_understanding_refuses_to_bypass_selected_provider(monkeypatch):
+    from actions import video_understanding
+    from core import provider_policy
+
+    def reject(_provider, capability):
+        raise RuntimeError(f"{capability} requires Gemini")
+
+    monkeypatch.setattr(provider_policy, "require_provider", reject)
+    monkeypatch.setattr(video_understanding, "_gemini_api_key", lambda: pytest.fail("Gemini key lookup bypassed provider policy"))
+
+    with pytest.raises(RuntimeError, match="requires Gemini"):
+        video_understanding.analyze_youtube("https://www.youtube.com/watch?v=example")
+
+
+def test_local_video_understanding_refuses_to_bypass_selected_provider(monkeypatch, tmp_path):
+    from actions import video_understanding
+    from core import provider_policy
+
+    video = tmp_path / "sample.mp4"
+    video.write_bytes(b"placeholder")
+
+    def reject(_provider, capability):
+        raise RuntimeError(f"{capability} requires Gemini")
+
+    monkeypatch.setattr(provider_policy, "require_provider", reject)
+    monkeypatch.setattr(video_understanding, "_gemini_api_key", lambda: pytest.fail("Gemini key lookup bypassed provider policy"))
+
+    with pytest.raises(RuntimeError, match="requires Gemini"):
+        video_understanding.analyze_local_video(str(video))

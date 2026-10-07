@@ -94,6 +94,9 @@ def analyze_youtube(
     if not re.search(r"(?:https?://)?(?:www\.)?(?:youtube\.com|youtu\.be)/", url, re.I):
         raise ValueError("A public YouTube URL is required for YouTube video analysis.")
 
+    from core.provider_policy import require_provider
+    require_provider("Gemini", "YouTube video analysis")
+
     key = _gemini_api_key()
     endpoint = "https://generativelanguage.googleapis.com/v1beta/interactions"
     body = {
@@ -136,6 +139,9 @@ def analyze_local_video(
     video_path = Path(str(path or "")).expanduser()
     if not video_path.is_file():
         raise FileNotFoundError(f"Video file not found: {video_path}")
+
+    from core.provider_policy import require_provider
+    require_provider("Gemini", "Local video analysis")
 
     from google import genai
     from google.genai import types
