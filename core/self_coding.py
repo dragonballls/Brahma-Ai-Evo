@@ -198,6 +198,13 @@ class SelfCodingAgent:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temp, target)
+            try:
+                verified = json.loads(target.read_text(encoding="utf-8"))
+            except Exception as exc:
+                raise SelfCodingError("Checkpoint metadata save could not be verified after replacement.") from exc
+            expected = json.loads(payload)
+            if verified != expected:
+                raise SelfCodingError("Checkpoint metadata save verification found a mismatched final state.")
         except Exception:
             try:
                 if fd >= 0:
