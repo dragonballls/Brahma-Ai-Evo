@@ -101,14 +101,14 @@ class _PinnedHTTPWrapper:
         return False
 
 
-def fetch_public_url_status(
+def fetch_public_bytes(
     url: str,
     *,
     timeout: float = 5.0,
     max_response_bytes: int = 64 * 1024,
     headers: dict[str, str] | None = None,
-) -> int:
-    """GET a public HTTP(S) URL using one DNS resolution and no redirect following."""
+) -> tuple[int, bytes]:
+    """GET a public HTTP(S) URL using one DNS resolution and no redirects."""
     parsed = urllib.parse.urlsplit(str(url or "").strip())
     host = (parsed.hostname or "").rstrip(".").lower()
     if parsed.scheme.lower() not in {"http", "https"} or not host:
@@ -123,9 +123,7 @@ def fetch_public_url_status(
     candidates = []
     for entry in entries:
         address = ipaddress.ip_address(entry[4][0])
-        if not address.is_global:
-            continue
-        if entry[4][0] not in candidates:
+        if address.is_global and entry[4][0] not in candidates:
             candidates.append(entry[4][0])
     if not candidates:
         raise ValueError("Public URL resolved only to non-global addresses.")
@@ -143,24 +141,41 @@ def fetch_public_url_status(
     else:
         import http.client
         conn = http.client.HTTPConnection(host, port=port, timeout=timeout)
-        original_connect = conn.connect
         def _pinned_connect() -> None:
             conn.sock = socket.create_connection((ip_address, port), timeout=timeout)
         conn.connect = _pinned_connect
 
+    response = None
     try:
         conn.request("GET", request_path, headers=request_headers)
         response = conn.getresponse()
         raw = response.read(max_response_bytes + 1)
         if len(raw) > max_response_bytes:
             raise ValueError(f"Public URL response exceeded the {max_response_bytes} byte safety limit.")
-        return int(response.status)
+        return int(response.status), raw
     finally:
-        try:
-            response.close()
-        except Exception:
-            pass
+        if response is not None:
+            try:
+                response.close()
+            except Exception:
+                pass
         conn.close()
+
+
+def fetch_public_url_status(
+    url: str,
+    *,
+    timeout: float = 5.0,
+    max_response_bytes: int = 64 * 1024,
+    headers: dict[str, str] | None = None,
+) -> int:
+    status, _ = fetch_public_bytes(
+        url,
+        timeout=timeout,
+        max_response_bytes=max_response_bytes,
+        headers=headers,
+    )
+    return status
 
 def read_bounded(response, max_bytes: int) -> bytes:
     raw = response.read(max_bytes + 1)
