@@ -131,6 +131,14 @@ const cases = [
         method: 'PUT',
         body: { uris: ['spotify:track:track1'] },
       },
+      {
+        url: 'me/player',
+        response: {
+          is_playing: true,
+          item: track,
+          device,
+        },
+      },
     ],
     text: /Now playing/,
   },
@@ -351,3 +359,47 @@ test('Spotify HTTP failures become MCP tool errors', async (t) => {
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /403|Forbidden/);
 });
+
+test('playMusic reports failure when Spotify accepts the request but playback is not verified', async (t) => {
+  mockConfig(t);
+  mockHttp(t, [
+    devices,
+    {
+      url: 'me/player/play?device_id=device1',
+      method: 'PUT',
+      body: { uris: ['spotify:track:track1'] },
+    },
+    {
+      url: 'me/player',
+      response: {
+        is_playing: false,
+        item: track,
+        device,
+      },
+    },
+    {
+      url: 'me/player',
+      response: {
+        is_playing: false,
+        item: track,
+        device,
+      },
+    },
+    {
+      url: 'me/player',
+      response: {
+        is_playing: false,
+        item: track,
+        device,
+      },
+    },
+  ]);
+  const client = await connect(t, { pin: '2026-07-28' });
+  const result = await client.callTool({
+    name: 'playMusic',
+    arguments: { type: 'track', id: 'track1' },
+  });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /could not be verified/i);
+});
+
