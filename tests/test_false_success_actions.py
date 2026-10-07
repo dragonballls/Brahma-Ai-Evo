@@ -392,3 +392,15 @@ def test_smart_home_restart_does_not_claim_success_on_provider_rejection():
     result = service.restart_device("d1")
     assert result["success"] is False
     assert "restart rejected" in result["error"]
+
+
+def test_pending_reply_failure_and_delivery_states_are_honest():
+    source = (ROOT / "main.py").read_text(encoding="utf-8")
+    start = source.index("def _draft_and_send_reply(")
+    end = source.index("def _parse_ig_reply_intent", start)
+    block = source[start:end]
+    assert "if _action_result_is_failure(result):" in block
+    assert '"Reply failed", 0' in block
+    assert '"Reply delivered." if verified else "Reply submitted"' in block
+    assert "100 if verified else 90" in block
+    assert "delivery was not independently verified" in block
