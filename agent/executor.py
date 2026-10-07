@@ -305,8 +305,17 @@ def _require_tool_result(tool: str, result: Any) -> Any:
 
 
 def _call_tool(tool: str, parameters: dict, speak: Callable | None, player: Any = None) -> str:
+    # Validate the planner/tool boundary before any parameter access.
+    if parameters is None:
+        params = {}
+    elif not isinstance(parameters, dict):
+        raise ValueError(
+            f"Tool '{tool}' parameters must be a JSON object, not {type(parameters).__name__}."
+        )
+    else:
+        params = dict(parameters)
+
     # Live Thinking Out Loud Breadcrumb
-    params = parameters or {}
     breadcrumb = {
         "web_search": f"Searching: {params.get('query', 'the web')[:30]}...",
         "pdf_document": "Generating PDF document...",

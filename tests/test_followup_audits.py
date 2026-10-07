@@ -1570,3 +1570,13 @@ def test_executor_does_not_retry_non_idempotent_action_after_ambiguous_failure(m
     assert len(attempts) == 1
     assert "could not be verified" in result.lower()
     assert "retry" in result.lower()
+
+
+def test_executor_rejects_non_object_tool_parameters_before_dispatch():
+    from agent.executor import _call_tool
+
+    with pytest.raises(ValueError, match="parameters must be a JSON object"):
+        _call_tool("web_search", ["query", "hello"], speak=None)
+
+    with pytest.raises(ValueError, match="parameters must be a JSON object"):
+        _call_tool("web_search", "query=hello", speak=None)
