@@ -3,11 +3,11 @@ import sys
 import subprocess
 import threading
 import time
-import requests
 from pathlib import Path
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from core.runtime_paths import GITHUB_OWNER, GITHUB_REPOSITORY, GITHUB_BRANCH
+from core.network_safety import fetch_public_bytes
 
 class UpdateChecker(QObject):
     update_available_sig = pyqtSignal(str)
@@ -115,11 +115,20 @@ class UpdateChecker(QObject):
     def _get_remote_hash(self):
         url = f"https://api.github.com/repos/{self.repo_owner}/{self.repo_name}/commits/{self.branch}"
         try:
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                return data.get("sha")
-        except Exception as e:
+            status, raw = fetch_public_bytes(
+                url,
+                timeout=10,
+                max_response_bytes=64 * 1024,
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": "BrahmaEvo-Updater/1",
+                },
+            )
+            if status == 200:
+                import json
+                data = json.loads(raw.decode("utf-8"))
+                if isinstance(data, dict):
+                    return data.get("sha")
             print(f"[Updater] Error fetching remote hash: {e}")
         return None
 
