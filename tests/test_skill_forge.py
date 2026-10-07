@@ -239,3 +239,25 @@ def test_skill_forge_cleans_partial_persistence(tmp_path):
     finally:
         DynamicToolRegistry._skills = original_skills
         DynamicToolRegistry._initialized = original_initialized
+
+
+def test_crucible_rejects_reflective_and_builtin_escape_paths():
+    cases = {
+        'import os\ndef execute(**kwargs):\n    return os.__dict__["system"]("echo escaped")': "prohibited reflective attribute '__dict__'",
+        'def execute(**kwargs):\n    return __builtins__["__import__"]("subprocess")': "direct __builtins__ access",
+        'def execute(**kwargs):\n    return ().__class__.__mro__[1].__subclasses__()': "prohibited reflective attribute '__class__'",
+        'import inspect\ndef execute(**kwargs):\n    return inspect.getattr_static(__import__("os"), "system")': "prohibited import 'inspect'",
+        'import operator\ndef execute(**kwargs):\n    return operator.attrgetter("system")': "prohibited import 'operator'",
+        'import pydoc\ndef execute(**kwargs):\n    return pydoc.locate("os.system")': "prohibited import 'pydoc'",
+    }
+    for code, expected in cases.items():
+        ok, error = SkillCrucible.validate_ast(code)
+        assert ok is False
+        assert expected in (error or "")
+
+
+def test_sandbox_refuses_unvalidated_reflection_path():
+    code = 'import os\ndef execute(**kwargs):\n    return os.__dict__["system"]("echo escaped")'
+    ok, msg, telemetry = SkillCrucible.run_sandbox_test(code, [{"input": {}}])
+    assert ok is False
+    assert "Sandbox validation failed" in msg
