@@ -74,12 +74,13 @@ class DeviceManager:
                 raw_text = self.registry_path.read_text(encoding="utf-8")
                 raw = json.loads(raw_text)
             except (UnicodeError, json.JSONDecodeError) as exc:
-                try:
-                    self._preserve_corrupt_registry(raw_text)
-                except OSError as quarantine_exc:
-                    raise RuntimeError(
-                        "Device registry is corrupted and could not be preserved safely."
-                    ) from quarantine_exc
+                if isinstance(raw_text, str):
+                    try:
+                        self._preserve_corrupt_registry(raw_text)
+                    except OSError as quarantine_exc:
+                        raise RuntimeError(
+                            "Device registry is corrupted and could not be preserved safely."
+                        ) from quarantine_exc
                 raise RuntimeError(
                     "Device registry is corrupted; refusing to substitute or rename it."
                 ) from exc
@@ -103,7 +104,7 @@ class DeviceManager:
                     self._preserve_corrupt_registry(raw_text)
                 except OSError as quarantine_exc:
                     raise RuntimeError(
-                        "Device registry has an invalid devices schema and could not be quarantined safely."
+                        "Device registry has an invalid devices schema and could not be preserved safely."
                     ) from quarantine_exc
                 raise RuntimeError(
                     "Device registry has an invalid devices schema; refusing to substitute or rename it."
