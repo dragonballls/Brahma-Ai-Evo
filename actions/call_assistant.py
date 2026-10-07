@@ -165,6 +165,12 @@ class CallAssistant:
     def start(self):
         """Answer the call only after Windows reports the answer action as confirmed."""
         self.is_active = False
+        try:
+            from core.provider_policy import require_provider
+            require_provider("Gemini", "Call screening")
+        except Exception as exc:
+            logger.warning(f"[CallAssistant] Provider policy blocked call screening: {exc}")
+            return False
         self._stop_event.clear()
 
         logger.info(f"[CallAssistant] Starting call proxy for {self.caller_name} on {self.app_name}")

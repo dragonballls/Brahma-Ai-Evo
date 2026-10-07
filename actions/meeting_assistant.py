@@ -222,6 +222,8 @@ class MeetingAssistant:
         return self._last_speech
 
     def _transcribe_audio(self, client, wav_bytes: bytes) -> str:
+        from core.provider_policy import require_provider
+        require_provider("Gemini", "Meeting audio transcription")
         prompt = (
             "Transcribe the spoken words from this meeting audio. "
             "Return only the words other people are speaking. "
@@ -251,6 +253,8 @@ class MeetingAssistant:
         print(f"[MeetingAssistant] audio source: {label}")
 
         try:
+            from core.provider_policy import require_provider
+            require_provider("Gemini", "Meeting audio capture")
             client = genai.Client(
                 api_key=_get_api_key(),
                 http_options={"api_version": "v1beta"},
@@ -332,6 +336,8 @@ class MeetingAssistant:
 
     def _loop(self) -> None:
         try:
+            from core.provider_policy import require_provider
+            require_provider("Gemini", "Meeting mode")
             client = genai.Client(
                 api_key=_get_api_key(),
                 http_options={"api_version": "v1beta"},

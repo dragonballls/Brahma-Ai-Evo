@@ -157,6 +157,20 @@ def test_non_boolean_offline_setting_is_not_treated_as_true():
     assert not isinstance(value, bool)
 
 
+def test_specialized_gemini_paths_fail_closed_when_openrouter_is_selected(monkeypatch):
+    from core import provider_policy
+
+    monkeypatch.setattr(provider_policy, "selected_provider", lambda: OPENROUTER)
+
+    with pytest.raises(RuntimeError, match="Gemini-grounded web search requires"):
+        from actions.web_search import _gemini_search
+        _gemini_search("test")
+
+    with pytest.raises(RuntimeError, match="Gemini video understanding requires"):
+        from actions.video_understanding import _gemini_api_key
+        _gemini_api_key()
+
+
 def test_intelligence_orchestrator_is_provider_preserving_by_default():
     source = IntelligenceOrchestrator._call.__kwdefaults__
     # The public orchestrator helper intentionally defaults to no direct provider switch.

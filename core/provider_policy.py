@@ -46,6 +46,26 @@ def validate_provider(value: object, default: str = GEMINI) -> str:
     return normalized
 
 
+def selected_provider(default: str = GEMINI) -> str:
+    """Read and validate the persisted provider selection."""
+    from memory.config_manager import get_setting
+
+    value = get_setting("default_ai_provider", default)
+    return validate_provider(value, default)
+
+
+def require_provider(provider: str, capability: str) -> str:
+    """Fail closed when a capability would otherwise bypass the selected provider."""
+    selected = selected_provider()
+    required = validate_provider(provider, default=provider)
+    if selected != required:
+        raise RuntimeError(
+            f"{capability} requires the {display_name(required)} provider, "
+            f"but {display_name(selected)} is selected. Switch providers explicitly before using this capability."
+        )
+    return selected
+
+
 def is_local(value: object) -> bool:
     return normalize_provider(value) == LOCAL
 

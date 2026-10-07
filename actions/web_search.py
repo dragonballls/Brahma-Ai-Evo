@@ -22,6 +22,8 @@ def _get_api_key() -> str:
 
 
 def _gemini_search(query: str) -> str:
+    from core.provider_policy import require_provider
+    require_provider("Gemini", "Gemini-grounded web search")
     from google import genai
 
     client   = genai.Client(api_key=_get_api_key())

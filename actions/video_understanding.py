@@ -16,6 +16,8 @@ DEFAULT_VIDEO_MODEL = os.environ.get("BRAHMA_VIDEO_MODEL", "gemini-2.5-flash")
 
 
 def _gemini_api_key() -> str:
+    from core.provider_policy import require_provider
+    require_provider("Gemini", "Gemini video understanding")
     from config import get_api_key
     key = str(get_api_key("Gemini") or "").strip()
     if not key:
