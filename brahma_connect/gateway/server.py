@@ -577,7 +577,7 @@ class BrahmaGateway:
         return {
             "success": True,
             "device": record.to_dict(),
-            "message": "Device approved and credentials delivered directly to the paired device.",
+            "message": "Device approved and credentials sent to the paired connection; receipt was not independently verified.",
         }
 
     def reject_pending_request(self, pending_id: str) -> bool:
