@@ -299,3 +299,96 @@ def test_instagram_manual_reply_accepts_verified_delivery_only_for_verified_resu
     assert finished.wait(2)
     assert instance.ui.finished[-1][1:] == ("Reply delivered", 100)
     assert "Message delivered." in instance.spoken
+
+
+def test_direct_local_app_handler_gates_success_on_launch_result():
+    source = (ROOT / "main.py").read_text(encoding="utf-8")
+    start = source.index("if is_open_app_cmd:")
+    end = source.index("memory_ctx = _memory_context_for_request", start)
+    block = source[start:end]
+    assert "_action_result_is_failure(result)" in block
+    assert "self.speak(result)" in block
+    assert 'self.speak(f"Opening {clean_app_candidate}, sir.")' not in block
+
+
+def test_direct_diagnostic_handlers_gate_ui_completion_on_result():
+    source = (ROOT / "main.py").read_text(encoding="utf-8")
+    start = source.index("if is_ram_check:")
+    end = source.index("# Autonomous Self-Healing", start)
+    block = source[start:end]
+    assert block.count("_action_result_is_failure(res)") >= 5
+    assert "0 if failed else 100" in block
+
+
+def test_smart_home_service_never_reports_provider_rejection_as_success():
+    from smart_home.service import SmartHomeService
+
+    class Storage:
+        def get_device(self, _device_id):
+            return {
+                "id": "d1",
+                "name": "Lamp",
+                "provider_key": "fake",
+                "provider_account_id": "a1",
+                "is_on": False,
+                "traits": {},
+            }
+
+        def get_provider_account(self, _account_id):
+            return {"credentials": {}}
+
+        def update_device(self, *args, **kwargs):
+            raise AssertionError("state must not be updated after provider rejection")
+
+        def log_activity(self, *args, **kwargs):
+            pass
+
+        def list_devices(self, *args, **kwargs):
+            return [{
+                "id": "d1",
+                "name": "Lamp",
+                "provider_key": "fake",
+                "provider_account_id": "a1",
+                "is_on": False,
+                "traits": {},
+            }]
+
+    class Provider:
+        def execute(self, _device, _action, _payload):
+            return {"success": False, "error": "provider rejected"}
+
+    service = SmartHomeService(storage=Storage())
+    service._registry = type("Registry", (), {"get": lambda self, _key: Provider()})()
+    result = service.execute_command("turn on lamp")
+    assert result["success"] is False
+    assert result["failures"]
+    assert "provider rejected" in result["detail"]
+
+
+def test_smart_home_restart_does_not_claim_success_on_provider_rejection():
+    from smart_home.service import SmartHomeService
+
+    class Storage:
+        def get_device(self, _device_id):
+            return {
+                "id": "d1",
+                "name": "Lamp",
+                "provider_key": "fake",
+                "provider_account_id": "a1",
+            }
+
+        def get_provider_account(self, _account_id):
+            return {"credentials": {}}
+
+        def log_activity(self, *args, **kwargs):
+            pass
+
+    class Provider:
+        def execute(self, _device, _action, _payload):
+            return {"success": False, "error": "restart rejected"}
+
+    service = SmartHomeService(storage=Storage())
+    service._registry = type("Registry", (), {"get": lambda self, _key: Provider()})()
+    result = service.restart_device("d1")
+    assert result["success"] is False
+    assert "restart rejected" in result["error"]
