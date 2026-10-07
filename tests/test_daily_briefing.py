@@ -98,3 +98,24 @@ def test_startup_daily_briefing_is_spoken_even_with_overlay_visible():
     assert ui.messages == [("briefing", data), ("log", f"Brahma Evo: {narrative}")]
     assert spoken == [narrative]
     native_speak.assert_not_called()
+
+def test_news_feed_rejects_oversized_response(monkeypatch):
+    import actions.daily_briefing as briefing
+
+    class FakeResponse:
+        def read(self, size):
+            return b"x" * size
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return False
+
+    class FakeOpener:
+        def open(self, *_args, **_kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(briefing.urllib.request, "build_opener", lambda *_args: FakeOpener())
+
+    result = briefing._get_top_headlines(limit=2)
+
+    assert result == []

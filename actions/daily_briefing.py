@@ -22,6 +22,7 @@ import queue
 import re
 import threading
 import time
+import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -29,6 +30,22 @@ from typing import Dict, Any, List, Tuple, Optional
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 BRIEFING_FETCH_TIMEOUT_SECONDS = 8.0
+
+
+_MAX_HEADLINE_FEED_BYTES = 256 * 1024
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise RuntimeError("News feed redirects are disabled.")
+
+
+def _read_bounded_response(response, maximum: int) -> bytes:
+    data = response.read(maximum + 1)
+    if len(data) > maximum:
+        raise ValueError("News feed response exceeds the safety limit.")
+    return data
+
 
 PLUGIN = {
     "name": "daily_briefing",
@@ -193,8 +210,9 @@ def _get_top_headlines(category: str = "all", limit: int = 2) -> List[str]:
 
     try:
         req = urllib.request.Request(feed_url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=3.5) as resp:
-            root = ET.fromstring(resp.read())
+        opener = urllib.request.build_opener(_NoRedirectHandler())
+        with opener.open(req, timeout=3.5) as resp:
+            root = ET.fromstring(_read_bounded_response(resp, _MAX_HEADLINE_FEED_BYTES))
             items = root.findall(".//item")[:limit]
             for item in items:
                 title_elem = item.find("title")
