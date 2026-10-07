@@ -151,6 +151,44 @@ def test_undo_metadata_failure_after_publish_preserves_recovery_state():
     assert saved[-1].state == "undone"
 
 
+def test_recover_undoing_retries_after_interrupted_local_rollback():
+    promoted = "c" * 40
+    undo_tip = "d" * 40
+    checkpoint = _checkpoint(state="undoing", promoted_sha=promoted, undo_commits=(undo_tip,))
+    saved = []
+    calls = []
+    agent = object.__new__(SelfCodingAgent)
+    agent._load = lambda _checkpoint_id: checkpoint
+    agent._validate_checkpoint = lambda _checkpoint, _checkpoint_id=None: None
+    agent.validate_repo = lambda: None
+    agent._save = lambda value: saved.append(value)
+    agent._undo_unlocked = lambda checkpoint_id: (
+        "retried" if checkpoint_id == checkpoint.checkpoint_id
+        else (_ for _ in ()).throw(AssertionError("wrong checkpoint id"))
+    )
+
+    def fake_git(*args, **kwargs):
+        calls.append(args)
+        if args == ("fetch", "origin", "main"):
+            return _result(args)
+        if args == ("rev-parse", "refs/remotes/origin/main"):
+            return _result(args, stdout=promoted)
+        if args == ("rev-parse", "refs/heads/main"):
+            return _result(args, stdout=promoted)
+        raise AssertionError(f"unexpected git call: {args}")
+
+    agent._git = fake_git
+
+    assert agent._recover_undoing(checkpoint) == "retried"
+    assert saved[-1].state == "approved"
+    assert saved[-1].undo_commits == ()
+    assert calls[:3] == [
+        ("fetch", "origin", "main"),
+        ("rev-parse", "refs/remotes/origin/main"),
+        ("rev-parse", "refs/heads/main"),
+    ]
+
+
 def test_recover_undoing_push_failure_is_explicitly_ambiguous():
     promoted = "c" * 40
     undo_tip = "d" * 40
