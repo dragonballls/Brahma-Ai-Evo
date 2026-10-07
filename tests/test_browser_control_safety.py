@@ -184,7 +184,8 @@ def test_browser_request_guard_allows_same_host_navigation_only_after_policy_val
 
 def test_public_browser_control_uses_guarded_native_backend_instead_of_mcp_navigation():
     source = (ROOT / "actions" / "browser_control.py").read_text(encoding="utf-8")
-    public = source[source.index("def browser_control"):source.index("def browser_evaluate_internal")]
+    start = source.index("def browser_control(")
+    public = source[start:]
     assert "get_playwright_mcp_client()" not in public
     assert "_bt._go_to" in public
     assert "_bt._back" in public
