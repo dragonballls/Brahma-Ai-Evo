@@ -281,7 +281,7 @@ class _BrowserThread:
             _log(f"[Browser] ⚠️ Launch failed ({e}), falling back to built-in Chromium")
             self._browser = await self._playwright.chromium.launch(
                 headless=False,
-                args=["--start-maximized"]
+                args=["--start-maximized"],
                 proxy={"server": proxy_url},
             )
 
@@ -331,9 +331,11 @@ class _BrowserThread:
             from actions.playwright_mcp_client import validate_browser_url
             validation_url = url
             if is_websocket:
-                validation_url = ("https:" if scheme == "wss" else "http:") + url[url.find(":") + 1:]
+                suffix = url[url.find(":") + 1:]
+                validation_url = ("https:" if scheme == "wss" else "http:") + suffix
             try:
                 validate_browser_url(validation_url)
+            except ValueError:
                 await route.abort("blockedbyclient")
                 return
 
@@ -341,13 +343,17 @@ class _BrowserThread:
             if redirected_from is not None:
                 previous = urlsplit(str(getattr(redirected_from, "url", "") or ""))
                 previous_host = (previous.hostname or "").rstrip(".").lower()
+                current_host = (parsed.hostname or "").rstrip(".").lower()
                 previous_port = previous.port or (443 if previous.scheme in {"https", "wss"} else 80)
                 current_port = parsed.port or (443 if scheme in {"https", "wss"} else 80)
                 previous_scheme = previous.scheme.lower()
-                current_host = (parsed.hostname or "").rstrip(".").lower()
                 if (
                     previous_host and current_host
-                    and (previous_host != current_host or previous_port != current_port or previous_scheme != scheme)
+                    and (
+                        previous_host != current_host
+                        or previous_port != current_port
+                        or previous_scheme != scheme
+                    )
                 ):
                     await route.abort("blockedbyclient")
                     return
