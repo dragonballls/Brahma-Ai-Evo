@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 from urllib.parse import urlsplit
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
+from core.browser_pinned_proxy import PinnedBrowserProxy
 
 
 def _log(message: str) -> None:
@@ -184,6 +185,7 @@ class _BrowserThread:
         self._network_log = []
         self._console_log = []
         self._active_dialog_handler = None
+        self._pinned_proxy = None
 
     def start(self) -> bool:
         if self._thread and self._thread.is_alive():
@@ -255,7 +257,12 @@ class _BrowserThread:
             ]
             _log("[Browser] 🎭 Opera detected — disabling private-mode flags")
 
-        launch_kwargs = {"headless": False}
+        if self._pinned_proxy is not None:
+            self._pinned_proxy.close()
+        self._pinned_proxy = PinnedBrowserProxy()
+        proxy_url = self._pinned_proxy.start()
+        launch_kwargs = {"headless": False, "proxy": {"server": proxy_url}}
+
         if self._engine_name == "chromium":
             launch_kwargs["args"] = chromium_args
         if self._exe_path:
@@ -275,6 +282,7 @@ class _BrowserThread:
             self._browser = await self._playwright.chromium.launch(
                 headless=False,
                 args=["--start-maximized"]
+                proxy={"server": proxy_url},
             )
 
     async def _get_page(self):
@@ -316,12 +324,16 @@ class _BrowserThread:
             await route.abort("blockedbyclient")
             return
 
-        is_http = parsed.scheme.lower() in {"http", "https"}
-        if is_http:
+        scheme = parsed.scheme.lower()
+        is_http = scheme in {"http", "https"}
+        is_websocket = scheme in {"ws", "wss"}
+        if is_http or is_websocket:
             from actions.playwright_mcp_client import validate_browser_url
+            validation_url = url
+            if is_websocket:
+                validation_url = ("https:" if scheme == "wss" else "http:") + url[url.find(":") + 1:]
             try:
-                validate_browser_url(url)
-            except ValueError:
+                validate_browser_url(validation_url)
                 await route.abort("blockedbyclient")
                 return
 
@@ -329,8 +341,14 @@ class _BrowserThread:
             if redirected_from is not None:
                 previous = urlsplit(str(getattr(redirected_from, "url", "") or ""))
                 previous_host = (previous.hostname or "").rstrip(".").lower()
+                previous_port = previous.port or (443 if previous.scheme in {"https", "wss"} else 80)
+                current_port = parsed.port or (443 if scheme in {"https", "wss"} else 80)
+                previous_scheme = previous.scheme.lower()
                 current_host = (parsed.hostname or "").rstrip(".").lower()
-                if previous_host and current_host and previous_host != current_host:
+                if (
+                    previous_host and current_host
+                    and (previous_host != current_host or previous_port != current_port or previous_scheme != scheme)
+                ):
                     await route.abort("blockedbyclient")
                     return
         elif resource_type == "document":
@@ -750,6 +768,9 @@ class _BrowserThread:
         if self._browser:
             await self._browser.close()
             self._browser = None
+            if self._pinned_proxy is not None:
+                self._pinned_proxy.close()
+                self._pinned_proxy = None
             self._context = None
             self._page    = None
             self._pages   = []
