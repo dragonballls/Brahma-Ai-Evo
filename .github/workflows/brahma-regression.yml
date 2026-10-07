@@ -28,7 +28,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install targeted test dependencies
-        run: python -m pip install --disable-pip-version-check requests fastapi uvicorn pytest cryptography pillow matplotlib speedtest-cli
+        run: python -m pip install --disable-pip-version-check requests fastapi uvicorn pytest cryptography pillow matplotlib speedtest-cli psutil
 
       - name: Compile touched Python modules
         run: >
