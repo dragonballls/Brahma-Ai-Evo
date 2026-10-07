@@ -70,6 +70,19 @@ def _positive_int_env(name: str, default: int, minimum: int, maximum: int) -> in
     return max(minimum, min(maximum, value))
 
 
+def _write_exclusive_text(path: Path, text: str, *, mode: int = 0o600) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = -1
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 class EvolutionEngine:
     """Background GitHub research + guarded candidate staging."""
 
@@ -155,9 +168,9 @@ class EvolutionEngine:
             f".{self._state_path.name}.{os.getpid()}-{time.time_ns()}.tmp"
         )
         try:
-            temp.write_text(
+            _write_exclusive_text(
+                temp,
                 json.dumps(self._state, indent=2, ensure_ascii=False),
-                encoding="utf-8",
             )
             temp.replace(self._state_path)
         finally:
