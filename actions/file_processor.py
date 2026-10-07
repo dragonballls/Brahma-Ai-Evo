@@ -756,7 +756,7 @@ def _safe_archive_destination(value: str | Path, fallback: Path) -> Path:
 
 def _safe_archive_target(root: Path, member_name: str) -> Path:
     normalized = str(member_name or "").replace("\\", "/")
-    if not normalized or normalized.startswith("/") or re.match(r"^[A-Za-z]:/", normalized):
+    if not normalized or normalized.startswith("/") or re.match(r"^[A-Za-z]:", normalized):
         raise ValueError("Archive contains an absolute member path.")
     parts = [part for part in normalized.split("/") if part not in {"", "."}]
     if ".." in parts:
@@ -858,7 +858,7 @@ def _safe_extract_archive(path: Path, dest: Path) -> None:
                 flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
                 fd = os.open(parts[-1], flags, 0o600, dir_fd=parent_fd)
                 handle = os.fdopen(fd, "wb")
-                created_files.append((target, _fingerprint(target)))
+                created_files.append((target, _fingerprint(target), None))
                 return handle
             finally:
                 if parent_fd is not None:
