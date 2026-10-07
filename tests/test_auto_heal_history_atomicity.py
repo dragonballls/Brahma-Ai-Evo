@@ -47,3 +47,19 @@ def test_auto_heal_history_save_reports_failure():
         assert auto_heal.SafetySandbox._save_history([]) is False
     finally:
         auto_heal.PATCH_HISTORY_FILE = original
+
+
+def test_auto_heal_history_rejects_malformed_non_object_entries(tmp_path):
+    import json
+    import pytest
+    import actions.auto_heal_engine as auto_heal
+
+    original = auto_heal.PATCH_HISTORY_FILE
+    path = tmp_path / "history.json"
+    path.write_text(json.dumps([{"patch_id": "ok"}, "malformed"]), encoding="utf-8")
+    auto_heal.PATCH_HISTORY_FILE = path
+    try:
+        with pytest.raises(RuntimeError, match="malformed non-object"):
+            auto_heal.SafetySandbox._load_history()
+    finally:
+        auto_heal.PATCH_HISTORY_FILE = original
