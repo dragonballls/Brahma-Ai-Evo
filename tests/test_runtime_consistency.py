@@ -701,7 +701,7 @@ class RuntimeConsistencyTests(unittest.TestCase):
         bootstrap = self.read("bootstrap.ps1")
         self.assertIn("SHA-256 digest", ota)
         self.assertIn("def _sha256", ota)
-        self.assertIn("actual = _sha256(temp_path)", ota)
+        self.assertIn("actual = _sha256_open_file(installer_handle)", ota)
         self.assertIn("OTA installer SHA-256 verification failed", ota)
         self.assertIn("function Get-Sha256", bootstrap)
         self.assertIn("Get-NodeChecksum", bootstrap)
