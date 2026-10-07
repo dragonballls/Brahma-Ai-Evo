@@ -52,14 +52,17 @@ def test_flight_radar_network_reader_uses_pinned_transport_and_rejects_redirect(
     assert captured["headers"]["User-Agent"].startswith("BrahmaAI-FlightRadar")
 
 
-def test_flight_radar_rejects_non_global_resolved_address(monkeypatch):
-    monkeypatch.setattr(radar.socket, "getaddrinfo", lambda *args, **kwargs: [
-        (2, 1, 6, "", ("10.0.0.5", 443))
-    ])
+def test_flight_radar_fetch_rejects_non_global_dns_before_request(monkeypatch):
+    from core import network_safety
+    import pytest
 
-    try:
-        radar._validate_remote_host("https://opensky-network.org/api/states/all")
-    except ValueError as exc:
-        assert "non-global" in str(exc)
-    else:
-        raise AssertionError("private DNS resolution must be rejected")
+    monkeypatch.setattr(
+        network_safety.socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [(2, 1, 6, "", ("10.0.0.5", 443))],
+    )
+    with pytest.raises(ValueError, match="non-global"):
+        radar._fetch_json(
+            "https://opensky-network.org/api/states/all",
+            timeout=8,
+        )
