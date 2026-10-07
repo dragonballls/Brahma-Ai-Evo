@@ -89,9 +89,9 @@ def _win_path(path: Path | str) -> str:
 
 
 def _strip_device_prefix(path: str) -> str:
-    if path.startswith(r"\\?\UNC\\"):
-        return r"\\" + path[8:]
-    if path.startswith(r"\\?\"):
+    if path.startswith("\\\\?\\UNC\\"):
+        return "\\" + path[8:]
+    if path.startswith("\\\\?\\"):
         return path[4:]
     return path
 
