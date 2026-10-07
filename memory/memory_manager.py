@@ -66,6 +66,26 @@ PROMPT_INDEX_CHARS = 420
 # with forty stored preferences still gets their sister into the prompt.
 PROMPT_MAX_PER_CATEGORY = 6
 
+def _read_memory_text() -> str:
+    """Read long-term memory without following a path swap after inspection."""
+    if os.name == "nt":
+        from core.windows_file_safety import read_text
+        text, _size = read_text(MEMORY_PATH, max_chars=4 * 1024 * 1024)
+        return text
+
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(MEMORY_PATH, flags)
+    try:
+        with os.fdopen(fd, "r", encoding="utf-8") as handle:
+            fd = -1
+            return handle.read(4 * 1024 * 1024 + 1)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 def _empty_memory() -> dict:
     return {
         "identity":      {},
@@ -83,7 +103,9 @@ def load_memory() -> dict:
         return _empty_memory()
     with _lock:
         try:
-            raw_text = MEMORY_PATH.read_text(encoding="utf-8")
+            raw_text = _read_memory_text()
+            if len(raw_text.encode("utf-8")) > 4 * 1024 * 1024:
+                raise ValueError("Persistent memory exceeds the 4 MiB safety limit.")
             data = json.loads(raw_text)
             if isinstance(data, dict):
                 base = _empty_memory()
