@@ -555,6 +555,12 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
         if remote_sha == undo_tip:
             self._save(replace(checkpoint, state="undone"))
             return "undone"
+        if remote_sha == checkpoint.promoted_sha and local_sha == checkpoint.promoted_sha:
+            # The prior undo may have been partially created locally and then safely
+            # discarded before publication. Clear the unpublished undo tip and retry
+            # from the last known approved state.
+            self._save(replace(checkpoint, state="approved", undo_commits=()))
+            return self._undo_unlocked(checkpoint.checkpoint_id)
         if remote_sha != checkpoint.promoted_sha:
             raise SelfCodingError("Undo recovery found unrelated remote main changes; refusing further mutation.")
         pushed = self._git("push", "origin", "main", timeout=300)
@@ -704,7 +710,18 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
                 reverted = self._git("revert", "--no-edit", commit, timeout=300)
                 if reverted.returncode != 0:
                     self._git("revert", "--abort")
-                    self._git("reset", "--hard", checkpoint.promoted_sha)
+                    reset = self._git("reset", "--hard", checkpoint.promoted_sha)
+                    if reset.returncode != 0:
+                        raise SelfCodingError(
+                            reset.stderr.strip()
+                            or "Unable to restore main after a partial undo failure; durable undo state remains required for recovery."
+                        )
+                    try:
+                        self._save(replace(checkpoint, state="approved", undo_commits=()))
+                    except Exception as save_exc:
+                        raise SelfCodingError(
+                            "Partial undo was restored to the promoted state, but checkpoint metadata could not be repaired."
+                        ) from save_exc
                     raise SelfCodingError(reverted.stderr.strip() or f"Unable to revert {commit}.")
                 head = self._git("rev-parse", "HEAD")
                 if head.returncode != 0:
@@ -752,14 +769,6 @@ EFFICIENCY-FIRST ENGINEERING POLICY:
                 ) from save_exc
             self._git("switch", current)
             return "undone"
-        except Exception:
-            try:
-                if self._branch() == "main" and not undo_commits:
-                    self._git("reset", "--hard", checkpoint.promoted_sha)
-                self._git("switch", current)
-            except Exception:
-                pass
-            raise
         except Exception:
             try:
                 if self._branch() == "main":
