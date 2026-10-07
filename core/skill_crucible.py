@@ -119,6 +119,7 @@ BANNED_IMPORT_MODULES = {
     # Native/C/device modules cannot be safely confined by Python-level Crucible hooks.
     "cffi", "numpy", "cv2", "mss", "psutil", "pyautogui", "pygetwindow", "pywinauto",
     "sounddevice", "pyaudio", "comtypes", "pycaw", "mediapipe", "send2trash",
+    "inspect", "operator", "gc", "pydoc", "pkgutil",
     "playwright", "browser_harness", "PyQt6", "win10toast", "pocketsphinx",
     "webbrowser", "pickle", "marshal", "zipimport", "faulthandler", "shelve", "dbm",
     # Native Windows modules can open files/processes or query protected system state.
