@@ -553,6 +553,8 @@ class _Handler(socketserver.BaseRequestHandler):
         if not _STATUS_LINE_RE.fullmatch(status_line):
             raise _ProxyUpstreamError("Malformed upstream status line.")
         status = int(status_line.split(" ", 2)[1])
+        content_lengths: list[str] = []
+        transfer_encodings: list[str] = []
         singleton = {"content-length"}
         seen: set[str] = set()
         for row in rows[1:]:
@@ -569,6 +571,27 @@ class _Handler(socketserver.BaseRequestHandler):
             if lowered in singleton and lowered in seen:
                 raise _ProxyUpstreamError("Duplicate upstream Content-Length header.")
             seen.add(lowered)
+            if lowered == "content-length":
+                if not value.isdigit():
+                    raise _ProxyUpstreamError("Malformed upstream Content-Length header.")
+                content_lengths.append(value)
+            elif lowered == "transfer-encoding":
+                transfer_encodings.append(value)
+
+        if content_lengths and transfer_encodings:
+            raise _ProxyUpstreamError(
+                "Ambiguous upstream response framing: Content-Length and Transfer-Encoding may not be combined."
+            )
+        if transfer_encodings:
+            tokens = [
+                item.strip().lower()
+                for item in transfer_encodings[0].split(",")
+                if item.strip()
+            ]
+            if len(transfer_encodings) != 1 or tokens != ["chunked"]:
+                raise _ProxyUpstreamError(
+                    "Unsupported upstream Transfer-Encoding framing."
+                )
         return status
 
     @classmethod
