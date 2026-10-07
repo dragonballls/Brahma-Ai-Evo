@@ -9,14 +9,59 @@ distinct.
 from __future__ import annotations
 
 import json
+import os
 import re
+import stat as _stat
+import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
 from core.user_paths import get_user_data_dir
 
 PATH = get_user_data_dir() / "config" / "self_awareness.json"
+
+
+def _is_link_like(path: Path) -> bool:
+    path = Path(path)
+    if path.is_symlink():
+        return True
+    is_junction = getattr(path, "is_junction", None)
+    if is_junction is not None and is_junction():
+        return True
+    if os.name == "nt":
+        try:
+            attrs = getattr(path.stat(follow_symlinks=False), "st_file_attributes", 0)
+            reparse = getattr(_stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+            if reparse and attrs & reparse:
+                return True
+        except OSError:
+            return True
+    return False
+
+
+def _assert_safe_path(path: Path) -> None:
+    current = Path(path)
+    while True:
+        if _is_link_like(current):
+            raise RuntimeError(
+                f"Self-awareness persistence path must not contain a symlink, junction, or reparse point: {current}"
+            )
+        try:
+            if current.exists() and current.is_file():
+                if int(current.stat(follow_symlinks=False).st_nlink) > 1:
+                    raise RuntimeError(
+                        f"Self-awareness persistence path has multiple hard links: {current}"
+                    )
+        except OSError as exc:
+            raise RuntimeError(
+                f"Self-awareness persistence path could not be inspected safely: {current}"
+            ) from exc
+        if current.parent == current:
+            break
+        current = current.parent
+
 
 _DEVICE_WORDS = {
     "pc", "computer", "laptop", "desktop", "phone", "mobile", "tablet",
@@ -37,6 +82,7 @@ class SelfAwareness:
     """Small deterministic self-model layered over existing identity + memory."""
 
     SCHEMA_VERSION = 1
+    _lock = threading.RLock()
 
     def __init__(self) -> None:
         self._state = {
@@ -52,6 +98,7 @@ class SelfAwareness:
     def _load(self) -> None:
         if not PATH.is_file():
             return
+        _assert_safe_path(PATH)
         try:
             raw = json.loads(PATH.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -69,16 +116,34 @@ class SelfAwareness:
         self._state["schema_version"] = self.SCHEMA_VERSION
 
     def save(self) -> None:
-        PATH.parent.mkdir(parents=True, exist_ok=True)
-        temp = PATH.with_name(f".{PATH.name}.{int(time.time_ns())}.tmp")
-        try:
-            temp.write_text(
-                json.dumps(self._state, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
-            temp.replace(PATH)
-        finally:
-            temp.unlink(missing_ok=True)
+        with self._lock:
+            PATH.parent.mkdir(parents=True, exist_ok=True)
+            _assert_safe_path(PATH)
+            temp = PATH.with_name(f".{PATH.name}.{os.getpid()}-{uuid.uuid4().hex}.tmp")
+            fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+                    fd = -1
+                    handle.write(json.dumps(self._state, indent=2, ensure_ascii=False))
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temp, PATH)
+                _assert_safe_path(PATH)
+                persisted = json.loads(PATH.read_text(encoding="utf-8"))
+                if persisted != self._state:
+                    raise RuntimeError("Self-awareness save verification found a mismatched final state.")
+            except Exception:
+                if fd >= 0:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+                raise
+            finally:
+                try:
+                    temp.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     @staticmethod
     def _owner_name() -> str:
