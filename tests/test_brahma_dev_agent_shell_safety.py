@@ -42,7 +42,7 @@ def test_brahma_dev_agent_blocks_git_pack_command_execution_overrides(tmp_path):
     ]
     for command in blocked:
         result = tools.bash(command)
-        assert result == "Error: Git upload/receive-pack execution overrides are not permitted."
+        assert result == "Error: Git execution/configuration overrides are not permitted."
 
 
 def test_brahma_dev_agent_blocks_git_config_and_execution_path_overrides(tmp_path):
