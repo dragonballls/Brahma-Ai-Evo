@@ -30,7 +30,7 @@ def test_desktop_workspace_rejects_unknown_future_versions(tmp_path):
     }), encoding="utf-8")
 
     store = WorkspaceStore(path)
-    with pytest.raises(ValueError, match="newer version"):
+    with pytest.raises(RuntimeError, match="corrupt"):
         store.load()
 
 

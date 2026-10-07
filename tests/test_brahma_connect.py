@@ -1,6 +1,7 @@
 import json
 from unittest.mock import patch
 import asyncio
+import threading
 from pathlib import Path
 
 from brahma_connect.gateway.command_router import CommandRouter
@@ -71,8 +72,9 @@ def test_device_manager_skips_corrupt_registry_records(tmp_path: Path):
         encoding="utf-8",
     )
     manager = DeviceManager(registry)
-    assert manager.get("good") is not None
-    assert manager.get("bad") is None
+    with __import__("pytest").raises(RuntimeError, match="invalid record|corrupt"):
+        DeviceManager(registry)
+    assert list(registry.parent.glob("devices.json.corrupt-*"))
 
 
 def test_capability_manager_accepts_single_required_capability():
@@ -403,7 +405,7 @@ def test_command_router_cleans_pending_when_device_send_fails(tmp_path: Path):
         name="Galaxy S24",
         platform="android",
         online=True,
-        capabilities=["launch_app"],
+        capabilities=["app_launch"],
     )
     manager._devices[record.device_id] = record
     manager.save()
@@ -549,9 +551,9 @@ def test_gateway_rejects_unauthenticated_event_and_chat_paths():
         'if msg_type == ProtocolTypes.DEVICE_OFFLINE:', 1
     )[0]
     offline_block = text_value.split("if msg_type == ProtocolTypes.DEVICE_OFFLINE:", 1)[1]
-    assert "if not device_id:" in event_block
-    assert "if not device_id:" in chat_block
-    assert "if not device_id:" in offline_block
+    assert "if not device_id or not await self.hub.is_current(websocket, device_id):" in event_block
+    assert "if not device_id or not await self.hub.is_current(websocket, device_id):" in chat_block
+    assert "if not device_id or not await self.hub.is_current(websocket, device_id):" in offline_block
     assert 'Authentication required for chat messages.' in chat_block
     assert 'Authentication required for device events.' in event_block
     assert 'Authentication required for device status changes.' in offline_block
@@ -590,7 +592,7 @@ def test_connection_hub_set_pending_cancels_when_device_is_missing():
         return future
 
     future = asyncio.run(scenario())
-    assert future.cancelled()
+    assert future is None
 
 
 def test_connection_hub_current_socket_guard_rejects_replaced_connection():
@@ -608,6 +610,30 @@ def test_connection_hub_current_socket_guard_rejects_replaced_connection():
     old_current, new_current = asyncio.run(scenario())
     assert old_current is False
     assert new_current is True
+
+def test_gateway_config_save_is_atomic_and_rejects_symlinks(tmp_path):
+    from brahma_connect.gateway.server import BrahmaGatewayConfig
+    import os
+
+    path = tmp_path / "config.json"
+    config = BrahmaGatewayConfig(config_path=path)
+    config.save()
+    assert path.exists()
+
+    outside = tmp_path / "outside.json"
+    outside.write_text("keep", encoding="utf-8")
+    link = tmp_path / "linked.json"
+    try:
+        os.symlink(outside, link)
+    except (OSError, NotImplementedError):
+        return
+    config.config_path = link
+    try:
+        config.save()
+    except RuntimeError as exc:
+        assert "symlink" in str(exc).lower()
+    else:
+        raise AssertionError("Symlinked gateway config target was accepted.")
 
 def test_android_remote_url_handler_rejects_non_web_schemes():
     source = (

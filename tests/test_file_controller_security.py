@@ -55,6 +55,7 @@ def test_write_file_refuses_unreadable_existing_targets(monkeypatch, tmp_path):
     monkeypatch.setattr(Path, "read_text", fail_target_read)
     result = file_controller.write_file(str(tmp_path), "existing.txt", "replacement")
     assert "refusing to overwrite it" in result
+    Path.read_text = original_read_text
     assert target.read_text(encoding="utf-8") == "original"
 
 

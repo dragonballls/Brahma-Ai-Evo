@@ -103,7 +103,7 @@ class ContinuousEvolutionTests(unittest.TestCase):
     def test_self_coding_can_restore_base_branch_after_background_preview(self):
         import inspect
         from core.self_coding import SelfCodingAgent
-        source = inspect.getsource(SelfCodingAgent.preview)
+        source = inspect.getsource(SelfCodingAgent._preview_unlocked)
         self.assertIn("return_to_base", source)
         self.assertIn('result["returned_to_base"] = base_branch', source)
 

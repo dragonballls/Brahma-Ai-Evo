@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -93,12 +95,21 @@ class SelectedCapabilitiesTests(unittest.TestCase):
             {"entity_id": "device_tracker.bob", "state": "home", "attributes": {"friendly_name": "Bob", "latitude": 35, "longitude": -118, "attribution": "Life360"}},
             {"entity_id": "sensor.no_tracker", "state": "on", "attributes": {"latitude": 35, "longitude": -118, "attribution": "Life360"}},
         ]
-        with patch("core.selected_capabilities.urlrequest.urlopen", side_effect=[_FakeResponse({"message": "API running."}), _FakeResponse(states)]) as call:
+        class _FakeOpener:
+            def __init__(self):
+                self.calls = []
+
+            def open(self, request, timeout=None):
+                self.calls.append(request)
+                return _FakeResponse({"message": "API running."}) if len(self.calls) == 1 else _FakeResponse(states)
+
+        opener = _FakeOpener()
+        with patch("core.selected_capabilities.urlrequest.build_opener", return_value=opener):
             rows = provider.locations()
-        self.assertEqual(len(rows), 1)
+        call = opener        self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["label"], "Alice")
         self.assertEqual(rows[0]["source"], "life360")
-        req = call.call_args_list[1].args[0]
+        req = call.calls[1]
         self.assertEqual(req.headers.get("Authorization"), "Bearer secret")
 
     def test_life360_rejects_public_hosts(self):
