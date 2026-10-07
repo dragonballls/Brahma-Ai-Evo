@@ -11,7 +11,7 @@ FEATURE_METADATA = {
     "active": True
 }
 
-import requests
+from core.network_safety import open_fixed_https, read_bounded
 import matplotlib
 matplotlib.use('Agg') # Use 'Agg' backend for non-interactive plotting
 import matplotlib.pyplot as plt
@@ -30,9 +30,13 @@ def execute(**kwargs):
 
     try:
         # Fetch ISS data
-        response = requests.get(iss_api_url, timeout=timeout_seconds)
-        response.raise_for_status() # Raise an HTTPError for bad responses (4xx or 5xx)
-        iss_data = response.json()
+        with open_fixed_https(
+            iss_api_url,
+            allowed_hosts={"api.wheretheiss.at"},
+            timeout=timeout_seconds,
+            headers={"User-Agent": "Brahma-Evo/1.0"},
+        ) as response:
+            iss_data = json.loads(read_bounded(response, 128 * 1024).decode("utf-8"))
 
         latitude = iss_data.get('latitude')
         longitude = iss_data.get('longitude')
@@ -93,12 +97,13 @@ def execute(**kwargs):
         )
 
         return {
+            "success": True,
             "image_path": image_path,
             "title": "International Space Station Live Tracking",
             "summary": summary
         }
 
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         return {
             "error": f"Network or API error while fetching ISS data: {e}",
             "details": str(e)
