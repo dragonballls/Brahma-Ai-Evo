@@ -45,7 +45,7 @@ MAX_HTTP_RESPONSE_BYTES = 25 * 1024 * 1024
 
 def _validate_remote_fetch_url(url: str) -> str:
     parsed = urlparse(str(url or "").strip())
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+    if parsed.scheme != "https" or not parsed.hostname:
         raise ValueError("Remote template URL must use http or https.")
     if parsed.username or parsed.password:
         raise ValueError("Remote template URLs may not include embedded credentials.")
@@ -466,17 +466,43 @@ def infer_presentation_profile(
 
 
 def _load_cache_index() -> dict[str, Any]:
-    if TEMPLATE_CACHE_INDEX.exists():
-        try:
-            return json.loads(TEMPLATE_CACHE_INDEX.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
-    return {}
+    if not TEMPLATE_CACHE_INDEX.exists():
+        return {}
+    if TEMPLATE_CACHE_INDEX.is_symlink():
+        raise RuntimeError("PPT template cache index must not be a symlink.")
+    try:
+        data = json.loads(TEMPLATE_CACHE_INDEX.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("PPT template cache index is unreadable or corrupted.") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError("PPT template cache index has an invalid schema.")
+    return data
 
 
 def _save_cache_index(index: dict[str, Any]) -> None:
+    if not isinstance(index, dict):
+        raise TypeError("PPT template cache index must be an object.")
     TEMPLATE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    TEMPLATE_CACHE_INDEX.write_text(json.dumps(index, indent=2), encoding="utf-8")
+    if TEMPLATE_CACHE_INDEX.is_symlink() or (TEMPLATE_CACHE_INDEX.exists() and not TEMPLATE_CACHE_INDEX.is_file()):
+        raise RuntimeError("PPT template cache index path is unsafe.")
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{TEMPLATE_CACHE_INDEX.name}.",
+        suffix=".tmp",
+        dir=str(TEMPLATE_CACHE_DIR),
+        text=True,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(index, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, TEMPLATE_CACHE_INDEX)
+    finally:
+        try:
+            Path(temp_name).unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _unwrap_bing_url(href: str) -> str:
@@ -706,55 +732,101 @@ def _extract_page_download_links(page_url: str, profile: dict[str, Any]) -> list
     return unique_links
 
 
+def _safe_cache_asset_path(raw_path: str | Path) -> Path:
+    root = TEMPLATE_ASSET_DIR.resolve()
+    path = Path(raw_path).expanduser()
+    try:
+        resolved = path.resolve(strict=False)
+        resolved.relative_to(root)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("PPT template cache path is outside the managed asset directory.") from exc
+    if path.is_symlink():
+        raise RuntimeError("PPT template cache asset must not be a symlink.")
+    return resolved
+
+
 def _validate_pptx(path: Path) -> bool:
-    if not path.exists() or path.stat().st_size == 0:
+    if not path.exists() or path.is_symlink() or path.stat().st_size == 0:
         return False
     try:
-        if zipfile.is_zipfile(path):
-            with zipfile.ZipFile(path, "r") as zf:
-                names = set(zf.namelist())
-                if "[Content_Types].xml" in names and any(name.startswith("ppt/") for name in names):
-                    return True
-        return path.suffix.lower() == ".pptx" and path.stat().st_size > 0
+        if not zipfile.is_zipfile(path):
+            return False
+        with zipfile.ZipFile(path, "r") as zf:
+            names = set(zf.namelist())
+            return "[Content_Types].xml" in names and any(name.startswith("ppt/") for name in names)
     except Exception:
         return False
 
 
+def _atomic_install_template(source: Path, dest: Path) -> Path:
+    TEMPLATE_ASSET_DIR.mkdir(parents=True, exist_ok=True)
+    if dest.is_symlink() or (dest.exists() and not dest.is_file()):
+        raise RuntimeError("PPT template destination path is unsafe.")
+    if dest.parent.resolve() != TEMPLATE_ASSET_DIR.resolve():
+        raise RuntimeError("PPT template destination must remain in the managed asset directory.")
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{dest.name}.",
+        suffix=".pptx.tmp",
+        dir=str(dest.parent),
+    )
+    os.close(fd)
+    tmp = Path(tmp_name)
+    try:
+        shutil.copyfile(source, tmp)
+        if not _validate_pptx(tmp):
+            raise ValueError("Downloaded template is not a valid PowerPoint package.")
+        os.replace(tmp, dest)
+        return dest
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def _materialize_template_file(downloaded_path: Path, dest_path: Path) -> Path | None:
+    _safe_cache_asset_path(dest_path)
     if _validate_pptx(downloaded_path):
-        shutil.copy2(downloaded_path, dest_path)
-        return dest_path
+        return _atomic_install_template(downloaded_path, dest_path)
 
     if zipfile.is_zipfile(downloaded_path):
-        with tempfile.TemporaryDirectory(prefix="brahma_pptx_extract_") as tmpdir:
+        from actions.file_processor import _safe_extract_archive
+        with tempfile.TemporaryDirectory(prefix="brahma_pptx_extract_", dir=str(Path.home())) as tmpdir:
             extract_dir = Path(tmpdir)
-            with zipfile.ZipFile(downloaded_path, "r") as zf:
-                zf.extractall(extract_dir)
+            _safe_extract_archive(downloaded_path, extract_dir)
             for candidate in extract_dir.rglob("*.pptx"):
                 if _validate_pptx(candidate):
-                    shutil.copy2(candidate, dest_path)
-                    return dest_path
+                    return _atomic_install_template(candidate, dest_path)
     return None
 
 
 def _download_url(url: str, dest: Path) -> Path | None:
+    tmp = None
     try:
-        with _safe_get(url, headers=HEADERS, timeout=40, stream=True, allow_redirects=True) as resp:
+        _safe_cache_asset_path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=f".{dest.name}.",
+            suffix=".download",
+            dir=str(dest.parent),
+        )
+        os.close(fd)
+        tmp = Path(tmp_name)
+        with _safe_get(url, headers=HEADERS, timeout=40, stream=True, allow_redirects=False) as resp:
             resp.raise_for_status()
-            tmp = dest.with_suffix(".download")
-            with open(tmp, "wb") as fh:
+            with tmp.open("wb") as fh:
                 for chunk in resp.iter_content(chunk_size=1024 * 64):
                     if chunk:
                         fh.write(chunk)
-            return _materialize_template_file(tmp, dest)
+        return _materialize_template_file(tmp, dest)
     except Exception:
         return None
     finally:
-        try:
-            if dest.with_suffix(".download").exists():
-                dest.with_suffix(".download").unlink()
-        except Exception:
-            pass
+        if tmp is not None:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def _choose_template_candidate(results: list[dict[str, str]], profile: dict[str, Any], query: str) -> dict[str, str] | None:
@@ -777,8 +849,11 @@ def resolve_presentation_template(profile: dict[str, Any]) -> dict[str, Any] | N
 
     cached = cache_index.get(cache_key)
     if cached:
-        cached_path = Path(cached.get("path", ""))
-        if cached_path.exists() and _validate_pptx(cached_path):
+        try:
+            cached_path = _safe_cache_asset_path(cached.get("path", ""))
+        except (RuntimeError, TypeError):
+            cached_path = None
+        if cached_path is not None and cached_path.exists() and _validate_pptx(cached_path):
             return {
                 "path": cached_path,
                 "source_url": cached.get("source_url"),
