@@ -90,7 +90,8 @@ def _undo_write(target: Path, previous: str | None, expected_after):
                 _secure_unlink(target)
                 return f"Removed '{target.name}' — it did not exist before."
             return f"'{target.name}' is already gone."
-        _secure_write_text(target, previous, append=False)
+        expected_identity = tuple(expected_after[1:3]) if expected_after and len(expected_after) >= 3 else None
+        _secure_write_text(target, previous, append=False, expected_identity=expected_identity)
         return f"Restored the previous contents of '{target.name}'."
     return _fn
 
@@ -255,7 +256,7 @@ def _secure_parent_fd(parent: Path):
         raise
 
 
-def _secure_write_text(target: Path, content: str, *, append: bool = False) -> None:
+def _secure_write_text(target: Path, content: str, *, append: bool = False, expected_identity=None) -> None:
     """Write a text file without following a raced leaf/parent when the OS supports openat."""
     target = Path(target).absolute()
     parent = target.parent
@@ -268,13 +269,20 @@ def _secure_write_text(target: Path, content: str, *, append: bool = False) -> N
         if parent_fd is None:
             raise RuntimeError("Secure parent descriptor could not be opened.")
         try:
-            flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW
-            if append:
-                flags |= os.O_APPEND
+            flags = os.O_WRONLY | os.O_NOFOLLOW
+            if expected_identity is None:
+                flags |= os.O_CREAT | os.O_EXCL
             else:
                 flags |= os.O_TRUNC
+                if append:
+                    flags |= os.O_APPEND
             fd = os.open(leaf, flags, 0o600, dir_fd=parent_fd)
             try:
+                if expected_identity is not None:
+                    opened = os.fstat(fd)
+                    actual_identity = (int(opened.st_dev), int(opened.st_ino))
+                    if tuple(expected_identity) != actual_identity:
+                        raise RuntimeError("Target changed identity before secure write; refusing the overwrite.")
                 with os.fdopen(fd, "w", encoding="utf-8") as handle:
                     handle.write(content)
                     handle.flush()
@@ -289,6 +297,10 @@ def _secure_write_text(target: Path, content: str, *, append: bool = False) -> N
 
     if _is_link_like(target):
         raise RuntimeError("Target is a link/reparse point.")
+    if expected_identity is not None:
+        current = _fingerprint(target)
+        if current is None or tuple(expected_identity) != tuple(current[1:3]):
+            raise RuntimeError("Target changed identity before write; refusing the overwrite.")
     with target.open("a" if append else "w", encoding="utf-8") as handle:
         handle.write(content)
         handle.flush()
@@ -382,6 +394,7 @@ def create_file(path: str, name: str = "", content: str = "") -> str:
         target.parent.mkdir(parents=True, exist_ok=True)
         existed = target.exists()
         previous = None
+        expected_identity = None
         if existed:
             try:
                 if _is_link_like(target) or not target.is_file():
@@ -389,6 +402,8 @@ def create_file(path: str, name: str = "", content: str = "") -> str:
                 if _is_hardlinked_regular_file(target):
                     return f"Could not create file: existing target '{target.name}' has multiple hard links; refusing an unsafe overwrite."
                 previous = target.read_text(encoding="utf-8")
+                stat = target.stat(follow_symlinks=False)
+                expected_identity = (int(stat.st_dev), int(stat.st_ino))
             except Exception as exc:
                 return f"Could not create file: existing target '{target.name}' could not be read safely: {exc}"
         _secure_write_text(target, content, append=False)
@@ -600,6 +615,7 @@ def write_file(path: str, name: str = "", content: str = "",
         # different undo (delete it) from "existed and had this in it".
         previous: str | None = None
         undoable = True
+        expected_identity = None
         existed = target.exists() or target.is_symlink()
         if existed:
             if _is_link_like(target) or not target.is_file():
@@ -617,6 +633,8 @@ def write_file(path: str, name: str = "", content: str = "",
                     undoable = False
                 else:
                     previous = target.read_text(encoding="utf-8")
+                    stat = target.stat(follow_symlinks=False)
+                    expected_identity = (int(stat.st_dev), int(stat.st_ino))
             except Exception as exc:
                 return (
                     "Could not write file: existing target could not be read safely; "
@@ -628,7 +646,7 @@ def write_file(path: str, name: str = "", content: str = "",
             return f"Access denied: {target.parent}"
         if _is_link_like(target) or _is_hardlinked_regular_file(target):
             return f"Could not write file: link/reparse or hard-linked targets are not permitted."
-        _secure_write_text(target, content, append=append)
+        _secure_write_text(target, content, append=append, expected_identity=expected_identity)
 
         expected_after = _fingerprint(target) if undoable else None
         if undoable and expected_after is None:
