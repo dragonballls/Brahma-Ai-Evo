@@ -111,3 +111,25 @@ def test_update_checker_uses_trusted_git_executable(monkeypatch, tmp_path):
 
     assert checker._get_local_hash() == "abc123"
     assert calls == [tmp_path]
+
+
+def test_root_updater_uses_trusted_git_resolution(monkeypatch, tmp_path):
+    from core import command_safety
+    import updater
+
+    calls = []
+    monkeypatch.setattr(
+        updater,
+        "resolve_git_executable",
+        lambda repo: (calls.append(Path(repo)) or str(tmp_path / "trusted-git.exe")),
+    )
+
+    class Result:
+        returncode = 0
+        stdout = "main\n"
+        stderr = ""
+
+    monkeypatch.setattr(updater.subprocess, "run", lambda argv, **kwargs: Result())
+    result = updater._run_git(tmp_path, "status", "--porcelain")
+    assert result.returncode == 0
+    assert calls == [tmp_path]
