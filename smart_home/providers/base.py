@@ -33,8 +33,8 @@ class SmartHomeProvider:
     def execute(self, device: dict[str, Any], action: str, payload: dict[str, Any]) -> dict[str, Any]:
         traits = dict(device.get("traits") or {})
         if action == "power":
-            return {"is_on": bool(payload.get("is_on")), "traits": traits, "detail": f"{device['name']} power updated."}
-        return {"is_on": bool(device.get("is_on")), "traits": traits, "detail": f"{device['name']} updated."}
+            return {"success": True, "is_on": bool(payload.get("is_on")), "traits": traits, "detail": f"{device['name']} power updated."}
+        return {"success": True, "is_on": bool(device.get("is_on")), "traits": traits, "detail": f"{device['name']} updated."}
 
     def get_status(self, device: dict[str, Any]) -> dict[str, Any]:
         return {"online": True, "detail": f"{device['name']} available."}
