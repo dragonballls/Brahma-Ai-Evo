@@ -1031,6 +1031,12 @@ class DashboardServer:
                     except json.JSONDecodeError:
                         await websocket.send_json({"type": "error", "error": "Invalid JSON message."})
                         continue
+                    if not isinstance(data, dict):
+                        await websocket.send_json({
+                            "type": "error",
+                            "error": "WebSocket message must be a JSON object.",
+                        })
+                        continue
                     if data.get("type") == "command":
                         enc = data.get("enc", "")
                         if enc and len(str(enc).encode("utf-8")) > 512 * 1024:

@@ -28,3 +28,12 @@ def test_dashboard_command_cannot_report_empty_command_as_success():
     assert 'if not text:' in block
     assert 'Command text is required.' in block
     assert 'return JSONResponse({"ok": True, "status": "queued"})' in block
+
+
+def test_dashboard_websocket_rejects_non_object_json_without_session_crash():
+    source = (ROOT / "dashboard" / "server.py").read_text(encoding="utf-8")
+    start = source.index("                    try:\n                        data = json.loads(raw_message)")
+    end = source.index('                    if data.get("type") == "command":', start)
+    block = source[start:end]
+    assert "if not isinstance(data, dict):" in block
+    assert "WebSocket message must be a JSON object." in block
