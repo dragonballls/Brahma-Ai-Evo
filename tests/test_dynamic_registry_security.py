@@ -1,4 +1,5 @@
 from pathlib import Path
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -74,6 +75,24 @@ def test_dynamic_registry_rejects_junction_and_reparse_native_feature_entries():
     assert "FILE_ATTRIBUTE_REPARSE_POINT" in source
     assert "if _is_link_like(item):" in source
     assert "if _is_link_like(manifest_file) or _is_link_like(code_file) or _is_link_like(item):" in source
+
+
+def test_persisted_skill_rejects_hardlinked_code(tmp_path):
+    from core.dynamic_registry import DynamicSkill
+
+    skill_dir = tmp_path / "hardlinked_skill"
+    skill_dir.mkdir()
+    source = tmp_path / "source.py"
+    code = skill_dir / "skill.py"
+    source.write_text("def execute(**kwargs):\n    return 'safe'\n", encoding="utf-8")
+    try:
+        code.hardlink_to(source)
+    except (OSError, NotImplementedError):
+        pytest.skip("Hard links are unavailable in this test environment.")
+
+    skill = DynamicSkill(skill_dir, {"name": "hardlinked_skill"}, untrusted=True)
+    with pytest.raises(RuntimeError, match="hard-linked"):
+        skill.execute_sync()
 
 
 def test_untrusted_skill_cannot_read_host_filesystem_during_activation(tmp_path):
