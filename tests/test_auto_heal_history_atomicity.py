@@ -19,7 +19,9 @@ def test_auto_heal_history_read_corruption_is_quarantined():
     try:
         auto_heal.PATCH_HISTORY_FILE = ROOT / "auto-heal-history-corrupt-test.json"
         auto_heal.PATCH_HISTORY_FILE.write_text("{broken", encoding="utf-8")
-        assert auto_heal.SafetySandbox._load_history() == []
+        import pytest
+        with pytest.raises(RuntimeError, match="Patch history was corrupt"):
+            auto_heal.SafetySandbox._load_history()
         assert not auto_heal.PATCH_HISTORY_FILE.exists()
         assert list(auto_heal.PATCH_HISTORY_FILE.parent.glob(
             auto_heal.PATCH_HISTORY_FILE.name + ".corrupt-*"
