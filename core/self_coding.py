@@ -20,6 +20,8 @@ import threading
 import uuid
 from typing import Any
 
+from core.command_safety import CommandSafetyError, hidden_creationflags, resolve_git_executable
+
 from core.efficiency_policy import EFFICIENCY_DIRECTIVE
 
 
@@ -78,7 +80,7 @@ class SelfCodingAgent:
     @staticmethod
     def _hidden_creationflags() -> int:
         """Keep Git/self-coding subprocesses invisible during normal GUI operation."""
-        return int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return hidden_creationflags()
 
     def _run(self, args: list[str] | tuple[str, ...], timeout: int = 900) -> subprocess.CompletedProcess[str]:
         try:
@@ -96,7 +98,11 @@ class SelfCodingAgent:
             raise SelfCodingError(f"Command failed to start: {args[0]}") from exc
 
     def _git(self, *args: str, timeout: int = 120) -> subprocess.CompletedProcess[str]:
-        return self._run(("git", *args), timeout=timeout)
+        try:
+            git = resolve_git_executable(self.repo)
+        except CommandSafetyError as exc:
+            raise SelfCodingError(str(exc)) from exc
+        return self._run((git, *args), timeout=timeout)
 
     def _branch(self) -> str:
         result = self._git("rev-parse", "--abbrev-ref", "HEAD")
