@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+from unittest.mock import patch
+
 import actions.attention_monitor as am
 
 
@@ -40,10 +43,10 @@ def test_edge_tts_generation_rechecks_cancellation_before_playback(monkeypatch, 
     import sys
     import types
 
-    audio_path = tmp_path / "stale.mp3"
     class Communicate:
         def __init__(self, *args, **kwargs):
             pass
+
         def save_sync(self, path):
             Path(path).write_bytes(b"audio")
             with am._speech_generation_lock:
@@ -52,12 +55,14 @@ def test_edge_tts_generation_rechecks_cancellation_before_playback(monkeypatch, 
     fake_edge = types.SimpleNamespace(Communicate=Communicate)
     monkeypatch.setitem(sys.modules, "edge_tts", fake_edge)
     monkeypatch.setattr(am.tempfile, "gettempdir", lambda: str(tmp_path))
-    monkeypatch.setattr(am, "_current_speech_generation", lambda: 10)
-    cleanup = {"called": False}
-    monkeypatch.setattr(am, "_cleanup_current_audio", lambda: cleanup.__setitem__("called", True))
-    # The generation passed into the worker is intentionally stale after
-    # save_sync() simulates an interruption.
-    am._speak_edge_native("stale", generation=9)
-    assert not am._current_player_alias
-    assert not am._current_audio_path
-    assert not any(tmp_path.glob("brahma_edge_tts_*.mp3"))
+    monkeypatch.setattr(am, "_cleanup_current_audio", lambda: None)
+
+    with am._speech_generation_lock:
+        am._speech_generation = 20
+
+    with patch.object(am.subprocess, "Popen", side_effect=AssertionError("stale audio must never start playback")):
+        am._speak_edge_native("stale", generation=20)
+
+    assert am._current_player_alias is None
+    assert am._current_audio_path is None
+    assert not list(tmp_path.glob("brahma_edge_tts_*.mp3"))
