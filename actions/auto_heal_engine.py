@@ -728,8 +728,8 @@ def auto_heal(
         if not tb:
             tb = AutoHealEngine.get_last_error() or ""
         if not tb:
-            # Check FATAL_CRASH.log if no traceback explicitly provided
-            crash_log = BASE_DIR / "FATAL_CRASH.log"
+            # Check the canonical runtime crash log if no traceback was explicitly provided.
+            crash_log = FATAL_CRASH_LOG_PATH
             if crash_log.exists():
                 try:
                     tb = crash_log.read_text(encoding="utf-8")
