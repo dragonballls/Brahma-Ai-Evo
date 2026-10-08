@@ -217,12 +217,35 @@ jobs:
       - name: Smoke-test packaged crash recovery mode
         shell: pwsh
         run: |
-          # Keep the recovery-mode contract hermetic. The normal GUI smoke test
-          # writes user-scoped state, so never let that state determine this check.
+          # Seed a real crash marker and repeated-crash state so the packaged
+          # recovery worker must read, fingerprint, and process the crash rather
+          # than passing solely because no crash log exists.
           $recoveryRoot = Join-Path $env:RUNNER_TEMP "BrahmaRecoverySmoke"
           Remove-Item -Recurse -Force $recoveryRoot -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force -Path $recoveryRoot | Out-Null
+          $configRoot = Join-Path $recoveryRoot "BrahmaAI\config"
+          $logRoot = Join-Path $recoveryRoot "BrahmaAI\logs"
+          New-Item -ItemType Directory -Force -Path $configRoot, $logRoot | Out-Null
           $env:LOCALAPPDATA = $recoveryRoot
+
+          $crashText = "Synthetic packaged crash for recovery verification"
+          $crashLog = Join-Path $logRoot "FATAL_CRASH.log"
+          Set-Content -Path $crashLog -Value $crashText -NoNewline
+
+          $bytes = [System.Text.Encoding]::UTF8.GetBytes($crashText.Trim())
+          $sha256 = [System.Security.Cryptography.SHA256]::Create()
+          try {
+            $digest = $sha256.ComputeHash($bytes)
+          } finally {
+            $sha256.Dispose()
+          }
+          $fingerprint = ([System.BitConverter]::ToString($digest)).Replace("-", "").ToLowerInvariant().Substring(0, 20)
+          $state = @{
+            last_crash_fingerprint = $fingerprint
+            repair_attempts = 1
+            blocked = $false
+          }
+          $state | ConvertTo-Json | Set-Content (Join-Path $configRoot "crash_recovery_state.json")
+          @() | ConvertTo-Json | Set-Content (Join-Path $configRoot "patch_history.json")
 
           $supervisor = (Resolve-Path "dist/BrahmaEvo/BrahmaEvoSupervisor.exe").Path
           $stdout = Join-Path $recoveryRoot "stdout.log"
@@ -237,7 +260,11 @@ jobs:
           if ($proc.ExitCode -ne 0) {
             throw "BrahmaEvoSupervisor.exe crash-recovery mode exited with code $($proc.ExitCode). Result: $out"
           }
-          Write-Host "Packaged crash-recovery worker mode passed."
+          $result = $out | ConvertFrom-Json
+          if ($result.action -ne "blocked") {
+            throw "Packaged crash-recovery worker did not process the seeded repeated crash as blocked. Action: $($result.action)"
+          }
+          Write-Host "Packaged crash-recovery worker processed the seeded crash and enforced the repeat-signature block."
 
       - name: Verify setup payload integration
         shell: pwsh
@@ -245,6 +272,12 @@ jobs:
           if (-not (Test-Path "dist/BrahmaEvo_Setup.exe")) { throw "Setup wizard missing." }
           if (-not (Test-Path "dist/BrahmaEvoPayload.zip")) { throw "Setup payload archive missing." }
           if ((Get-Item "dist/BrahmaEvoPayload.zip").Length -le 0) { throw "Setup payload archive is empty." }
+
+      - name: Run end-to-end installer activation test
+        shell: pwsh
+        env:
+          BRAHMA_CI_INSTALLER_PAYLOAD: ${{ github.workspace }}\dist\BrahmaEvoPayload.zip
+        run: python -m pytest -q tests/test_installer_integration.py
 
       - name: Smoke-test setup wizard
         shell: pwsh
