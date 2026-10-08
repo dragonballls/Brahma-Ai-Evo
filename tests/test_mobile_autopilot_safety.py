@@ -23,7 +23,6 @@ def test_mobile_autopilot_actually_dispatches_supported_actions():
                 ]
             },
         },
-        {"success": True, "data": {"clicked": True}},
         {
             "success": True,
             "data": {
@@ -33,6 +32,20 @@ def test_mobile_autopilot_actually_dispatches_supported_actions():
                     {
                         "bounds": [0, 0, 100, 100],
                         "text": "Search",
+                    }
+                ]
+            },
+        },
+        {"success": True, "data": {"clicked": True}},
+        {
+            "success": True,
+            "data": {
+                "screen_width": 1080,
+                "screen_height": 2400,
+                "nodes": [
+                    {
+                        "bounds": [0, 0, 100, 100],
+                        "text": "Complete",
                     }
                 ]
             },

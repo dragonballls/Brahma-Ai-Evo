@@ -41,13 +41,16 @@ jobs:
       - name: Configure headless GUI runtime
         shell: bash
         run: |
-          if ! command -v Xvfb >/dev/null 2>&1; then
-            sudo apt-get update -y
-            sudo apt-get install -y xvfb
-          fi
-          Xvfb :99 -screen 0 1280x1024x24 -ac -nolisten tcp >"$RUNNER_TEMP/brahma-xvfb.log" 2>&1 &
+          sudo apt-get update -y
+          sudo apt-get install -y xvfb xauth libegl1 libgl1
+          XAUTHORITY="$RUNNER_TEMP/brahma-xauthority"
+          touch "$XAUTHORITY"
+          COOKIE="$(mcookie)"
+          xauth -f "$XAUTHORITY" add :99 . "$COOKIE"
+          Xvfb :99 -screen 0 1280x1024x24 -auth "$XAUTHORITY" -nolisten tcp >"$RUNNER_TEMP/brahma-xvfb.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/brahma-xvfb.pid"
           echo "DISPLAY=:99" >> "$GITHUB_ENV"
+          echo "XAUTHORITY=$XAUTHORITY" >> "$GITHUB_ENV"
 
       - name: Run selected unittest regression checks
         run: >
@@ -178,13 +181,16 @@ jobs:
       - name: Configure headless GUI runtime
         shell: bash
         run: |
-          if ! command -v Xvfb >/dev/null 2>&1; then
-            sudo apt-get update -y
-            sudo apt-get install -y xvfb
-          fi
-          Xvfb :99 -screen 0 1280x1024x24 -ac -nolisten tcp >"$RUNNER_TEMP/brahma-xvfb.log" 2>&1 &
+          sudo apt-get update -y
+          sudo apt-get install -y xvfb xauth libegl1 libgl1
+          XAUTHORITY="$RUNNER_TEMP/brahma-xauthority"
+          touch "$XAUTHORITY"
+          COOKIE="$(mcookie)"
+          xauth -f "$XAUTHORITY" add :99 . "$COOKIE"
+          Xvfb :99 -screen 0 1280x1024x24 -auth "$XAUTHORITY" -nolisten tcp >"$RUNNER_TEMP/brahma-xvfb.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/brahma-xvfb.pid"
           echo "DISPLAY=:99" >> "$GITHUB_ENV"
+          echo "XAUTHORITY=$XAUTHORITY" >> "$GITHUB_ENV"
 
       - name: Run targeted suite
         run: python -m pytest -q ${{ matrix.tests }}

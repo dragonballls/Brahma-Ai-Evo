@@ -16,8 +16,8 @@ def test_ppt_template_fetch_disables_redirects_and_caps_response_size():
     assert "MAX_HTTP_RESPONSE_BYTES = 25 * 1024 * 1024" in source
     assert "fetch_public_bytes(" in source
     assert "redirect" in source.casefold()
-    assert "Remote template response exceeds the 25 MiB safety limit." in source
-    assert "fetch_public_bytes(" in source
+    assert "max_response_bytes=MAX_HTTP_RESPONSE_BYTES" in source
+    assert "300 <= response.status_code < 400" in source
 
 
 def test_ppt_template_safe_get_uses_pinned_transport_and_preserves_response_contract(monkeypatch):

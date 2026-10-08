@@ -52,6 +52,8 @@ def _fetch_json(url: str, timeout: float) -> dict:
         max_response_bytes=MAX_NETWORK_RESPONSE_BYTES,
         headers={"User-Agent": "BrahmaAI-FlightRadar/1.0"},
     )
+    if 300 <= status < 400:
+        raise RuntimeError(f"Flight-radar service returned HTTP {status}.")
     if status >= 400:
         raise RuntimeError(f"Flight-radar service returned HTTP {status}.")
     data = json.loads(raw.decode("utf-8"))

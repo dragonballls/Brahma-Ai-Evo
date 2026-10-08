@@ -411,9 +411,9 @@ Answer: ...
             except Exception as exc:
                 if self._on_update:
                     self._on_update({
-                        "active": True,
+                        "active": False,
                         "title": self._title,
-                        "summary": "Meeting watch is active.",
+                        "summary": "Meeting analysis is unavailable.",
                         "answer": f"Analysis paused: {exc}",
                         "status": "error",
                     })
