@@ -6,7 +6,7 @@ safely apply patches with atomic rollback guarantees, and record changelogs.
 """
 
 from __future__ import annotations
-from core.runtime_paths import API_CONFIG_PATH, CONFIG_DIR, PATCH_HISTORY_PATH, PATCH_BACKUPS_DIR
+from core.runtime_paths import API_CONFIG_PATH, CONFIG_DIR, FATAL_CRASH_LOG_PATH, PATCH_HISTORY_PATH, PATCH_BACKUPS_DIR
 from core.efficiency_policy import EFFICIENCY_DIRECTIVE
 
 import ast
