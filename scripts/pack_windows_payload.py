@@ -57,6 +57,7 @@ def _validate_archive_entries(archive: zipfile.ZipFile) -> None:
 
 
 def build(source: Path, output: Path) -> dict[str, object]:
+    source = source.resolve()
     files = _validate_source(source)
     output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -89,6 +90,7 @@ def build(source: Path, output: Path) -> dict[str, object]:
 
 
 def verify(source: Path, archive_path: Path) -> dict[str, object]:
+    source = source.resolve()
     files = _validate_source(source)
     expected = {p.relative_to(source).as_posix(): p.stat().st_size for p in files}
     with zipfile.ZipFile(archive_path, "r") as archive:
