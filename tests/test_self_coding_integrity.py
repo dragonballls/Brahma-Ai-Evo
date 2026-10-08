@@ -178,8 +178,7 @@ def test_self_coding_resolves_git_worktree_dotgit_file(tmp_path, monkeypatch):
     worktree.mkdir()
     git_dir = tmp_path / "git-dir"
     git_dir.mkdir()
-    (worktree / ".git").write_text(f"gitdir: {git_dir}
-", encoding="utf-8")
+    (worktree / ".git").write_text(f"gitdir: {git_dir}\n", encoding="utf-8")
 
     monkeypatch.setenv("BRAHMA_SELF_CODING_REPO", str(worktree))
     assert SelfCodingAgent._resolve_repo(None) == worktree.resolve()
@@ -195,8 +194,7 @@ def test_self_coding_rejects_invalid_worktree_dotgit_file(tmp_path):
 
     worktree = tmp_path / "worktree"
     worktree.mkdir()
-    (worktree / ".git").write_text("not-a-gitdir-marker
-", encoding="utf-8")
+    (worktree / ".git").write_text("not-a-gitdir-marker\n", encoding="utf-8")
 
     agent = object.__new__(SelfCodingAgent)
     agent.repo = worktree
