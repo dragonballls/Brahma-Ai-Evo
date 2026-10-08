@@ -197,5 +197,14 @@ jobs:
           echo "XAUTHORITY=$XAUTHORITY" >> "$GITHUB_ENV"
 
       - name: Run targeted suite
-        run: python -m pytest -q ${{ matrix.tests }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.name }}" == "persistence-fail-closed" ]]; then
+            python -m pip install --disable-pip-version-check pytest-timeout
+            python -m pytest --collect-only -vv -s tests/test_persistence_fail_closed.py
+            python -m pytest -vv -s --timeout=120 --timeout-method=signal tests/test_persistence_fail_closed.py
+          else
+            python -m pytest -q ${{ matrix.tests }}
+          fi
 
