@@ -263,11 +263,22 @@ def _secure_parent_fd(parent: Path):
     parent = Path(parent).absolute()
     if not _is_safe_path(parent):
         raise RuntimeError(f"Access denied: {parent}")
-    root = Path.home().absolute()
-    try:
-        relative = parent.relative_to(root)
-    except ValueError as exc:
-        raise RuntimeError(f"Access denied: {parent}") from exc
+    safe_roots = sorted(
+        (Path(root).absolute() for root in _SAFE_ROOTS),
+        key=lambda item: len(item.parts),
+        reverse=True,
+    )
+    root = next(
+        (
+            candidate
+            for candidate in safe_roots
+            if parent == candidate or candidate in parent.parents
+        ),
+        None,
+    )
+    if root is None:
+        raise RuntimeError(f"Access denied: {parent}")
+    relative = parent.relative_to(root)
 
     if os.name == "nt" or not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
         return None

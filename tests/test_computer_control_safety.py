@@ -11,6 +11,7 @@ def test_screenshot_path_validation_fails_closed_instead_of_using_fallback():
     assert "Screenshot path may not contain symlinked components." in block
     assert "Screenshot path must remain inside the user's home directory." in block
     assert "return fallback" not in block
+    assert "requested = str(requested).strip() if requested else str(fallback)" in block
 
 
 def test_screenshot_success_requires_a_real_nonempty_artifact(monkeypatch, tmp_path):

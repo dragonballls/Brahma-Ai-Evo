@@ -121,10 +121,9 @@ class DeviceManager:
                 self._quarantine_corrupt_registry(raw_bytes)
                 self._devices = {}
                 return
-            except OSError as exc:
-                raise RuntimeError(
-                    "Device registry could not be read safely; refusing to overwrite it."
-                ) from exc
+            except OSError:
+                # Preserve typed filesystem integrity failures such as hard-link rejection.
+                raise
             if not isinstance(raw, dict):
                 self._quarantine_corrupt_registry(raw_bytes)
                 self._devices = {}

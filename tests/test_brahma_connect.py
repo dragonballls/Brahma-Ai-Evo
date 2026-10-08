@@ -72,8 +72,7 @@ def test_device_manager_skips_corrupt_registry_records(tmp_path: Path):
         encoding="utf-8",
     )
     manager = DeviceManager(registry)
-    with __import__("pytest").raises(RuntimeError, match="invalid record|corrupt"):
-        DeviceManager(registry)
+    assert manager.list_devices() == []
     assert list(registry.parent.glob("devices.json.corrupt-*"))
 
 
@@ -482,6 +481,9 @@ def test_gateway_disconnect_does_not_report_success_when_socket_close_fails(tmp_
             self.record.online = False
 
     class FailingHub:
+        async def get(self, _device_id):
+            return object()
+
         async def close_device(self, _device_id, *, reason=""):
             return False
 
@@ -527,6 +529,9 @@ def test_gateway_disconnect_reports_already_disconnected_without_false_success()
             self.record.online = False
 
     class Hub:
+        async def get(self, _device_id):
+            return None
+
         async def close_device(self, _device_id, *, reason=""):
             raise AssertionError("Offline devices must not attempt socket closure.")
 
@@ -580,8 +585,12 @@ def test_android_remote_file_boundary_is_canonical_and_protected():
         / "commands"
         / "DeviceCommandHandler.kt"
     ).read_text(encoding="utf-8")
-    assert 'if (normalized.startsWith("/") || Regex("^[A-Za-z]:").containsMatchIn(normalized))' in source
-    assert 'if (parts.any { it == ".." })' in source
+    start = source.index("private fun resolveFileTarget")
+    end = source.index("private fun rejectProtectedStorageRoot", start)
+    boundary = source[start:end]
+    assert 'if (normalized.startsWith("/") || Regex("^[A-Za-z]:").containsMatchIn(normalized))' in boundary
+    assert 'if (parts.any { it == ".." })' in boundary
+    assert "candidate.relativeTo(storageRoot)" in boundary
     assert 'Deleting a storage root is not allowed.' in source
     assert '10 MB remote-read limit' in source
 

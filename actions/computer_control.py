@@ -48,8 +48,7 @@ _SAFE_SCREENSHOT_ROOTS = (
 
 def _safe_screenshot_path(requested: str | None) -> Path:
     fallback = Path.home() / "Desktop" / "brahma_screenshot.png"
-    if not requested:
-        return fallback
+    requested = str(requested).strip() if requested else str(fallback)
     try:
         raw = Path(requested).expanduser()
         p = raw.resolve()

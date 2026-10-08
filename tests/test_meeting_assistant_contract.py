@@ -89,7 +89,7 @@ def test_meeting_empty_gemini_analysis_is_not_reported_as_live(monkeypatch):
 
         assert updates
         assert updates[0]["status"] == "error"
-        assert updates[0]["active"] is True
+        assert updates[0]["active"] is False
         assert "empty" in updates[0]["answer"].casefold()
 
 
@@ -146,7 +146,7 @@ def test_meeting_audio_loop_normalizes_and_emits_transcription(monkeypatch):
             def __exit__(self, exc_type, exc, tb):
                 return False
 
-        monkeypatch.setattr(meeting_assistant.sd, "InputStream", FakeInputStream)
+        monkeypatch.setattr(meeting_assistant.sd, "InputStream", FakeInputStream, raising=False)
         monkeypatch.setattr(
             meeting_assistant.time,
             "sleep",

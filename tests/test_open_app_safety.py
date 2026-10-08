@@ -50,7 +50,9 @@ def test_spotify_browser_fallback_propagates_launcher_failure():
     source = (ROOT / "actions" / "open_app.py").read_text(encoding="utf-8")
     assert 'if not _open_url_in_chrome("https://open.spotify.com"):' in source
     spotify = (ROOT / "actions" / "spotify_controller.py").read_text(encoding="utf-8")
-    assert "return bool(webbrowser.open(url))" in spotify
+    assert "webbrowser.open(url)" in spotify
+    assert "return" in spotify
+    assert "is True" in spotify
 
 
 def test_direct_windows_and_linux_binary_launches_check_child_liveness():

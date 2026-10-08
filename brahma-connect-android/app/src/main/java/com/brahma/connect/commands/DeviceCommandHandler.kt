@@ -207,6 +207,48 @@ class DeviceCommandHandler(private val context: Context) {
         return CommandResult(true, data = mapOf("stream" to "music", "percentage" to clamped, "current" to level, "max" to max))
     }
 
+    private fun resolveFileTarget(rawPath: String?): java.io.File {
+        val storageRoot = (
+            context.getExternalFilesDir(null)?.canonicalFile?.parentFile?.parentFile?.parentFile
+                ?: context.filesDir.canonicalFile
+            ).canonicalFile
+        val raw = rawPath?.trim().orEmpty()
+        val normalized = raw.replace('\\', '/')
+        if (normalized.isBlank()) return storageRoot
+        if (normalized.startsWith("/") || Regex("^[A-Za-z]:").containsMatchIn(normalized)) {
+            throw IllegalArgumentException("Absolute remote file paths are not allowed.")
+        }
+        val parts = normalized.split('/').filter { it.isNotBlank() && it != "." }
+        if (parts.any { it == ".." }) {
+            throw IllegalArgumentException("Remote file path traversal is not allowed.")
+        }
+        val candidate = java.io.File(storageRoot, normalized).canonicalFile
+        try {
+            candidate.relativeTo(storageRoot)
+        } catch (_: IllegalArgumentException) {
+            throw IllegalArgumentException("Remote file path escapes the protected storage boundary.")
+        }
+        return candidate
+    }
+
+    private fun rejectProtectedStorageRoot(file: java.io.File): CommandResult? {
+        val candidate = file.canonicalFile
+        val protectedRoots = listOfNotNull(
+            context.getExternalFilesDir(null)?.canonicalFile,
+            context.getExternalFilesDir(null)?.canonicalFile?.parentFile?.parentFile?.parentFile,
+            runCatching { android.os.Environment.getExternalStorageDirectory().canonicalFile }.getOrNull(),
+            runCatching { android.os.Environment.getRootDirectory().canonicalFile }.getOrNull(),
+        )
+        if (protectedRoots.any { candidate == it }) {
+            return CommandResult(
+                false,
+                errorCode = "PROTECTED_PATH",
+                error = "Deleting a storage root is not allowed.",
+            )
+        }
+        return null
+    }
+
     private fun fileList(parameters: Map<String, Any?>): CommandResult {
         val path = parameters["path"]?.toString()
         val dir = try {

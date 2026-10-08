@@ -13,7 +13,7 @@ def test_dev_agent_run_command_has_an_explicit_development_allowlist():
 
 def test_dev_agent_run_command_uses_shell_false_and_shlex():
     source = (ROOT / "actions" / "dev_agent.py").read_text(encoding="utf-8")
-    start = source.index("def _run_project")
+    start = source.index("def _validate_run_arguments")
     end = source.index("def _try_auto_install", start)
     block = source[start:end]
     assert "shlex.split" in block

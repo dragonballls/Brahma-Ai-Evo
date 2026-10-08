@@ -64,4 +64,4 @@ def test_boot_sentry_rollback_uses_exclusive_temp_creation_and_valid_uuid_call()
     assert "def _copy_file_exclusive" in source
     assert "os.O_EXCL" in source
     assert "uuid.uuid4().hex" in source
-    assert "uuid4().hex" not in source
+    assert "from uuid import uuid4" not in source

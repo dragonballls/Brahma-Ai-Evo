@@ -190,7 +190,10 @@ class BrahmaGatewayConfig:
         if config_path.exists():
             try:
                 loaded = _read_config_json(config_path)
-            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            except OSError:
+                # Preserve typed filesystem integrity failures such as hard-link rejection.
+                raise
+            except (UnicodeError, json.JSONDecodeError) as exc:
                 raise RuntimeError(
                     "Brahma Connect configuration is unreadable or corrupted."
                 ) from exc

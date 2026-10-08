@@ -860,6 +860,18 @@ def run_tests():
             if is_err:
                 entry["error"] = err_msg
             results.append(entry)
+        except SystemExit as exc:
+            # A generated skill exiting zero is not an authoritative success.
+            if exc.code in (None, 0):
+                results.clear()
+                break
+            tb = _TRUSTED_TRACEBACK_FORMAT_EXC()
+            results.append({{
+                "index": i,
+                "success": False,
+                "error": f"Skill exited via SystemExit({{exc.code!r}}).",
+                "traceback": tb,
+            }})
         except BaseException as exc:
             tb = _TRUSTED_TRACEBACK_FORMAT_EXC()
             results.append({{"index": i, "success": False, "error": str(exc), "traceback": tb}})
@@ -960,7 +972,7 @@ if __name__ == '__main__':
                      if isinstance(t, dict) and not t.get("success")),
                     "Test failed",
                 ))
-                return False, f"Test Verification Failed: {first_err}", {"results": safe_results, "elapsed_s": elapsed}
+                return False, f"Test Verification Failed: Test failed: {first_err}", {"results": safe_results, "elapsed_s": elapsed}
 
             return True, f"Passed {len(safe_results)}/{len(safe_results)} tests in {elapsed:.2f}s", {
                 "results": safe_results,

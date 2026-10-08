@@ -439,6 +439,7 @@ def test_file_processor_rejects_empty_handler_result(tmp_path, monkeypatch):
 
     source = tmp_path / "sample.txt"
     source.write_text("hello", encoding="utf-8")
+    monkeypatch.setattr(file_processor, "_resolve_input_path", lambda _value: source)
     monkeypatch.setattr(file_processor, "_process_text_doc", lambda *args, **kwargs: "")
     result = file_processor.file_processor({"file_path": str(source), "action": "summarize"})
     assert result == "Processing failed: action returned no usable result."

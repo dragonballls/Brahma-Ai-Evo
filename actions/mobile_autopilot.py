@@ -8,6 +8,32 @@ MAX_TYPED_TEXT = 4_000
 MAX_AUTOPILOT_SECONDS = 600.0
 MAX_REPEAT_SIGNATURES = 2
 
+def _ui_state_signature(ui_tree) -> str:
+    """Canonicalize bounded, user-visible UI state for stale-action detection."""
+    if not isinstance(ui_tree, dict):
+        return ""
+    try:
+        screen_width, screen_height = _screen_dimensions(ui_tree)
+    except ValueError:
+        return ""
+    nodes = []
+    for node, bounds in _validated_nodes(ui_tree):
+        nodes.append({
+            "bounds": list(bounds),
+            "text": str(node.get("text") or "")[:512],
+            "content_description": str(node.get("content_description") or "")[:512],
+            "class_name": str(node.get("class_name") or node.get("className") or "")[:256],
+            "is_clickable": bool(node.get("is_clickable")),
+            "is_enabled": bool(node.get("is_enabled", True)),
+        })
+    return json.dumps(
+        {"screen_width": screen_width, "screen_height": screen_height, "nodes": nodes},
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
 def _parse_remote_result(raw, action):
     if isinstance(raw, str):
         try:

@@ -28,7 +28,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install targeted test dependencies
-        run: python -m pip install --disable-pip-version-check requests fastapi uvicorn pytest cryptography pillow matplotlib speedtest-cli psutil playwright==1.63.0 pyautogui
+        run: python -m pip install --disable-pip-version-check requests fastapi uvicorn pytest cryptography pillow matplotlib speedtest-cli psutil playwright==1.63.0 pyautogui PyQt6==6.11.0 reportlab==5.0.1 python-docx==1.2.0 sounddevice==0.5.6 mss==10.2.0
 
       - name: Compile touched Python modules
         run: >
@@ -37,6 +37,17 @@ jobs:
           or_client.py
           core/intelligence_orchestrator.py
           tests/test_omniroute_self_coding.py
+
+      - name: Configure headless GUI runtime
+        shell: bash
+        run: |
+          if ! command -v Xvfb >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y xvfb
+          fi
+          Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp >"$RUNNER_TEMP/brahma-xvfb.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/brahma-xvfb.pid"
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
 
       - name: Run selected unittest regression checks
         run: >
@@ -162,7 +173,18 @@ jobs:
           python-version: "3.12"
 
       - name: Install targeted test dependencies
-        run: python -m pip install --disable-pip-version-check requests fastapi uvicorn pytest cryptography pillow matplotlib speedtest-cli psutil playwright==1.63.0 pyautogui
+        run: python -m pip install --disable-pip-version-check requests fastapi uvicorn pytest cryptography pillow matplotlib speedtest-cli psutil playwright==1.63.0 pyautogui PyQt6==6.11.0 reportlab==5.0.1 python-docx==1.2.0 sounddevice==0.5.6 mss==10.2.0
+
+      - name: Configure headless GUI runtime
+        shell: bash
+        run: |
+          if ! command -v Xvfb >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y xvfb
+          fi
+          Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp >"$RUNNER_TEMP/brahma-xvfb.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/brahma-xvfb.pid"
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
 
       - name: Run targeted suite
         run: python -m pytest -q ${{ matrix.tests }}

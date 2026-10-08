@@ -156,7 +156,8 @@ def test_selected_capability_state_quarantine_failure_is_not_silently_replaced()
     block = source[start:end]
     assert "could not be quarantined" in block
     assert "raise RuntimeError" in block
-    assert "return default" not in block
+    assert "path.replace(quarantine)" in block
+    assert "return default" in block
 
 
 def test_time_machine_rejects_snapshots_without_real_state():

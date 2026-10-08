@@ -46,6 +46,33 @@ PROTECTED_CORE_FILES = {
 }
 
 
+def _is_link_like(path: Path) -> bool:
+    """Return True when a path or any parent component is link/reparse-like."""
+    path = Path(path)
+    try:
+        current = Path(path.anchor) if path.anchor else Path(".")
+        parts = path.parts[1:] if path.anchor else path.parts
+        for part in parts:
+            current = current / part
+            if current.is_symlink():
+                return True
+            is_junction = getattr(current, "is_junction", None)
+            if is_junction is not None and is_junction():
+                return True
+            if os.name == "nt":
+                try:
+                    attrs = int(getattr(current.stat(follow_symlinks=False), "st_file_attributes", 0))
+                except OSError:
+                    return True
+                import stat as _stat
+                reparse = int(getattr(_stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+                if reparse and attrs & reparse:
+                    return True
+        return False
+    except OSError:
+        return True
+
+
 def _write_exclusive_text(path: Path, text: str, *, mode: int = 0o600) -> None:
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
     try:
