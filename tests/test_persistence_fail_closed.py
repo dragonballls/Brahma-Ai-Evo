@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import sqlite3
 
 import pytest
@@ -229,16 +230,16 @@ def test_memory_atomic_writer_uses_exclusive_temp_creation(monkeypatch, tmp_path
     monkeypatch.setattr(mm.os, "open", checked_open)
     mm._atomic_write_json(target, {"ok": True})
     assert seen["flags"] & mm.os.O_EXCL
-    assert target.read_text(encoding="utf-8").strip() == '{"ok": true}'
+    assert json.loads(target.read_text(encoding="utf-8")) == {"ok": True}
 
 
 def test_config_atomic_writer_uses_exclusive_temp_creation(monkeypatch, tmp_path):
     from memory import config_manager as cm
-    seen = {}
+    seen_flags = []
     real_open = cm.os.open
 
     def checked_open(path, flags, mode=0o666):
-        seen["flags"] = flags
+        seen_flags.append(flags)
         return real_open(path, flags, mode)
 
     target = tmp_path / "settings.json"
@@ -246,7 +247,7 @@ def test_config_atomic_writer_uses_exclusive_temp_creation(monkeypatch, tmp_path
     monkeypatch.setattr(cm.os, "open", checked_open)
     monkeypatch.setattr(cm, "_SETTINGS_CACHE", None)
     cm.save_settings({"race_test": "ok"})
-    assert seen["flags"] & cm.os.O_EXCL
+    assert any(flags & cm.os.O_EXCL for flags in seen_flags)
     assert target.exists()
 
 

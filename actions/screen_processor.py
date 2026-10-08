@@ -8,7 +8,10 @@ import os
 import sys
 import time
 import threading
-import cv2
+try:
+    import cv2
+except ImportError:
+    cv2 = None
 import mss
 import mss.tools
 import sounddevice as sd
@@ -111,6 +114,8 @@ def _get_camera_index() -> int:
             raise RuntimeError("Camera configuration contains an invalid camera_index.")
         return camera_index
 
+    if cv2 is None:
+        raise RuntimeError("OpenCV is not installed; camera auto-detection is unavailable.")
     print("[Camera] [FIND] No camera index in config. Auto-detecting...")
     best_index = 0
 

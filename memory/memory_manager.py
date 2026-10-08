@@ -8,7 +8,7 @@ import re
 from datetime import datetime
 import time
 import uuid
-from threading import Lock
+from threading import RLock
 from pathlib import Path
 import sys
 
@@ -29,7 +29,7 @@ def get_base_dir() -> Path:
 
 BASE_DIR         = get_base_dir()
 MEMORY_PATH      = get_user_data_dir() / "memory" / "long_term.json"
-_lock            = Lock()
+_lock            = RLock()
 MAX_VALUE_LENGTH = 380
 
 _SECRET_RE = re.compile(
