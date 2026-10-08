@@ -169,3 +169,37 @@ def test_self_coding_link_like_guard_covers_junction_reparse_contract():
     assert 'is_junction = getattr(path, "is_junction", None)' in source
     assert "FILE_ATTRIBUTE_REPARSE_POINT" in source
     assert "Checkpoint directory must not be a symlink, junction, or reparse point." in source
+
+
+def test_self_coding_resolves_git_worktree_dotgit_file(tmp_path, monkeypatch):
+    from core.self_coding import SelfCodingAgent
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    git_dir = tmp_path / "git-dir"
+    git_dir.mkdir()
+    (worktree / ".git").write_text(f"gitdir: {git_dir}
+", encoding="utf-8")
+
+    monkeypatch.setenv("BRAHMA_SELF_CODING_REPO", str(worktree))
+    assert SelfCodingAgent._resolve_repo(None) == worktree.resolve()
+
+    agent = object.__new__(SelfCodingAgent)
+    agent.repo = worktree
+    assert agent.checkpoint_dir == git_dir / "brahma-checkpoints"
+
+
+def test_self_coding_rejects_invalid_worktree_dotgit_file(tmp_path):
+    import pytest
+    from core.self_coding import SelfCodingAgent
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / ".git").write_text("not-a-gitdir-marker
+", encoding="utf-8")
+
+    agent = object.__new__(SelfCodingAgent)
+    agent.repo = worktree
+
+    with pytest.raises(Exception, match="could not resolve the Git directory"):
+        _ = agent.checkpoint_dir

@@ -84,7 +84,10 @@ class SelfCodingAgent:
         candidates.extend([here.parent.parent, Path.cwd()])
         for candidate in candidates:
             for parent in (candidate, *candidate.parents):
-                if (parent / ".git").is_dir():
+                git_entry = parent / ".git"
+                # Normal checkouts use a .git directory; linked worktrees use a
+                # .git file that points at the worktree-specific Git directory.
+                if git_entry.is_dir() or git_entry.is_file():
                     return parent.resolve()
 
         raise SelfCodingError(
@@ -94,7 +97,26 @@ class SelfCodingAgent:
 
     @property
     def checkpoint_dir(self) -> Path:
-        return self.repo / ".git" / "brahma-checkpoints"
+        git_entry = self.repo / ".git"
+        if git_entry.is_dir():
+            return git_entry / "brahma-checkpoints"
+        if git_entry.is_file():
+            try:
+                marker = git_entry.read_text(encoding="utf-8").strip()
+                prefix = "gitdir:"
+                if not marker.lower().startswith(prefix):
+                    raise ValueError("invalid worktree .git file")
+                git_dir = Path(marker[len(prefix):].strip())
+                if not git_dir.is_absolute():
+                    git_dir = (git_entry.parent / git_dir).resolve()
+                return git_dir / "brahma-checkpoints"
+            except (OSError, UnicodeError, ValueError) as exc:
+                raise SelfCodingError(
+                    "Self-coding could not resolve the Git directory for this worktree."
+                ) from exc
+        # Keep the lightweight path usable for isolated unit-test doubles; real
+        # self-coding operations call validate_repo() before touching Git state.
+        return git_entry / "brahma-checkpoints"
 
     @staticmethod
     def _hidden_creationflags() -> int:
