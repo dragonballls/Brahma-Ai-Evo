@@ -119,14 +119,14 @@ def _send_instagram(receiver: str, message: str) -> str:
     try:
         from actions.instagram_mcp import InstagramService
         res = InstagramService.instance().send_dm(receiver, message, open_in_browser=True)
-        if not isinstance(res, dict):
-            return "Instagram send failed: Instagram returned a malformed send result."
-        if res.get("delivery_verified") is True and res.get("success") is True:
+        if not _is_success_result(res):
+            error = res.get("error") if isinstance(res, dict) else "Instagram returned a malformed send result."
+            return f"Instagram send failed: {error or 'Instagram send did not complete successfully.'}"
+        if res.get("delivery_verified") is True:
             return f"Message delivered to @{receiver} via Instagram. Browser navigation was requested."
         if res.get("submitted") is True:
             return f"Instagram message submission was accepted for @{receiver}, but delivery was not independently verified."
-        error = res.get("error") or "Instagram send did not complete successfully."
-        return f"Instagram send failed: {error}"
+        return "Instagram send failed: Instagram send was not independently verified."
     except Exception as e:
         try:
             _open_instagram_home()

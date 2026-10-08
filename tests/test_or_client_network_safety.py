@@ -4,8 +4,9 @@ import or_client
 
 
 class FakeResponse:
-    def __init__(self, chunks):
+    def __init__(self, chunks, status=200):
         self._chunks = chunks
+        self.status_code = status
         self.closed = False
 
     def iter_content(self, chunk_size):

@@ -150,6 +150,8 @@ def geocode_location(location_name: str) -> Tuple[float, float, str]:
                 raise RuntimeError("Device location coordinates are out of range.")
             city = loc.get("city") or "Current Location"
             return lat, lon, f"{city} (Device Location)"
+        except RuntimeError:
+            raise
         except Exception as exc:
             raise RuntimeError("Device location is unavailable.") from exc
 

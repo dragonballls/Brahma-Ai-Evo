@@ -23,8 +23,6 @@ def _ui_state_signature(ui_tree) -> str:
             "text": str(node.get("text") or "")[:512],
             "content_description": str(node.get("content_description") or "")[:512],
             "class_name": str(node.get("class_name") or node.get("className") or "")[:256],
-            "is_clickable": bool(node.get("is_clickable")),
-            "is_enabled": bool(node.get("is_enabled", True)),
         })
     return json.dumps(
         {"screen_width": screen_width, "screen_height": screen_height, "nodes": nodes},

@@ -68,6 +68,7 @@ def test_meeting_empty_gemini_analysis_is_not_reported_as_live(monkeypatch):
             "require_provider",
             lambda provider, capability: provider_policy.GEMINI,
         )
+        monkeypatch.setattr(meeting_assistant, "_get_api_key", lambda: "test-key")
         monkeypatch.setattr(
             meeting_assistant,
             "_capture_screen",

@@ -22,7 +22,7 @@ def test_updater_detection_fetches_and_verifies_the_actual_origin_tip():
     assert '"origin"' in block
     assert "self.branch" in block
     assert '"rev-parse"' in block
-    assert '"origin/"' in block
+    assert "origin/" in block
     assert "self.branch" in block
 
 

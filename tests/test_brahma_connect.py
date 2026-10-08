@@ -788,8 +788,10 @@ def test_gateway_config_hardlink_is_rejected(tmp_path: Path):
     import pytest
     from brahma_connect.gateway.server import BrahmaGatewayConfig
 
-    real = tmp_path / "real.json"
-    config = tmp_path / "config.json"
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    real = config_dir / "real.json"
+    config = config_dir / "brahma_connect.json"
     real.write_text('{"enabled": true}', encoding="utf-8")
     try:
         os.link(real, config)

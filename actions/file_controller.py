@@ -325,8 +325,6 @@ def _secure_write_text(target: Path, content: str, *, append: bool = False, expe
                 flags |= os.O_CREAT | os.O_EXCL
             elif append:
                 flags |= os.O_APPEND
-            else:
-                flags |= os.O_TRUNC
             fd = os.open(leaf, flags, 0o600, dir_fd=parent_fd)
             try:
                 if expected_identity is not None:
@@ -334,6 +332,8 @@ def _secure_write_text(target: Path, content: str, *, append: bool = False, expe
                     actual_identity = (int(opened.st_dev), int(opened.st_ino))
                     if tuple(expected_identity) != actual_identity:
                         raise RuntimeError("Target changed identity before secure write; refusing the overwrite.")
+                    if not append:
+                        os.ftruncate(fd, 0)
                 with os.fdopen(fd, "w", encoding="utf-8") as handle:
                     handle.write(content)
                     handle.flush()

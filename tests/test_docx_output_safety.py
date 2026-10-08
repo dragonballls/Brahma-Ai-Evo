@@ -31,6 +31,7 @@ def test_docx_result_path_receives_overwrite_flag_and_implicit_outputs_avoid_col
 def test_docx_create_cannot_claim_success_when_save_produces_no_artifact(tmp_path, monkeypatch):
     from actions import docx_tools
 
+    monkeypatch.setattr(docx_tools.Path, "home", classmethod(lambda cls: tmp_path))
     real_document, *rest = docx_tools._import_docx()
 
     def fake_import():

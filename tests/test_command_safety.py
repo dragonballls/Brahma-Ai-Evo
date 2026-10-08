@@ -93,7 +93,7 @@ def test_update_checker_uses_trusted_git_executable(monkeypatch, tmp_path):
     import subprocess
     from core import updater
 
-    checker = object.__new__(updater.UpdateChecker)
+    checker = updater.UpdateChecker.__new__(updater.UpdateChecker)
     checker.base_dir = tmp_path
 
     calls = []
@@ -114,7 +114,7 @@ def test_update_checker_uses_trusted_git_executable(monkeypatch, tmp_path):
 
 
 def test_root_updater_uses_trusted_git_resolution(monkeypatch, tmp_path):
-    from core import command_safety
+    from pathlib import Path
     import updater
 
     calls = []

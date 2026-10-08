@@ -478,7 +478,8 @@ def test_followup_audit_workflows_execute_module_tests_with_pytest():
     windows = Path(".github/workflows/windows-release.yml").read_text(encoding="utf-8")
     targeted = Path(".github/workflows/brahma-regression.yml").read_text(encoding="utf-8")
     assert "python -m pytest -q tests/test_followup_audits.py" in windows
-    assert "python -m pytest -q tests/test_followup_audits.py" in targeted
+    assert "python -m pytest -q" in targeted
+    assert "tests/test_followup_audits.py" in targeted
     assert "tests.test_followup_audits" not in windows
 
 

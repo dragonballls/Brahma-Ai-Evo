@@ -931,7 +931,7 @@ if __name__ == '__main__':
             expected_count = max(1, len(test_cases))
             if len(test_results) != expected_count:
                 return False, (
-                    "Sandbox execution returned an incomplete authoritative test result set; "
+                    "Sandbox execution returned no authoritative test result for the requested cases; "
                     f"expected {expected_count}, received {len(test_results)}."
                 ), {"results": [], "elapsed_s": elapsed}
 

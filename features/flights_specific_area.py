@@ -19,6 +19,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from core.network_safety import fetch_public_bytes
+
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt

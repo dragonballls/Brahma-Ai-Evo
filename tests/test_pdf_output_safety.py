@@ -21,6 +21,7 @@ def test_pdf_implicit_output_collisions_get_unique_names():
 def test_pdf_create_cannot_claim_success_when_build_produces_no_artifact(tmp_path, monkeypatch):
     from actions import pdf_tools
 
+    monkeypatch.setattr(pdf_tools.Path, "home", classmethod(lambda cls: tmp_path))
     real_pdf = pdf_tools._import_pdf()
     RealDocTemplate = real_pdf["SimpleDocTemplate"]
 
