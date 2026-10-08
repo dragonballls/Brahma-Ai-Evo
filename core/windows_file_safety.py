@@ -428,15 +428,17 @@ def rename(source: Path | str, destination: Path | str, *, source_identity=None)
         if not leaf or leaf in {".", ".."} or "\x00" in leaf or "/" in leaf or "\\" in leaf:
             raise ValueError("Invalid destination filename")
 
-        name = leaf.encode("utf-16-le")
-        pointer_size = ctypes.sizeof(ctypes.c_void_p)
-        root_offset = pointer_size
-        length_offset = root_offset + pointer_size
+        # SetFileInformationByHandle currently rejects a non-NULL RootDirectory
+        # with a relative FileName on affected Windows builds (ERROR_INVALID_PARAMETER).
+        # Use the documented absolute-path form with RootDirectory == NULL.
+        name = _win_path(destination_path).encode("utf-16-le")
+        root_offset = 8
+        length_offset = root_offset + ctypes.sizeof(ctypes.c_void_p)
         name_offset = length_offset + ctypes.sizeof(ctypes.c_ulong)
         size = name_offset + len(name)
         raw = ctypes.create_string_buffer(size)
         ctypes.c_ubyte.from_buffer(raw, 0).value = 0
-        ctypes.c_void_p.from_buffer(raw, root_offset).value = parent_handle
+        ctypes.c_void_p.from_buffer(raw, root_offset).value = None
         ctypes.c_ulong.from_buffer(raw, length_offset).value = len(name)
         raw[name_offset:name_offset + len(name)] = name
 
@@ -447,6 +449,20 @@ def rename(source: Path | str, destination: Path | str, *, source_identity=None)
             size,
         ):
             raise OSError(ctypes.get_last_error(), "SetFileInformationByHandle(rename) failed")
+
+        # Re-open the destination through the same handle-backed safety checks and
+        # prove that the renamed object is the original object we validated.
+        destination_fd, destination_final, destination_info = open_safe_file(
+            destination_path,
+            write=False,
+        )
+        try:
+            if _identity(destination_info) != _identity(source_info):
+                raise OSError("Renamed destination identity does not match the validated source")
+            if not _same_path(destination_final, destination_path):
+                raise OSError("Renamed destination final path does not match the requested destination")
+        finally:
+            os.close(destination_fd)
     finally:
         kernel32.CloseHandle(ctypes.c_void_p(parent_handle))
         kernel32.CloseHandle(ctypes.c_void_p(source_handle))
