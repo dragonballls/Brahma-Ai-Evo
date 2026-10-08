@@ -141,10 +141,14 @@ jobs:
               tests/test_speed_test_safety.py
               tests/test_or_client_network_safety.py
               tests/test_send_message_safety.py
-          - name: persistence-and-false-success
+          - name: false-success-actions
             tests: >-
               tests/test_false_success_actions.py
+          - name: persistence-fail-closed
+            tests: >-
               tests/test_persistence_fail_closed.py
+          - name: model-performance
+            tests: >-
               tests/test_model_performance.py
           - name: lifecycle-and-browser
             tests: >-
