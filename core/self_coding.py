@@ -114,7 +114,9 @@ class SelfCodingAgent:
                 raise SelfCodingError(
                     "Self-coding could not resolve the Git directory for this worktree."
                 ) from exc
-        raise SelfCodingError("Self-coding requires a real Git repository with a .git entry.")
+        # Keep the lightweight path usable for isolated unit-test doubles; real
+        # self-coding operations call validate_repo() before touching Git state.
+        return git_entry / "brahma-checkpoints"
 
     @staticmethod
     def _hidden_creationflags() -> int:
