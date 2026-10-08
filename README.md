@@ -207,3 +207,5 @@ For full terms and legal conditions, see the [LICENSE](LICENSE) file. For commer
 <div align="center">
 <b>Brahma AI Evo</b> • Built with intelligence, precision, and autonomy.
 </div>
+
+> CI sign-off coverage includes standalone supervisor tests, crash-recovery rollback integration, and end-to-end installer activation validation.
