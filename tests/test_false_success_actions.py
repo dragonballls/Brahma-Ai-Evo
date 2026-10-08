@@ -196,7 +196,8 @@ def _load_email_flow_for_test():
         for node in ast.walk(tree)
         if isinstance(node, ast.FunctionDef) and node.name == "_handle_email_flow"
     )
-    namespace = {}
+    import threading
+    namespace = {"threading": threading}
     exec(compile(ast.Module(body=[method], type_ignores=[]), str(ROOT / "main.py"), "exec"), namespace)
     return namespace["_handle_email_flow"]
 
@@ -262,7 +263,8 @@ def _load_ig_reply_flow_for_test():
         for node in ast.walk(tree)
         if isinstance(node, ast.FunctionDef) and node.name == "_handle_ig_reply_flow"
     )
-    namespace = {}
+    import threading
+    namespace = {"threading": threading}
     exec(compile(ast.Module(body=[method], type_ignores=[]), str(ROOT / "main.py"), "exec"), namespace)
     return namespace["_handle_ig_reply_flow"]
 
