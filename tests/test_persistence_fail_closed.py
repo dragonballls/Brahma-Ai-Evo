@@ -88,7 +88,11 @@ def test_chat_history_invalid_schema_is_not_treated_as_missing(tmp_path, monkeyp
 def test_pop_last_session_propagates_write_failure(tmp_path, monkeypatch):
     import memory.memory_manager as mm
     path = tmp_path / "long_term.json"
-    path.write_text('{"sessions":[{"summary":"hello"}]}', encoding="utf-8")
+    path.write_text(
+        '{"sessions":[{"summary":"hello"}],"identity":{},"preferences":{},'
+        '"projects":{},"relationships":{},"wishes":{},"notes":{}}',
+        encoding="utf-8",
+    )
     monkeypatch.setattr(mm, "MEMORY_PATH", path)
     monkeypatch.setattr(mm, "_atomic_write_json", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk failure")))
     with pytest.raises(OSError, match="disk failure"):

@@ -14,7 +14,10 @@ except ImportError:
     cv2 = None
 import mss
 import mss.tools
-import sounddevice as sd
+try:
+    import sounddevice as sd
+except (ImportError, OSError):
+    sd = None
 import numpy as np
 from pathlib import Path
 
@@ -372,6 +375,8 @@ class _LiveSession:
                 await asyncio.sleep(0.3)
 
     async def _play_loop(self):
+        if sd is None:
+            raise RuntimeError("PortAudio is unavailable; audio playback is disabled.")
         stream = sd.RawOutputStream(
             samplerate=RECEIVE_SAMPLE_RATE,
             channels=CHANNELS,
