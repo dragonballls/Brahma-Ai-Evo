@@ -27,8 +27,12 @@ try:
 except ImportError:
     _PIL_OK = False
 
-from google import genai
-from google.genai import types
+try:
+    from google import genai
+    from google.genai import types
+except ImportError:
+    genai = None
+    types = None
 
 def get_base_dir():
     if getattr(sys, "frozen", False):
@@ -251,6 +255,8 @@ class _LiveSession:
     async def _main(self):
         from core.provider_policy import require_provider
         require_provider("Gemini", "Screen vision Live")
+        if genai is None or types is None:
+            raise RuntimeError("google-genai is unavailable; vision Live is disabled.")
         self._out_queue = asyncio.Queue(maxsize=30)
         self._audio_in  = asyncio.Queue(maxsize=48)
         self._send_lock = asyncio.Lock()
