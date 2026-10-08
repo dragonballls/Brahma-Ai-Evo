@@ -245,7 +245,7 @@ jobs:
             blocked = $false
           }
           $state | ConvertTo-Json | Set-Content (Join-Path $configRoot "crash_recovery_state.json")
-          @() | ConvertTo-Json | Set-Content (Join-Path $configRoot "patch_history.json")
+          Set-Content -Path (Join-Path $configRoot "patch_history.json") -Value "[]"
 
           $supervisor = (Resolve-Path "dist/BrahmaEvo/BrahmaEvoSupervisor.exe").Path
           $stdout = Join-Path $recoveryRoot "stdout.log"
