@@ -32,7 +32,10 @@ def resolve_repository() -> Path | None:
         except Exception:
             continue
         for parent in (root, *root.parents):
-            if (parent / ".git").is_dir():
+            git_entry = parent / ".git"
+            # Normal checkouts have a .git directory; linked Git worktrees
+            # have a .git file pointing to the worktree-specific Git dir.
+            if git_entry.is_dir() or git_entry.is_file():
                 return parent
     return None
 
