@@ -151,18 +151,15 @@ def test_screen_processor_rejects_invalid_camera_index_without_autodetection(tmp
     path.write_text('{"camera_index": "not-an-int"}', encoding="utf-8")
     monkeypatch.setattr(sp, "API_CONFIG_PATH", path)
 
-    camera_calls = []
-
-    class FakeCapture:
-        def __init__(self, *args, **kwargs):
-            camera_calls.append((args, kwargs))
-
-    monkeypatch.setattr(sp.cv2, "VideoCapture", FakeCapture)
+    monkeypatch.setattr(
+        sp,
+        "_save_api_config",
+        lambda *_args, **_kwargs: pytest.fail("invalid camera_index must not trigger config writes"),
+    )
 
     with pytest.raises(RuntimeError, match="invalid camera_index"):
         sp._get_camera_index()
 
-    assert camera_calls == []
     assert path.read_text(encoding="utf-8") == '{"camera_index": "not-an-int"}'
 
 
