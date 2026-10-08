@@ -98,3 +98,28 @@ def test_auto_heal_refuses_concurrent_target_change_before_publish(tmp_path, mon
     assert result["success"] is False
     assert "changed after backup creation" in result["message"]
     assert target.read_text(encoding="utf-8") == "value = 99\n"
+
+
+def test_auto_heal_heal_command_uses_canonical_crash_log(tmp_path, monkeypatch):
+    import actions.auto_heal_engine as auto_heal
+
+    crash_log = tmp_path / "FATAL_CRASH.log"
+    crash_log.write_text("synthetic traceback", encoding="utf-8")
+    monkeypatch.setattr(auto_heal, "FATAL_CRASH_LOG_PATH", crash_log)
+    monkeypatch.setattr(auto_heal.AutoHealEngine, "get_last_error", classmethod(lambda cls: None))
+
+    seen = {}
+
+    def fake_heal(cls, traceback_text, context_notes="", dry_run=False):
+        seen["traceback"] = traceback_text
+        return {"message": "healed"}
+
+    monkeypatch.setattr(
+        auto_heal.AutoHealEngine,
+        "heal_traceback",
+        classmethod(fake_heal),
+    )
+
+    result = auto_heal.auto_heal({"action": "heal"})
+    assert result == "healed"
+    assert seen["traceback"] == "synthetic traceback"
