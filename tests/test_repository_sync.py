@@ -80,3 +80,17 @@ def test_repository_sync_rejects_changes_to_the_verified_preimage():
     assert "expected_preimage_sha256" in source
     assert "target_preimage_changed" in source
     assert '"show", f"HEAD:{' in source
+
+
+def test_repository_sync_resolves_git_worktree_dotgit_file(tmp_path, monkeypatch):
+    from core import repository_sync
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    git_dir = tmp_path / "git-dir"
+    git_dir.mkdir()
+    (worktree / ".git").write_text(f"gitdir: {git_dir}\n", encoding="utf-8")
+
+    monkeypatch.setenv("BRAHMA_REPOSITORY_PATH", str(worktree))
+    monkeypatch.delenv("BRAHMA_SELF_CODING_REPO", raising=False)
+    assert repository_sync.resolve_repository() == worktree.resolve()
