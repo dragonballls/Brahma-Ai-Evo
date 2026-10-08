@@ -432,10 +432,14 @@ def rename(source: Path | str, destination: Path | str, *, source_identity=None)
         # with a relative FileName on affected Windows builds (ERROR_INVALID_PARAMETER).
         # Use the documented absolute-path form with RootDirectory == NULL.
         name = _win_path(destination_path).encode("utf-16-le")
-        root_offset = 8
-        length_offset = root_offset + ctypes.sizeof(ctypes.c_void_p)
+        pointer_size = ctypes.sizeof(ctypes.c_void_p)
+        root_offset = ctypes.alignment(ctypes.c_void_p)
+        length_offset = root_offset + pointer_size
         name_offset = length_offset + ctypes.sizeof(ctypes.c_ulong)
-        size = name_offset + len(name)
+        # FILE_RENAME_INFO is pointer-aligned and its inline FileName starts at
+        # name_offset; include the trailing NUL and the structure's alignment padding.
+        struct_size = (name_offset + pointer_size - 1) & ~(pointer_size - 1)
+        size = struct_size + len(name) + ctypes.sizeof(ctypes.c_wchar)
         raw = ctypes.create_string_buffer(size)
         ctypes.c_ubyte.from_buffer(raw, 0).value = 0
         ctypes.c_void_p.from_buffer(raw, root_offset).value = None
