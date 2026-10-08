@@ -26,6 +26,9 @@ def _meeting_module():
         AssertionError("unexpected Gemini client")
     )
     fake_genai_types = ModuleType("google.genai.types")
+    fake_genai_types.Part = SimpleNamespace(
+        from_bytes=lambda **kwargs: SimpleNamespace(**kwargs)
+    )
     fake_genai.types = fake_genai_types
     fake_google.genai = fake_genai
     try:

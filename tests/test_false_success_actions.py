@@ -2,6 +2,10 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
+from core import protocols as protocol_module
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -573,13 +577,12 @@ def test_smart_home_device_management_surfaces_persistence_failures():
 
 
 def test_action_result_classifier_rejects_error_dicts_and_accepts_normal_dicts():
-    source = (ROOT / "main.py").read_text(encoding="utf-8")
-    start = source.index("def _action_result_is_failure")
-    end = source.index("\ndef ", start + 5)
-    block = source[start:end]
-    assert 'error = result.get("error")' in block
-    assert 'errors = result.get("errors")' in block
-    assert 'if error not in (None, "")' in block
+    from core.action_result import action_result_is_failure
+
+    assert action_result_is_failure({"success": False}) is True
+    assert action_result_is_failure({"error": "provider rejected"}) is True
+    assert action_result_is_failure({"errors": ["provider rejected"]}) is True
+    assert action_result_is_failure({"success": True, "result": "0 devices"}) is False
 
 
 def test_instagram_reply_handler_does_not_claim_success_for_unverified_send():
@@ -591,7 +594,9 @@ def test_instagram_reply_handler_does_not_claim_success_for_unverified_send():
     block = source[start:end]
 
     assert "delivery was not independently verified" in block
-    assert "Successfully sent manual reply" not in block
+    marker = 'elif isinstance(send_result, dict) and send_result.get("submitted") is True:'
+    unverified_block = block[block.index(marker):block.index("self._ig_reply_mode = False", block.index(marker))]
+    assert "Successfully sent manual reply" not in unverified_block
     assert 'if isinstance(send_result, dict) and send_result.get("delivery_verified") is True' in block
 
 

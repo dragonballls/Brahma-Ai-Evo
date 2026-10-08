@@ -30,6 +30,7 @@ try:
     from instagrapi import Client
     INSTAGRAPI_AVAILABLE = True
 except ImportError:
+    Client = None
     INSTAGRAPI_AVAILABLE = False
 
 

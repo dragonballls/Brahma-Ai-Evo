@@ -22,6 +22,7 @@ def test_screenshot_success_requires_a_real_nonempty_artifact(monkeypatch, tmp_p
             return None
 
     monkeypatch.setattr(computer_control, "_require_pyautogui", lambda: None)
+    monkeypatch.setattr(computer_control, "_SAFE_SCREENSHOT_ROOTS", (tmp_path,))
     monkeypatch.setattr(computer_control.pyautogui, "screenshot", lambda: Image())
     target = tmp_path / "missing.png"
     result = computer_control._screenshot(str(target))
