@@ -19,6 +19,7 @@ from core.account_integrations import (
 from core.universal_integrations import (
     APIKeyConnector,
     OAuth2PKCEConnector,
+    _default_header_requester,
     OAuthProviderMetadata,
     analyze_openapi_spec,
     configure_provider_connector,
@@ -546,3 +547,38 @@ def test_provider_onboarding_factory_fails_closed_for_missing_identity_or_unsafe
             _api_key_openapi(),
         )
     assert untrusted.value.code == IntegrationErrorCode.INVALID_REQUEST
+
+
+def test_default_header_requester_sends_api_keys_raw_and_bearer_tokens_as_bearer(monkeypatch):
+    class FakeHTTPResponse:
+        status = 200
+        headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _limit):
+            return b'{"ok": true}'
+
+    captured = []
+
+    class FakeOpener:
+        def open(self, request, timeout):
+            captured.append((request, timeout))
+            return FakeHTTPResponse()
+
+    monkeypatch.setattr("urllib.request.build_opener", lambda *_args: FakeOpener())
+    for bearer, expected in ((False, "raw-api-key"), (True, "Bearer bearer-key")):
+        _default_header_requester(
+            "https://api.example.test/v1/whoami",
+            api_key="bearer-key" if bearer else "raw-api-key",
+            header_name="Authorization",
+            trusted_hosts=("api.example.test",),
+            bearer_token=bearer,
+        )
+        request, timeout = captured[-1]
+        assert request.get_header("Authorization") == expected
+        assert timeout <= 15.0
