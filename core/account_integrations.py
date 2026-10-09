@@ -320,7 +320,7 @@ class MemoryCredentialStore:
 class HttpResponse:
     status: int
     headers: Mapping[str, str]
-    data: dict[str, Any]
+    data: Any
 
 
 def request_json(
@@ -349,7 +349,7 @@ def request_json(
             if len(raw) > 1024 * 1024:
                 raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Provider response exceeded the 1 MiB safety limit.")
             data = json.loads(raw.decode("utf-8")) if raw else {}
-            if not isinstance(data, dict):
+            if not isinstance(data, (dict, list)):
                 raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Provider returned an unexpected response format.")
             return HttpResponse(int(response.status), dict(response.headers.items()), data)
     except urllib.error.HTTPError as exc:
@@ -560,7 +560,7 @@ class GitHubConnector:
             response = self._requester(GITHUB_API + "/user", method="GET", token=token, timeout=REQUEST_TIMEOUT_SECONDS)
             if response.status == 401:
                 raise IntegrationError(IntegrationErrorCode.AUTHENTICATION_REQUIRED, "GitHub authorization expired or was revoked; reconnect this account.")
-            if response.status == 403 and response.headers.get("X-RateLimit-Remaining") == "0":
+            if response.status == 403 and any(key.lower() == "x-ratelimit-remaining" and str(value) == "0" for key, value in response.headers.items()):
                 raise IntegrationError(IntegrationErrorCode.RATE_LIMITED, "GitHub rate limit reached; retry later.", retryable=True)
             if response.status != 200:
                 raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "GitHub profile request failed.")
@@ -572,7 +572,7 @@ class GitHubConnector:
             response = self._requester(url, method="GET", token=token, timeout=REQUEST_TIMEOUT_SECONDS)
             if response.status == 401:
                 raise IntegrationError(IntegrationErrorCode.AUTHENTICATION_REQUIRED, "GitHub authorization expired or was revoked; reconnect this account.")
-            if response.status == 403 and response.headers.get("X-RateLimit-Remaining") == "0":
+            if response.status == 403 and any(key.lower() == "x-ratelimit-remaining" and str(value) == "0" for key, value in response.headers.items()):
                 raise IntegrationError(IntegrationErrorCode.RATE_LIMITED, "GitHub rate limit reached; retry later.", retryable=True)
             if response.status != 200:
                 raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "GitHub public repository lookup failed.")
@@ -637,6 +637,10 @@ class IntegrationManager:
                     raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Integration manifest contains an empty or duplicate action.")
                 seen.add(capability.action)
             self._adapters[provider_id] = adapter
+
+    def connector(self, provider_id: str) -> Connector | None:
+        """Return an adapter to trusted application code; do not expose it as a model tool."""
+        return self._adapters.get(str(provider_id or "").strip().lower())
 
     def catalog(self) -> list[IntegrationManifest]:
         catalog = {item.provider_id: item for item in PROVIDER_CATALOG}
