@@ -100,13 +100,17 @@ def test_multiple_accounts_for_same_provider_are_isolated():
     assert manager.store.read(second.account_id)["credentials"]["access_token"] == "token-b"
 
 
-def test_connect_fails_closed_when_required_scope_is_missing():
+def test_valid_account_can_connect_with_limited_scopes_but_operation_is_denied():
     connector = FakeConnector(requires_scope=("read:user",))
-    manager, store, _ = _connected_manager(connector)
-    with pytest.raises(IntegrationError) as exc:
-        manager.connect("sample", {"access_token": "token", "identity": "alice", "scopes": []})
-    assert exc.value.code == IntegrationErrorCode.MISSING_PERMISSION
-    assert store.list_records() == []
+    manager, _store, _ = _connected_manager(connector)
+    account = manager.connect("sample", {"access_token": "token", "identity": "alice", "scopes": []})
+    assert account.status == ConnectionStatus.CONNECTED
+    capabilities = manager.capabilities("sample", scopes=account.scopes)
+    assert next(item for item in capabilities if item["action"] == "sample.read")["available"] is False
+    result = manager.execute(account.account_id, "sample.read")
+    assert result.status == ActionStatus.REJECTED
+    assert result.error_code == IntegrationErrorCode.MISSING_PERMISSION.value
+    assert connector.calls == []
 
 
 def test_unsupported_operations_never_reach_connector():
@@ -343,3 +347,47 @@ def test_provider_catalog_discloses_unimplemented_integrations_without_fake_capa
     assert catalog["amazon"].status_detail
     assert catalog["outlook"].status == ConnectionStatus.UNAVAILABLE
     assert manager.capabilities("roblox") == []
+
+
+def test_action_result_redacts_nested_secret_fields_in_result_and_evidence():
+    from core.account_integrations import ActionResult
+    result = ActionResult(
+        ActionStatus.SUCCEEDED_VERIFIED,
+        "sample",
+        "fake-account-id",
+        "sample.read",
+        result={"name": "demo", "access_token": "secret-value", "nested": {"client_secret": "other-secret", "count": 2}},
+        verification_evidence={"source": "test", "authorization": "Bearer " + "a" * 40},
+    ).to_dict()
+    assert result["result"] == {"name": "demo", "nested": {"count": 2}}
+    assert "authorization" not in result["verification_evidence"]
+    assert "secret-value" not in str(result)
+    assert "other-secret" not in str(result)
+
+
+def test_natural_language_feature_lists_accounts_and_declared_capabilities():
+    from features.account_integrations import execute_with_manager
+
+    connector = FakeConnector(provider_id="sample")
+    manager, _store, _ = _connected_manager(connector)
+    account = manager.connect("sample", {"access_token": "token", "identity": "alice"})
+    listed = execute_with_manager(manager, action="accounts")
+    assert listed["status"] == "succeeded_and_verified"
+    assert listed["result"][0]["account_id"] == account.account_id
+
+    declared = execute_with_manager(manager, action="capabilities", provider_id="sample", account_id=account.account_id)
+    assert declared["status"] == "succeeded_and_verified"
+    assert {item["action"] for item in declared["result"]} == {"sample.read", "sample.write"}
+
+
+def test_natural_language_connect_and_disconnect_never_modify_accounts_directly():
+    from features.account_integrations import execute_with_manager
+
+    manager, store, _ = _connected_manager()
+    account = manager.connect("sample", {"access_token": "token", "identity": "alice"})
+    before = store.read(account.account_id)
+    connect = execute_with_manager(manager, action="connect", provider_id="github")
+    disconnect = execute_with_manager(manager, action="disconnect", provider_id="sample", account_id=account.account_id)
+    assert connect["status"] == "waiting_for_user_authorization"
+    assert disconnect["status"] == "waiting_for_confirmation"
+    assert store.read(account.account_id) == before
