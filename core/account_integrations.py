@@ -1063,7 +1063,7 @@ class IntegrationManager:
 
     def disconnect(self, account_id: str) -> dict[str, Any]:
         account, adapter, record = self._require_account(account_id)
-        provider_revocation = "not_supported"
+        provider_revocation = "not_performed"
         revocation_error = None
         revoke = getattr(adapter, "revoke_credentials", None)
         revoke_supported = bool(getattr(adapter, "supports_revocation", True))
