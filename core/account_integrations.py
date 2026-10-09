@@ -633,11 +633,271 @@ class GitHubConnector:
         raise IntegrationError(IntegrationErrorCode.UNSUPPORTED_ACTION, "The GitHub connector does not declare that operation.")
 
 
+class RobloxConnector:
+    """Official Roblox OAuth2 authorization-code adapter with PKCE and loopback callback validation."""
+
+    AUTHORIZATION_URL = "https://apis.roblox.com/oauth/v1/authorize"
+    TOKEN_URL = "https://apis.roblox.com/oauth/v1/token"
+    USERINFO_URL = "https://apis.roblox.com/oauth/v1/userinfo"
+    REVOCATION_URL = "https://apis.roblox.com/oauth/v1/token/revoke"
+
+    manifest = IntegrationManifest(
+        provider_id="roblox",
+        display_name="Roblox",
+        auth_method="oauth2_authorization_code_pkce",
+        documentation_url="https://create.roblox.com/docs/cloud/auth/oauth2-reference",
+        status=ConnectionStatus.LIMITED_SUPPORT,
+        status_detail="Official OAuth2/OIDC with PKCE; verified user identity and basic profile reads only. Roblox documents this OAuth API as beta; resource/game actions are not claimed.",
+        capabilities=(
+            Capability("roblox.connection.test", "Validate the authorization and Roblox user identity.", RiskLevel.READ_ONLY, ("openid",)),
+            Capability("roblox.profile.read", "Read the connected Roblox account's basic profile.", RiskLevel.READ_ONLY, ("openid", "profile")),
+        ),
+    )
+
+    def __init__(self, requester: Callable[..., HttpResponse] | None = None):
+        self._requester = requester or request_json
+
+    @staticmethod
+    def _text(value: Any, field_name: str, *, max_length: int = 512) -> str:
+        text = str(value or "").strip()
+        if not text or len(text) > max_length or any(ord(ch) < 32 for ch in text):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, f"Enter a valid {field_name}.")
+        return text
+
+    @staticmethod
+    def _redirect_parts(redirect_uri: str):
+        parsed = urllib.parse.urlparse(str(redirect_uri or "").strip())
+        # This native-app flow intentionally supports only the exact IPv4 loopback
+        # callback. It does not start a server on a LAN interface or accept open redirects.
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname != "127.0.0.1"
+            or parsed.port is None
+            or not (1024 <= parsed.port <= 65535)
+            or parsed.path != "/roblox/callback"
+            or parsed.query
+            or parsed.fragment
+            or parsed.username
+            or parsed.password
+        ):
+            raise IntegrationError(
+                IntegrationErrorCode.INVALID_REQUEST,
+                "Roblox redirect URI must be an exact loopback URL such as http://127.0.0.1:8765/roblox/callback, registered with the Roblox OAuth app.",
+            )
+        return parsed
+
+    def begin_authorization(self, client_id: str, client_secret: str, redirect_uri: str) -> dict[str, Any]:
+        client_id = self._text(client_id, "Roblox OAuth client ID", max_length=160)
+        client_secret = self._text(client_secret, "Roblox OAuth client secret", max_length=1000)
+        self._redirect_parts(redirect_uri)
+        verifier = secrets.token_urlsafe(48)
+        challenge = __import__("base64").urlsafe_b64encode(
+            __import__("hashlib").sha256(verifier.encode("ascii")).digest()
+        ).decode("ascii").rstrip("=")
+        state = secrets.token_urlsafe(32)
+        params = {
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": "openid profile",
+            "state": state,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "prompt": "consent",
+        }
+        authorization_url = self.AUTHORIZATION_URL + "?" + urllib.parse.urlencode(params)
+        return {
+            "provider_id": "roblox",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uri": redirect_uri,
+            "state": state,
+            "code_verifier": verifier,
+            "expires_at": time.time() + 600,
+            "authorization_url": authorization_url,
+        }
+
+    def complete_authorization(self, flow: Mapping[str, Any], callback_url: str) -> dict[str, Any]:
+        if not isinstance(flow, Mapping):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "No Roblox authorization flow is active.")
+        if time.time() >= float(flow.get("expires_at") or 0):
+            raise IntegrationError(IntegrationErrorCode.AUTHORIZATION_EXPIRED, "Roblox authorization expired; start a new connection.")
+        expected = self._redirect_parts(str(flow.get("redirect_uri") or ""))
+        callback = urllib.parse.urlparse(str(callback_url or "").strip())
+        if (
+            callback.scheme != expected.scheme
+            or callback.hostname != expected.hostname
+            or callback.port != expected.port
+            or callback.path != expected.path
+            or callback.fragment
+            or callback.username
+            or callback.password
+        ):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Roblox returned to an unexpected callback URI.")
+        query = urllib.parse.parse_qs(callback.query, keep_blank_values=True, max_num_fields=20)
+        state_values = query.get("state") or []
+        if len(state_values) != 1 or not secrets.compare_digest(str(state_values[0]), str(flow.get("state") or "")):
+            raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "Roblox OAuth state did not match; authorization was discarded.")
+        errors = query.get("error") or []
+        if errors:
+            message = "Roblox authorization was denied or cancelled." if errors[0] == "access_denied" else "Roblox authorization returned an error."
+            raise IntegrationError(IntegrationErrorCode.AUTHORIZATION_DENIED, message)
+        codes = query.get("code") or []
+        if len(codes) != 1 or not codes[0] or len(codes[0]) > 2048:
+            raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "Roblox callback did not contain exactly one valid authorization code.")
+        if not flow.get("client_id") or not flow.get("client_secret") or not flow.get("code_verifier"):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Roblox authorization flow is missing required PKCE credentials.")
+        response = self._requester(
+            self.TOKEN_URL,
+            method="POST",
+            form={
+                "grant_type": "authorization_code",
+                "client_id": str(flow["client_id"]),
+                "client_secret": str(flow["client_secret"]),
+                "redirect_uri": str(flow["redirect_uri"]),
+                "code_verifier": str(flow["code_verifier"]),
+                "code": str(codes[0]),
+            },
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        data = response.data
+        if response.status == 401 or response.status == 400:
+            raise IntegrationError(IntegrationErrorCode.AUTHENTICATION_REQUIRED, "Roblox rejected the authorization code; start a new connection.")
+        if response.status == 429:
+            raise IntegrationError(IntegrationErrorCode.RATE_LIMITED, "Roblox rate limit reached during authorization exchange.", retryable=True)
+        if response.status != 200 or not isinstance(data, dict) or not data.get("access_token") or not data.get("refresh_token"):
+            raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "Roblox did not return a complete access and refresh token pair.")
+        scopes = tuple(sorted({item for item in str(data.get("scope") or "").split() if item}))
+        credentials = {
+            "access_token": str(data["access_token"]),
+            "refresh_token": str(data["refresh_token"]),
+            "client_id": str(flow["client_id"]),
+            "client_secret": str(flow["client_secret"]),
+            "redirect_uri": str(flow["redirect_uri"]),
+            "token_type": str(data.get("token_type") or "Bearer"),
+            "expires_at": time.time() + max(1, min(int(data.get("expires_in", 900)), 86400)),
+            "scopes": list(scopes),
+        }
+        identity, _granted_scopes = self.validate_credentials(credentials)
+        credentials["identity"] = identity
+        return credentials
+
+    def _get_userinfo(self, credentials: Mapping[str, Any]) -> tuple[dict[str, Any], HttpResponse]:
+        token = str(credentials.get("access_token") or "")
+        if not token:
+            raise IntegrationError(IntegrationErrorCode.AUTHENTICATION_REQUIRED, "Roblox authorization is missing.")
+        try:
+            expires_at = float(credentials.get("expires_at") or 0)
+        except (TypeError, ValueError):
+            expires_at = 0
+        if expires_at and expires_at <= time.time():
+            raise IntegrationError(IntegrationErrorCode.AUTHORIZATION_EXPIRED, "Roblox access token has expired; refresh the authorization.")
+        response = self._requester(self.USERINFO_URL, method="GET", token=token, timeout=REQUEST_TIMEOUT_SECONDS)
+        if response.status == 401:
+            raise IntegrationError(IntegrationErrorCode.AUTHENTICATION_REQUIRED, "Roblox rejected the access token; refresh or reconnect the account.")
+        if response.status == 403:
+            raise IntegrationError(IntegrationErrorCode.MISSING_PERMISSION, "Roblox denied user-information access; reauthorize with the minimum required scopes.")
+        if response.status == 429:
+            raise IntegrationError(IntegrationErrorCode.RATE_LIMITED, "Roblox rate limit reached; retry later.", retryable=True)
+        if response.status != 200 or not isinstance(response.data, dict):
+            raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Roblox user-information lookup failed.")
+        data = response.data
+        identity = str(data.get("sub") or "").strip()
+        if not identity:
+            raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "Roblox did not return a stable user identifier.")
+        raw_scopes = credentials.get("scopes") or []
+        if isinstance(raw_scopes, str):
+            raw_scopes = raw_scopes.split()
+        scopes = {str(scope).strip() for scope in raw_scopes if str(scope).strip()}
+        if "openid" not in scopes:
+            raise IntegrationError(IntegrationErrorCode.MISSING_PERMISSION, "Roblox token did not grant the required openid identity scope.")
+        return data, response
+
+    def validate_credentials(self, credentials: Mapping[str, Any]) -> tuple[str, tuple[str, ...]]:
+        data, _response = self._get_userinfo(credentials)
+        identity = str(data.get("sub") or "").strip()
+        raw_scopes = credentials.get("scopes") or []
+        if isinstance(raw_scopes, str):
+            raw_scopes = raw_scopes.split()
+        scopes = tuple(sorted({str(scope).strip() for scope in raw_scopes if str(scope).strip()}))
+        return identity, scopes
+
+    def health_check(self, credentials: Mapping[str, Any]) -> tuple[bool, Mapping[str, Any]]:
+        try:
+            data, response = self._get_userinfo(credentials)
+            return True, {
+                "verified": True,
+                "identity": str(data["sub"]),
+                "username": str(data.get("preferred_username") or ""),
+                "http_status": response.status,
+                "source": "GET /oauth/v1/userinfo",
+                "scopes": list(credentials.get("scopes") or []),
+            }
+        except IntegrationError as exc:
+            if exc.code in (IntegrationErrorCode.AUTHENTICATION_REQUIRED, IntegrationErrorCode.AUTHORIZATION_EXPIRED):
+                return False, {"error_code": exc.code.value, "status": ConnectionStatus.AUTHENTICATION_REQUIRED.value}
+            if exc.code == IntegrationErrorCode.MISSING_PERMISSION:
+                return False, {"error_code": exc.code.value, "status": ConnectionStatus.MISSING_PERMISSION.value}
+            raise
+
+    def execute(self, action: str, arguments: Mapping[str, Any], credentials: Mapping[str, Any]) -> tuple[Any, Mapping[str, Any]]:
+        if action not in ("roblox.connection.test", "roblox.profile.read"):
+            raise IntegrationError(IntegrationErrorCode.UNSUPPORTED_ACTION, "The Roblox connector does not declare that operation.")
+        if action == "roblox.profile.read":
+            scopes = set(credentials.get("scopes") or [])
+            if "profile" not in scopes:
+                raise IntegrationError(IntegrationErrorCode.MISSING_PERMISSION, "Roblox profile access requires the profile scope; reconnect with explicit consent.")
+        data, response = self._get_userinfo(credentials)
+        result = {"user_id": str(data["sub"])}
+        if "profile" in set(credentials.get("scopes") or []):
+            for field_name in ("preferred_username", "name", "nickname", "profile", "picture", "created_at"):
+                if data.get(field_name) is not None:
+                    result[field_name] = data[field_name]
+        return result, {"verified": True, "source": "GET /oauth/v1/userinfo", "http_status": response.status, "identity": str(data["sub"])}
+
+    def refresh_credentials(self, credentials: Mapping[str, Any]) -> dict[str, Any]:
+        refresh_token = str(credentials.get("refresh_token") or "")
+        client_id = str(credentials.get("client_id") or "")
+        client_secret = str(credentials.get("client_secret") or "")
+        if not refresh_token or not client_id or not client_secret:
+            raise IntegrationError(IntegrationErrorCode.AUTHENTICATION_REQUIRED, "Roblox refresh credentials are missing; reconnect the account.")
+        response = self._requester(
+            self.TOKEN_URL,
+            method="POST",
+            form={"grant_type": "refresh_token", "refresh_token": refresh_token, "client_id": client_id, "client_secret": client_secret},
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        if response.status != 200 or not isinstance(response.data, dict) or not response.data.get("access_token") or not response.data.get("refresh_token"):
+            raise IntegrationError(IntegrationErrorCode.AUTHENTICATION_REQUIRED, "Roblox token refresh failed; reconnect this account.")
+        updated = dict(credentials)
+        updated["access_token"] = str(response.data["access_token"])
+        updated["refresh_token"] = str(response.data["refresh_token"])
+        updated["expires_at"] = time.time() + max(1, min(int(response.data.get("expires_in", 900)), 86400))
+        if response.data.get("scope"):
+            updated["scopes"] = sorted({item for item in str(response.data["scope"]).split() if item})
+        return updated
+
+    def revoke_credentials(self, credentials: Mapping[str, Any]) -> None:
+        refresh_token = str(credentials.get("refresh_token") or "")
+        client_id = str(credentials.get("client_id") or "")
+        client_secret = str(credentials.get("client_secret") or "")
+        if not refresh_token or not client_id or not client_secret:
+            raise IntegrationError(IntegrationErrorCode.AUTHENTICATION_REQUIRED, "Roblox remote revocation credentials are missing.")
+        response = self._requester(
+            self.REVOCATION_URL,
+            method="POST",
+            form={"token": refresh_token, "client_id": client_id, "client_secret": client_secret},
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        if response.status != 200:
+            raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Roblox did not confirm remote token revocation.")
+
+
 # Informational entries are intentionally not executable adapters. They keep a user
 # informed without pretending that an existing legacy feature is a connected account.
 PROVIDER_CATALOG: tuple[IntegrationManifest, ...] = (
     GitHubConnector.manifest,
-    IntegrationManifest("roblox", "Roblox", "oauth2_oidc", documentation_url="https://create.roblox.com/docs/cloud/auth/oauth2-overview", status=ConnectionStatus.LIMITED_SUPPORT, status_detail="Official OAuth2/OIDC exists, but this build does not yet expose a live account connector. No private account data or game automation is claimed."),
+    RobloxConnector.manifest,
     IntegrationManifest("amazon", "Amazon", "provider_specific", documentation_url="https://developer.amazon.com/", status=ConnectionStatus.LIMITED_SUPPORT, status_detail="Product research is separate from account authorization. Private orders, checkout, and purchases are not supported by this unified connector."),
     IntegrationManifest("google_workspace", "Google Workspace", "existing_legacy_connector", documentation_url="https://developers.google.com/identity/protocols/oauth2", status=ConnectionStatus.LIMITED_SUPPORT, status_detail="Existing Gmail/Calendar/Drive paths remain separate; they have not yet been migrated to the shared account registry."),
     IntegrationManifest("youtube", "YouTube", "oauth2", documentation_url="https://developers.google.com/youtube/v3/guides/authentication", status=ConnectionStatus.LIMITED_SUPPORT, status_detail="Existing video discovery remains separate; channel authorization and publishing are not claimed by this connector."),
@@ -801,15 +1061,33 @@ class IntegrationManager:
         return self._summary(account_id, changed)
 
     def disconnect(self, account_id: str) -> dict[str, Any]:
-        account, adapter, _record = self._require_account(account_id)
+        account, adapter, record = self._require_account(account_id)
+        provider_revocation = "not_supported"
+        revocation_error = None
+        revoke = getattr(adapter, "revoke_credentials", None)
+        if callable(revoke):
+            try:
+                revoke(record["credentials"])
+                provider_revocation = "succeeded"
+            except IntegrationError as exc:
+                provider_revocation = "failed"
+                revocation_error = exc.code.value
+            except Exception:
+                provider_revocation = "failed"
+                revocation_error = IntegrationErrorCode.PROVIDER_ERROR.value
         removed = self.store.delete(account_id)
-        self._record_activity(account.provider_id, account_id, "account.disconnect", "succeeded_and_verified" if removed else "failed", {"local_credential_deleted": removed, "provider_revocation": "not_performed"})
+        self._record_activity(account.provider_id, account_id, "account.disconnect", "succeeded_and_verified" if removed else "failed", {"local_credential_deleted": removed, "provider_revocation": provider_revocation})
         return {
             "ok": removed,
             "account_id": account_id,
             "status": ConnectionStatus.DISCONNECTED.value if removed else ConnectionStatus.AUTHENTICATION_REQUIRED.value,
-            "provider_revocation": "not_performed",
-            "message": "Local credentials were deleted. Revoke this app's authorization in the provider's security settings if remote revocation is required.",
+            "provider_revocation": provider_revocation,
+            "provider_revocation_error": revocation_error,
+            "message": "Local credentials were deleted. " + (
+                "The provider confirmed remote token revocation." if provider_revocation == "succeeded"
+                else "Remote revocation failed; revoke the app grant in the provider's security settings if required." if provider_revocation == "failed"
+                else "This connector did not perform remote revocation; revoke the app grant in the provider's security settings if required."
+            ),
         }
 
     def execute(
@@ -962,7 +1240,7 @@ class IntegrationManager:
 
 def create_default_manager(store: SecureCredentialStore | None = None) -> IntegrationManager:
     """Create an app manager with the currently executable adapters only."""
-    return IntegrationManager(store=store, adapters=[GitHubConnector()])
+    return IntegrationManager(store=store, adapters=[GitHubConnector(), RobloxConnector()])
 
 
 _default_manager: IntegrationManager | None = None
