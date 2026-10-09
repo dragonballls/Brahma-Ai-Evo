@@ -1,8 +1,8 @@
-"""Generic OAuth2/OIDC onboarding and safe OpenAPI read-operation discovery.
+"""Reusable OAuth2/OIDC and capability-driven OpenAPI integrations.
 
-This module deliberately generates read-only candidates from API descriptions.
-Mutation operations remain blocked until a provider-specific adapter implements
-them and Brahma's confirmation/verification contract can be applied.
+Imported API descriptions are untrusted data. Preview never executes a remote
+operation; users explicitly approve the reviewed capability set before registration.
+Network requests are bounded, HTTPS-only and redirect-free.
 """
 from __future__ import annotations
 
@@ -11,13 +11,14 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import math
 import re
 import secrets
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Sequence
 
 from core.account_integrations import (
@@ -64,12 +65,24 @@ class OpenAPIOperation:
     method: str = "GET"
     auth_type: str = "oauth2"
     api_key_header: str = ""
+    required_query_params: tuple[str, ...] = ()
+    path_param_schemas: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    query_param_schemas: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    body_schema: Mapping[str, Any] | None = None
+    body_required: bool = False
+    body_content_type: str = "application/json"
+    output_schema: Mapping[str, Any] = field(default_factory=dict)
+    risk: RiskLevel = RiskLevel.READ_ONLY
+    idempotent: bool = True
 
     def __post_init__(self):
+        method = str(self.method).upper()
         if not _OPERATION_RE.fullmatch(str(self.action or "")):
             raise ValueError("Operation action must be a stable identifier.")
-        if str(self.method).upper() != "GET":
-            raise ValueError("The generic OpenAPI connector only executes GET operations.")
+        if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+            raise ValueError("Operation uses an unsupported HTTP method.")
+        if method == "GET" and self.risk != RiskLevel.READ_ONLY:
+            raise ValueError("GET operations must be classified read-only.")
         decoded_path = urllib.parse.unquote(str(self.path or ""))
         if not str(self.path).startswith("/") or "://" in self.path or "#" in self.path or "?" in self.path or "\\" in self.path or ".." in decoded_path.split("/"):
             raise ValueError("Operation path must be a safe relative API path.")
@@ -78,6 +91,10 @@ class OpenAPIOperation:
             raise ValueError("Declared path parameters must exactly match the path template.")
         if len(set(self.query_params)) != len(self.query_params) or len(set(self.path_params)) != len(self.path_params):
             raise ValueError("Operation parameter names must be unique.")
+        if not set(self.required_query_params).issubset(set(self.query_params)):
+            raise ValueError("Required query parameters must be declared query parameters.")
+        if set(self.path_param_schemas) - set(self.path_params) or set(self.query_param_schemas) - set(self.query_params):
+            raise ValueError("Parameter schemas may only describe declared parameters.")
         if self.auth_type not in ("oauth2", "oidc", "api_key", "bearer"):
             raise ValueError("Operation authentication type is unsupported.")
         if self.auth_type in ("api_key", "bearer"):
@@ -85,6 +102,12 @@ class OpenAPIOperation:
                 raise ValueError("API credential header name is invalid.")
         elif self.api_key_header:
             raise ValueError("OAuth operations may not declare a static credential header.")
+        if self.body_schema is not None and not isinstance(self.body_schema, Mapping):
+            raise ValueError("Request body schema must be an object.")
+        if self.body_required and self.body_schema is None:
+            raise ValueError("Required request bodies must have a validated schema.")
+        if self.body_content_type != "application/json" and not self.body_content_type.endswith("+json"):
+            raise ValueError("Only explicitly described JSON request bodies are supported.")
 
 
 def _normalized_host(value: str) -> str:
@@ -140,21 +163,42 @@ def _default_requester(
     *,
     method: str = "GET",
     form: Mapping[str, str] | None = None,
+    json_body: Any = None,
+    content_type: str = "application/json",
     token: str | None = None,
     timeout: float = 8.0,
 ) -> HttpResponse:
-    """Bounded HTTPS JSON request that refuses redirects to prevent credential forwarding."""
+    """Bounded HTTPS JSON/form request that refuses redirects and oversized payloads."""
     _check_https_url(url)
-    body = urllib.parse.urlencode(dict(form)).encode("utf-8") if form is not None else None
+    method = str(method or "GET").upper()
+    if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "HTTP method is not supported by the generic connector.")
+    if form is not None and json_body is not None:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "A request cannot use both form data and a JSON body.")
+    body = None
     headers = {"Accept": "application/json", "User-Agent": "Brahma-Evo-Generic-Integration"}
     if form is not None:
+        body = urllib.parse.urlencode(dict(form)).encode("utf-8")
         headers["Content-Type"] = "application/x-www-form-urlencoded"
+    elif json_body is not None:
+        if content_type != "application/json" and not str(content_type).endswith("+json"):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Only JSON request content types are supported.")
+        try:
+            body = json.dumps(json_body, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Request body is not valid JSON data.") from exc
+        if len(body) > 512 * 1024:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Request body exceeds the 512 KiB safety limit.")
+        headers["Content-Type"] = str(content_type)
     if token:
+        if len(str(token)) > 8192 or any(ord(char) < 32 or ord(char) == 127 for char in str(token)):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Provider token contains invalid header characters.")
         headers["Authorization"] = "Bearer " + str(token)
-    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+    request = urllib.request.Request(url, data=body, headers=headers, method=method)
     opener = urllib.request.build_opener(_NoRedirect())
+    response_headers = {}
     try:
-        with opener.open(req, timeout=max(0.5, min(float(timeout), 15.0))) as response:
+        with opener.open(request, timeout=max(0.5, min(float(timeout), 15.0))) as response:
             raw = response.read(_MAX_RESPONSE_BYTES + 1)
             status = int(response.status)
             response_headers = dict(response.headers.items())
@@ -165,7 +209,7 @@ def _default_requester(
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
         raise IntegrationError(IntegrationErrorCode.NETWORK_ERROR, "Provider request failed or timed out.", retryable=True) from exc
     if 300 <= status < 400:
-        raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Provider redirected an API request; redirects are not followed by the secure integration client.")
+        raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Provider redirected an API request; redirects are not followed.")
     if len(raw) > _MAX_RESPONSE_BYTES:
         raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Provider response exceeded the 1 MiB safety limit.")
     try:
@@ -175,6 +219,7 @@ def _default_requester(
     if not isinstance(data, (dict, list)):
         raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Provider returned an unexpected response format.")
     return HttpResponse(status, response_headers, data)
+
 
 
 def discover_oidc_metadata(
@@ -274,6 +319,148 @@ def _load_openapi_spec(spec: str | Mapping[str, Any]) -> dict[str, Any]:
     return loaded
 
 
+
+def _resolve_openapi_reference(document: Mapping[str, Any], value: Any, seen: frozenset[str] = frozenset()) -> Any:
+    """Resolve internal JSON pointers only; never fetch remote schema references."""
+    if not isinstance(value, Mapping) or "$ref" not in value:
+        return value
+    reference = value.get("$ref")
+    if not isinstance(reference, str) or not reference.startswith("#/") or reference in seen:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI contains an external or cyclic reference.")
+    target: Any = document
+    try:
+        for part in reference[2:].split("/"):
+            target = target[part.replace("~1", "/").replace("~0", "~")]
+    except (KeyError, TypeError) as exc:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI contains a broken internal reference.") from exc
+    if not isinstance(target, Mapping):
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI reference must resolve to an object.")
+    merged = dict(target)
+    merged.update({key: item for key, item in value.items() if key != "$ref"})
+    return _resolve_openapi_reference(document, merged, seen | {reference})
+
+
+def _normalize_operation_schema(
+    schema: Any, document: Mapping[str, Any], *, depth: int = 0,
+    seen_refs: frozenset[str] = frozenset(), strict_objects: bool = True,
+) -> dict[str, Any]:
+    """Normalize a bounded JSON-schema subset; fail closed for unknown constraints."""
+    if depth > 16 or not isinstance(schema, Mapping):
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI operation schema exceeds the supported validation subset.")
+    reference = schema.get("$ref")
+    if reference is not None:
+        if not isinstance(reference, str) or not reference.startswith("#/") or reference in seen_refs:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI schema references must be internal and acyclic.")
+        resolved = _resolve_openapi_reference(document, schema)
+        return _normalize_operation_schema(resolved, document, depth=depth + 1, seen_refs=seen_refs | {reference}, strict_objects=strict_objects)
+    if any(key in schema for key in ("allOf", "oneOf", "anyOf", "not", "patternProperties", "unevaluatedProperties")):
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI schema composition or dynamic properties are outside the generic safe subset.")
+    kind = schema.get("type")
+    if kind not in ("object", "array", "string", "integer", "number", "boolean"):
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI operation schema must declare a supported JSON type.")
+    result: dict[str, Any] = {"type": kind}
+    if "enum" in schema:
+        values = schema["enum"]
+        if not isinstance(values, list) or not values or len(values) > 100:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI enum is malformed or too large.")
+        result["enum"] = values
+    if kind == "object":
+        properties = schema.get("properties", {})
+        if not isinstance(properties, Mapping) or len(properties) > 100:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI object properties are malformed or too numerous.")
+        if strict_objects and schema.get("additionalProperties", False) not in (False, None):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Dynamic additional properties are not supported for write arguments.")
+        normalized = {}
+        for name, item in properties.items():
+            if not isinstance(name, str) or not name or len(name) > 128:
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI property name is invalid.")
+            normalized[name] = _normalize_operation_schema(item, document, depth=depth + 1, seen_refs=seen_refs, strict_objects=strict_objects)
+        required = schema.get("required", [])
+        if not isinstance(required, list) or any(not isinstance(name, str) for name in required) or not set(required).issubset(normalized):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI required object properties are invalid.")
+        result.update({"properties": normalized, "required": list(dict.fromkeys(required)), "additionalProperties": False if strict_objects else bool(schema.get("additionalProperties", True))})
+    elif kind == "array":
+        if "items" not in schema:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI array schema must declare item types.")
+        result["items"] = _normalize_operation_schema(schema["items"], document, depth=depth + 1, seen_refs=seen_refs, strict_objects=strict_objects)
+        try:
+            result["maxItems"] = max(0, min(int(schema.get("maxItems", 100)), 100))
+            result["minItems"] = max(0, min(int(schema.get("minItems", 0)), 100))
+        except (TypeError, ValueError) as exc:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI array size constraints are invalid.") from exc
+    elif kind == "string":
+        try:
+            result["maxLength"] = max(0, min(int(schema.get("maxLength", 4096)), 4096))
+            result["minLength"] = max(0, min(int(schema.get("minLength", 0)), 4096))
+        except (TypeError, ValueError) as exc:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI string length constraints are invalid.") from exc
+    elif kind in ("integer", "number"):
+        for key in ("minimum", "maximum"):
+            if schema.get(key) is not None:
+                try:
+                    result[key] = float(schema[key])
+                except (TypeError, ValueError) as exc:
+                    raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI numeric constraint is invalid.") from exc
+                if not math.isfinite(result[key]):
+                    raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI numeric constraints must be finite.")
+    return result
+
+
+def _validate_operation_value(value: Any, schema: Mapping[str, Any], *, depth: int = 0) -> None:
+    """Validate an operation argument before any remote request is sent."""
+    if depth > 20:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Operation arguments exceed the nesting limit.")
+    kind = schema.get("type")
+    valid = (
+        isinstance(value, Mapping) if kind == "object" else
+        isinstance(value, list) if kind == "array" else
+        isinstance(value, str) if kind == "string" else
+        isinstance(value, int) and not isinstance(value, bool) if kind == "integer" else
+        isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value)) if kind == "number" else
+        isinstance(value, bool) if kind == "boolean" else False
+    )
+    if not valid:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "An operation argument does not match the declared JSON schema.")
+    if "enum" in schema and value not in schema["enum"]:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "An operation argument is not an allowed declared value.")
+    if kind == "object":
+        properties = schema.get("properties", {})
+        if set(value) - set(properties) or set(schema.get("required", [])) - set(value):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Object arguments contain undeclared fields or omit required fields.")
+        for key, item in value.items():
+            _validate_operation_value(item, properties[key], depth=depth + 1)
+    elif kind == "array":
+        if len(value) > int(schema.get("maxItems", 100)) or len(value) < int(schema.get("minItems", 0)):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Array argument is outside its declared size limits.")
+        for item in value:
+            _validate_operation_value(item, schema["items"], depth=depth + 1)
+    elif kind == "string":
+        if len(value) > int(schema.get("maxLength", 4096)) or len(value) < int(schema.get("minLength", 0)):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "String argument is outside its declared length limits.")
+    elif kind in ("integer", "number"):
+        if ("minimum" in schema and value < schema["minimum"]) or ("maximum" in schema and value > schema["maximum"]):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Numeric argument is outside its declared range.")
+
+
+def _operation_risk(method: str, operation: Mapping[str, Any], path: str) -> RiskLevel:
+    """Use conservative method/path semantics; summaries cannot lower DELETE risk."""
+    method = str(method).upper()
+    text = (path + " " + str(operation.get("summary") or "") + " " +
+            str(operation.get("description") or "") + " " +
+            " ".join(tag for tag in operation.get("tags", []) if isinstance(tag, str))).casefold()
+    if method == "GET":
+        return RiskLevel.READ_ONLY
+    if method == "DELETE" or any(word in text for word in ("permission", "credential", "access key", "api key", "token", "administrator", "admin", "security", "role", "revoke", "delete")):
+        return RiskLevel.DESTRUCTIVE
+    if any(word in text for word in ("payment", "checkout", "billing", "transfer", "invoice", "charge", "refund", "purchase", "order")):
+        return RiskLevel.FINANCIAL
+    if any(word in text for word in ("publish", "social post")):
+        return RiskLevel.PUBLICATION
+    if any(word in text for word in ("message", "email", "sms", "notify", "invite", "comment")):
+        return RiskLevel.EXTERNAL_COMMUNICATION
+    return RiskLevel.REVERSIBLE
+
+
 def analyze_openapi_spec(
     spec: str | Mapping[str, Any],
     *,
@@ -281,185 +468,261 @@ def analyze_openapi_spec(
     trusted_server_hosts: Sequence[str] = (),
     max_operations: int = 250,
 ) -> dict[str, Any]:
-    """Return candidate GET operations and separately list blocked mutating routes.
-
-    Candidates are not registered or executable by this analysis function alone.
-    """
+    """Preview explicitly authenticated OpenAPI operations without executing them."""
     provider = str(provider_id or "").strip().lower()
     if not _PROVIDER_RE.fullmatch(provider):
         raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Provider identifier must use lowercase letters, digits, underscores, or hyphens.")
     document = _load_openapi_spec(spec)
     servers = document.get("servers")
     if not isinstance(servers, list) or len(servers) != 1 or not isinstance(servers[0], Mapping):
-        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Provide exactly one explicit API server; implicit or multi-server routing requires manual adapter review.")
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Provide exactly one explicit API server.")
     server_url = str(servers[0].get("url") or "")
     if "{" in server_url or "}" in server_url:
-        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Templated API server URLs require manual provider review.")
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Templated server URLs require a provider-specific adapter.")
     _check_https_url(server_url, allowed_hosts=trusted_server_hosts)
     paths = document.get("paths")
     if not isinstance(paths, Mapping) or len(paths) > _MAX_OPERATIONS:
         raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI document has no valid paths or exceeds the path limit.")
-    schemes = document.get("components", {}).get("securitySchemes", {}) if isinstance(document.get("components"), Mapping) else {}
+    components = document.get("components", {})
+    schemes = components.get("securitySchemes", {}) if isinstance(components, Mapping) else {}
     root_security = document.get("security", [])
-    read_candidates = []
-    mutation_candidates = []
+    read_candidates: list[dict[str, Any]] = []
+    mutation_candidates: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     warnings: list[str] = []
+    count = 0
     for path, path_item in paths.items():
-        if not isinstance(path, str) or not path.startswith("/") or "://" in path or ".." in path.split("/") or not isinstance(path_item, Mapping):
+        if not isinstance(path, str) or not path.startswith("/") or "://" in path or ".." in urllib.parse.unquote(path).split("/") or not isinstance(path_item, Mapping):
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI contains an unsafe or malformed path.")
-        path_parameters = path_item.get("parameters", [])
+        shared_parameters = path_item.get("parameters", [])
+        if not isinstance(shared_parameters, list):
+            warnings.append("Skipped malformed shared parameters on " + path + ".")
+            shared_parameters = []
         for method in ("get", "post", "put", "patch", "delete"):
             operation = path_item.get(method)
             if not isinstance(operation, Mapping):
                 continue
+            count += 1
+            if count > _MAX_OPERATIONS:
+                warnings.append("Operation discovery stopped at the structural operation limit.")
+                break
             operation_id = str(operation.get("operationId") or "")
             summary = str(operation.get("summary") or operation.get("description") or operation_id or (method.upper() + " " + path))[:400]
-            candidate = {"operation_id": operation_id, "method": method.upper(), "path": path, "summary": summary}
-            if method == "get":
-                if not operation_id or not _OPERATION_RE.fullmatch(operation_id) or operation_id in seen_ids:
-                    warnings.append("Skipped a GET route with a missing, invalid, or duplicate operationId.")
+            if not operation_id or not _OPERATION_RE.fullmatch(operation_id) or operation_id in seen_ids:
+                warnings.append("Skipped " + method.upper() + " " + path + " because its operationId is missing, invalid, or duplicated.")
+                continue
+            if operation.get("deprecated") is True:
+                warnings.append("Skipped deprecated operation " + operation_id + ".")
+                continue
+            declared_security = operation.get("security", root_security)
+            if not isinstance(declared_security, list) or not declared_security:
+                warnings.append("Skipped operation " + operation_id + " because explicit authentication is not declared.")
+                continue
+            if len(declared_security) != 1 or not isinstance(declared_security[0], Mapping) or len(declared_security[0]) != 1:
+                warnings.append("Skipped operation " + operation_id + " because its authentication alternatives require manual adapter support.")
+                continue
+            scheme_name, scopes = next(iter(declared_security[0].items()))
+            scheme = schemes.get(scheme_name) if isinstance(schemes, Mapping) else None
+            if not isinstance(scheme, Mapping):
+                warnings.append("Skipped operation " + operation_id + " because its security scheme is missing.")
+                continue
+            scheme_type = str(scheme.get("type") or "")
+            auth_type, api_key_header = "", ""
+            if scheme_type in ("oauth2", "openIdConnect"):
+                auth_type = "oidc" if scheme_type == "openIdConnect" else "oauth2"
+            elif scheme_type == "apiKey" and scheme.get("in") == "header":
+                api_key_header = str(scheme.get("name") or "")
+                if not re.fullmatch(r"[!#$%&'*+.^_|~0-9A-Za-z-]+", api_key_header) or scopes:
+                    warnings.append("Skipped operation " + operation_id + " because its API-key header scheme is invalid.")
                     continue
-                if operation.get("deprecated") is True:
-                    warnings.append("Skipped deprecated GET operation " + operation_id + ".")
+                auth_type = "api_key"
+            elif scheme_type == "http" and str(scheme.get("scheme") or "").casefold() == "bearer":
+                api_key_header = "Authorization"
+                if scopes:
+                    warnings.append("Skipped operation " + operation_id + " because HTTP bearer auth cannot declare OAuth scopes.")
                     continue
-                declared_security = operation.get("security", root_security)
-                if not isinstance(declared_security, list) or not declared_security:
-                    warnings.append("Skipped GET operation " + operation_id + " because it lacks explicit authentication requirements.")
-                    continue
-                if len(declared_security) != 1 or not isinstance(declared_security[0], Mapping) or len(declared_security[0]) != 1:
-                    warnings.append("Skipped GET operation " + operation_id + " because its security alternatives require manual review.")
-                    continue
-                scheme_name, scopes = next(iter(declared_security[0].items()))
-                scheme = schemes.get(scheme_name) if isinstance(schemes, Mapping) else None
-                if not isinstance(scheme, Mapping):
-                    warnings.append("Skipped GET operation " + operation_id + " because its security scheme is missing.")
-                    continue
-                scheme_type = str(scheme.get("type") or "")
-                auth_type = ""
-                api_key_header = ""
-                if scheme_type in ("oauth2", "openIdConnect"):
-                    auth_type = "oidc" if scheme_type == "openIdConnect" else "oauth2"
-                elif scheme_type == "apiKey" and scheme.get("in") == "header":
-                    api_key_header = str(scheme.get("name") or "")
-                    if not re.fullmatch(r"[!#$%&'*+.^_|~0-9A-Za-z-]+", api_key_header):
-                        warnings.append("Skipped GET operation " + operation_id + " because its API-key header name is invalid.")
-                        continue
-                    auth_type = "api_key"
-                    if scopes:
-                        warnings.append("Skipped GET operation " + operation_id + " because API-key security must not declare OAuth scopes.")
-                        continue
-                elif scheme_type == "http" and str(scheme.get("scheme") or "").casefold() == "bearer":
-                    auth_type = "bearer"
-                    api_key_header = "Authorization"
-                    if scopes:
-                        warnings.append("Skipped GET operation " + operation_id + " because HTTP bearer security must not declare OAuth scopes.")
-                        continue
-                else:
-                    warnings.append("Skipped GET operation " + operation_id + " because its auth method is not supported by the generic executor (query/cookie API keys are intentionally disabled).")
-                    continue
-                if not isinstance(scopes, list) or any(not isinstance(scope, str) for scope in scopes):
-                    warnings.append("Skipped GET operation " + operation_id + " due to invalid security scopes.")
-                    continue
-                all_parameters = list(path_parameters) if isinstance(path_parameters, list) else []
-                operation_parameters = operation.get("parameters", [])
-                if isinstance(operation_parameters, list):
-                    all_parameters.extend(operation_parameters)
-                path_params = tuple(sorted(set(_PATH_PARAM_RE.findall(path))))
-                query_params = []
-                declared_path_params = set()
-                valid_params = True
-                for parameter in all_parameters:
-                    if not isinstance(parameter, Mapping):
-                        valid_params = False
-                        break
-                    loc = parameter.get("in")
-                    name = str(parameter.get("name") or "")
-                    schema = parameter.get("schema")
-                    if loc not in ("path", "query") or not name or not isinstance(schema, Mapping):
-                        valid_params = False
-                        break
-                    if schema.get("type") not in ("string", "integer", "number", "boolean"):
-                        valid_params = False
-                        break
-                    if loc == "path":
-                        if name not in path_params or parameter.get("required") is not True:
-                            valid_params = False
-                            break
-                        declared_path_params.add(name)
-                    if loc == "query":
-                        query_params.append(name)
-                if (not valid_params or declared_path_params != set(path_params)
-                    or len(set(query_params)) != len(query_params)
-                    or set(query_params) & set(path_params)):
-                    warnings.append("Skipped GET operation " + operation_id + " because its parameters could not be validated safely.")
-                    continue
-                seen_ids.add(operation_id)
-                read_candidates.append({
-                    "action": provider + "." + operation_id,
-                    "operation_id": operation_id,
-                    "summary": summary,
-                    "method": "GET",
-                    "path": path,
-                    "required_scopes": sorted(set(scopes)),
-                    "path_params": list(path_params),
-                    "query_params": sorted(set(query_params)),
-                    "auth_scheme": str(scheme_name),
-                    "auth_type": auth_type,
-                    "api_key_header": api_key_header,
-                    "supported": True,
-                    "requires_manual_approval": True,
-                })
+                auth_type = "bearer"
             else:
-                mutation_candidates.append({
-                    **candidate,
-                    "risk": "destructive_or_security_sensitive" if method == "DELETE" else "reversible_change_or_external_effect",
-                    "supported": False,
-                    "requires_manual_approval": True,
-                })
-    if len(read_candidates) > min(max_operations, _MAX_OPERATIONS):
-        read_candidates = read_candidates[: min(max_operations, _MAX_OPERATIONS)]
-        warnings.append("Read-only candidate list was truncated to the configured operation limit.")
+                warnings.append("Skipped operation " + operation_id + " because this generic adapter does not implement its authentication scheme.")
+                continue
+            if not isinstance(scopes, list) or any(not isinstance(scope, str) or not scope.strip() for scope in scopes):
+                warnings.append("Skipped operation " + operation_id + " because its scopes are malformed.")
+                continue
+
+            parameters = list(shared_parameters)
+            own_parameters = operation.get("parameters", [])
+            if not isinstance(own_parameters, list):
+                warnings.append("Skipped operation " + operation_id + " because its parameters are malformed.")
+                continue
+            parameters.extend(own_parameters)
+            path_params = tuple(sorted(set(_PATH_PARAM_RE.findall(path))))
+            query_params, required_query_params = [], []
+            path_schemas, query_schemas = {}, {}
+            declared_path_params: set[str] = set()
+            valid_parameters = True
+            for raw_parameter in parameters:
+                parameter = _resolve_openapi_reference(document, raw_parameter) if isinstance(raw_parameter, Mapping) else raw_parameter
+                if not isinstance(parameter, Mapping):
+                    valid_parameters = False
+                    break
+                location = parameter.get("in")
+                name = str(parameter.get("name") or "")
+                if location not in ("path", "query") or not name or len(name) > 128 or not isinstance(parameter.get("schema"), Mapping):
+                    valid_parameters = False
+                    break
+                try:
+                    normalized = _normalize_operation_schema(parameter["schema"], document, strict_objects=True)
+                except IntegrationError:
+                    valid_parameters = False
+                    break
+                if location == "path":
+                    if name not in path_params or parameter.get("required") is not True or name in path_schemas:
+                        valid_parameters = False
+                        break
+                    declared_path_params.add(name)
+                    path_schemas[name] = normalized
+                else:
+                    if name in query_schemas:
+                        valid_parameters = False
+                        break
+                    query_params.append(name)
+                    query_schemas[name] = normalized
+                    if parameter.get("required") is True:
+                        required_query_params.append(name)
+            if not valid_parameters or declared_path_params != set(path_params) or set(path_params) & set(query_params):
+                warnings.append("Skipped operation " + operation_id + " because path/query parameter schemas cannot be safely validated.")
+                continue
+
+            body_schema, body_required, body_content_type = None, False, "application/json"
+            body_error = ""
+            request_body = operation.get("requestBody")
+            if request_body is not None:
+                try:
+                    request_body = _resolve_openapi_reference(document, request_body)
+                    content = request_body.get("content") if isinstance(request_body, Mapping) else None
+                    if not isinstance(content, Mapping):
+                        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "request body content is missing")
+                    json_media = next(((name, item) for name, item in content.items()
+                                       if isinstance(name, str) and
+                                       (name.casefold() == "application/json" or
+                                        (name.casefold().startswith("application/") and name.casefold().endswith("+json")))), None)
+                    if json_media is None or not isinstance(json_media[1], Mapping) or not isinstance(json_media[1].get("schema"), Mapping):
+                        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "only JSON request bodies with a declared schema are supported")
+                    body_content_type, media = json_media
+                    body_schema = _normalize_operation_schema(media["schema"], document, strict_objects=True)
+                    body_required = request_body.get("required") is True
+                except IntegrationError as exc:
+                    body_error = str(exc)
+            risk = _operation_risk(method.upper(), operation, path)
+            if body_error:
+                candidate = {
+                    "action": provider + "." + operation_id, "operation_id": operation_id,
+                    "summary": summary, "method": method.upper(), "path": path,
+                    "risk": risk.value, "supported": False,
+                    "requires_manual_approval": True, "unsupported_reason": body_error,
+                }
+                if method == "get":
+                    warnings.append("Skipped GET operation " + operation_id + " because " + body_error + ".")
+                else:
+                    mutation_candidates.append(candidate)
+                seen_ids.add(operation_id)
+                continue
+
+            output_schema: Mapping[str, Any] = {}
+            responses = operation.get("responses", {})
+            if isinstance(responses, Mapping):
+                for status_code, response_spec in responses.items():
+                    if not str(status_code).startswith("2") or not isinstance(response_spec, Mapping):
+                        continue
+                    try:
+                        response_spec = _resolve_openapi_reference(document, response_spec)
+                        response_content = response_spec.get("content", {})
+                        if isinstance(response_content, Mapping):
+                            media = next((item for name, item in response_content.items()
+                                          if isinstance(name, str) and
+                                          (name.casefold() == "application/json" or
+                                           (name.casefold().startswith("application/") and name.casefold().endswith("+json")))
+                                          and isinstance(item, Mapping) and isinstance(item.get("schema"), Mapping)), None)
+                            if media:
+                                output_schema = _normalize_operation_schema(media["schema"], document, strict_objects=False)
+                                break
+                    except IntegrationError:
+                        warnings.append("Response schema for " + operation_id + " is outside the supported subset; bounded JSON parsing remains enabled.")
+            candidate = {
+                "action": provider + "." + operation_id, "operation_id": operation_id,
+                "summary": summary, "method": method.upper(), "path": path,
+                "required_scopes": sorted(set(scopes)), "path_params": list(path_params),
+                "query_params": sorted(set(query_params)), "required_query_params": sorted(set(required_query_params)),
+                "path_param_schemas": path_schemas, "query_param_schemas": query_schemas,
+                "body_schema": body_schema, "body_required": body_required, "body_content_type": body_content_type,
+                "output_schema": dict(output_schema), "auth_scheme": str(scheme_name),
+                "auth_type": auth_type, "api_key_header": api_key_header, "risk": risk.value,
+                "idempotent": method in ("get", "put", "delete"), "supported": True,
+                "requires_manual_approval": True,
+            }
+            (read_candidates if method == "get" else mutation_candidates).append(candidate)
+            seen_ids.add(operation_id)
+
+    try:
+        limit = max(1, min(int(max_operations), _MAX_OPERATIONS))
+    except (TypeError, ValueError) as exc:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "max_operations must be a positive integer.") from exc
+    if len(read_candidates) > limit:
+        read_candidates = read_candidates[:limit]
+        warnings.append("Read operation candidates were truncated to the configured operation limit.")
+    if len(mutation_candidates) > limit:
+        mutation_candidates = mutation_candidates[:limit]
+        warnings.append("State-changing candidates were truncated to the configured operation limit.")
+    review_candidates = read_candidates + [item for item in mutation_candidates if item.get("supported") is True]
     return {
-        "provider_id": provider,
-        "openapi": document["openapi"],
-        "server_url": server_url,
-        "read_only_candidates": read_candidates,
-        "mutation_candidates": mutation_candidates[:_MAX_OPERATIONS],
-        "warnings": warnings,
-        "registered": False,
-        "note": "This is an onboarding preview. Candidates are not exposed for execution until an approved adapter registers the exact operations and passes contract tests.",
+        "provider_id": provider, "openapi": document["openapi"], "server_url": server_url,
+        "read_only_candidates": read_candidates, "mutation_candidates": mutation_candidates,
+        "review_candidates": review_candidates, "warnings": warnings, "registered": False,
+        "note": "Inert preview only. Review and explicitly approve the listed capabilities before registering them; state-changing actions require trusted-UI confirmation at execution time.",
     }
 
 
 def operations_from_openapi(preview: Mapping[str, Any]) -> tuple[OpenAPIOperation, ...]:
-    """Build GET operation descriptors from an analyzed preview for a reviewed adapter."""
-    if preview.get("registered") is not False or not isinstance(preview.get("read_only_candidates"), list):
-        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Use a validated OpenAPI preview before creating operation descriptors.")
+    """Build operation descriptors from supported candidates in an inert OpenAPI preview."""
+    if preview.get("registered") is not False:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Use a validated, unregistered OpenAPI preview.")
+    candidates = preview.get("review_candidates")
+    if not isinstance(candidates, list):
+        candidates = list(preview.get("read_only_candidates") or []) + [
+            item for item in (preview.get("mutation_candidates") or [])
+            if isinstance(item, Mapping) and item.get("supported") is True
+        ]
     operations = []
-    for item in preview["read_only_candidates"]:
+    for item in candidates:
         if not isinstance(item, Mapping) or item.get("supported") is not True or item.get("requires_manual_approval") is not True:
-            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI candidate did not satisfy the safe preview contract.")
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI candidate did not satisfy the review contract.")
+        try:
+            risk = RiskLevel(str(item.get("risk") or ("read_only" if str(item.get("method") or "GET").upper() == "GET" else "reversible_change")))
+        except ValueError as exc:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI operation risk classification is unknown.") from exc
         operations.append(OpenAPIOperation(
-            action=str(item["action"]),
-            summary=str(item.get("summary") or item["operation_id"]),
-            path=str(item["path"]),
-            required_scopes=tuple(str(x) for x in item.get("required_scopes", [])),
+            action=str(item["action"]), summary=str(item.get("summary") or item["operation_id"]),
+            path=str(item["path"]), required_scopes=tuple(str(x) for x in item.get("required_scopes", [])),
             path_params=tuple(str(x) for x in item.get("path_params", [])),
             query_params=tuple(str(x) for x in item.get("query_params", [])),
-            method=str(item.get("method") or "GET"),
-            auth_type=str(item.get("auth_type") or "oauth2"),
-            api_key_header=str(item.get("api_key_header") or ""),
+            method=str(item.get("method") or "GET").upper(),
+            auth_type=str(item.get("auth_type") or "oauth2"), api_key_header=str(item.get("api_key_header") or ""),
+            required_query_params=tuple(str(x) for x in item.get("required_query_params", [])),
+            path_param_schemas=dict(item.get("path_param_schemas") or {}),
+            query_param_schemas=dict(item.get("query_param_schemas") or {}),
+            body_schema=dict(item["body_schema"]) if isinstance(item.get("body_schema"), Mapping) else None,
+            body_required=bool(item.get("body_required")), body_content_type=str(item.get("body_content_type") or "application/json"),
+            output_schema=dict(item.get("output_schema") or {}), risk=risk,
+            idempotent=bool(item.get("idempotent", str(item.get("method") or "GET").upper() in ("GET", "PUT", "DELETE"))),
         ))
     return tuple(operations)
 
 
 class OAuth2PKCEConnector:
-    """Reusable authorization-code/PKCE connector with OIDC ID-token validation.
+    """Reusable authorization-code/PKCE connector for reviewed read/write API operations.
 
-    Provider API operations are intentionally limited to exact GET routes derived
-    from a reviewed OpenAPI preview. Provider-specific mutation behavior needs a
-    separate adapter implementing Brahma's risk, confirmation and verification rules.
+    State-changing operations are declared by the reviewed capability manifest and
+    remain subject to manager-enforced, trusted-UI confirmation before execution.
     """
 
     def __init__(
@@ -538,8 +801,22 @@ class OAuth2PKCEConnector:
                 raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OAuth connectors may only execute operations configured for OAuth2/OIDC authentication.")
         caps = [
             Capability(
-                item.action, item.summary, RiskLevel.READ_ONLY, item.required_scopes,
-                idempotent=True, supported=True
+                item.action, item.summary, item.risk, item.required_scopes,
+                idempotent=item.idempotent, supported=True,
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        **{name: dict(schema) for name, schema in item.path_param_schemas.items()},
+                        **{name: dict(schema) for name, schema in item.query_param_schemas.items()},
+                        **({"body": dict(item.body_schema)} if item.body_schema is not None else {}),
+                    },
+                    "required": list(item.path_params) + list(item.required_query_params) + (["body"] if item.body_required else []),
+                    "additionalProperties": False,
+                },
+                output_schema=dict(item.output_schema),
+                operation_kind=("read" if item.method == "GET" else "delete" if item.method == "DELETE" else "update" if item.method in ("PUT", "PATCH") else "create_or_submit"),
+                changes_state=item.method != "GET",
+                reversible=item.risk == RiskLevel.REVERSIBLE,
             )
             for item in self.operations.values()
         ]
@@ -557,7 +834,7 @@ class OAuth2PKCEConnector:
             auth_method="oauth2_authorization_code_pkce_oidc" if self.use_oidc else "oauth2_authorization_code_pkce",
             documentation_url=self.metadata.issuer or self.metadata.authorization_endpoint,
             status=ConnectionStatus.LIMITED_SUPPORT,
-            status_detail="Generic OAuth2 authorization-code/PKCE adapter; only explicitly configured read-only API operations are executable.",
+            status_detail="Generic OAuth2 authorization-code/PKCE adapter; configured operations are reviewed and state-changing operations require trusted-UI confirmation.",
             authentication_documentation_url=self.metadata.issuer or self.metadata.authorization_endpoint,
             identity_validation_method="Validated OIDC RS256 ID token plus matching UserInfo sub" if self.use_oidc else "Configured HTTPS UserInfo endpoint and explicit stable identity field",
             supports_token_expiration=True,
@@ -566,7 +843,7 @@ class OAuth2PKCEConnector:
             pagination_strategy="Provider-specific; no automatic multi-page traversal is inferred from OpenAPI.",
             rate_limit_behavior="Surface 401/403/429 as typed errors; no automatic replay.",
             setup_requirements=("Official OAuth client ID", "Exact registered redirect URI", "Explicit minimum scopes", "Trusted endpoint host allowlist", "Reviewed OpenAPI JSON specification"),
-            limitations=("Only reviewed GET operations are executable.", "Refresh works only when the provider issues a refresh token.", "No generic browser automation, write operation, or arbitrary endpoint discovery."),
+            limitations=("Only reviewed OpenAPI operations with supported authentication and JSON schemas are executable.", "Refresh works only when the provider issues a refresh token.", "Nonstandard signing/protocols require an explicit adapter extension; arbitrary endpoint discovery is disabled."),
             configuration_fields=("provider_id", "display_name", "auth_type", "trusted_hosts", "client_id", "client_secret (protected storage only)", "redirect_uri", "requested_scopes", "issuer or oauth_endpoints", "OpenAPI JSON"),
             capabilities=tuple(caps),
         )
@@ -880,13 +1157,27 @@ class OAuth2PKCEConnector:
             raise IntegrationError(IntegrationErrorCode.MISSING_PERMISSION, "The connected account has not granted the scopes required by this operation.")
         args = dict(arguments or {})
         allowed_args = set(operation.path_params) | set(operation.query_params)
+        if operation.body_schema is not None:
+            allowed_args.add("body")
         if set(args) - allowed_args:
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Operation arguments contain parameters not declared by the reviewed OpenAPI contract.")
+        if operation.body_required and "body" not in args:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "This operation requires a JSON request body.")
+        body = args.get("body") if operation.body_schema is not None and "body" in args else None
+        if body is not None:
+            _validate_operation_value(body, operation.body_schema)
         path = operation.path
         for name in operation.path_params:
             value = args.get(name)
-            if isinstance(value, (dict, list, bool)) or value is None or len(str(value)) > 256 or not str(value):
-                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "A required path parameter is missing or invalid.")
+            if value is None:
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "A required path parameter is missing.")
+            schema = operation.path_param_schemas.get(name)
+            if schema is not None:
+                _validate_operation_value(value, schema)
+            elif isinstance(value, (dict, list, bool)) or len(str(value)) > 256 or not str(value):
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "A required path parameter is invalid.")
+            if isinstance(value, (dict, list, bool)) or len(str(value)) > 256 or not str(value):
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "A path parameter cannot be encoded safely.")
             path = path.replace("{" + name + "}", urllib.parse.quote(str(value), safe=""))
         if _PATH_PARAM_RE.search(path):
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Operation path contains an unresolved path parameter.")
@@ -894,8 +1185,13 @@ class OAuth2PKCEConnector:
         query_items = []
         for name in operation.query_params:
             if name not in args:
+                if name in operation.required_query_params:
+                    raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "A required query parameter is missing.")
                 continue
             value = args[name]
+            schema = operation.query_param_schemas.get(name)
+            if schema is not None:
+                _validate_operation_value(value, schema)
             values = value if isinstance(value, (list, tuple)) else [value]
             if len(values) > 20:
                 raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Query parameter contains too many values.")
@@ -909,7 +1205,11 @@ class OAuth2PKCEConnector:
         base = urllib.parse.urlparse(self.api_base_url)
         if _normalized_host(parsed.hostname or "") != _normalized_host(base.hostname or ""):
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Resolved operation URL left the configured API host.")
-        response = self._requester(url, method="GET", token=str(credentials.get("access_token") or ""), timeout=8.0)
+        request_options: dict[str, Any] = {"method": operation.method, "token": str(credentials.get("access_token") or ""), "timeout": 8.0}
+        if body is not None:
+            request_options["json_body"] = body
+            request_options["content_type"] = operation.body_content_type
+        response = self._requester(url, **request_options)
         if response.status == 401:
             raise IntegrationError(IntegrationErrorCode.AUTHENTICATION_REQUIRED, "Provider rejected the access token; refresh or reconnect the account.")
         if response.status == 403:
@@ -917,14 +1217,18 @@ class OAuth2PKCEConnector:
         if response.status == 429:
             raise IntegrationError(IntegrationErrorCode.RATE_LIMITED, "Provider rate limit reached; retry later.", retryable=True)
         if response.status < 200 or response.status >= 300:
-            raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Provider read operation failed.")
-        data = response.data
-        return _sanitize_payload(data), {
-            "verified": True,
-            "source": "reviewed OpenAPI GET operation",
+            raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Provider operation failed.")
+        return _sanitize_payload(response.data), {
+            "verified": operation.method == "GET",
+            "source": "reviewed OpenAPI operation",
             "operation": operation.action,
+            "method": operation.method,
             "http_status": response.status,
         }
+
+
+_HEADER_TOKEN = re.compile(r"^[!#$%&'*+.^_|~0-9A-Za-z-]+$")
+
 
 
 _HEADER_TOKEN = re.compile(r"^[!#$%&'*+.^_|~0-9A-Za-z-]+$")
@@ -937,35 +1241,49 @@ def _default_header_requester(
     header_name: str,
     trusted_hosts: Sequence[str],
     bearer_token: bool = False,
+    method: str = "GET",
+    json_body: Any = None,
+    content_type: str = "application/json",
     timeout: float = 8.0,
 ) -> HttpResponse:
-    """Send one bounded GET with an explicit header credential and no redirects."""
+    """Send one bounded authenticated JSON request with redirects disabled."""
     _check_https_url(url, allowed_hosts=trusted_hosts)
     key = str(api_key or "")
     header = str(header_name or "")
+    method = str(method or "GET").upper()
+    if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "HTTP method is not supported by the generic connector.")
     if not key or len(key) > 4096 or any(ord(char) < 32 or ord(char) == 127 for char in key):
         raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "API key is empty or contains forbidden header characters.")
     if not _HEADER_TOKEN.fullmatch(header):
         raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "API-key header name is invalid.")
-    request = urllib.request.Request(
-        url,
-        headers={
-            "Accept": "application/json",
-            "User-Agent": "Brahma-Evo-Account-Integrations",
-            header: ("Bearer " + key) if bearer_token else key,
-        },
-        method="GET",
-    )
+    request_headers = {
+        "Accept": "application/json", "User-Agent": "Brahma-Evo-Account-Integrations",
+        header: ("Bearer " + key) if bearer_token else key,
+    }
+    body = None
+    if json_body is not None:
+        if content_type != "application/json" and not str(content_type).endswith("+json"):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Only JSON request content types are supported.")
+        try:
+            body = json.dumps(json_body, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Request body is not valid JSON data.") from exc
+        if len(body) > 512 * 1024:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Request body exceeds the 512 KiB safety limit.")
+        request_headers["Content-Type"] = str(content_type)
+    request = urllib.request.Request(url, data=body, headers=request_headers, method=method)
     opener = urllib.request.build_opener(_NoRedirect())
+    response_headers = {}
     try:
         with opener.open(request, timeout=max(0.5, min(float(timeout), 15.0))) as response:
             raw = response.read(_MAX_RESPONSE_BYTES + 1)
             status = int(response.status)
-            headers = dict(response.headers.items())
+            response_headers = dict(response.headers.items())
     except urllib.error.HTTPError as exc:
         raw = exc.read(65536)
         status = int(exc.code)
-        headers = dict(exc.headers.items()) if exc.headers else {}
+        response_headers = dict(exc.headers.items()) if exc.headers else {}
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
         raise IntegrationError(IntegrationErrorCode.NETWORK_ERROR, "Provider request failed or timed out.", retryable=True) from exc
     if 300 <= status < 400:
@@ -978,14 +1296,15 @@ def _default_header_requester(
         raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Provider returned malformed JSON.") from exc
     if not isinstance(data, (dict, list)):
         raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Provider returned an unexpected response format.")
-    return HttpResponse(status, headers, data)
+    return HttpResponse(status, response_headers, data)
+
 
 
 class APIKeyConnector:
-    """Reusable header-based API-key/bearer adapter for explicitly reviewed GETs.
+    """Reusable header-based API-key/bearer adapter for reviewed API operations.
 
-    The API key is passed as account credentials and remains in the configured secure
-    credential store. Keys in query parameters and browser cookies are not supported.
+    Credentials are sent only using the declared header contract. State-changing
+    operations still pass through manager-enforced confirmation and scope checks.
     """
 
     def __init__(
@@ -1036,7 +1355,24 @@ class APIKeyConnector:
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "A generic header connector must use one consistent authentication type.")
         self.credential_auth_type = next(iter(auth_types))
         capabilities = [
-            Capability(item.action, item.summary, RiskLevel.READ_ONLY, item.required_scopes, idempotent=True, supported=True)
+            Capability(
+                item.action, item.summary, item.risk, item.required_scopes,
+                idempotent=item.idempotent, supported=True,
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        **{name: dict(schema) for name, schema in item.path_param_schemas.items()},
+                        **{name: dict(schema) for name, schema in item.query_param_schemas.items()},
+                        **({"body": dict(item.body_schema)} if item.body_schema is not None else {}),
+                    },
+                    "required": list(item.path_params) + list(item.required_query_params) + (["body"] if item.body_required else []),
+                    "additionalProperties": False,
+                },
+                output_schema=dict(item.output_schema),
+                operation_kind=("read" if item.method == "GET" else "delete" if item.method == "DELETE" else "update" if item.method in ("PUT", "PATCH") else "create_or_submit"),
+                changes_state=item.method != "GET",
+                reversible=item.risk == RiskLevel.REVERSIBLE,
+            )
             for item in self.operations.values()
         ]
         capabilities.append(Capability(
@@ -1053,7 +1389,7 @@ class APIKeyConnector:
             auth_method="bearer_token" if self.credential_auth_type == "bearer" else "api_key_header",
             documentation_url=str(documentation_url or "")[:2048],
             status=ConnectionStatus.LIMITED_SUPPORT,
-            status_detail="Header-based API-key/bearer authentication with identity validation and reviewed read-only API operations only.",
+            status_detail="Header-based API-key/bearer authentication with identity validation and reviewed operations; writes require trusted-UI confirmation.",
             authentication_documentation_url=str(documentation_url or "")[:2048],
             identity_validation_method="Configured HTTPS identity endpoint; response must contain the declared stable identity field",
             supports_token_expiration=False,
@@ -1062,18 +1398,25 @@ class APIKeyConnector:
             pagination_strategy="Provider-specific; no automatic multi-page traversal is inferred from OpenAPI.",
             rate_limit_behavior="Surface 401/403/429 as typed errors; no automatic replay.",
             setup_requirements=("Official provider API credential", "Documented identity endpoint", "Trusted HTTPS host allowlist", "Reviewed OpenAPI JSON specification", "Credential sent only in an explicit header"),
-            limitations=("Header API-key and bearer authentication only; query-string and cookie credentials are disabled.", "Only reviewed GET operations are executable.", "Provider-specific key rotation/revocation must be handled by the provider's security settings."),
+            limitations=("Header API-key and bearer authentication only; query-string and cookie credentials are disabled.", "Only explicitly reviewed operations with supported JSON schemas are executable.", "Provider-specific key rotation/revocation must be handled by the provider's security settings."),
             configuration_fields=("provider_id", "display_name", "auth_type", "trusted_hosts", "api_key_header", "identity_url", "identity_field", "documentation_url", "OpenAPI JSON"),
             capabilities=tuple(capabilities),
         )
 
-    def _request(self, url: str, api_key: str) -> HttpResponse:
+    def _request(self, url: str, api_key: str, *, method: str = "GET", json_body: Any = None, content_type: str = "application/json") -> HttpResponse:
         _check_https_url(url, allowed_hosts=self.trusted_hosts)
+        options: dict[str, Any] = {
+            "method": method, "api_key": api_key, "api_key_header": self.api_key_header, "timeout": 8.0,
+        }
+        if json_body is not None:
+            options["json_body"] = json_body
+            options["content_type"] = content_type
         if self._requester is not None:
-            return self._requester(url, method="GET", api_key=api_key, api_key_header=self.api_key_header, timeout=8.0)
+            return self._requester(url, **options)
         return _default_header_requester(
             url, api_key=api_key, header_name=self.api_key_header,
-            trusted_hosts=self.trusted_hosts, bearer_token=(self.credential_auth_type == "bearer"), timeout=8.0,
+            trusted_hosts=self.trusted_hosts, bearer_token=(self.credential_auth_type == "bearer"),
+            method=method, json_body=json_body, content_type=content_type, timeout=8.0,
         )
 
     @staticmethod
@@ -1122,13 +1465,27 @@ class APIKeyConnector:
             raise IntegrationError(IntegrationErrorCode.UNSUPPORTED_ACTION, "The provider does not declare this operation.")
         args = dict(arguments or {})
         allowed_args = set(operation.path_params) | set(operation.query_params)
+        if operation.body_schema is not None:
+            allowed_args.add("body")
         if set(args) - allowed_args:
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Operation arguments contain parameters not declared by the reviewed API contract.")
+        if operation.body_required and "body" not in args:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "This operation requires a JSON request body.")
+        body = args.get("body") if operation.body_schema is not None and "body" in args else None
+        if body is not None:
+            _validate_operation_value(body, operation.body_schema)
         path = operation.path
         for name in operation.path_params:
             value = args.get(name)
-            if value is None or isinstance(value, (dict, list, bool)) or len(str(value)) > 256 or not str(value):
-                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "A required path parameter is missing or invalid.")
+            if value is None:
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "A required path parameter is missing.")
+            schema = operation.path_param_schemas.get(name)
+            if schema is not None:
+                _validate_operation_value(value, schema)
+            elif isinstance(value, (dict, list, bool)) or len(str(value)) > 256 or not str(value):
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "A required path parameter is invalid.")
+            if isinstance(value, (dict, list, bool)) or len(str(value)) > 256 or not str(value):
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "A path parameter cannot be encoded safely.")
             path = path.replace("{" + name + "}", urllib.parse.quote(str(value), safe=""))
         if _PATH_PARAM_RE.search(path):
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Operation path contains an unresolved path parameter.")
@@ -1136,25 +1493,38 @@ class APIKeyConnector:
         query_items = []
         for name in operation.query_params:
             if name not in args:
+                if name in operation.required_query_params:
+                    raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "A required query parameter is missing.")
                 continue
-            values = args[name] if isinstance(args[name], (list, tuple)) else [args[name]]
+            value = args[name]
+            schema = operation.query_param_schemas.get(name)
+            if schema is not None:
+                _validate_operation_value(value, schema)
+            values = value if isinstance(value, (list, tuple)) else [value]
             if len(values) > 20:
                 raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Query parameter contains too many values.")
-            for value in values:
-                if value is None or isinstance(value, (dict, list, tuple)) or len(str(value)) > 512 or any(char in str(value) for char in "\r\n"):
+            for item in values:
+                if item is None or isinstance(item, (dict, list, tuple)) or len(str(item)) > 512 or any(ch in str(item) for ch in "\r\n"):
                     raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "A query parameter is invalid.")
-                query_items.append((name, str(value)))
+                query_items.append((name, str(item)))
         if query_items:
             url += ("&" if "?" in url else "?") + urllib.parse.urlencode(query_items)
-        _check_https_url(url, allowed_hosts=self.trusted_hosts)
-        response = self._request(url, api_key)
-        self._status_error(response, operation="read")
+        parsed = _check_https_url(url, allowed_hosts=self.trusted_hosts)
+        base = urllib.parse.urlparse(self.api_base_url)
+        if _normalized_host(parsed.hostname or "") != _normalized_host(base.hostname or ""):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Resolved operation URL left the configured API host.")
+        response = self._request(url, api_key, method=operation.method, json_body=body, content_type=operation.body_content_type)
+        self._status_error(response, operation="API")
         return _sanitize_payload(response.data), {
-            "verified": True,
-            "source": "reviewed OpenAPI GET operation",
+            "verified": operation.method == "GET",
+            "source": "reviewed OpenAPI operation",
             "operation": operation.action,
+            "method": operation.method,
             "http_status": response.status,
         }
+
+
+def configure_provider_connector(
 
 
 def configure_provider_connector(

@@ -87,6 +87,12 @@ class Capability:
     required_scopes: tuple[str, ...] = ()
     idempotent: bool = True
     supported: bool = True
+    input_schema: Mapping[str, Any] = field(default_factory=dict)
+    output_schema: Mapping[str, Any] = field(default_factory=dict)
+    operation_kind: str = "read"
+    changes_state: bool = False
+    reversible: bool = False
+    documentation_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -1005,6 +1011,12 @@ class IntegrationManager:
                 "missing_scopes": missing,
                 "requires_confirmation": item.risk != RiskLevel.READ_ONLY,
                 "idempotent": item.idempotent,
+                "input_schema": dict(item.input_schema),
+                "output_schema": dict(item.output_schema),
+                "operation_kind": item.operation_kind,
+                "changes_state": item.changes_state,
+                "reversible": item.reversible,
+                "documentation_url": item.documentation_url,
             })
         return out
 
