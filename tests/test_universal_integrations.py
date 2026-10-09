@@ -352,7 +352,6 @@ def test_natural_language_router_invokes_only_registered_read_operations():
     _flow, credentials = _authorize(connector, requester)
     manager = IntegrationManager(store=MemoryCredentialStore(), adapters=[connector])
     account = manager.connect("sample", credentials)
-    api_reads_before = len([call for call in requester.calls if "/users/" in call[0]])
     result = execute_with_manager(
         manager,
         action="execute",
@@ -363,6 +362,7 @@ def test_natural_language_router_invokes_only_registered_read_operations():
     )
     assert result["status"] == "succeeded_and_verified"
     assert result["provider_id"] == "sample"
+    api_reads_before_unsupported = len([call for call in requester.calls if "/users/" in call[0]])
 
     unsupported = execute_with_manager(
         manager,
@@ -374,7 +374,7 @@ def test_natural_language_router_invokes_only_registered_read_operations():
     )
     assert unsupported["status"] == "unsupported"
     api_reads_after = len([call for call in requester.calls if "/users/" in call[0]])
-    assert api_reads_after == api_reads_before
+    assert api_reads_after == api_reads_before_unsupported
 
 
 def _api_key_openapi():
