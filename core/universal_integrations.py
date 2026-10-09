@@ -67,8 +67,9 @@ class OpenAPIOperation:
             raise ValueError("Operation action must be a stable identifier.")
         if str(self.method).upper() != "GET":
             raise ValueError("The generic OpenAPI connector only executes GET operations.")
-        if not str(self.path).startswith("/") or "://" in self.path or "#" in self.path or ".." in self.path.split("/"):
-            raise ValueError("Operation path must be a relative API path.")
+        decoded_path = urllib.parse.unquote(str(self.path or ""))
+        if not str(self.path).startswith("/") or "://" in self.path or "#" in self.path or "?" in self.path or "\\" in self.path or ".." in decoded_path.split("/"):
+            raise ValueError("Operation path must be a safe relative API path.")
         placeholders = set(_PATH_PARAM_RE.findall(self.path))
         if placeholders != set(self.path_params):
             raise ValueError("Declared path parameters must exactly match the path template.")
@@ -323,6 +324,7 @@ def analyze_openapi_spec(
                     all_parameters.extend(operation_parameters)
                 path_params = tuple(sorted(set(_PATH_PARAM_RE.findall(path))))
                 query_params = []
+                declared_path_params = set()
                 valid_params = True
                 for parameter in all_parameters:
                     if not isinstance(parameter, Mapping):
@@ -330,12 +332,23 @@ def analyze_openapi_spec(
                         break
                     loc = parameter.get("in")
                     name = str(parameter.get("name") or "")
-                    if loc not in ("path", "query") or not name or (loc == "path" and name not in path_params):
+                    schema = parameter.get("schema")
+                    if loc not in ("path", "query") or not name or not isinstance(schema, Mapping):
                         valid_params = False
                         break
+                    if schema.get("type") not in ("string", "integer", "number", "boolean"):
+                        valid_params = False
+                        break
+                    if loc == "path":
+                        if name not in path_params or parameter.get("required") is not True:
+                            valid_params = False
+                            break
+                        declared_path_params.add(name)
                     if loc == "query":
                         query_params.append(name)
-                if not valid_params or len(set(query_params)) != len(query_params):
+                if (not valid_params or declared_path_params != set(path_params)
+                    or len(set(query_params)) != len(query_params)
+                    or set(query_params) & set(path_params)):
                     warnings.append("Skipped GET operation " + operation_id + " because its parameters could not be validated safely.")
                     continue
                 seen_ids.add(operation_id)
@@ -446,15 +459,19 @@ class OAuth2PKCEConnector:
         self.use_oidc = bool(use_oidc)
         if self.use_oidc and ("openid" not in self.requested_scopes or not self.metadata.issuer or not self.metadata.jwks_uri):
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OIDC mode requires the openid scope, issuer, and JWKS metadata.")
+        if self.use_oidc and self.identity_field != "sub":
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OIDC account identity must use the stable subject (sub) claim.")
         hosts = set(_normalized_host(item) for item in trusted_hosts if item)
+        if metadata.issuer:
+            issuer = _check_https_url(metadata.issuer, allowed_hosts=tuple(hosts))
+            hosts.add(_normalized_host(issuer.hostname or ""))
+        if not hosts:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Declare the provider's trusted HTTPS hosts explicitly.")
         for endpoint in (metadata.authorization_endpoint, metadata.token_endpoint, metadata.userinfo_endpoint):
-            hosts.add(_normalized_host(urllib.parse.urlparse(endpoint).hostname or ""))
             _check_https_url(endpoint, allowed_hosts=tuple(hosts))
         if metadata.jwks_uri:
-            hosts.add(_normalized_host(urllib.parse.urlparse(metadata.jwks_uri).hostname or ""))
             _check_https_url(metadata.jwks_uri, allowed_hosts=tuple(hosts))
         if metadata.revocation_endpoint:
-            hosts.add(_normalized_host(urllib.parse.urlparse(metadata.revocation_endpoint).hostname or ""))
             _check_https_url(metadata.revocation_endpoint, allowed_hosts=tuple(hosts))
         self.trusted_hosts = tuple(sorted(hosts))
         self.api_base_url = str(api_base_url or "").rstrip("/")
@@ -637,7 +654,9 @@ class OAuth2PKCEConnector:
         audiences = claims.get("aud")
         if isinstance(audiences, str):
             audiences = [audiences]
-        if not isinstance(audiences, list) or self.client_id not in audiences or (len(audiences) > 1 and claims.get("azp") != self.client_id):
+        if (not isinstance(audiences, list) or self.client_id not in audiences
+            or (len(audiences) > 1 and claims.get("azp") != self.client_id)
+            or (claims.get("azp") is not None and claims.get("azp") != self.client_id)):
             raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "OIDC ID token audience did not match this client.")
         try:
             now = time.time()
@@ -655,7 +674,9 @@ class OAuth2PKCEConnector:
         keys = response.data.get("keys") if response.status == 200 and isinstance(response.data, Mapping) else None
         if not isinstance(keys, list) or len(keys) > 100:
             raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "OIDC JWKS response is malformed.")
-        key = next((item for item in keys if isinstance(item, Mapping) and item.get("kid") == header["kid"] and item.get("kty") == "RSA"), None)
+        key = next((item for item in keys if isinstance(item, Mapping) and item.get("kid") == header["kid"]
+                    and item.get("kty") == "RSA" and item.get("use") in (None, "sig")
+                    and item.get("alg") in (None, "RS256")), None)
         if not key:
             raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "OIDC signing key was not found in the issuer's JWKS.")
         try:
@@ -731,10 +752,10 @@ class OAuth2PKCEConnector:
             form["client_secret"] = self.client_secret
         response = self._requester(self.metadata.token_endpoint, method="POST", form=form, timeout=8.0)
         data = response.data
-        if response.status in (400, 401) or not isinstance(data, Mapping) or not data.get("access_token"):
-            raise IntegrationError(IntegrationErrorCode.AUTHENTICATION_REQUIRED, "Provider token refresh failed; reconnect the account.")
         if response.status == 429:
             raise IntegrationError(IntegrationErrorCode.RATE_LIMITED, "Provider rate limit reached during token refresh.", retryable=True)
+        if response.status in (400, 401) or not isinstance(data, Mapping) or not data.get("access_token"):
+            raise IntegrationError(IntegrationErrorCode.AUTHENTICATION_REQUIRED, "Provider token refresh failed; reconnect the account.")
         updated = dict(credentials)
         updated["access_token"] = str(data["access_token"])
         updated["refresh_token"] = str(data.get("refresh_token") or refresh_token)
@@ -766,6 +787,12 @@ class OAuth2PKCEConnector:
         operation = self.operations.get(action)
         if operation is None:
             raise IntegrationError(IntegrationErrorCode.UNSUPPORTED_ACTION, "The provider does not declare this operation.")
+        try:
+            expires_at = float(credentials.get("expires_at") or 0)
+        except (TypeError, ValueError):
+            expires_at = 0
+        if expires_at and expires_at <= time.time():
+            raise IntegrationError(IntegrationErrorCode.AUTHORIZATION_EXPIRED, "Provider access token has expired; refresh or reconnect the account.")
         raw_scopes = credentials.get("scopes") or []
         if isinstance(raw_scopes, str):
             raw_scopes = raw_scopes.split()
