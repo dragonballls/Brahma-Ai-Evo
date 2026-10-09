@@ -68,9 +68,34 @@ def test_install_thread_performs_end_to_end_payload_activation(tmp_path, monkeyp
     assert errors == [], errors
     assert (target / "BrahmaEvo.exe").is_file()
     assert (target / "BrahmaEvoSupervisor.exe").is_file()
-    assert (target / "assets" / "runtime.txt").is_file()
     assert (target / "BrahmaEvo.exe").stat().st_size > 0
     assert (target / "BrahmaEvoSupervisor.exe").stat().st_size > 0
+
+    # Verify the complete installed tree against the payload actually supplied
+    # to the installer. The built production payload does not contain the
+    # synthetic fixture's assets/runtime.txt, so assert payload fidelity rather
+    # than requiring a file that exists only in the unit-test ZIP.
+    with zipfile.ZipFile(payload, "r") as archive:
+        expected = {
+            Path(member.filename).as_posix(): member
+            for member in archive.infolist()
+            if not member.is_dir()
+        }
+    installed = {
+        path.relative_to(target).as_posix(): path
+        for path in target.rglob("*")
+        if path.is_file()
+    }
+    assert set(installed) == set(expected), (
+        f"Installed file tree differs from payload: "
+        f"missing={sorted(set(expected) - set(installed))[:10]}, "
+        f"unexpected={sorted(set(installed) - set(expected))[:10]}"
+    )
+    for name, member in expected.items():
+        installed_path = installed[name]
+        assert installed_path.stat().st_size == member.file_size, (
+            f"Installed payload file has incorrect size: {name}"
+        )
 
     leftovers = [
         p.name
