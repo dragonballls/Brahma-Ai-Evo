@@ -719,9 +719,8 @@ class IntegrationManager:
         identity, scopes = adapter.validate_credentials(safe_credentials)
         if not identity or not str(identity).strip():
             raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "The provider did not return a verified account identity.")
-        required = {scope for cap in adapter.manifest.capabilities for scope in cap.required_scopes}
-        if required and not (required.issubset(set(scopes)) or all(scope == "read:user" and "user" in scopes for scope in required)):
-            raise IntegrationError(IntegrationErrorCode.MISSING_PERMISSION, "The account token is valid but did not grant the declared minimum scopes.")
+        # Validate identity here; individual capabilities enforce their own scopes at execution time.
+        # This avoids requesting every possible permission merely to connect an account.
         account_id = str(uuid.uuid4())
         record = {
             "account_id": account_id,
