@@ -452,6 +452,7 @@ def test_header_api_key_connector_validates_identity_and_runs_only_declared_get(
     assert "do-not-log-this" not in str(manager.activity_history())
 
     requester.status = 401
-    with pytest.raises(IntegrationError) as invalid_key:
-        manager.test_connection(account.account_id)
-    assert invalid_key.value.code == IntegrationErrorCode.AUTHENTICATION_REQUIRED
+    failed_check = manager.test_connection(account.account_id)
+    assert failed_check["ok"] is False
+    assert failed_check["evidence"]["error_code"] == IntegrationErrorCode.AUTHENTICATION_REQUIRED.value
+    assert failed_check["account"]["status"] == "Authentication Required"
