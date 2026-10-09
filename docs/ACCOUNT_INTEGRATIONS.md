@@ -19,7 +19,7 @@ A provider appearing in the catalog is not evidence that it is connected. A capa
 ## Architecture
 
 - `core/account_integrations.py` defines the provider manifest, capability/risk taxonomy, result and status contracts, typed errors, registry, bounded activity history, and secure-store protocol.
-- `core/universal_integrations.py` adds reusable OAuth2 authorization-code/PKCE, optional OIDC ID-token verification, OIDC discovery validation, and a constrained OpenAPI 3.0/3.1 JSON preview that proposes authenticated GET operations while keeping mutation operations blocked. It is a developer-preview adapter core, not a general provider setup form; a developer must construct/configure the adapter and explicitly register it.
+- `core/universal_integrations.py` adds reusable OAuth2 authorization-code/PKCE, optional OIDC ID-token verification, OIDC discovery validation, header-based API-key/bearer authentication with account identity validation, and a constrained OpenAPI 3.0/3.1 JSON preview that proposes authenticated GET operations while keeping mutation operations blocked. Query-string and cookie API-key authentication are intentionally disabled. It is a developer-preview adapter core, not a general provider setup form; a developer must construct/configure the adapter and explicitly register it.
 - WindowsCredentialManager uses Windows Credential Manager through pywin32. If the store is unavailable, account connection fails closed. There is intentionally no plaintext token-file fallback. MemoryCredentialStore is for tests only and is never selected as a production fallback.
 - GitHubConnector implements GitHub OAuth device authorization with the minimum read:user scope. It exposes read-only identity/profile, connection-test, and public-owned-repository operations. API results are verified from actual HTTPS responses. Public repository output is filtered so records marked private are never returned.
 - core/account_integrations_ui.py provides the Accounts & Integrations page. ui.py adds it to the existing Settings Hub navigation.
@@ -53,7 +53,7 @@ Credentials and sensitive values are excluded from the bounded activity history.
 
 ## Reusable OAuth/OIDC and OpenAPI onboarding (developer preview)
 
-The generic module is intended to reduce repeated work for standards-compatible providers. It is not a universal magic login: every provider still needs a registered adapter configured with that provider's official client ID, exact redirect URI, trusted HTTPS hosts, issuer metadata, requested scopes, API base URL, and reviewed operations.
+The generic module supports standards-compatible OAuth2/OIDC and documented header-based API-key/bearer services to reduce repeated work. It is not a universal magic login: every provider still needs a registered adapter configured with that provider's official client ID, exact redirect URI, trusted HTTPS hosts, issuer metadata, requested scopes, API base URL, and reviewed operations.
 
 - OIDC discovery verifies the configured issuer exactly and validates trusted HTTPS endpoints. The generic ID-token validator currently supports RS256 and checks the issuer, audience/authorized party, time claims, nonce, subject, JWKS signature, and matching UserInfo subject.
 - OpenAPI onboarding currently accepts JSON OpenAPI 3.0/3.1 only. External references are blocked; one explicit HTTPS server must be declared; read candidates need a single explicit OAuth2/OIDC security scheme and scopes; deprecated or ambiguous/unparameterized operations are skipped. Mutation endpoints are previewed as unsupported and are never executable through the generic connector.
@@ -71,7 +71,7 @@ Example developer workflow:
 
 ## Adding an adapter
 
-Create a provider-specific class implementing the Connector contract:
+Create a provider-specific class implementing the `Connector` contract, or configure `OAuth2PKCEConnector` / `APIKeyConnector` when the service fits one of those safe standard paths:
 
 1. Add a stable provider_id, display name, official authorization method, documentation URL, and accurate support status to an IntegrationManifest.
 2. Declare only operations supported by the provider's official API and document minimum scopes on each Capability. Keep read operations separate from reversible changes, messages/publications, financial actions, and destructive/security-sensitive actions.
