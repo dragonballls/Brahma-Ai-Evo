@@ -1231,7 +1231,6 @@ _HEADER_TOKEN = re.compile(r"^[!#$%&'*+.^_|~0-9A-Za-z-]+$")
 
 
 
-_HEADER_TOKEN = re.compile(r"^[!#$%&'*+.^_|~0-9A-Za-z-]+$")
 
 
 def _default_header_requester(
@@ -1527,7 +1526,6 @@ class APIKeyConnector:
 def configure_provider_connector(
 
 
-def configure_provider_connector(
     config: Mapping[str, Any],
     openapi_spec: str | Mapping[str, Any],
     *,
