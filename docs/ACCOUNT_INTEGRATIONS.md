@@ -16,6 +16,12 @@ This document describes the shared account integration framework in `core/accoun
 
 A provider appearing in the catalog is not evidence that it is connected. A capability is exposed only if an executable adapter declares it. A connected status is stored only after provider authentication and identity validation pass.
 
+## Provider manifest contract
+
+Every executable provider manifest carries its stable ID/name, official documentation references, declared capabilities and scope requirements, support status, identity-validation method, supported token expiry/refresh/revocation features, pagination strategy, timeout, rate-limit and retry behavior, cancellation behavior, confirmation/verification policy, setup requirements, and explicit limitations. Individual operations declare risk, idempotency, required scopes, and whether they are supported. The provider-discovery response exposes this metadata so the assistant can explain a limitation without inventing an operation.
+
+Manifest lifecycle fields describe what an adapter implements, not what every token/account is guaranteed to receive. For example, a connector may support refresh-token exchange but a specific OAuth grant may not issue a refresh token. The execution path must still verify the actual credential state and provider response.
+
 ## Architecture
 
 - `core/account_integrations.py` defines the provider manifest, capability/risk taxonomy, result and status contracts, typed errors, registry, bounded activity history, and secure-store protocol.
@@ -65,7 +71,7 @@ Example developer workflow:
 
 1. Obtain the provider's official API specification and OAuth/OIDC setup instructions.
 2. Validate issuer metadata with `discover_oidc_metadata` where the service is OIDC-compatible.
-3. Use `analyze_openapi_spec` for a constrained read-only candidate preview, review the generated actions and required scopes, then convert only reviewed candidates with `operations_from_openapi`.
+3. Use `analyze_openapi_spec` for a constrained read-only candidate preview, review the generated actions and required scopes, then convert only reviewed candidates with `operations_from_openapi`. For a single call that validates the explicit provider configuration, previews the supplied OpenAPI JSON, and builds the appropriate connector, use `configure_provider_connector(config, openapi_spec)`; this function still returns an unregistered preview, so review the manifest and explicitly register the connector only after approval.
 4. Construct `OAuth2PKCEConnector` with the exact metadata and trusted hosts, register it via `IntegrationManager.register`, and run the generic contract tests plus provider-specific tests before shipping.
 5. Add an adapter-specific settings/onboarding path that stores provider client configuration in appropriate secure/local settings and tokens only in the secure credential store. Do not ship user-supplied secrets in manifests, source, or logs.
 
