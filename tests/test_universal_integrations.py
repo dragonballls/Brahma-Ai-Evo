@@ -119,6 +119,7 @@ class FakeOAuthRequester:
                 "jwks_uri": "https://auth.example.test/oauth/jwks",
                 "code_challenge_methods_supported": ["S256"],
                 "response_types_supported": ["code"],
+                "id_token_signing_alg_values_supported": ["RS256"],
                 "scopes_supported": ["openid", "profile"],
             })
         if url.endswith("/oauth/jwks"):
@@ -582,3 +583,71 @@ def test_default_header_requester_sends_api_keys_raw_and_bearer_tokens_as_bearer
         request, timeout = captured[-1]
         assert request.get_header("Authorization") == expected
         assert timeout <= 15.0
+
+
+def test_oidc_es256_token_signature_is_validated_against_ec_jwks():
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    public_numbers = private_key.public_key().public_numbers()
+    x = _b64url(public_numbers.x.to_bytes(32, "big"))
+    y = _b64url(public_numbers.y.to_bytes(32, "big"))
+    requester = FakeOAuthRequester()
+    requester.jwks = {
+        "keys": [{
+            "kid": "ec-signing-key",
+            "kty": "EC",
+            "crv": "P-256",
+            "use": "sig",
+            "alg": "ES256",
+            "x": x,
+            "y": y,
+        }]
+    }
+    metadata = OAuthProviderMetadata(
+        issuer="https://auth.example.test",
+        authorization_endpoint="https://auth.example.test/oauth/authorize",
+        token_endpoint="https://auth.example.test/oauth/token",
+        userinfo_endpoint="https://auth.example.test/oauth/userinfo",
+        jwks_uri="https://auth.example.test/oauth/jwks",
+        id_token_signing_alg_values_supported=("ES256",),
+    )
+    connector, _ = _connector(
+        requester,
+        use_oidc=True,
+        metadata=metadata,
+        scopes=("openid", "profile", "people:read"),
+    )
+    now = time.time()
+    header = _b64url(json.dumps({"alg": "ES256", "kid": "ec-signing-key"}).encode("utf-8"))
+    claims = _b64url(json.dumps({
+        "iss": metadata.issuer,
+        "aud": "public-client",
+        "sub": "person-123",
+        "exp": now + 300,
+        "iat": now,
+        "nonce": "expected-nonce",
+    }).encode("utf-8"))
+    signing_input = (header + "." + claims).encode("ascii")
+    der_signature = private_key.sign(signing_input, ec.ECDSA(hashes.SHA256()))
+    r_value, s_value = decode_dss_signature(der_signature)
+    raw_signature = r_value.to_bytes(32, "big") + s_value.to_bytes(32, "big")
+    token = header + "." + claims + "." + _b64url(raw_signature)
+
+    assert connector._validate_id_token(token, "expected-nonce")["sub"] == "person-123"
+    with pytest.raises(IntegrationError):
+        connector._validate_id_token(token, "wrong-nonce")
+
+    rs256_only_metadata = OAuthProviderMetadata(
+        issuer=metadata.issuer,
+        authorization_endpoint=metadata.authorization_endpoint,
+        token_endpoint=metadata.token_endpoint,
+        userinfo_endpoint=metadata.userinfo_endpoint,
+        jwks_uri=metadata.jwks_uri,
+        id_token_signing_alg_values_supported=("RS256",),
+    )
+    rs256_only, _ = _connector(requester, use_oidc=True, metadata=rs256_only_metadata, scopes=("openid", "profile", "people:read"))
+    with pytest.raises(IntegrationError):
+        rs256_only._validate_id_token(token, "expected-nonce")
