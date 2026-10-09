@@ -214,10 +214,17 @@ def test_oidc_discovery_checks_issuer_pkce_and_trusted_endpoint_hosts():
     assert metadata.jwks_uri == "https://auth.example.test/oauth/jwks"
     assert any(call[0].endswith("/.well-known/openid-configuration") for call in requester.calls)
 
-    requester = FakeOAuthRequester()
-    requester.__call__ = lambda *args, **kwargs: HttpResponse(200, {}, {"issuer": "https://wrong.example"})
+    class MismatchRequester:
+        def __call__(self, url, *, method="GET", form=None, token=None, timeout=8.0):
+            return HttpResponse(200, {}, {
+                "issuer": "https://wrong.example",
+                "authorization_endpoint": "https://auth.example.test/oauth/authorize",
+                "token_endpoint": "https://auth.example.test/oauth/token",
+                "userinfo_endpoint": "https://auth.example.test/oauth/userinfo",
+                "jwks_uri": "https://auth.example.test/oauth/jwks",
+            })
     with pytest.raises(IntegrationError) as mismatch:
-        discover_oidc_metadata("https://auth.example.test", requester=requester)
+        discover_oidc_metadata("https://auth.example.test", requester=MismatchRequester())
     assert mismatch.value.code == IntegrationErrorCode.INVALID_AUTH_RESPONSE
 
 
@@ -335,3 +342,33 @@ def test_oidc_id_token_signature_audience_issuer_expiry_and_nonce_validation():
     assert connector._validate_id_token(token, "expected-nonce")["sub"] == "person-123"
     with pytest.raises(IntegrationError):
         connector._validate_id_token(token, "wrong-nonce")
+
+
+def test_natural_language_router_invokes_only_registered_read_operations():
+    from features.account_integrations import execute_with_manager
+
+    connector, requester = _connector()
+    _flow, credentials = _authorize(connector, requester)
+    manager = IntegrationManager(store=MemoryCredentialStore(), adapters=[connector])
+    account = manager.connect("sample", credentials)
+    result = execute_with_manager(
+        manager,
+        action="execute",
+        provider_id="sample",
+        account_id=account.account_id,
+        operation="sample.getUser",
+        arguments={"user_id": "target-user", "fields": "name"},
+    )
+    assert result["status"] == "succeeded_and_verified"
+    assert result["provider_id"] == "sample"
+
+    unsupported = execute_with_manager(
+        manager,
+        action="execute",
+        provider_id="sample",
+        account_id=account.account_id,
+        operation="sample.updateUser",
+        arguments={"user_id": "target-user"},
+    )
+    assert unsupported["status"] == "unsupported"
+    assert not any(call[0].endswith("/oauth/token") for call in requester.calls if call[2].get("grant_type") == "authorization_code" and call[0].endswith("/oauth/token"))
