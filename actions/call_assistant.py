@@ -273,6 +273,7 @@ class CallAssistant:
         # Generate post-call briefing
         self._finalize_call_report()
         CallAssistant._active_instance = None
+        return True
 
     def _speak(self, text: str):
         """
@@ -638,16 +639,14 @@ def start_call_proxy(event: dict, ui: Any = None, speak_fn: Optional[Callable[[s
     return assistant
 
 
-def take_over_active_call() -> None:
+def take_over_active_call() -> bool:
     """Invoked when user clicks Take Over or speaks take over command."""
     inst = CallAssistant.get_active()
-    if inst:
-        inst.take_over()
+    return bool(inst and inst.take_over())
 
 
-def hang_up_active_call() -> None:
+def hang_up_active_call() -> bool:
     """Invoked when user clicks Hang Up or asks Brahma to end the call."""
     inst = CallAssistant.get_active()
-    if inst:
-        inst.hang_up()
+    return bool(inst and inst.hang_up())
 

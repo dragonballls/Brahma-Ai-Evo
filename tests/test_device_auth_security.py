@@ -4,11 +4,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_device_auth_rejects_empty_or_malformed_credentials():
-    source = (ROOT / "brahma_connect" / "gateway" / "device_manager.py").read_text(encoding="utf-8")
-    assert 'if not key or not str(record.secret_hash or "").strip()' in source
-    assert 'if not str(secret or "").strip()' in source
+def test_device_auth_rejects_empty_or_malformed_credentials(tmp_path):
+    from brahma_connect.gateway.device_manager import DeviceManager
 
+    manager = DeviceManager(tmp_path / "devices.json")
+    record, secret = manager.create_from_pairing(name="Test Device", platform="android")
+    assert manager.authenticate(record.device_id, "") is None
+    assert manager.authenticate(record.device_id, "   ") is None
+    assert manager.authenticate(record.device_id, "not-the-device-secret") is None
+    assert manager.authenticate("", secret) is None
+    authenticated = manager.authenticate(record.device_id, secret)
+    assert authenticated is not None
+    assert authenticated.device_id == record.device_id
 
 def test_device_registry_temp_file_is_process_safe():
     source = (ROOT / "brahma_connect" / "gateway" / "device_manager.py").read_text(encoding="utf-8")

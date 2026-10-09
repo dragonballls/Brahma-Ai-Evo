@@ -62,4 +62,6 @@ def test_brahma_dev_accepts_final_response_after_verified_command(monkeypatch, t
     result = agent.run("build a project", max_turns=2)
 
     assert result == "The project is complete and the verification command passed."
-    assert agent.verification_evidence == ["python -m pytest -q"]
+    assert agent.verification_evidence == [
+        {"command": "python -m pytest -q", "generation": 0}
+    ]
