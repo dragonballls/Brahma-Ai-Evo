@@ -30,7 +30,9 @@ def test_gateway_pairing_uses_configured_pairing_ttl_after_hello():
     source = (ROOT / "brahma_connect" / "gateway" / "server.py").read_text(encoding="utf-8")
     assert "pairing_deadline: float | None = None" in source
     assert "deadline = pairing_deadline or handshake_deadline" in source
-    assert "pairing_deadline = loop.time() + self.config.pairing_ttl_seconds" in source
+    assert "pairing_deadline = _start_pairing_deadline(" in source
+    assert "accepted=True" in source
+    assert 'accepted=bool(result.get("success"))' in source
 
 
 class _FakeWebSocket:
