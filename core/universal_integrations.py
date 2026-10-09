@@ -1099,3 +1099,138 @@ class APIKeyConnector:
             "operation": operation.action,
             "http_status": response.status,
         }
+
+
+def configure_provider_connector(
+    config: Mapping[str, Any],
+    openapi_spec: str | Mapping[str, Any],
+    *,
+    requester: Callable[..., HttpResponse] | None = None,
+) -> tuple[Any, dict[str, Any]]:
+    """Build a reviewed generic adapter from explicit provider configuration.
+
+    Required config is intentionally small but provider-specific: provider_id,
+    display_name, auth_type, trusted_hosts, and either OAuth metadata/client details
+    or API-key header/identity endpoint. No endpoints are guessed from names.
+    The returned OpenAPI preview is still not registered; callers must review it
+    and explicitly register the returned connector with IntegrationManager.
+    """
+    if not isinstance(config, Mapping):
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Provider configuration must be an object.")
+    provider_id = str(config.get("provider_id") or "").strip().lower()
+    if not _PROVIDER_RE.fullmatch(provider_id):
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Provider identifier must use lowercase letters, digits, underscores, or hyphens.")
+    display_name = str(config.get("display_name") or provider_id).strip()[:120]
+    auth_type = str(config.get("auth_type") or "").strip().lower()
+    if auth_type not in ("oidc", "oauth2", "api_key", "bearer"):
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Choose an explicitly supported auth_type: oidc, oauth2, api_key, or bearer.")
+    raw_hosts = config.get("trusted_hosts")
+    if not isinstance(raw_hosts, (list, tuple)) or not raw_hosts or any(not isinstance(host, str) for host in raw_hosts):
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "trusted_hosts must explicitly list the provider's approved HTTPS hostnames.")
+    trusted_hosts = tuple(sorted({_normalized_host(host) for host in raw_hosts if _normalized_host(host)}))
+    if not trusted_hosts:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "No valid trusted HTTPS hostnames were configured.")
+    preview = analyze_openapi_spec(
+        openapi_spec,
+        provider_id=provider_id,
+        trusted_server_hosts=trusted_hosts,
+        max_operations=int(config.get("max_operations", 250)),
+    )
+    candidates = preview["read_only_candidates"]
+    operations = operations_from_openapi(preview)
+    if not operations:
+        raise IntegrationError(IntegrationErrorCode.UNSUPPORTED_ACTION, "The reviewed API specification contains no safe, authenticated GET operations for this provider.")
+    if auth_type in ("api_key", "bearer"):
+        expected_type = auth_type
+        if any(item.auth_type != expected_type for item in operations):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "The API specification contains operations that do not use the configured header credential type. Use one authentication type per generic connector.")
+        candidate_headers = {item.api_key_header.casefold(): item.api_key_header for item in operations}
+        configured_header = str(config.get("api_key_header") or "").strip()
+        if configured_header:
+            if configured_header.casefold() not in candidate_headers:
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Configured credential header does not match the reviewed API specification.")
+            api_key_header = candidate_headers[configured_header.casefold()]
+        elif len(candidate_headers) == 1:
+            api_key_header = next(iter(candidate_headers.values()))
+        else:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Configure one explicit API credential header used by the reviewed operations.")
+        identity_url = str(config.get("identity_url") or "").strip()
+        if not identity_url:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Configure the documented identity/me endpoint; Brahma will not guess an identity endpoint.")
+        connector = APIKeyConnector(
+            provider_id=provider_id,
+            display_name=display_name,
+            identity_url=identity_url,
+            api_base_url=preview["server_url"],
+            api_key_header=api_key_header,
+            trusted_hosts=trusted_hosts,
+            operations=operations,
+            identity_field=str(config.get("identity_field") or "id"),
+            documentation_url=str(config.get("documentation_url") or "")[:2048],
+            requester=requester,
+        )
+    else:
+        expected_type = auth_type
+        expected_operation_type = "oidc" if auth_type == "oidc" else "oauth2"
+        if any(item.auth_type != expected_operation_type for item in operations):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "The API specification contains operations with a different auth type. Use one authentication type per generic connector.")
+        client_id = str(config.get("client_id") or "").strip()
+        redirect_uri = str(config.get("redirect_uri") or "").strip()
+        if not client_id or not redirect_uri:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OAuth configuration requires the official client_id and exact registered redirect_uri.")
+        raw_scopes = config.get("requested_scopes")
+        if not isinstance(raw_scopes, (list, tuple)) or not raw_scopes or any(not isinstance(scope, str) or not scope.strip() for scope in raw_scopes):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "requested_scopes must explicitly list the minimum provider permissions.")
+        requested_scopes = tuple(dict.fromkeys(str(scope).strip() for scope in raw_scopes))
+        if auth_type == "oidc":
+            if "openid" not in requested_scopes:
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OIDC configuration must request the openid scope.")
+            issuer = str(config.get("issuer") or "").strip()
+            if not issuer:
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OIDC configuration requires the exact official issuer.")
+            metadata = discover_oidc_metadata(issuer, trusted_hosts=trusted_hosts, requester=requester)
+            unsupported_scopes = set(requested_scopes) - set(metadata.scopes_supported)
+            if metadata.scopes_supported and unsupported_scopes:
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Requested scopes include values not listed in the provider's published OIDC metadata.")
+            identity_field = str(config.get("identity_field") or "sub")
+            if identity_field != "sub":
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OIDC account identity must use the validated stable sub claim.")
+        else:
+            endpoints = config.get("oauth_endpoints")
+            if not isinstance(endpoints, Mapping):
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OAuth2-only setup requires explicit documented endpoint metadata.")
+            issuer = str(endpoints.get("issuer") or "")
+            metadata = OAuthProviderMetadata(
+                issuer=issuer,
+                authorization_endpoint=str(endpoints.get("authorization_endpoint") or ""),
+                token_endpoint=str(endpoints.get("token_endpoint") or ""),
+                userinfo_endpoint=str(endpoints.get("userinfo_endpoint") or ""),
+                jwks_uri=str(endpoints.get("jwks_uri") or ""),
+                revocation_endpoint=str(endpoints.get("revocation_endpoint") or ""),
+                scopes_supported=tuple(str(item) for item in endpoints.get("scopes_supported", ()) if isinstance(item, str)),
+            )
+            if not metadata.authorization_endpoint or not metadata.token_endpoint or not metadata.userinfo_endpoint:
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OAuth2 metadata must explicitly define authorization, token, and userinfo endpoints.")
+            for endpoint in (metadata.authorization_endpoint, metadata.token_endpoint, metadata.userinfo_endpoint):
+                _check_https_url(endpoint, allowed_hosts=trusted_hosts)
+            if metadata.jwks_uri:
+                _check_https_url(metadata.jwks_uri, allowed_hosts=trusted_hosts)
+            if metadata.revocation_endpoint:
+                _check_https_url(metadata.revocation_endpoint, allowed_hosts=trusted_hosts)
+            identity_field = str(config.get("identity_field") or "id")
+        connector = OAuth2PKCEConnector(
+            provider_id=provider_id,
+            display_name=display_name,
+            client_id=client_id,
+            client_secret=str(config.get("client_secret") or ""),
+            redirect_uri=redirect_uri,
+            metadata=metadata,
+            api_base_url=preview["server_url"],
+            operations=operations,
+            requested_scopes=requested_scopes,
+            identity_field=identity_field,
+            trusted_hosts=trusted_hosts,
+            requester=requester,
+            use_oidc=(expected_type == "oidc"),
+        )
+    return connector, preview
