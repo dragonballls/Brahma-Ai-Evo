@@ -224,3 +224,33 @@ def test_custom_ui_worker_queues_write_confirmation_and_redacts_sensitive_argume
         "ok": True, "kind": "action",
         "data": {"status": "accepted_by_provider_unverified"},
     }]
+
+
+
+def test_custom_registry_persists_and_restores_graphql_schema_and_operations(monkeypatch, tmp_path):
+    monkeypatch.setattr(registry, "CONFIG_PATH", tmp_path / "custom-providers.json")
+    config = {
+        "provider_id": "registry_graphql", "display_name": "Registry GraphQL",
+        "protocol": "graphql", "auth_type": "api_key",
+        "trusted_hosts": ["api.example.test"], "api_key_header": "X-API-Key",
+        "identity_url": "https://api.example.test/me", "identity_field": "id",
+        "graphql_endpoint_url": "https://api.example.test/graphql",
+        "graphql_operations": [{
+            "operation_id": "getItem", "summary": "Read item",
+            "document": "query GetItem($id: ID!) { item(id: $id) { id } }",
+        }],
+    }
+    schema = "type Item { id: ID! } type Query { item(id: ID!): Item }"
+    manager = IntegrationManager(store=MemoryCredentialStore())
+    connector, _ = configure_provider_connector(config, schema)
+    saved = registry.save_custom_provider(manager, config, schema, connector)
+    assert saved["provider_id"] == "registry_graphql"
+    record = registry._read_document()["providers"][0]
+    assert record["openapi_spec"] == schema
+    assert record["config"]["protocol"] == "graphql"
+    assert record["config"]["graphql_operations"][0]["operation_id"] == "getItem"
+
+    restored_manager = IntegrationManager(store=MemoryCredentialStore())
+    restored = registry.register_saved_custom_providers(restored_manager)
+    assert restored["loaded"] == ["registry_graphql"]
+    assert restored_manager.connector("registry_graphql") is not None

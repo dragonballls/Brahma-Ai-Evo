@@ -731,3 +731,115 @@ def test_oidc_es256_token_signature_is_validated_against_ec_jwks():
     rs256_only, _ = _connector(requester, use_oidc=True, metadata=rs256_only_metadata, scopes=("openid", "profile", "people:read"))
     with pytest.raises(IntegrationError):
         rs256_only._validate_id_token(token, "expected-nonce")
+
+
+class FakeGraphQLRequester:
+    def __init__(self):
+        self.calls = []
+        self.status = 200
+        self.identity = {"id": "graphql-user"}
+        self.graphql_response = {"data": {"item": {"id": "item-1", "name": "Example"}, "updateItem": {"id": "item-1", "name": "Updated"}}}
+
+    def __call__(self, url, *, method="GET", form=None, token=None, api_key="", api_key_header="", json_body=None, content_type="application/json", timeout=8.0):
+        self.calls.append({
+            "url": url, "method": method, "token": token, "api_key": api_key,
+            "api_key_header": api_key_header, "body": json_body, "content_type": content_type,
+        })
+        if url.endswith("/me"):
+            return HttpResponse(self.status, {}, dict(self.identity))
+        if url.endswith("/graphql"):
+            return HttpResponse(self.status, {}, dict(self.graphql_response))
+        return HttpResponse(404, {}, {})
+
+
+def _graphql_config():
+    return {
+        "provider_id": "sample_graphql", "display_name": "Sample GraphQL",
+        "protocol": "graphql", "auth_type": "api_key",
+        "trusted_hosts": ["api.example.test"], "api_key_header": "X-API-Key",
+        "identity_url": "https://api.example.test/me", "identity_field": "id",
+        "graphql_endpoint_url": "https://api.example.test/graphql",
+        "graphql_operations": [
+            {
+                "operation_id": "getItem", "summary": "Read one item",
+                "document": "query GetItem($id: ID!) { item(id: $id) { id name } }",
+            },
+            {
+                "operation_id": "updateItem", "summary": "Update an item",
+                "document": "mutation UpdateItem($id: ID!, $name: String!) { updateItem(id: $id, name: $name) { id name } }",
+            },
+        ],
+    }
+
+
+_GRAPHQL_SCHEMA = """
+type Item { id: ID!, name: String! }
+type Query { item(id: ID!): Item }
+type Mutation { updateItem(id: ID!, name: String!): Item }
+"""
+
+
+def test_graphql_schema_validates_queries_mutations_and_capability_variables():
+    connector, preview = configure_provider_connector(_graphql_config(), _GRAPHQL_SCHEMA)
+    assert connector.provider_id == "sample_graphql"
+    assert preview["protocol"] == "graphql"
+    assert [item["operation_type"] for item in preview["review_candidates"]] == ["query", "mutation"]
+    query_cap = next(item for item in connector.manifest.capabilities if item.action == "sample_graphql.getItem")
+    mutation_cap = next(item for item in connector.manifest.capabilities if item.action == "sample_graphql.updateItem")
+    assert query_cap.risk.value == "read_only"
+    assert mutation_cap.risk.value != "read_only"
+    assert query_cap.input_schema["required"] == ["id"]
+    assert mutation_cap.input_schema["required"] == ["id", "name"]
+    assert preview["registered"] is False
+
+
+def test_graphql_query_executes_and_mutation_waits_for_confirmation_before_post():
+    requester = FakeGraphQLRequester()
+    connector, _preview = configure_provider_connector(_graphql_config(), _GRAPHQL_SCHEMA, requester=requester)
+    manager = IntegrationManager(store=MemoryCredentialStore(), adapters=[connector])
+    account = manager.connect("sample_graphql", {"api_key": "graphql-key"})
+
+    query = manager.execute(account.account_id, "sample_graphql.getItem", {"id": "item-1"})
+    assert query.status == ActionStatus.SUCCEEDED_VERIFIED
+    query_call = requester.calls[-1]
+    assert query_call["url"] == "https://api.example.test/graphql"
+    assert query_call["method"] == "POST"
+    assert query_call["body"]["operationName"] == "GetItem"
+    assert query_call["body"]["variables"] == {"id": "item-1"}
+
+    before_mutation = sum(1 for call in requester.calls if call["body"] and call["body"].get("operationName") == "UpdateItem")
+    pending = manager.execute(account.account_id, "sample_graphql.updateItem", {"id": "item-1", "name": "Updated"})
+    assert pending.status == ActionStatus.WAITING_FOR_CONFIRMATION
+    assert sum(1 for call in requester.calls if call["body"] and call["body"].get("operationName") == "UpdateItem") == before_mutation
+    completed = manager.confirm_action(pending.confirmation_id, approved=True)
+    assert completed.status == ActionStatus.ACCEPTED_UNVERIFIED
+    mutation_call = next(call for call in reversed(requester.calls) if call["body"] and call["body"].get("operationName") == "UpdateItem")
+    assert mutation_call["body"]["variables"] == {"id": "item-1", "name": "Updated"}
+    assert "verified" not in completed.verification_evidence
+
+
+def test_graphql_rejects_invalid_documents_variables_and_provider_errors_without_false_success():
+    requester = FakeGraphQLRequester()
+    bad = _graphql_config()
+    bad["graphql_operations"] = [{
+        "operation_id": "badRead", "summary": "Invalid read",
+        "document": "query BadRead($id: ID!) { noSuchField(id: $id) }",
+    }]
+    with pytest.raises(IntegrationError):
+        configure_provider_connector(bad, _GRAPHQL_SCHEMA)
+
+    connector, _preview = configure_provider_connector(_graphql_config(), _GRAPHQL_SCHEMA, requester=requester)
+    with pytest.raises(IntegrationError) as extra_variable:
+        connector.execute("sample_graphql.getItem", {"id": "item-1", "admin": True}, {"api_key": "graphql-key"})
+    assert extra_variable.value.code == IntegrationErrorCode.INVALID_REQUEST
+    before = len(requester.calls)
+    with pytest.raises(IntegrationError) as missing_variable:
+        connector.execute("sample_graphql.getItem", {}, {"api_key": "graphql-key"})
+    assert missing_variable.value.code == IntegrationErrorCode.INVALID_REQUEST
+    assert len(requester.calls) == before
+
+    requester.graphql_response = {"errors": [{"message": "private provider detail"}], "data": {"item": None}}
+    with pytest.raises(IntegrationError) as provider_error:
+        connector.execute("sample_graphql.getItem", {"id": "item-1"}, {"api_key": "graphql-key"})
+    assert provider_error.value.code == IntegrationErrorCode.PROVIDER_ERROR
+    assert "private provider detail" not in str(provider_error.value)
