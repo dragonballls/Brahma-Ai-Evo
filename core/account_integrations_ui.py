@@ -388,6 +388,9 @@ class AccountsIntegrationsPage(QWidget):
         self._test_btn = QPushButton("Test connection")
         self._test_btn.clicked.connect(lambda: self._run_account_action("test"))
         action_row.addWidget(self._test_btn)
+        self._refresh_auth_btn = QPushButton("Refresh authorization")
+        self._refresh_auth_btn.clicked.connect(lambda: self._run_account_action("refresh"))
+        action_row.addWidget(self._refresh_auth_btn)
         self._profile_btn = QPushButton("Read profile")
         self._profile_btn.clicked.connect(lambda: self._run_account_action("profile"))
         action_row.addWidget(self._profile_btn)
@@ -438,8 +441,14 @@ class AccountsIntegrationsPage(QWidget):
         return frame
 
     def _set_account_actions_enabled(self, enabled: bool):
-        for control in (self._test_btn, self._profile_btn, self._repos_btn, self._disconnect_btn):
-            control.setEnabled(bool(enabled))
+        account = next((item for item in self.manager.list_accounts() if item.account_id == self._selected_account_id), None) if self._selected_account_id else None
+        provider_id = account.provider_id if account else ""
+        self._test_btn.setEnabled(bool(enabled and account))
+        self._disconnect_btn.setEnabled(bool(enabled and account))
+        self._profile_btn.setEnabled(bool(enabled and account and provider_id in ("github", "roblox")))
+        self._repos_btn.setEnabled(bool(enabled and account and provider_id == "github"))
+        adapter = self.manager.connector(provider_id) if provider_id else None
+        self._refresh_auth_btn.setEnabled(bool(enabled and adapter and callable(getattr(adapter, "refresh_credentials", None))))
 
     def refresh(self):
         if not self.manager.store.available:
@@ -448,9 +457,14 @@ class AccountsIntegrationsPage(QWidget):
                 "On Windows, enable Windows Credential Manager support and restart Brahma."
             )
             self._connect_btn.setEnabled(False)
+            if hasattr(self, "_roblox_connect_btn"):
+                self._roblox_connect_btn.setEnabled(False)
         else:
-            self._connect_btn.setEnabled(self._worker is None and self._flow is None)
-            self._status.setText("Secure account storage is ready. No account is reported connected until GitHub validates the token.")
+            idle = self._worker is None and self._flow is None and self._roblox_flow is None
+            self._connect_btn.setEnabled(idle)
+            if hasattr(self, "_roblox_connect_btn"):
+                self._roblox_connect_btn.setEnabled(idle and self.roblox is not None)
+            self._status.setText("Secure account storage is ready. An account is connected only after the provider validates its identity.")
         try:
             accounts = self.manager.list_accounts()
         except IntegrationError as exc:
@@ -489,6 +503,80 @@ class AccountsIntegrationsPage(QWidget):
     def _account_selected(self, current, _previous):
         self._selected_account_id = str(current.data(Qt.ItemDataRole.UserRole)) if current else ""
         self._set_account_actions_enabled(bool(self._selected_account_id) and self._worker is None)
+
+    def _start_roblox_authorization(self):
+        if self.roblox is None:
+            self._roblox_status.setText("Roblox adapter is unavailable in this build.")
+            return
+        if self._worker is not None or self._flow is not None or self._roblox_flow is not None:
+            self._roblox_status.setText("Finish or cancel the current authorization before starting another.")
+            return
+        if not self.manager.store.available:
+            self._roblox_status.setText("Secure Windows Credential Manager storage is unavailable; no token will be saved.")
+            return
+        client_id = self._roblox_client_id.text().strip()
+        client_secret = self._roblox_client_secret.text()
+        redirect_uri = self._roblox_redirect_uri.text().strip()
+        if not client_id or not client_secret:
+            QMessageBox.information(self, "Roblox OAuth setup required", "Enter the Client ID and Client Secret from your Roblox OAuth app. The app must grant openid and profile scopes and register the exact loopback Redirect URI shown in this form.")
+            return
+        try:
+            flow = self.roblox.begin_authorization(client_id, client_secret, redirect_uri)
+            listener = _LoopbackOAuthCallback(redirect_uri, flow["state"])
+        except IntegrationError as exc:
+            self._roblox_status.setText(f"{exc.code.value}: {exc}")
+            return
+        except OSError:
+            self._roblox_status.setText("The local callback port is unavailable. Close the app using 127.0.0.1:8765 or register and enter a different supported loopback port.")
+            return
+        self._roblox_flow = flow
+        self._roblox_listener = listener
+        if not QDesktopServices.openUrl(QUrl(flow["authorization_url"])):
+            self._cancel_roblox_authorization()
+            self._roblox_status.setText("The authorization browser could not be opened. No credentials were stored.")
+            return
+        self._roblox_status.setText("Waiting for Roblox authorization in the browser. The callback listener is bound only to 127.0.0.1 and validates the OAuth state.")
+        self._roblox_cancel_btn.setEnabled(True)
+        self._roblox_connect_btn.setEnabled(False)
+        self._connect_btn.setEnabled(False)
+        self._roblox_callback_timer.start()
+
+    def _check_roblox_callback(self):
+        if not self._roblox_flow or not self._roblox_listener:
+            self._roblox_callback_timer.stop()
+            return
+        if time.time() >= float(self._roblox_flow.get("expires_at") or 0):
+            self._cancel_roblox_authorization()
+            self._roblox_status.setText("Roblox authorization expired. Start a new connection.")
+            return
+        if not self._roblox_listener.event.is_set():
+            return
+        listener, self._roblox_listener = self._roblox_listener, None
+        result = listener.result() or {"error": "missing_callback"}
+        listener.close()
+        self._roblox_callback_timer.stop()
+        if result.get("error"):
+            self._roblox_flow = None
+            self._roblox_cancel_btn.setEnabled(False)
+            self._roblox_status.setText("Roblox authorization was not completed. Cancelled or invalid callbacks were discarded; start a new connection.")
+            self.refresh()
+            return
+        flow, self._roblox_flow = self._roblox_flow, None
+        self._roblox_cancel_btn.setEnabled(False)
+        self._roblox_status.setText("Roblox authorization received; validating the token and account identity securely.")
+        self._launch_worker("roblox_exchange", connector=self.roblox, flow=flow, callback_url=result["callback_url"])
+
+    def _cancel_roblox_authorization(self):
+        self._roblox_callback_timer.stop()
+        listener, self._roblox_listener = self._roblox_listener, None
+        if listener is not None:
+            listener.close()
+        self._roblox_flow = None
+        self._roblox_cancel_btn.setEnabled(False)
+        self._roblox_status.setText("Roblox authorization cancelled locally. No token was saved.")
+        idle = self._worker is None and self._flow is None
+        self._roblox_connect_btn.setEnabled(bool(idle and self.manager.store.available and self.roblox is not None))
+        self._connect_btn.setEnabled(bool(idle and self.manager.store.available))
 
     def _start_authorization(self):
         client_id = self._client_id.text().strip()
@@ -541,7 +629,11 @@ class AccountsIntegrationsPage(QWidget):
             return
         self._set_account_actions_enabled(False)
         self._connect_btn.setEnabled(False)
-        self._worker = _AccountWorker(command, self.manager, self.github, **kwargs)
+        self._roblox_connect_btn.setEnabled(False)
+        self._cancel_btn.setEnabled(False)
+        self._roblox_cancel_btn.setEnabled(False)
+        connector = kwargs.pop("connector", self.github)
+        self._worker = _AccountWorker(command, self.manager, connector, **kwargs)
         self._worker.completed.connect(self._worker_completed)
         self._worker.finished.connect(self._worker_finished)
         self._worker.start()
@@ -551,8 +643,6 @@ class AccountsIntegrationsPage(QWidget):
         self._worker = None
         if worker is not None:
             worker.deleteLater()
-        self._set_account_actions_enabled(bool(self._selected_account_id))
-        self._connect_btn.setEnabled(self.manager.store.available and self._flow is None)
         self.refresh()
 
     def _worker_completed(self, result: dict[str, Any]):
@@ -618,5 +708,10 @@ class AccountsIntegrationsPage(QWidget):
 
     def closeEvent(self, event):
         self._poll_timer.stop()
+        self._roblox_callback_timer.stop()
+        if self._roblox_listener is not None:
+            self._roblox_listener.close()
+            self._roblox_listener = None
+        self._roblox_flow = None
         if event:
             super().closeEvent(event)
