@@ -1066,7 +1066,8 @@ class IntegrationManager:
         provider_revocation = "not_supported"
         revocation_error = None
         revoke = getattr(adapter, "revoke_credentials", None)
-        if callable(revoke):
+        revoke_supported = bool(getattr(adapter, "supports_revocation", True))
+        if callable(revoke) and revoke_supported:
             try:
                 revoke(record["credentials"])
                 provider_revocation = "succeeded"
