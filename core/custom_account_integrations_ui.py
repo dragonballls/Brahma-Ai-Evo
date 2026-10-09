@@ -267,7 +267,7 @@ class CustomProvidersWidget(QWidget):
         row.addWidget(self._disconnect_btn)
         self._operation = QComboBox()
         row.addWidget(self._operation, 2)
-        self._execute_btn = QPushButton("Run declared read")
+        self._execute_btn = QPushButton("Run selected operation")
         self._execute_btn.clicked.connect(self._run_operation)
         row.addWidget(self._execute_btn)
         layout.addLayout(row)

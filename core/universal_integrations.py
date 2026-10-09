@@ -425,10 +425,12 @@ def _validate_operation_value(value: Any, schema: Mapping[str, Any], *, depth: i
         raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "An operation argument is not an allowed declared value.")
     if kind == "object":
         properties = schema.get("properties", {})
-        if set(value) - set(properties) or set(schema.get("required", [])) - set(value):
+        extra_fields = set(value) - set(properties)
+        if (extra_fields and schema.get("additionalProperties", False) is not True) or set(schema.get("required", [])) - set(value):
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Object arguments contain undeclared fields or omit required fields.")
         for key, item in value.items():
-            _validate_operation_value(item, properties[key], depth=depth + 1)
+            if key in properties:
+                _validate_operation_value(item, properties[key], depth=depth + 1)
     elif kind == "array":
         if len(value) > int(schema.get("maxItems", 100)) or len(value) < int(schema.get("minItems", 0)):
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Array argument is outside its declared size limits.")
@@ -1223,6 +1225,11 @@ class OAuth2PKCEConnector:
             raise IntegrationError(IntegrationErrorCode.RATE_LIMITED, "Provider rate limit reached; retry later.", retryable=True)
         if response.status < 200 or response.status >= 300:
             raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Provider operation failed.")
+        if operation.output_schema and response.status != 204:
+            try:
+                _validate_operation_value(response.data, operation.output_schema)
+            except IntegrationError as exc:
+                raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Provider response did not match the declared response schema.") from exc
         return _sanitize_payload(response.data), {
             "verified": operation.method == "GET",
             "source": "reviewed OpenAPI operation",
@@ -1519,6 +1526,11 @@ class APIKeyConnector:
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Resolved operation URL left the configured API host.")
         response = self._request(url, api_key, method=operation.method, json_body=body, content_type=operation.body_content_type)
         self._status_error(response, operation="API")
+        if operation.output_schema and response.status != 204:
+            try:
+                _validate_operation_value(response.data, operation.output_schema)
+            except IntegrationError as exc:
+                raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Provider response did not match the declared response schema.") from exc
         return _sanitize_payload(response.data), {
             "verified": operation.method == "GET",
             "source": "reviewed OpenAPI operation",

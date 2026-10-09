@@ -58,7 +58,12 @@ def _openapi():
                     "parameters": [
                         {"name": "fields", "in": "query", "schema": {"type": "string"}}
                     ],
-                    "responses": {"200": {"description": "OK"}},
+                    "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {
+                        "type": "object",
+                        "properties": {"id": {"type": "string"}, "name": {"type": "string"}},
+                        "required": ["id"],
+                        "additionalProperties": True,
+                    }}}}},
                 },
                 "patch": {
                     "operationId": "updateUser",
@@ -69,7 +74,12 @@ def _openapi():
                         "required": ["name"],
                         "additionalProperties": False,
                     }}}},
-                    "responses": {"200": {"description": "OK"}},
+                    "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {
+                        "type": "object",
+                        "properties": {"id": {"type": "string"}, "name": {"type": "string"}},
+                        "required": ["id"],
+                        "additionalProperties": True,
+                    }}}}},
                 },
             },
             "/unsafe": {
@@ -91,6 +101,7 @@ class FakeOAuthRequester:
         self.userinfo_status = 200
         self.userinfo = {"sub": "person-123", "name": "Demo Person"}
         self.api_status = 200
+        self.api_data: dict[str, Any] = {"id": "target-user", "name": "Target User"}
         self.jwks: dict[str, Any] = {"keys": []}
         self.json_calls: list[tuple[str, str, Any, str]] = []
 
@@ -134,7 +145,7 @@ class FakeOAuthRequester:
         if url.endswith("/oauth/jwks"):
             return HttpResponse(200, {}, self.jwks)
         if "/users/" in url:
-            return HttpResponse(self.api_status, {}, {"id": "target-user", "name": "Target User"})
+            return HttpResponse(self.api_status, {}, dict(self.api_data))
         return HttpResponse(404, {}, {})
 
 
@@ -224,6 +235,12 @@ def test_confirmed_write_uses_declared_patch_and_schema_before_network_request()
     assert body == {"name": "New name"}
     assert content_type == "application/json"
     assert "verified" not in completed.verification_evidence
+
+    requester.api_data = {"id": 17, "name": "Malformed id"}
+    with pytest.raises(IntegrationError) as malformed_response:
+        connector.execute("sample.getUser", {"user_id": "target-user"}, credentials)
+    assert malformed_response.value.code == IntegrationErrorCode.PROVIDER_ERROR
+    requester.api_data = {"id": "target-user", "name": "Target User"}
 
     calls_before_invalid = len(requester.calls)
     with pytest.raises(IntegrationError):
@@ -439,8 +456,11 @@ class FakeAPIKeyRequester:
     def __init__(self):
         self.calls = []
         self.status = 200
+        self.json_calls = []
 
-    def __call__(self, url, *, method="GET", api_key="", api_key_header="", timeout=8.0):
+    def __call__(self, url, *, method="GET", api_key="", api_key_header="", json_body=None, content_type="application/json", timeout=8.0):
+        if json_body is not None:
+            self.json_calls.append((url, method, json_body, content_type))
         self.calls.append((url, method, api_key_header, api_key))
         if url.endswith("/whoami"):
             return HttpResponse(self.status, {}, {"id": "api-key-user", "name": "Key User"})
@@ -465,7 +485,7 @@ def test_openapi_preview_supports_header_api_keys_but_skips_query_api_keys():
     assert any("query/cookie API keys" in warning for warning in rejected["warnings"])
 
 
-def test_header_api_key_connector_validates_identity_and_runs_only_declared_get():
+def test_header_api_key_connector_validates_identity_and_runs_declared_read_and_confirmed_write():
     requester = FakeAPIKeyRequester()
     preview = analyze_openapi_spec(
         _api_key_openapi(),
@@ -498,6 +518,20 @@ def test_header_api_key_connector_validates_identity_and_runs_only_declared_get(
     assert result.result["name"] == "Target User"
     assert all(call[2] == "X-API-Key" for call in requester.calls)
     assert all(call[3] == "do-not-log-this" for call in requester.calls)
+    assert "do-not-log-this" not in str(manager.activity_history())
+
+    pending = manager.execute(account.account_id, "sample.updateUser", {
+        "user_id": "target-user", "body": {"name": "Changed by API key"},
+    })
+    assert pending.status == ActionStatus.WAITING_FOR_CONFIRMATION
+    assert not any(call[1] == "PATCH" for call in requester.calls)
+    accepted = manager.confirm_action(pending.confirmation_id, approved=True)
+    assert accepted.status == ActionStatus.ACCEPTED_UNVERIFIED
+    url, method, body, content_type = requester.json_calls[-1]
+    assert url == "https://api.example.test/v1/users/target-user"
+    assert method == "PATCH"
+    assert body == {"name": "Changed by API key"}
+    assert content_type == "application/json"
     assert "do-not-log-this" not in str(manager.activity_history())
 
     requester.status = 401

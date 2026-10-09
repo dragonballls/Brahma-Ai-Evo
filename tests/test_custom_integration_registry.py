@@ -163,3 +163,64 @@ def test_custom_ui_worker_routes_operation_to_the_selected_integration_manager()
     worker.run()
     manager.execute.assert_called_once_with("acct-1", "example_oidc.listItems", {"limit": 2})
     assert emitted == [{"ok": True, "kind": "action", "data": {"status": "succeeded_and_verified", "action": "example_oidc.listItems"}}]
+
+
+
+def test_custom_ui_worker_queues_write_confirmation_and_redacts_sensitive_arguments():
+    from types import SimpleNamespace
+    from core.custom_account_integrations_ui import _CustomProviderWorker
+
+    manager = MagicMock()
+    pending_result = MagicMock()
+    pending_result.to_dict.return_value = {
+        "status": "waiting_for_confirmation",
+        "provider_id": "example_oidc",
+        "action": "example_oidc.updateItem",
+        "confirmation_id": "confirm-123",
+    }
+    manager.execute.return_value = pending_result
+    account = SimpleNamespace(account_id="acct-1", provider_id="example_oidc")
+    capability = SimpleNamespace(
+        action="example_oidc.updateItem",
+        description="Update one item",
+        risk=SimpleNamespace(value="reversible_change"),
+    )
+    manager.list_accounts.return_value = [account]
+    manager.connector.return_value = SimpleNamespace(
+        manifest=SimpleNamespace(capabilities=[capability])
+    )
+    emitted = []
+    worker = _CustomProviderWorker(
+        "execute", manager,
+        account_id="acct-1", action="example_oidc.updateItem",
+        arguments_text='{"item_id":"item-7","body":{"name":"safe","api_key":"never-display-this"}}',
+    )
+    worker.completed.connect(emitted.append)
+    worker.run()
+
+    manager.execute.assert_called_once_with("acct-1", "example_oidc.updateItem", {
+        "item_id": "item-7", "body": {"name": "safe", "api_key": "never-display-this"},
+    })
+    assert len(emitted) == 1
+    prompt = emitted[0]["confirmation_prompt"]
+    assert prompt["provider_id"] == "example_oidc"
+    assert prompt["operation"] == "example_oidc.updateItem"
+    assert prompt["risk"] == "reversible_change"
+    assert prompt["arguments"]["body"]["api_key"] == "[REDACTED]"
+    assert "never-display-this" not in json.dumps(prompt)
+    manager.confirm_action.assert_not_called()
+
+    confirmed_result = MagicMock()
+    confirmed_result.to_dict.return_value = {"status": "accepted_by_provider_unverified"}
+    manager.confirm_action.return_value = confirmed_result
+    confirm_events = []
+    confirmation_worker = _CustomProviderWorker(
+        "confirm", manager, confirmation_id="confirm-123", approved=True
+    )
+    confirmation_worker.completed.connect(confirm_events.append)
+    confirmation_worker.run()
+    manager.confirm_action.assert_called_once_with("confirm-123", approved=True)
+    assert confirm_events == [{
+        "ok": True, "kind": "action",
+        "data": {"status": "accepted_by_provider_unverified"},
+    }]
