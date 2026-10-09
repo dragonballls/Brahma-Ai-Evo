@@ -98,6 +98,20 @@ class IntegrationManifest:
     documentation_url: str = ""
     status: ConnectionStatus = ConnectionStatus.LIMITED_SUPPORT
     status_detail: str = ""
+    authentication_documentation_url: str = ""
+    identity_validation_method: str = "not_implemented"
+    supports_token_expiration: bool = False
+    supports_refresh: bool = False
+    supports_revocation: bool = False
+    pagination_strategy: str = "not_implemented"
+    retry_policy: str = "No automatic retry; never replay an uncertain non-idempotent operation."
+    rate_limit_behavior: str = "Provider rate limits are surfaced; no automatic replay."
+    timeout_seconds: float = REQUEST_TIMEOUT_SECONDS
+    cancellation_behavior: str = "Bounded request timeout; in-flight request cancellation is provider-specific."
+    confirmation_policy: str = "Non-read-only actions require approval through a trusted application interface."
+    verification_policy: str = "Only adapter-supplied evidence is reported; unverified results must remain unverified."
+    setup_requirements: tuple[str, ...] = ()
+    limitations: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -420,6 +434,14 @@ class GitHubConnector:
         documentation_url="https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps",
         status=ConnectionStatus.LIMITED_SUPPORT,
         status_detail="OAuth device authorization with profile and public-repository read operations. Requires a configured OAuth App with Device Flow enabled.",
+        authentication_documentation_url="https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps",
+        identity_validation_method="GET /user; require a stable GitHub login and explicit read:user scope",
+        supports_token_expiration=True,
+        supports_refresh=True,
+        pagination_strategy="One public-repository page capped at 30 items; cursor/page traversal is not exposed.",
+        rate_limit_behavior="Surface 403/429 rate limits as typed errors; no automatic replay.",
+        setup_requirements=("GitHub OAuth App client ID", "OAuth App Device Flow enabled", "read:user permission"),
+        limitations=("Only profile, connection test, and public owned-repository listing are executable.", "No private repository, write, issue, pull-request, release, or workflow mutations."),
         capabilities=(
             Capability("github.profile.read", "Read the connected GitHub account profile.", RiskLevel.READ_ONLY, ("read:user",)),
             Capability("github.repositories.public.list", "List public repositories for the connected account.", RiskLevel.READ_ONLY),
@@ -649,6 +671,15 @@ class RobloxConnector:
         documentation_url="https://create.roblox.com/docs/cloud/auth/oauth2-reference",
         status=ConnectionStatus.LIMITED_SUPPORT,
         status_detail="Official OAuth2/OIDC with PKCE; verified user identity and basic profile reads only. Roblox documents this OAuth API as beta; resource/game actions are not claimed.",
+        authentication_documentation_url="https://create.roblox.com/docs/cloud/auth/oauth2-reference",
+        identity_validation_method="GET /oauth/v1/userinfo; require stable OIDC subject (sub) and openid scope",
+        supports_token_expiration=True,
+        supports_refresh=True,
+        supports_revocation=True,
+        pagination_strategy="Not applicable to currently exposed profile operations.",
+        rate_limit_behavior="Surface 429 and permission/authentication failures as typed errors; no automatic replay.",
+        setup_requirements=("Roblox OAuth app client ID and client secret", "Exact registered loopback redirect URI", "openid and profile scopes"),
+        limitations=("Only connection test and basic profile reads are implemented.", "Roblox OAuth resources are beta; arbitrary game control and private account actions are not supported."),
         capabilities=(
             Capability("roblox.connection.test", "Validate the authorization and Roblox user identity.", RiskLevel.READ_ONLY, ("openid",)),
             Capability("roblox.profile.read", "Read the connected Roblox account's basic profile.", RiskLevel.READ_ONLY, ("openid", "profile")),
