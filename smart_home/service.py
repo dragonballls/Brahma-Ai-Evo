@@ -136,7 +136,13 @@ class SmartHomeService:
         if not isinstance(result, dict):
             raise RuntimeError("Smart-home provider returned an invalid action result.")
         if result.get("success") is not True:
-            detail = str(result.get("error") or result.get("detail") or "Smart-home provider did not provide authoritative success verification.")
+            # A provider detail may mean the request was accepted, not that the state change was verified.
+            if result.get("error"):
+                detail = str(result["error"])
+            elif result.get("success") is False and result.get("detail"):
+                detail = str(result["detail"])
+            else:
+                detail = "Smart-home provider did not provide authoritative success verification."
             self._storage.log_activity(device["name"], f"Action failed: {detail}")
             return {"success": False, "device": device, "detail": detail, "error": detail}
         self._storage.update_device(device_id, is_on=result.get("is_on"), traits=result.get("traits"))
