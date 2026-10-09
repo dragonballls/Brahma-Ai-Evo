@@ -391,3 +391,151 @@ def test_natural_language_connect_and_disconnect_never_modify_accounts_directly(
     assert connect["status"] == "waiting_for_user_authorization"
     assert disconnect["status"] == "waiting_for_confirmation"
     assert store.read(account.account_id) == before
+
+
+class RobloxRequester:
+    def __init__(self):
+        self.calls = []
+        self.userinfo_status = 200
+        self.refresh_number = 0
+
+    def __call__(self, url, *, method="GET", form=None, token=None, timeout=8.0):
+        form = dict(form or {})
+        self.calls.append((url, method, form, token))
+        if url.endswith("/oauth/v1/token") and form.get("grant_type") == "authorization_code":
+            return HttpResponse(200, {}, {
+                "access_token": "roblox-access-1",
+                "refresh_token": "roblox-refresh-1",
+                "token_type": "Bearer",
+                "expires_in": 900,
+                "scope": "openid profile",
+            })
+        if url.endswith("/oauth/v1/token") and form.get("grant_type") == "refresh_token":
+            self.refresh_number += 1
+            return HttpResponse(200, {}, {
+                "access_token": f"roblox-access-{self.refresh_number + 1}",
+                "refresh_token": f"roblox-refresh-{self.refresh_number + 1}",
+                "token_type": "Bearer",
+                "expires_in": 900,
+                "scope": "openid profile",
+            })
+        if url.endswith("/oauth/v1/token/revoke"):
+            return HttpResponse(200, {}, {})
+        if url.endswith("/oauth/v1/userinfo"):
+            return HttpResponse(self.userinfo_status, {}, {
+                "sub": "123456789",
+                "preferred_username": "roblox-demo",
+                "name": "Roblox Demo",
+                "nickname": "Roblox Demo",
+                "profile": "https://www.roblox.com/users/123456789/profile",
+            })
+        return HttpResponse(404, {}, {})
+
+
+def _roblox_callback(connector, requester):
+    from urllib.parse import parse_qs, urlencode, urlparse
+    flow = connector.begin_authorization(
+        "roblox-public-client",
+        "roblox-client-secret",
+        "http://127.0.0.1:8765/roblox/callback",
+    )
+    parsed = urlparse(flow["authorization_url"])
+    query = parse_qs(parsed.query)
+    assert query["code_challenge_method"] == ["S256"]
+    assert query["scope"] == ["openid profile"]
+    callback = flow["redirect_uri"] + "?" + urlencode({"code": "one-time-code", "state": flow["state"]})
+    credentials = connector.complete_authorization(flow, callback)
+    return flow, credentials
+
+
+def test_roblox_oauth_pkce_validates_state_callback_identity_and_profile():
+    from core.account_integrations import RobloxConnector
+    requester = RobloxRequester()
+    connector = RobloxConnector(requester=requester)
+    flow, credentials = _roblox_callback(connector, requester)
+    manager = IntegrationManager(store=MemoryCredentialStore(), adapters=[connector])
+    account = manager.connect("roblox", credentials)
+
+    assert account.identity == "123456789"
+    assert account.status == ConnectionStatus.CONNECTED
+    result = manager.execute(account.account_id, "roblox.profile.read")
+    assert result.status == ActionStatus.SUCCEEDED_VERIFIED
+    assert result.result["preferred_username"] == "roblox-demo"
+    token_calls = [call for call in requester.calls if call[0].endswith("/oauth/v1/token") and call[2].get("grant_type") == "authorization_code"]
+    assert len(token_calls) == 1
+    assert token_calls[0][2]["code_verifier"] == flow["code_verifier"]
+    assert "client_secret" not in str(manager.activity_history())
+
+
+def test_roblox_oauth_rejects_forged_state_and_redirect_uri_before_token_exchange():
+    from urllib.parse import urlencode
+    from core.account_integrations import RobloxConnector
+    requester = RobloxRequester()
+    connector = RobloxConnector(requester=requester)
+    flow = connector.begin_authorization(
+        "roblox-public-client", "roblox-client-secret",
+        "http://127.0.0.1:8765/roblox/callback",
+    )
+    wrong_state_callback = flow["redirect_uri"] + "?" + urlencode({"code": "wrong-code", "state": "forged"})
+    with pytest.raises(IntegrationError) as exc:
+        connector.complete_authorization(flow, wrong_state_callback)
+    assert exc.value.code == IntegrationErrorCode.INVALID_AUTH_RESPONSE
+    assert not any(call[0].endswith("/oauth/v1/token") for call in requester.calls)
+
+    wrong_uri = "http://127.0.0.1:8766/roblox/callback?code=x&state=" + flow["state"]
+    with pytest.raises(IntegrationError) as exc2:
+        connector.complete_authorization(flow, wrong_uri)
+    assert exc2.value.code == IntegrationErrorCode.INVALID_REQUEST
+    assert not any(call[0].endswith("/oauth/v1/token") for call in requester.calls)
+
+
+def test_roblox_rejects_non_loopback_redirects_and_invalid_authorization():
+    from core.account_integrations import RobloxConnector
+    connector = RobloxConnector(requester=RobloxRequester())
+    with pytest.raises(IntegrationError) as exc:
+        connector.begin_authorization("client", "secret", "http://192.168.1.50:8765/roblox/callback")
+    assert exc.value.code == IntegrationErrorCode.INVALID_REQUEST
+    with pytest.raises(IntegrationError):
+        connector.begin_authorization("client", "secret", "https://evil.example/callback")
+
+
+def test_roblox_refresh_rotates_refresh_token_and_disconnect_revokes_provider_grant():
+    from core.account_integrations import RobloxConnector
+    requester = RobloxRequester()
+    connector = RobloxConnector(requester=requester)
+    _flow, credentials = _roblox_callback(connector, requester)
+    manager = IntegrationManager(store=MemoryCredentialStore(), adapters=[connector])
+    account = manager.connect("roblox", credentials)
+
+    refreshed = manager.refresh_authorization(account.account_id)
+    stored = manager.store.read(account.account_id)
+    assert refreshed.identity == account.identity
+    assert stored["credentials"]["refresh_token"] == "roblox-refresh-2"
+    assert any(
+        call[2].get("grant_type") == "refresh_token" and call[2].get("refresh_token") == "roblox-refresh-1"
+        for call in requester.calls
+    )
+
+    disconnected = manager.disconnect(account.account_id)
+    assert disconnected["ok"] is True
+    assert disconnected["provider_revocation"] == "succeeded"
+    assert manager.list_accounts() == []
+    assert any(call[0].endswith("/oauth/v1/token/revoke") for call in requester.calls)
+
+
+def test_roblox_userinfo_permission_failure_is_not_a_success():
+    from core.account_integrations import RobloxConnector
+    requester = RobloxRequester()
+    requester.userinfo_status = 403
+    connector = RobloxConnector(requester=requester)
+    credentials = {
+        "access_token": "token",
+        "refresh_token": "refresh",
+        "client_id": "client",
+        "client_secret": "secret",
+        "expires_at": time.time() + 100,
+        "scopes": ["openid", "profile"],
+    }
+    with pytest.raises(IntegrationError) as exc:
+        connector.validate_credentials(credentials)
+    assert exc.value.code == IntegrationErrorCode.MISSING_PERMISSION
