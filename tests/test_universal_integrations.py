@@ -17,6 +17,7 @@ from core.account_integrations import (
     MemoryCredentialStore,
 )
 from core.universal_integrations import (
+    APIKeyConnector,
     OAuth2PKCEConnector,
     OAuthProviderMetadata,
     analyze_openapi_spec,
@@ -374,3 +375,83 @@ def test_natural_language_router_invokes_only_registered_read_operations():
     assert unsupported["status"] == "unsupported"
     api_reads_after = len([call for call in requester.calls if "/users/" in call[0]])
     assert api_reads_after == api_reads_before
+
+
+def _api_key_openapi():
+    document = _openapi()
+    document["components"]["securitySchemes"] = {
+        "apiKeyHeader": {"type": "apiKey", "in": "header", "name": "X-API-Key"}
+    }
+    document["security"] = [{"apiKeyHeader": []}]
+    return document
+
+
+class FakeAPIKeyRequester:
+    def __init__(self):
+        self.calls = []
+        self.status = 200
+
+    def __call__(self, url, *, method="GET", api_key="", api_key_header="", timeout=8.0):
+        self.calls.append((url, method, api_key_header, api_key))
+        if url.endswith("/whoami"):
+            return HttpResponse(self.status, {}, {"id": "api-key-user", "name": "Key User"})
+        if "/users/" in url:
+            return HttpResponse(self.status, {}, {"id": "target-user", "name": "Target User"})
+        return HttpResponse(404, {}, {})
+
+
+def test_openapi_preview_supports_header_api_keys_but_skips_query_api_keys():
+    document = _api_key_openapi()
+    preview = analyze_openapi_spec(document, provider_id="sample", trusted_server_hosts=("api.example.test",))
+    assert [item["action"] for item in preview["read_only_candidates"]] == ["sample.getUser"]
+    candidate = preview["read_only_candidates"][0]
+    assert candidate["auth_type"] == "api_key"
+    assert candidate["api_key_header"] == "X-API-Key"
+
+    document["components"]["securitySchemes"]["apiKeyHeader"] = {
+        "type": "apiKey", "in": "query", "name": "api_key"
+    }
+    rejected = analyze_openapi_spec(document, provider_id="sample", trusted_server_hosts=("api.example.test",))
+    assert rejected["read_only_candidates"] == []
+    assert any("query/cookie API keys" in warning for warning in rejected["warnings"])
+
+
+def test_header_api_key_connector_validates_identity_and_runs_only_declared_get():
+    requester = FakeAPIKeyRequester()
+    preview = analyze_openapi_spec(
+        _api_key_openapi(),
+        provider_id="sample",
+        trusted_server_hosts=("api.example.test",),
+    )
+    connector = APIKeyConnector(
+        provider_id="sample",
+        display_name="Sample API key service",
+        identity_url="https://api.example.test/v1/whoami",
+        api_base_url=preview["server_url"],
+        api_key_header="X-API-Key",
+        trusted_hosts=("api.example.test",),
+        operations=operations_from_openapi(preview),
+        identity_field="id",
+        documentation_url="https://api.example.test/docs",
+        requester=requester,
+    )
+    manager = IntegrationManager(store=MemoryCredentialStore(), adapters=[connector])
+    account = manager.connect("sample", {"api_key": "do-not-log-this"})
+    assert account.identity == "api-key-user"
+    assert account.status.value == "Connected"
+
+    result = manager.execute(
+        account.account_id,
+        "sample.getUser",
+        {"user_id": "target-user", "fields": "name"},
+    )
+    assert result.status == ActionStatus.SUCCEEDED_VERIFIED
+    assert result.result["name"] == "Target User"
+    assert all(call[2] == "X-API-Key" for call in requester.calls)
+    assert all(call[3] == "do-not-log-this" for call in requester.calls)
+    assert "do-not-log-this" not in str(manager.activity_history())
+
+    requester.status = 401
+    with pytest.raises(IntegrationError) as invalid_key:
+        manager.test_connection(account.account_id)
+    assert invalid_key.value.code == IntegrationErrorCode.AUTHENTICATION_REQUIRED
