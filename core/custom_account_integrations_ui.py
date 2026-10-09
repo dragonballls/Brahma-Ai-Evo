@@ -150,7 +150,7 @@ class _CustomProviderWorker(QThread):
         except IntegrationError as exc:
             self.completed.emit({"ok": False, "error_code": exc.code.value, "message": str(exc)})
         except json.JSONDecodeError:
-            self.completed.emit({"ok": False, "error_code": IntegrationErrorCode.INVALID_REQUEST.value, "message": "The configuration, OpenAPI document, or operation arguments contain invalid JSON."})
+            self.completed.emit({"ok": False, "error_code": IntegrationErrorCode.INVALID_REQUEST.value, "message": "The provider configuration or operation arguments contain invalid JSON; GraphQL SDL documents are plain text."})
         except (TypeError, ValueError):
             self.completed.emit({"ok": False, "error_code": IntegrationErrorCode.INVALID_REQUEST.value, "message": "The provider configuration or operation arguments are invalid."})
         except Exception:
@@ -195,7 +195,7 @@ class CustomProvidersWidget(QWidget):
         title = QLabel("Add a documented provider")
         title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
         layout.addWidget(title)
-        intro = QLabel("Use the provider's official API documentation and OpenAPI JSON. Review each discovered operation before enabling it. State-changing requests require a separate confirmation that displays the provider, risk, and target arguments. Do not enter a website password or put tokens/secrets into JSON.")
+        intro = QLabel("Use the provider's official API documentation and OpenAPI JSON or GraphQL SDL/introspection schema. Set protocol to graphql in provider configuration and list the exact named operations you want reviewed. State-changing requests require a separate confirmation showing provider, risk, and target arguments. Never enter a website password or put tokens/secrets into JSON.")
         intro.setWordWrap(True)
         layout.addWidget(intro)
         layout.addWidget(QLabel("Provider configuration JSON (replace example endpoints with the real documented provider)"))
@@ -203,7 +203,7 @@ class CustomProvidersWidget(QWidget):
         self._config.setMinimumHeight(130)
         self._config.setMaximumHeight(210)
         layout.addWidget(self._config)
-        layout.addWidget(QLabel("OpenAPI 3.0/3.1 JSON (one explicit HTTPS server; external references are rejected)"))
+        layout.addWidget(QLabel("API schema: OpenAPI 3.0/3.1 JSON or GraphQL SDL/introspection JSON (choose protocol in provider configuration)"))
         self._spec = QPlainTextEdit(json.dumps(_SAMPLE_OPENAPI, indent=2))
         self._spec.setMinimumHeight(160)
         self._spec.setMaximumHeight(250)
@@ -366,7 +366,8 @@ class CustomProvidersWidget(QWidget):
         blocked = [item for item in (preview.get("mutation_candidates") or []) if item.get("supported") is not True]
         rows = [
             str(item.get("method") or "GET") + " [" + str(item.get("risk") or "read_only") + "] " +
-            str(item.get("action")) + " — " + str(item.get("summary")) + " — " + str(item.get("path"))
+            str(item.get("action")) + " — " + str(item.get("summary")) + " — " + str(item.get("path")) +
+            ("\nGraphQL operation document:\n" + str(item.get("document") or "") if item.get("protocol") == "graphql" else "")
             for item in operations
         ]
         details = "Capabilities to be enabled:\n\n" + ("\n".join(rows) or "(none)")

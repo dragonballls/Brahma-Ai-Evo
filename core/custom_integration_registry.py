@@ -22,6 +22,7 @@ _PUBLIC_FIELDS = {
     "provider_id", "display_name", "auth_type", "trusted_hosts", "api_key_header",
     "identity_url", "identity_field", "documentation_url", "client_id", "redirect_uri",
     "requested_scopes", "issuer", "oauth_endpoints", "max_operations",
+    "protocol", "graphql_endpoint_url", "graphql_operations",
 }
 _ENDPOINT_FIELDS = ("issuer", "authorization_endpoint", "token_endpoint", "userinfo_endpoint", "jwks_uri", "revocation_endpoint", "scopes_supported")
 
@@ -129,12 +130,16 @@ def save_custom_provider(
         raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OAuth client secret exceeds the supported length.")
     try:
         spec_text = openapi_spec if isinstance(openapi_spec, str) else json.dumps(openapi_spec, ensure_ascii=False)
-        if len(spec_text.encode("utf-8")) > MAX_SPEC_BYTES or not isinstance(json.loads(spec_text), dict):
-            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI spec must be a JSON object within the size limit.")
+        if not isinstance(spec_text, str) or len(spec_text.encode("utf-8")) > MAX_SPEC_BYTES:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Provider schema exceeds the configured size limit.")
+        if str(config.get("protocol") or "openapi").strip().lower() != "graphql":
+            parsed_spec = json.loads(spec_text)
+            if not isinstance(parsed_spec, dict):
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI spec must be a JSON object.")
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         if isinstance(exc, IntegrationError):
             raise
-        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI spec must be valid JSON.") from exc
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Provider schema must be valid OpenAPI JSON or GraphQL SDL/introspection JSON.") from exc
 
     public = _public_config(config, connector)
     # Never copy secret material into this file, even if callers pass excess config fields.

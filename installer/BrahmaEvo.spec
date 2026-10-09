@@ -33,7 +33,7 @@ a = Analysis(
         'PyQt6.QtWebEngineWidgets', 'PyQt6.QtWebChannel', 'pyautogui', 'sounddevice',
         'docx', 'pptx', 'multipart', 'bcrypt', 'aiohttp', 'websockets',
         'uvicorn', 'fastapi', 'pydantic', 'typing_extensions', 'requests', 'bs4',
-        'pyaudio', 'numpy', 'speech_recognition', 'pocketsphinx', 'jev_ultrafast', 'jev_ultrafast.agent', 'jev_ultrafast.browser', 'jev_ultrafast.model', 'jev_ultrafast.questions', 'browser_harness'
+        'pyaudio', 'numpy', 'speech_recognition', 'pocketsphinx', 'jev_ultrafast', 'jev_ultrafast.agent', 'jev_ultrafast.browser', 'jev_ultrafast.model', 'jev_ultrafast.questions', 'browser_harness', 'graphql', 'graphql.language', 'graphql.type', 'graphql.utilities', 'graphql.validation', 'graphql.execution', 'graphql.error'
     ],
     hookspath=[],
     hooksconfig={},

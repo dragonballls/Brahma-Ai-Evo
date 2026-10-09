@@ -59,7 +59,7 @@ Action statuses distinguish rejected-before-execution, waiting for user authoriz
 
 Credentials and sensitive values are excluded from the bounded activity history. Provider-controlled result fields whose names look like token, secret, password, cookie, credential, authorization, or private-key data are removed before the result is returned to the conversation or UI.
 
-## Custom provider onboarding (OAuth/OIDC and OpenAPI)
+## Custom provider onboarding (OAuth/OIDC, OpenAPI and GraphQL)
 
 The built-in generic connector is designed for services with a documented HTTPS API, not for consumer website passwords or arbitrary browser scraping. It uses one reusable account manager and adapter contract, so an ordinary API fitting the supported contract can be configured without editing the central application's Python source.
 
@@ -70,7 +70,8 @@ The built-in generic connector is designed for services with a documented HTTPS 
 - **Results:** connection is not claimed until the configured identity endpoint verifies the provider-issued credential. HTTP write success is classified as accepted-but-unverified unless a separate supported readback proves the resulting state. Timeouts after sending a write can leave an uncertain remote outcome; Brahma avoids automatically repeating non-idempotent actions. Provider-side permissions and scope restrictions remain authoritative.
 - **Persistence:** account credentials remain in protected credential storage; public custom-provider configuration and its reviewed OpenAPI JSON are stored separately. On restart, connectors are restored from validated saved definitions and credentials are revalidated on connection test—saved configuration is not authentication evidence. A damaged/missing secret results in an attention/error state rather than a false connected state.
 - **Supported operation methods:** GET, POST, PUT, PATCH and DELETE when the operation's auth scheme and bounded JSON schemas fit the generic contract. Operation risk is conservatively classified and the manager confirms non-read methods before sending them.
-- **Protocol scope:** GraphQL, SOAP/WSDL, YAML imports, multipart/media upload, provider-specific request signing, alternative OAuth flows, custom pagination/cursors, and nonstandard response contracts require a separately tested adapter/plugin. The stable adapter contract is the intended extension point; the UI and core manager do not need vendor-specific rewrites.
+- **GraphQL:** Set protocol to graphql, configure the explicit HTTPS graphql_endpoint_url, supply SDL or introspection JSON, and list named query/mutation documents in graphql_operations. graphql-core validates the schema, operation documents and runtime variables before execution. Only explicitly declared operations are exposed; importing a schema never runs operations or fetches introspection automatically. Queries/mutations use bounded HTTPS JSON POST; mutations enter the same manager/UI confirmation queue as REST writes. OAuth2/OIDC PKCE and API-key/bearer headers reuse the authentication framework, with an explicit identity/UserInfo endpoint required for account validation.
+- **Remaining protocol scope:** SOAP/WSDL, YAML OpenAPI import, multipart/media upload, provider-specific signing, alternative OAuth grants and nonstandard response contracts require a separately tested adapter/plugin. Compatible services do not need vendor-specific UI rewrites.
 
 Example custom API workflow:
 

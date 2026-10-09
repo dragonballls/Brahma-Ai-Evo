@@ -28,7 +28,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install targeted test dependencies
-        run: python -m pip install --disable-pip-version-check requests fastapi uvicorn pytest cryptography pillow matplotlib speedtest-cli psutil playwright==1.63.0 pyautogui PyQt6==6.11.0 reportlab==5.0.1 python-docx==1.2.0 sounddevice==0.5.6 mss==10.2.0
+        run: python -m pip install --disable-pip-version-check requests fastapi uvicorn pytest cryptography pillow matplotlib speedtest-cli psutil playwright==1.63.0 pyautogui PyQt6==6.11.0 reportlab==5.0.1 python-docx==1.2.0 sounddevice==0.5.6 mss==10.2.0 graphql-core==3.2.6
 
       - name: Compile touched Python modules
         run: >

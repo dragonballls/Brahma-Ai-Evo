@@ -1814,6 +1814,9 @@ class GraphQLAPIKeyConnector(APIKeyConnector):
         self.graphql_endpoint_url, self.graphql_schema = graphql_endpoint_url, graphql_schema
         self.graphql_operations = {op.action: op for op in graphql_operations}
         super().__init__(operations=pseudo, api_base_url=graphql_endpoint_url, **kwargs)
+        # Keep the explicit auth mode authoritative. An API key named Authorization
+        # must not silently be converted to a Bearer credential.
+        self.credential_auth_type = credential_auth_type
         self.operations = self.graphql_operations
         old = self.manifest
         self.manifest = IntegrationManifest(
