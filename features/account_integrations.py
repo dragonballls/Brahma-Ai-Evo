@@ -6,11 +6,9 @@ This tool permits only reads that have been declared by a connected adapter.
 """
 from __future__ import annotations
 
-from dataclasses import asdict
 from typing import Any
 
 from core.account_integrations import (
-    ActionStatus,
     ConnectionStatus,
     IntegrationError,
     IntegrationErrorCode,
