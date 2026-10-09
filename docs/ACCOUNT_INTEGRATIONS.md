@@ -1,13 +1,13 @@
 # Brahma Evo Accounts & Integrations
 
-This document describes the shared account integration framework added in core/account_integrations.py. It is designed to become the common boundary between natural-language commands, provider adapters, credentials, and result reporting. It does not imply that every provider already has a live connector.
+This document describes the shared account integration framework in `core/account_integrations.py` and the developer-preview generic OAuth/OpenAPI layer in `core/universal_integrations.py`. Provider presence in a catalog does not imply live credentials or working operations.
 
 ## Current verified implementation boundary
 
 | Provider | Current state | Implemented operations |
 |---|---|---|
 | GitHub | Limited support; live OAuth flow is implemented | OAuth device authorization; validate account identity; test authorization; read the connected profile; list up to 30 public owned repositories |
-| Roblox | Limited support; informational catalog only | No authenticated connector is claimed in this release |
+| Roblox | Limited support; OAuth2/PKCE adapter implemented (live account not yet verified) | Authorization-code + PKCE, exact loopback callback/state validation, userinfo identity validation, connection test, basic profile read when scope is granted, refresh-token rotation, and documented token revocation |
 | Amazon | Limited support; informational catalog only | No private account, order, checkout, or purchase operations in the shared account connector |
 | Google Workspace | Existing legacy path; not migrated | Existing Gmail, Calendar, and Drive paths remain separate |
 | YouTube | Existing legacy path; not migrated | Existing video features remain separate; this connector does not claim authorized-channel or publishing operations |
@@ -18,12 +18,13 @@ A provider appearing in the catalog is not evidence that it is connected. A capa
 
 ## Architecture
 
-- core/account_integrations.py defines the provider manifest, capability/risk taxonomy, result and status contracts, typed errors, registry, bounded activity history, and secure-store protocol.
+- `core/account_integrations.py` defines the provider manifest, capability/risk taxonomy, result and status contracts, typed errors, registry, bounded activity history, and secure-store protocol.
+- `core/universal_integrations.py` adds reusable OAuth2 authorization-code/PKCE, optional OIDC ID-token verification, OIDC discovery validation, and a constrained OpenAPI 3.0/3.1 JSON preview that proposes authenticated GET operations while keeping mutation operations blocked. It is a developer-preview adapter core, not a general provider setup form; a developer must construct/configure the adapter and explicitly register it.
 - WindowsCredentialManager uses Windows Credential Manager through pywin32. If the store is unavailable, account connection fails closed. There is intentionally no plaintext token-file fallback. MemoryCredentialStore is for tests only and is never selected as a production fallback.
 - GitHubConnector implements GitHub OAuth device authorization with the minimum read:user scope. It exposes read-only identity/profile, connection-test, and public-owned-repository operations. API results are verified from actual HTTPS responses. Public repository output is filtered so records marked private are never returned.
 - core/account_integrations_ui.py provides the Accounts & Integrations page. ui.py adds it to the existing Settings Hub navigation.
-- features/account_integrations.py exposes safe provider/account/capability inspection and read-only GitHub queries to Brahma's existing dynamic feature registry. Starting OAuth and deleting saved credentials are routed back through explicit UI actions rather than model-controlled side effects.
-- tests/test_account_integrations.py provides deterministic tests using injected requester and credential-store fakes. Mocked provider responses test logic, not live provider availability.
+- `features/account_integrations.py` exposes provider/account/capability inspection and read-only provider operations for exact registered action IDs. It retains explicit UI-only connection/disconnection routing and asks the user to identify an account when multiple matches exist.
+- `tests/test_account_integrations.py` and `tests/test_universal_integrations.py` use deterministic HTTP and credential-store fakes. These tests validate logic only and are not proof of live provider availability.
 
 ## Connect a GitHub account
 
@@ -49,6 +50,24 @@ GitHub device authorization requires a configured OAuth App with Device Flow ena
 Action statuses distinguish rejected-before-execution, waiting for user authorization, waiting for confirmation, running, provider-accepted-but-unverified, succeeded-and-verified, failed, outcome-unknown, and unsupported. A result is never verified simply because a request was attempted. If a provider request may have succeeded but no trustworthy evidence was returned, do not blindly repeat a non-idempotent action.
 
 Credentials and sensitive values are excluded from the bounded activity history. Provider-controlled result fields whose names look like token, secret, password, cookie, credential, authorization, or private-key data are removed before the result is returned to the conversation or UI.
+
+## Reusable OAuth/OIDC and OpenAPI onboarding (developer preview)
+
+The generic module is intended to reduce repeated work for standards-compatible providers. It is not a universal magic login: every provider still needs a registered adapter configured with that provider's official client ID, exact redirect URI, trusted HTTPS hosts, issuer metadata, requested scopes, API base URL, and reviewed operations.
+
+- OIDC discovery verifies the configured issuer exactly and validates trusted HTTPS endpoints. The generic ID-token validator currently supports RS256 and checks the issuer, audience/authorized party, time claims, nonce, subject, JWKS signature, and matching UserInfo subject.
+- OpenAPI onboarding currently accepts JSON OpenAPI 3.0/3.1 only. External references are blocked; one explicit HTTPS server must be declared; read candidates need a single explicit OAuth2/OIDC security scheme and scopes; deprecated or ambiguous/unparameterized operations are skipped. Mutation endpoints are previewed as unsupported and are never executable through the generic connector.
+- Generated GET candidates are previews, not auto-enabled operations. Review the API terms, exact endpoint behavior, permissions, response schema, and provider rate limits; register only reviewed operations. Result verification means the provider returned a successful read response from the configured endpoint, not that every semantic claim in its data is independently true.
+- Generic adapter operations can be routed through the feature tool by exact provider ID and operation ID once the adapter is registered in the manager. The current Settings → Accounts & Integrations UI has dedicated GitHub and Roblox onboarding forms; a dynamic, persisted onboarding form for arbitrary providers has not yet been completed.
+- Do not point the generic adapter at user-provided private/local addresses or untrusted hosts, and do not use generic discovery to guess endpoints that do not appear in provider documentation.
+
+Example developer workflow:
+
+1. Obtain the provider's official API specification and OAuth/OIDC setup instructions.
+2. Validate issuer metadata with `discover_oidc_metadata` where the service is OIDC-compatible.
+3. Use `analyze_openapi_spec` for a constrained read-only candidate preview, review the generated actions and required scopes, then convert only reviewed candidates with `operations_from_openapi`.
+4. Construct `OAuth2PKCEConnector` with the exact metadata and trusted hosts, register it via `IntegrationManager.register`, and run the generic contract tests plus provider-specific tests before shipping.
+5. Add an adapter-specific settings/onboarding path that stores provider client configuration in appropriate secure/local settings and tokens only in the secure credential store. Do not ship user-supplied secrets in manifests, source, or logs.
 
 ## Adding an adapter
 
