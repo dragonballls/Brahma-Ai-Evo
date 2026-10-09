@@ -128,6 +128,7 @@ jobs:
             "tests/test_desktop_safety.py"
             "tests/test_dev_agent_safety.py"
             "tests/test_device_auth_security.py"
+            "tests/test_account_integrations.py"
             "tests/test_device_manager_resolution.py"
             "tests/test_duplex_voice.py"
             "tests/test_evo_integrations.py"
