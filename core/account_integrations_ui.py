@@ -211,12 +211,19 @@ class AccountsIntegrationsPage(QWidget):
         self.manager = manager or get_default_manager()
         adapter = self.manager.connector("github")
         self.github = adapter if isinstance(adapter, GitHubConnector) else GitHubConnector()
+        roblox_adapter = self.manager.connector("roblox")
+        self.roblox = roblox_adapter if isinstance(roblox_adapter, RobloxConnector) else None
         self._flow: dict[str, Any] | None = None
+        self._roblox_flow: dict[str, Any] | None = None
+        self._roblox_listener: _LoopbackOAuthCallback | None = None
         self._worker: _AccountWorker | None = None
         self._selected_account_id = ""
         self._poll_timer = QTimer(self)
         self._poll_timer.setSingleShot(True)
         self._poll_timer.timeout.connect(self._poll_authorization)
+        self._roblox_callback_timer = QTimer(self)
+        self._roblox_callback_timer.setInterval(250)
+        self._roblox_callback_timer.timeout.connect(self._check_roblox_callback)
 
         self.setObjectName("AccountsIntegrationsPage")
         self.setStyleSheet("""
@@ -321,6 +328,48 @@ class AccountsIntegrationsPage(QWidget):
         self._status.setWordWrap(True)
         gh_layout.addWidget(self._status)
         layout.addWidget(github_card)
+
+        # Roblox uses its official OAuth authorization-code flow with PKCE.
+        roblox_card = self._card()
+        roblox_layout = QVBoxLayout(roblox_card)
+        roblox_layout.setContentsMargins(14, 14, 14, 14)
+        roblox_layout.setSpacing(8)
+        roblox_title = QLabel("Roblox — OAuth 2.0 / PKCE")
+        roblox_title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+        roblox_layout.addWidget(roblox_title)
+        roblox_help = QLabel(
+            "Supports verified account identity and basic profile reads only. Create a Roblox OAuth app "
+            "with the openid and profile scopes, and register the exact loopback Redirect URI shown below. "
+            "Roblox labels its OAuth API as beta; game automation and private account changes are not included."
+        )
+        roblox_help.setWordWrap(True)
+        roblox_layout.addWidget(roblox_help)
+        self._roblox_client_id = QLineEdit()
+        self._roblox_client_id.setPlaceholderText("Roblox OAuth client ID")
+        self._roblox_client_secret = QLineEdit()
+        self._roblox_client_secret.setEchoMode(QLineEdit.EchoMode.Password)
+        self._roblox_client_secret.setPlaceholderText("Roblox OAuth client secret (stored only in Credential Manager after validation)")
+        self._roblox_redirect_uri = QLineEdit("http://127.0.0.1:8765/roblox/callback")
+        self._roblox_redirect_uri.setToolTip("Must exactly match the loopback Redirect URI registered in your Roblox OAuth app.")
+        roblox_layout.addWidget(self._roblox_client_id)
+        roblox_layout.addWidget(self._roblox_client_secret)
+        roblox_layout.addWidget(self._roblox_redirect_uri)
+        roblox_row = QHBoxLayout()
+        self._roblox_connect_btn = QPushButton("Connect Roblox")
+        self._roblox_connect_btn.clicked.connect(self._start_roblox_authorization)
+        self._roblox_cancel_btn = QPushButton("Cancel Roblox authorization")
+        self._roblox_cancel_btn.clicked.connect(self._cancel_roblox_authorization)
+        self._roblox_cancel_btn.setEnabled(False)
+        roblox_row.addWidget(self._roblox_connect_btn)
+        roblox_row.addWidget(self._roblox_cancel_btn)
+        roblox_layout.addLayout(roblox_row)
+        self._roblox_status = QLabel("Status: not connected")
+        self._roblox_status.setWordWrap(True)
+        roblox_layout.addWidget(self._roblox_status)
+        if self.roblox is None:
+            self._roblox_connect_btn.setEnabled(False)
+            self._roblox_status.setText("Status: unavailable — no Roblox adapter is registered.")
+        layout.addWidget(roblox_card)
 
         account_card = self._card()
         account_layout = QVBoxLayout(account_card)
