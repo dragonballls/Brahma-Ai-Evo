@@ -131,7 +131,7 @@ class ActionResult:
             "account_id": self.account_id,
             "action": self.action,
             "result": _sanitize_payload(self.result),
-            "verification_evidence": dict(self.verification_evidence),
+            "verification_evidence": _sanitize_payload(self.verification_evidence),
             "error_code": self.error_code,
             "message": _redact(self.message),
             "follow_up": _redact(self.follow_up or ""),
@@ -533,13 +533,20 @@ class GitHubConnector:
         if not login:
             raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "GitHub validated the token but returned no account identity.")
         scope_header = ""
+        scope_header_present = False
         for key, value in response.headers.items():
             if key.lower() == "x-oauth-scopes":
+                scope_header_present = True
                 scope_header = str(value or "")
                 break
         scopes = tuple(sorted({scope.strip() for scope in scope_header.split(",") if scope.strip()}))
-        response_scopes = {scope.strip() for scope in str(credentials.get("scopes") and ",".join(credentials.get("scopes", [])) or "").split(",") if scope.strip()}
-        effective_scopes = tuple(sorted(set(scopes or response_scopes)))
+        raw_credential_scopes = credentials.get("scopes") or []
+        if isinstance(raw_credential_scopes, str):
+            raw_credential_scopes = raw_credential_scopes.split(",")
+        response_scopes = {str(scope).strip() for scope in raw_credential_scopes if str(scope).strip()}
+        # When GitHub explicitly reports granted scopes, an empty header is
+        # authoritative and must not be overridden by token-response metadata.
+        effective_scopes = tuple(sorted(set(scopes if scope_header_present else response_scopes)))
         # The OAuth device flow requests only read:user. Fail closed if that scope
         # was not granted, instead of storing an account whose declared actions fail.
         if "read:user" not in effective_scopes and "user" not in effective_scopes:
@@ -882,17 +889,35 @@ class IntegrationManager:
             pending = self._pending.pop(str(confirmation_id or ""), None)
         if pending is None:
             return self._result(ActionStatus.REJECTED, "", None, "", code=IntegrationErrorCode.INVALID_REQUEST, message="Confirmation expired or is unknown; no action was executed.")
-        account_id, action, arguments, idempotency_key = pending
+        account_id, action, arguments, _idempotency_key = pending
         if not approved:
             return self._result(ActionStatus.REJECTED, "", account_id, action, code=IntegrationErrorCode.CANCELLED, message="The user cancelled the action; no provider request was sent.")
-        account, adapter, record = self._require_account(account_id)
-        result, evidence = adapter.execute(action, arguments, record["credentials"])
-        if not isinstance(evidence, Mapping):
-            return self._result(ActionStatus.OUTCOME_UNKNOWN, account.provider_id, account_id, action, code=IntegrationErrorCode.PROVIDER_ERROR, message="The action may have reached the provider, but no verification evidence was returned.")
-        status = ActionStatus.SUCCEEDED_VERIFIED if evidence.get("verified") is True else ActionStatus.ACCEPTED_UNVERIFIED
-        final = ActionResult(status, account.provider_id, account_id, action, result, {key: value for key, value in evidence.items() if key != "verified"}, message="User-approved action executed." if status == ActionStatus.SUCCEEDED_VERIFIED else "User-approved action was accepted but remains unverified.")
-        self._record_activity(account.provider_id, account_id, action, status.value, final.verification_evidence)
-        return final
+        try:
+            account, adapter, record = self._require_account(account_id)
+            capability = next((item for item in adapter.manifest.capabilities if item.action == action and item.supported), None)
+            if capability is None:
+                return self._result(ActionStatus.UNSUPPORTED, account.provider_id, account_id, action, code=IntegrationErrorCode.UNSUPPORTED_ACTION, message="This operation is no longer declared by the provider; no action was executed.")
+            missing = sorted(set(capability.required_scopes) - set(account.scopes))
+            if missing and not (missing == ["read:user"] and "user" in account.scopes):
+                return self._result(ActionStatus.REJECTED, account.provider_id, account_id, action, code=IntegrationErrorCode.MISSING_PERMISSION, message="Required provider permission is no longer present; no action was executed.")
+            result, evidence = adapter.execute(action, arguments, record["credentials"])
+            if not isinstance(evidence, Mapping):
+                final = self._result(ActionStatus.OUTCOME_UNKNOWN, account.provider_id, account_id, action, code=IntegrationErrorCode.PROVIDER_ERROR, message="The action may have reached the provider, but no verification evidence was returned.")
+                self._record_activity(account.provider_id, account_id, action, final.status.value)
+                return final
+            status = ActionStatus.SUCCEEDED_VERIFIED if evidence.get("verified") is True else ActionStatus.ACCEPTED_UNVERIFIED
+            final = ActionResult(status, account.provider_id, account_id, action, result, {key: value for key, value in evidence.items() if key != "verified"}, message="User-approved action executed." if status == ActionStatus.SUCCEEDED_VERIFIED else "User-approved action was accepted but remains unverified.")
+            self._record_activity(account.provider_id, account_id, action, status.value, final.verification_evidence)
+            return final
+        except IntegrationError as exc:
+            status = ActionStatus.UNSUPPORTED if exc.code == IntegrationErrorCode.UNSUPPORTED_ACTION else ActionStatus.FAILED
+            return self._result(status, "", account_id, action, code=exc.code, message=str(exc))
+        except Exception:
+            # Once an approved provider request starts, an unexpected exception
+            # is ambiguous rather than an automatic failure: avoid unsafe retries.
+            final = self._result(ActionStatus.OUTCOME_UNKNOWN, "", account_id, action, code=IntegrationErrorCode.PROVIDER_ERROR, message="The approved action's outcome is unknown; inspect provider state before retrying.")
+            self._record_activity("", account_id, action, final.status.value)
+            return final
 
     def activity_history(self) -> list[dict[str, Any]]:
         with self._lock:
