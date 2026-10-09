@@ -373,7 +373,10 @@ class CustomProvidersWidget(QWidget):
             # module is fully loaded to avoid a module-import cycle.
             from core.account_integrations_ui import _LoopbackOAuthCallback
             flow = adapter.begin_authorization()
-            listener = _LoopbackOAuthCallback(adapter.redirect_uri, str(flow.get("state") or ""))
+            listener = _LoopbackOAuthCallback(
+                adapter.redirect_uri, str(flow.get("state") or ""),
+                provider_name=getattr(getattr(adapter, "manifest", None), "display_name", provider),
+            )
         except (ValueError, OSError, IntegrationError) as exc:
             self._status.setText("OAuth could not start: " + str(exc))
             return

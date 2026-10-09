@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import hmac
+import html
 import threading
 import time
 import urllib.parse
@@ -39,9 +40,10 @@ from core.custom_account_integrations_ui import CustomProvidersWidget
 class _LoopbackOAuthCallback:
     """Small loopback-only callback receiver with strict path and OAuth-state checks."""
 
-    def __init__(self, redirect_uri: str, expected_state: str):
+    def __init__(self, redirect_uri: str, expected_state: str, *, provider_name: str = "Roblox"):
         parsed = RobloxConnector._redirect_parts(redirect_uri)
         self.redirect_uri = redirect_uri
+        self.display_name = html.escape(str(provider_name or "Account").strip()[:80])
         self.expected_state = str(expected_state)
         self._result: dict[str, str] | None = None
         self._lock = threading.Lock()
@@ -59,7 +61,7 @@ class _LoopbackOAuthCallback:
                     "<meta http-equiv=Content-Security-Policy content=\"default-src 'none'; style-src 'unsafe-inline'\">"
                     "<meta name=viewport content=\"width=device-width,initial-scale=1\"></head>"
                     "<body style=\"font-family:Segoe UI,sans-serif;padding:2rem\">"
-                    "<h2>Roblox authorization</h2><p>" + message +
+                    "<h2>" + outer.display_name + " authorization</h2><p>" + message +
                     "</p><p>You may return to Brahma Evo now.</p></body></html>"
                 ).encode("utf-8")
                 self.send_response(status)
@@ -107,7 +109,7 @@ class _LoopbackOAuthCallback:
         self.server = ThreadingHTTPServer((parsed.hostname, parsed.port), Handler)
         self.server.daemon_threads = True
         self.server.timeout = 0.5
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True, name="BrahmaRobloxOAuthCallback")
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True, name="BrahmaOAuthCallback")
         self.thread.start()
 
     def result(self) -> dict[str, str] | None:
