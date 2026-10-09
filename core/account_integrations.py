@@ -130,7 +130,7 @@ class ActionResult:
             "provider_id": self.provider_id,
             "account_id": self.account_id,
             "action": self.action,
-            "result": self.result,
+            "result": _sanitize_payload(self.result),
             "verification_evidence": dict(self.verification_evidence),
             "error_code": self.error_code,
             "message": _redact(self.message),
@@ -152,6 +152,35 @@ class IntegrationError(RuntimeError):
         self.retryable = bool(retryable)
         self.retry_after = retry_after
         super().__init__(_redact(message))
+
+
+def _looks_secret(key: str) -> bool:
+    lowered = str(key or "").casefold().replace("-", "_")
+    return any(marker in lowered for marker in ("token", "secret", "password", "credential", "cookie", "authorization", "device_code", "client_secret", "api_key", "private_key"))
+
+
+def _sanitize_payload(value: Any, *, depth: int = 0) -> Any:
+    """Bound nested provider data and remove fields that could contain secrets."""
+    if depth > 6:
+        return "[TRUNCATED]"
+    if isinstance(value, str):
+        return _redact(value)[:4000]
+    if isinstance(value, Mapping):
+        cleaned = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= 100:
+                cleaned["_truncated"] = True
+                break
+            name = str(key)[:120]
+            if _looks_secret(name):
+                continue
+            cleaned[name] = _sanitize_payload(item, depth=depth + 1)
+        return cleaned
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_payload(item, depth=depth + 1) for item in list(value)[:100]]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return _redact(value)
 
 
 def _redact(text: object) -> str:
@@ -494,10 +523,10 @@ class GitHubConnector:
         )
         if response.status == 401:
             raise IntegrationError(IntegrationErrorCode.AUTHENTICATION_REQUIRED, "GitHub rejected the authorization token; reconnect this account.")
+        if response.status == 429 or (response.status == 403 and any(key.lower() == "x-ratelimit-remaining" and str(value) == "0" for key, value in response.headers.items())):
+            raise IntegrationError(IntegrationErrorCode.RATE_LIMITED, "GitHub rate limit reached; retry after the provider's reset time.", retryable=True)
         if response.status == 403:
             raise IntegrationError(IntegrationErrorCode.MISSING_PERMISSION, "GitHub denied access to the account profile. Grant the required read:user permission.")
-        if response.status == 429 or (response.status == 403 and "X-RateLimit-Remaining" in response.headers and response.headers.get("X-RateLimit-Remaining") == "0"):
-            raise IntegrationError(IntegrationErrorCode.RATE_LIMITED, "GitHub rate limit reached; retry after the provider's reset time.", retryable=True)
         if response.status != 200:
             raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "GitHub account validation failed.")
         login = str(response.data.get("login") or "").strip()
