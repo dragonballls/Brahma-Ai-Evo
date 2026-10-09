@@ -223,12 +223,16 @@ def test_confirmed_write_uses_declared_patch_and_schema_before_network_request()
     assert method == "PATCH"
     assert body == {"name": "New name"}
     assert content_type == "application/json"
-    assert completed.verification_evidence["verified"] is False
+    assert "verified" not in completed.verification_evidence
 
     calls_before_invalid = len(requester.calls)
     with pytest.raises(IntegrationError):
         connector.execute("sample.updateUser", {
             "user_id": "target-user", "body": {"name": "Modified", "admin": True},
+        }, credentials)
+    with pytest.raises(IntegrationError):
+        connector.execute("sample.updateUser", {
+            "user_id": "target-user", "body": None,
         }, credentials)
     assert len(requester.calls) == calls_before_invalid
 

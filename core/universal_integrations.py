@@ -1169,7 +1169,7 @@ class OAuth2PKCEConnector:
         if operation.body_required and "body" not in args:
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "This operation requires a JSON request body.")
         body = args.get("body") if operation.body_schema is not None and "body" in args else None
-        if body is not None:
+        if operation.body_schema is not None and "body" in args:
             _validate_operation_value(body, operation.body_schema)
         path = operation.path
         for name in operation.path_params:
@@ -1476,7 +1476,7 @@ class APIKeyConnector:
         if operation.body_required and "body" not in args:
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "This operation requires a JSON request body.")
         body = args.get("body") if operation.body_schema is not None and "body" in args else None
-        if body is not None:
+        if operation.body_schema is not None and "body" in args:
             _validate_operation_value(body, operation.body_schema)
         path = operation.path
         for name in operation.path_params:
