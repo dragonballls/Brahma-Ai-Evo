@@ -904,6 +904,7 @@ def _default_header_requester(
     api_key: str,
     header_name: str,
     trusted_hosts: Sequence[str],
+    bearer_token: bool = False,
     timeout: float = 8.0,
 ) -> HttpResponse:
     """Send one bounded GET with an explicit header credential and no redirects."""
@@ -919,7 +920,7 @@ def _default_header_requester(
         headers={
             "Accept": "application/json",
             "User-Agent": "Brahma-Evo-Account-Integrations",
-            header: ("Bearer " + key) if header.casefold() == "authorization" else key,
+            header: ("Bearer " + key) if bearer_token else key,
         },
         method="GET",
     )
@@ -998,6 +999,10 @@ class APIKeyConnector:
                 raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Operation actions must use the configured provider prefix.")
             if operation.auth_type not in ("api_key", "bearer") or operation.api_key_header.casefold() != self.api_key_header.casefold():
                 raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Every operation must use the configured header-based API-key or bearer authentication.")
+        auth_types = {operation.auth_type for operation in self.operations.values()}
+        if len(auth_types) != 1:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "A generic header connector must use one consistent authentication type.")
+        self.credential_auth_type = next(iter(auth_types))
         capabilities = [
             Capability(item.action, item.summary, RiskLevel.READ_ONLY, item.required_scopes, idempotent=True, supported=True)
             for item in self.operations.values()
@@ -1013,7 +1018,7 @@ class APIKeyConnector:
         self.manifest = IntegrationManifest(
             provider_id=self.provider_id,
             display_name=str(display_name or self.provider_id)[:120],
-            auth_method="api_key_header" if self.api_key_header.casefold() != "authorization" else "bearer_token",
+            auth_method="bearer_token" if self.credential_auth_type == "bearer" else "api_key_header",
             documentation_url=str(documentation_url or "")[:2048],
             status=ConnectionStatus.LIMITED_SUPPORT,
             status_detail="Header-based API-key/bearer authentication with identity validation and reviewed read-only API operations only.",
@@ -1035,7 +1040,7 @@ class APIKeyConnector:
             return self._requester(url, method="GET", api_key=api_key, api_key_header=self.api_key_header, timeout=8.0)
         return _default_header_requester(
             url, api_key=api_key, header_name=self.api_key_header,
-            trusted_hosts=self.trusted_hosts, timeout=8.0,
+            trusted_hosts=self.trusted_hosts, bearer_token=(self.credential_auth_type == "bearer"), timeout=8.0,
         )
 
     @staticmethod
