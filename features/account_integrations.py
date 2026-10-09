@@ -34,6 +34,8 @@ FEATURE_METADATA = {
         "check my github connection",
         "test my github connection",
         "read my github profile",
+        "read my roblox profile",
+        "test my roblox connection",
         "show my public github repositories",
         "list my github repositories",
         "why can't you perform this account action",
@@ -45,7 +47,7 @@ FEATURE_METADATA = {
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "providers | accounts | capabilities | test_connection | github_profile | github_public_repositories | connect | disconnect",
+                "description": "providers | accounts | capabilities | test_connection | github_profile | roblox_profile | github_public_repositories | connect | disconnect",
             },
             "provider_id": {
                 "type": "STRING",
@@ -170,6 +172,8 @@ def execute_with_manager(manager, *, action: str = "accounts", provider_id: str 
         "profile": "github_profile",
         "read_profile": "github_profile",
         "github_profile": "github_profile",
+        "roblox_profile": "roblox_profile",
+        "read_roblox_profile": "roblox_profile",
         "public_repositories": "github_public_repositories",
         "list_public_repositories": "github_public_repositories",
         "github_public_repositories": "github_public_repositories",
@@ -183,9 +187,16 @@ def execute_with_manager(manager, *, action: str = "accounts", provider_id: str 
             "message": "That account operation is not declared by this tool. Inspect the provider capabilities before requesting an action.",
         }
 
-    provider_id = provider_id or "github"
-    if normalized != "test_connection" and provider_id != "github":
-        return {"status": "unsupported", "error_code": "unsupported_action", "message": "This read operation is currently implemented only for GitHub."}
+    if normalized == "roblox_profile":
+        provider_id = provider_id or "roblox"
+    else:
+        provider_id = provider_id or "github"
+    if normalized == "github_profile" and provider_id != "github":
+        return {"status": "unsupported", "error_code": "unsupported_action", "message": "GitHub profile reads require a connected GitHub account."}
+    if normalized == "github_public_repositories" and provider_id != "github":
+        return {"status": "unsupported", "error_code": "unsupported_action", "message": "Public-repository listing is currently implemented only for GitHub."}
+    if normalized == "roblox_profile" and provider_id != "roblox":
+        return {"status": "unsupported", "error_code": "unsupported_action", "message": "Roblox profile reads require a connected Roblox account."}
 
     account, error = _select_account(manager, provider_id, account_id)
     if error:
@@ -206,7 +217,11 @@ def execute_with_manager(manager, *, action: str = "accounts", provider_id: str 
                 "verification_evidence": checked.get("evidence") or {},
                 "error_code": None if checked.get("ok") else str((checked.get("evidence") or {}).get("error_code") or "connection_failed"),
             }
-        operation = "github.profile.read" if normalized == "github_profile" else "github.repositories.public.list"
+        operation = (
+            "github.profile.read" if normalized == "github_profile"
+            else "roblox.profile.read" if normalized == "roblox_profile"
+            else "github.repositories.public.list"
+        )
         result = manager.execute(account.account_id, operation)
         return result.to_dict()
     except IntegrationError as exc:
