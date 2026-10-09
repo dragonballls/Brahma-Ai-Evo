@@ -445,9 +445,11 @@ def _validate_operation_value(value: Any, schema: Mapping[str, Any], *, depth: i
 def _operation_risk(method: str, operation: Mapping[str, Any], path: str) -> RiskLevel:
     """Use conservative method/path semantics; summaries cannot lower DELETE risk."""
     method = str(method).upper()
+    raw_tags = operation.get("tags", [])
+    tags = raw_tags if isinstance(raw_tags, (list, tuple)) else []
     text = (path + " " + str(operation.get("summary") or "") + " " +
             str(operation.get("description") or "") + " " +
-            " ".join(tag for tag in operation.get("tags", []) if isinstance(tag, str))).casefold()
+            " ".join(tag for tag in tags if isinstance(tag, str))).casefold()
     if method == "GET":
         return RiskLevel.READ_ONLY
     if method == "DELETE" or any(word in text for word in ("permission", "credential", "access key", "api key", "token", "administrator", "admin", "security", "role", "revoke", "delete")):
@@ -509,7 +511,7 @@ def analyze_openapi_spec(
             operation_id = str(operation.get("operationId") or "")
             summary = str(operation.get("summary") or operation.get("description") or operation_id or (method.upper() + " " + path))[:400]
             if not operation_id or not _OPERATION_RE.fullmatch(operation_id) or operation_id in seen_ids:
-                warnings.append("Skipped " + method.upper() + " " + path + " because its operationId is missing, invalid, or duplicated.")
+                warnings.append("Skipped " + method.upper() + " " + path + " because a duplicate operationId is present or the operationId is missing/invalid.")
                 continue
             if operation.get("deprecated") is True:
                 warnings.append("Skipped deprecated operation " + operation_id + ".")
@@ -536,6 +538,9 @@ def analyze_openapi_spec(
                     warnings.append("Skipped operation " + operation_id + " because its API-key header scheme is invalid.")
                     continue
                 auth_type = "api_key"
+            elif scheme_type == "apiKey":
+                warnings.append("Skipped operation " + operation_id + " because query/cookie API keys are not supported; configure the key in a documented header or use an explicit adapter.")
+                continue
             elif scheme_type == "http" and str(scheme.get("scheme") or "").casefold() == "bearer":
                 api_key_header = "Authorization"
                 if scopes:
@@ -1524,8 +1529,6 @@ class APIKeyConnector:
 
 
 def configure_provider_connector(
-
-
     config: Mapping[str, Any],
     openapi_spec: str | Mapping[str, Any],
     *,

@@ -63,6 +63,12 @@ def _openapi():
                 "patch": {
                     "operationId": "updateUser",
                     "summary": "Update a user",
+                    "requestBody": {"required": True, "content": {"application/json": {"schema": {
+                        "type": "object",
+                        "properties": {"name": {"type": "string", "maxLength": 120}},
+                        "required": ["name"],
+                        "additionalProperties": False,
+                    }}}},
                     "responses": {"200": {"description": "OK"}},
                 },
             },
@@ -86,9 +92,12 @@ class FakeOAuthRequester:
         self.userinfo = {"sub": "person-123", "name": "Demo Person"}
         self.api_status = 200
         self.jwks: dict[str, Any] = {"keys": []}
+        self.json_calls: list[tuple[str, str, Any, str]] = []
 
-    def __call__(self, url, *, method="GET", form=None, token=None, timeout=8.0):
+    def __call__(self, url, *, method="GET", form=None, json_body=None, content_type="application/json", token=None, timeout=8.0):
         values = dict(form or {})
+        if json_body is not None:
+            self.json_calls.append((url, method, json_body, content_type))
         self.calls.append((url, method, values, token))
         if url.endswith("/oauth/token") and values.get("grant_type") == "authorization_code":
             return HttpResponse(200, {}, {
@@ -168,12 +177,15 @@ def _authorize(connector, requester):
     return flow, credentials
 
 
-def test_openapi_preview_only_offers_explicitly_authenticated_get_operations():
+def test_openapi_preview_discloses_read_and_reviewable_write_operations():
     result = analyze_openapi_spec(_openapi(), provider_id="sample", trusted_server_hosts=("api.example.test",))
     assert [item["action"] for item in result["read_only_candidates"]] == ["sample.getUser"]
     assert result["read_only_candidates"][0]["required_scopes"] == ["people:read"]
-    assert result["mutation_candidates"][0]["supported"] is False
+    assert result["mutation_candidates"][0]["supported"] is True
     assert result["mutation_candidates"][0]["method"] == "PATCH"
+    assert result["mutation_candidates"][0]["risk"] == "reversible_change"
+    assert result["mutation_candidates"][0]["body_required"] is True
+    assert result["review_candidates"] == result["read_only_candidates"] + result["mutation_candidates"]
     assert result["registered"] is False
     assert any("anonymousRead" in warning for warning in result["warnings"])
 
@@ -190,6 +202,35 @@ def test_openapi_preview_rejects_external_refs_and_insecure_servers():
     with pytest.raises(IntegrationError) as insecure:
         analyze_openapi_spec(spec, provider_id="sample")
     assert insecure.value.code == IntegrationErrorCode.INVALID_REQUEST
+
+
+def test_confirmed_write_uses_declared_patch_and_schema_before_network_request():
+    connector, requester = _connector()
+    _flow, credentials = _authorize(connector, requester)
+    manager = IntegrationManager(store=MemoryCredentialStore(), adapters=[connector])
+    account = manager.connect("sample", credentials)
+
+    pending = manager.execute(account.account_id, "sample.updateUser", {
+        "user_id": "target-user", "body": {"name": "New name"},
+    })
+    assert pending.status == ActionStatus.WAITING_FOR_CONFIRMATION
+    assert not any(call[1] == "PATCH" for call in requester.calls)
+    confirmation_id = pending.to_dict()["confirmation_id"]
+    completed = manager.confirm_action(confirmation_id, approved=True)
+    assert completed.status == ActionStatus.ACCEPTED_UNVERIFIED
+    url, method, body, content_type = requester.json_calls[-1]
+    assert url == "https://api.example.test/v1/users/target-user"
+    assert method == "PATCH"
+    assert body == {"name": "New name"}
+    assert content_type == "application/json"
+    assert completed.verification_evidence["verified"] is False
+
+    calls_before_invalid = len(requester.calls)
+    with pytest.raises(IntegrationError):
+        connector.execute("sample.updateUser", {
+            "user_id": "target-user", "body": {"name": "Modified", "admin": True},
+        }, credentials)
+    assert len(requester.calls) == calls_before_invalid
 
 
 def test_openapi_preview_rejects_private_server_and_duplicate_operation_ids():
@@ -232,7 +273,7 @@ def test_oidc_discovery_checks_issuer_pkce_and_trusted_endpoint_hosts():
     assert mismatch.value.code == IntegrationErrorCode.INVALID_AUTH_RESPONSE
 
 
-def test_generic_oauth_pkce_connects_validates_identity_and_executes_only_reviewed_get():
+def test_generic_oauth_pkce_connects_validates_identity_and_executes_reviewed_reads():
     connector, requester = _connector()
     flow, credentials = _authorize(connector, requester)
     assert len(flow["code_verifier"]) >= 43
@@ -375,7 +416,8 @@ def test_natural_language_router_invokes_only_registered_read_operations():
         operation="sample.updateUser",
         arguments={"user_id": "target-user"},
     )
-    assert unsupported["status"] == "unsupported"
+    assert unsupported["status"] == "waiting_for_confirmation"
+    assert unsupported["ui_route"] == "settings/accounts"
     api_reads_after = len([call for call in requester.calls if "/users/" in call[0]])
     assert api_reads_after == api_reads_before_unsupported
 

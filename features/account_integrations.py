@@ -2,7 +2,8 @@
 
 Connection setup and account deletion stay in the explicit Settings UI so a model
 cannot create a device-code flow or remove credentials without direct user action.
-This tool permits only reads that have been declared by a connected adapter.
+This tool executes declared reads; state-changing operations require confirmation
+through the trusted Settings UI and are never approved automatically.
 """
 from __future__ import annotations
 
@@ -20,8 +21,8 @@ FEATURE_METADATA = {
     "name": "account_integrations",
     "aliases": ["accounts", "connected_accounts", "account_connections", "integrations"],
     "description": (
-        "Inspect provider manifests and connected accounts, explain declared capabilities, test authorization, "
-        "and execute exact registered read-only operations through the matching adapter. GitHub profile and public-repository reads "
+        "Inspect provider manifests and connected accounts, explain declared capabilities and schemas, test authorization, "
+        "and execute exact registered operations through the matching adapter; state-changing actions require trusted UI confirmation. GitHub profile and public-repository reads "
         "and Roblox profile reads are currently implemented. Account connection and disconnection must be completed in the Accounts & Integrations UI."
     ),
     "triggers": [
@@ -219,9 +220,14 @@ def execute_with_manager(
             }
         if capability.risk != RiskLevel.READ_ONLY:
             return {
-                "status": "rejected_before_execution",
+                "status": "waiting_for_confirmation",
                 "error_code": "confirmation_required",
-                "message": "This natural-language route permits read-only operations only. Use a trusted provider-specific confirmation flow for changes; no request was sent.",
+                "provider_id": provider_id,
+                "operation": operation,
+                "risk": capability.risk.value,
+                "description": capability.description,
+                "message": "Review and approve this state-changing operation in Settings → Accounts & Integrations, where Brahma displays the exact target and consequence. No request was sent from the natural-language route.",
+                "ui_route": "settings/accounts",
             }
         account, error = _select_account(manager, provider_id, account_id)
         if error:

@@ -1,4 +1,4 @@
-"""Dynamic UI for user-configured integrations using reviewed, read-only API operations."""
+"""Dynamic UI for reviewed custom API integrations and confirmed state-changing operations."""
 from __future__ import annotations
 
 import json
@@ -9,8 +9,8 @@ from typing import Any, Mapping
 from PyQt6.QtCore import QThread, QTimer, Qt, pyqtSignal, QUrl
 from PyQt6.QtGui import QDesktopServices, QFont, QStandardItemModel
 from PyQt6.QtWidgets import (
-    QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-    QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
+    QComboBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout, QLabel,
+    QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
 from core.account_integrations import IntegrationError, IntegrationErrorCode, IntegrationManager
@@ -23,16 +23,51 @@ _SAMPLE_CONFIG = {
     "identity_url": "https://api.example.com/v1/me", "identity_field": "id",
     "documentation_url": "https://docs.example.com/api",
 }
+def _safe_confirmation_arguments(value: Any, *, depth: int = 0) -> Any:
+    """Redact likely secret fields before the user reviews a state-changing action."""
+    secret_markers = ("token", "secret", "password", "credential", "authorization", "cookie", "api_key", "private_key")
+    if depth > 8:
+        return "[TRUNCATED]"
+    if isinstance(value, Mapping):
+        result = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= 80:
+                result["_truncated"] = True
+                break
+            name = str(key)
+            normalized = name.casefold().replace("-", "_")
+            result[name] = "[REDACTED]" if any(marker in normalized for marker in secret_markers) else _safe_confirmation_arguments(item, depth=depth + 1)
+        return result
+    if isinstance(value, (list, tuple)):
+        return [_safe_confirmation_arguments(item, depth=depth + 1) for item in value[:80]]
+    if isinstance(value, str):
+        return value[:1500]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return str(value)[:500]
+
+
 _SAMPLE_OPENAPI = {
     "openapi": "3.0.3", "info": {"title": "Example API", "version": "1.0.0"},
     "servers": [{"url": "https://api.example.com"}],
     "components": {"securitySchemes": {"apiKey": {"type": "apiKey", "in": "header", "name": "X-API-Key"}}},
     "security": [{"apiKey": []}],
-    "paths": {"/v1/items/{item_id}": {"get": {
-        "operationId": "readItem", "summary": "Read one item",
-        "parameters": [{"name": "item_id", "in": "path", "required": True, "schema": {"type": "string"}}],
-        "responses": {"200": {"description": "Provider response"}},
-    }}},
+    "paths": {"/v1/items/{item_id}": {
+        "get": {
+            "operationId": "readItem", "summary": "Read one item",
+            "parameters": [{"name": "item_id", "in": "path", "required": True, "schema": {"type": "string"}}],
+            "responses": {"200": {"description": "Provider response"}},
+        },
+        "patch": {
+            "operationId": "updateItem", "summary": "Update one item",
+            "parameters": [{"name": "item_id", "in": "path", "required": True, "schema": {"type": "string"}}],
+            "requestBody": {"required": True, "content": {"application/json": {"schema": {
+                "type": "object", "properties": {"name": {"type": "string", "maxLength": 120}},
+                "required": ["name"], "additionalProperties": False
+            }}}},
+            "responses": {"200": {"description": "Updated item"}},
+        },
+    }},
 }
 
 
@@ -84,6 +119,24 @@ class _CustomProviderWorker(QThread):
                 if not isinstance(args, dict):
                     raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Operation arguments must be a JSON object.")
                 result = self.manager.execute(o["account_id"], o["action"], args)
+                data = result.to_dict()
+                payload = {"ok": True, "kind": "action", "data": data}
+                if data.get("status") == "waiting_for_confirmation" and data.get("confirmation_id"):
+                    account = next((item for item in self.manager.list_accounts() if item.account_id == o["account_id"]), None)
+                    adapter = self.manager.connector(account.provider_id) if account else None
+                    capability = next((item for item in getattr(getattr(adapter, "manifest", None), "capabilities", ())
+                                       if item.action == o["action"]), None)
+                    payload["confirmation_prompt"] = {
+                        "provider_id": account.provider_id if account else "selected provider",
+                        "operation": o["action"],
+                        "description": capability.description if capability else o["action"],
+                        "risk": capability.risk.value if capability else "state-changing action",
+                        "arguments": _safe_confirmation_arguments(args),
+                    }
+                self.completed.emit(payload)
+                return
+            if self.command == "confirm":
+                result = self.manager.confirm_action(o["confirmation_id"], approved=bool(o.get("approved")))
                 self.completed.emit({"ok": True, "kind": "action", "data": result.to_dict()})
                 return
             if self.command == "refresh":
@@ -112,6 +165,7 @@ class CustomProvidersWidget(QWidget):
         super().__init__(parent)
         self.manager = manager
         self._worker: _CustomProviderWorker | None = None
+        self._confirmation_request: dict[str, Any] | None = None
         self._pending: dict[str, Any] | None = None
         self._pending_snapshot: tuple[str, str, str] | None = None
         self._flow: dict[str, Any] | None = None
@@ -141,7 +195,7 @@ class CustomProvidersWidget(QWidget):
         title = QLabel("Add a documented provider")
         title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
         layout.addWidget(title)
-        intro = QLabel("Use the provider's official API documentation and OpenAPI JSON. Only reviewed authenticated GET operations can be enabled; writes remain blocked. Do not enter a website password or put tokens/secrets into JSON.")
+        intro = QLabel("Use the provider's official API documentation and OpenAPI JSON. Review each discovered operation before enabling it. State-changing requests require a separate confirmation that displays the provider, risk, and target arguments. Do not enter a website password or put tokens/secrets into JSON.")
         intro.setWordWrap(True)
         layout.addWidget(intro)
         layout.addWidget(QLabel("Provider configuration JSON (replace example endpoints with the real documented provider)"))
@@ -266,6 +320,29 @@ class CustomProvidersWidget(QWidget):
         self._refresh_providers()
         self._refresh_accounts()
         self._busy(False)
+        pending = self._confirmation_request
+        self._confirmation_request = None
+        if pending:
+            prompt = pending["prompt"]
+            message = (
+                "Provider: " + str(prompt["provider_id"]) +
+                "\nOperation: " + str(prompt["operation"]) +
+                "\nDeclared action: " + str(prompt["description"]) +
+                "\nRisk classification: " + str(prompt["risk"]) +
+                "\n\nExact arguments/target:\n" +
+                json.dumps(prompt["arguments"], ensure_ascii=False, indent=2)[:7000] +
+                "\n\nApprove sending this request to the provider? It may change remote state. "
+                "Rejecting sends no operation request."
+            )
+            answer = QMessageBox.question(
+                self, "Confirm provider operation", message,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            self._start_worker(
+                "confirm", confirmation_id=pending["confirmation_id"],
+                approved=(answer == QMessageBox.StandardButton.Yes),
+            )
 
     def _preview_provider(self):
         if self._worker is not None:
@@ -285,16 +362,39 @@ class CustomProvidersWidget(QWidget):
             self._save_btn.setEnabled(False)
             return
         preview = self._pending["preview"]
-        operations = preview.get("read_only_candidates") or []
-        display = "\n".join(str(x.get("action")) + " — " + str(x.get("summary")) for x in operations[:25]) or "(none)"
-        message = "Eligible read-only operations:\n\n" + display
-        if len(operations) > 25:
-            message += "\nAdditional operations are omitted from this confirmation."
-        message += "\n\nBlocked mutating operations: " + str(len(preview.get("mutation_candidates") or []))
-        message += "\n\nApprove and save this provider? Nothing is connected yet."
-        answer = QMessageBox.question(self, "Review provider operations", message,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
-        if answer != QMessageBox.StandardButton.Yes:
+        operations = preview.get("review_candidates") or []
+        blocked = [item for item in (preview.get("mutation_candidates") or []) if item.get("supported") is not True]
+        rows = [
+            str(item.get("method") or "GET") + " [" + str(item.get("risk") or "read_only") + "] " +
+            str(item.get("action")) + " — " + str(item.get("summary")) + " — " + str(item.get("path"))
+            for item in operations
+        ]
+        details = "Capabilities to be enabled:\n\n" + ("\n".join(rows) or "(none)")
+        if blocked:
+            details += "\n\nUnsupported operations remain blocked:\n" + "\n".join(
+                str(item.get("method")) + " " + str(item.get("path")) + ": " + str(item.get("unsupported_reason") or "unsupported contract")
+                for item in blocked
+            )
+        if preview.get("warnings"):
+            details += "\n\nImport warnings:\n" + "\n".join(str(item) for item in preview.get("warnings", []))
+        details += "\n\nNo requests are sent during registration. Every non-read action requires individual confirmation at execution time."
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Review provider capabilities")
+        dialog.resize(780, 600)
+        dialog_layout = QVBoxLayout(dialog)
+        review_text = QPlainTextEdit(dialog)
+        review_text.setReadOnly(True)
+        review_text.setPlainText(details)
+        dialog_layout.addWidget(review_text)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Yes | QDialogButtonBox.StandardButton.No, parent=dialog)
+        buttons.button(QDialogButtonBox.StandardButton.Yes).setText("Approve listed capabilities")
+        buttons.button(QDialogButtonBox.StandardButton.No).setText("Cancel")
+        buttons.button(QDialogButtonBox.StandardButton.No).setDefault(True)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        dialog_layout.addWidget(buttons)
+        answer = dialog.exec()
+        if answer != QDialog.DialogCode.Accepted:
             self._status.setText("Provider save cancelled; nothing was registered.")
             return
         pending = self._pending
@@ -467,7 +567,7 @@ class CustomProvidersWidget(QWidget):
             if not cap.supported or cap.action == account.provider_id + ".connection.test":
                 continue
             missing = sorted(set(cap.required_scopes) - set(account.scopes))
-            label = cap.action + " — " + cap.description
+            label = cap.action + " [" + ("READ" if cap.risk.value == "read_only" else cap.risk.value.upper()) + "] — " + cap.description
             if missing:
                 label += " (missing scopes: " + ", ".join(missing) + ")"
             self._operation.addItem(label, cap.action)
@@ -516,11 +616,16 @@ class CustomProvidersWidget(QWidget):
         if kind == "preview":
             self._pending, self._pending_snapshot = result, self._snapshot()
             preview = result["preview"]
-            rows = [str(x.get("action")) + " — " + str(x.get("summary")) for x in preview.get("read_only_candidates", [])]
-            body = "Read-only operations eligible for review:\n" + ("\n".join(rows[:35]) or "(none)")
-            if len(rows) > 35:
-                body += "\nAdditional operations omitted from this display."
-            body += "\nBlocked mutating operations: " + str(len(preview.get("mutation_candidates") or []))
+            rows = [
+                str(item.get("method") or "GET") + " [" + str(item.get("risk") or "read_only") + "] " +
+                str(item.get("action")) + " — " + str(item.get("summary"))
+                for item in preview.get("review_candidates", [])
+            ]
+            body = "Reviewed candidates (preview only; no API calls sent):\n" + ("\n".join(rows[:80]) or "(none)")
+            if len(rows) > 80:
+                body += "\n" + str(len(rows) - 80) + " additional candidates are shown in the scrollable approval dialog."
+            blocked = [item for item in (preview.get("mutation_candidates") or []) if item.get("supported") is not True]
+            body += "\nUnsupported state-changing operations: " + str(len(blocked))
             if preview.get("warnings"):
                 body += "\nReview warnings:\n" + "\n".join(str(x) for x in preview["warnings"][:10])
             body += "\n\nNothing is registered or executed until you approve the preview."
@@ -538,7 +643,19 @@ class CustomProvidersWidget(QWidget):
             self.accountsChanged.emit()
         elif kind == "action":
             data = result.get("data") or {}
-            self._status.setText("Operation status: " + str(data.get("status")) + "\nMessage: " + str(data.get("message")) + "\nVerification evidence: " + json.dumps(data.get("verification_evidence") or {}, ensure_ascii=False)[:1600] + "\nResult: " + json.dumps(data.get("result"), ensure_ascii=False)[:3000])
+            if data.get("status") == "waiting_for_confirmation" and data.get("confirmation_id"):
+                self._confirmation_request = {
+                    "confirmation_id": data["confirmation_id"],
+                    "prompt": result.get("confirmation_prompt") or {
+                        "provider_id": data.get("provider_id") or "selected provider",
+                        "operation": data.get("action") or "unknown operation",
+                        "description": data.get("action") or "state-changing operation",
+                        "risk": "state-changing action", "arguments": {},
+                    },
+                }
+                self._status.setText("Waiting for confirmation. The request has not been sent; review its target and consequence in the confirmation dialog.")
+            else:
+                self._status.setText("Operation status: " + str(data.get("status")) + "\nMessage: " + str(data.get("message")) + "\nVerification evidence: " + json.dumps(data.get("verification_evidence") or {}, ensure_ascii=False)[:1600] + "\nResult: " + json.dumps(data.get("result"), ensure_ascii=False)[:3000])
         elif kind == "refreshed":
             self._status.setText("Authorization refreshed and identity revalidated for " + str(result.get("provider_id")) + ": " + str(result.get("identity")))
             self.accountsChanged.emit()
