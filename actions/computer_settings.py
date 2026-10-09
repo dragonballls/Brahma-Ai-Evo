@@ -143,6 +143,44 @@ def brightness_get() -> int | None:
     return None
 
 
+def _read_xrandr_display_brightness() -> tuple[str, float]:
+    """Read the first connected XRandR output and its brightness without a shell."""
+    result = subprocess.run(["xrandr", "--verbose"], capture_output=True, text=True, timeout=5)
+    if result.returncode != 0:
+        raise RuntimeError(f"Unable to inspect XRandR brightness (exit {result.returncode}).")
+    output = result.stdout or ""
+    match = re.search(r"(?m)^(\S+)[ \t]+connected\b", output)
+    if match is None:
+        raise RuntimeError("XRandR did not report a connected display.")
+    display = match.group(1)
+    following = re.search(r"(?m)^\S+[ \t]+(?:connected|disconnected)\b", output[match.end():])
+    end = match.end() + following.start() if following else len(output)
+    block = output[match.start():end]
+    brightness = re.search(r"(?m)^[ \t]*Brightness:[ \t]*([0-9]+(?:\.[0-9]+)?)[ \t]*$", block)
+    if brightness is None:
+        raise RuntimeError("XRandR did not report brightness for the connected display.")
+    return display, float(brightness.group(1))
+
+
+def _adjust_xrandr_brightness(delta: float) -> None:
+    """Adjust XRandR brightness through argv and verify its final state."""
+    display, current = _read_xrandr_display_brightness()
+    target = max(0.1, min(1.0, current + float(delta)))
+    if abs(target - current) < 0.001:
+        return
+    result = subprocess.run(
+        ["xrandr", "--output", display, "--brightness", f"{target:.2f}"],
+        capture_output=True, text=True, timeout=5,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"XRandR brightness command failed (exit {result.returncode}).")
+    actual_display, observed = _read_xrandr_display_brightness()
+    if actual_display != display or abs(observed - target) > 0.05:
+        raise RuntimeError(
+            f"XRandR brightness final state mismatch: requested {target:.2f}, observed {observed:.2f}."
+        )
+
+
 def brightness_set(value: int) -> None:
     """Set brightness and verify the observable final value before returning."""
     value = max(0, min(100, int(value)))
@@ -213,13 +251,7 @@ def brightness_up():
                 capture_output=True).returncode == 0:
             subprocess.run(["brightnessctl", "set", "+10%"], capture_output=True)
         else:
-            subprocess.run(
-                'xrandr --output $(xrandr | grep " connected" | head -1 | cut -d " " -f1)'
-                ' --brightness $(python3 -c "import subprocess; '
-                'b=float(subprocess.check_output([\"xrandr\",\"--verbose\"]).decode()'
-                '.split(\"Brightness:\")[1].split()[0]); print(min(1.0,b+0.1))")',
-                shell=True, capture_output=True
-            )
+            _adjust_xrandr_brightness(0.1)
     else:
         try:
             subprocess.run(
@@ -242,13 +274,7 @@ def brightness_down():
                 capture_output=True).returncode == 0:
             subprocess.run(["brightnessctl", "set", "10%-"], capture_output=True)
         else:
-            subprocess.run(
-                'xrandr --output $(xrandr | grep " connected" | head -1 | cut -d " " -f1)'
-                ' --brightness $(python3 -c "import subprocess; '
-                'b=float(subprocess.check_output([\"xrandr\",\"--verbose\"]).decode()'
-                '.split(\"Brightness:\")[1].split()[0]); print(max(0.1,b-0.1))")',
-                shell=True, capture_output=True
-            )
+            _adjust_xrandr_brightness(-0.1)
     else:
         try:
             subprocess.run(

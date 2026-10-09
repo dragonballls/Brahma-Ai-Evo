@@ -559,9 +559,13 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None, player: Any 
         action = str(p.get("action", "start")).lower()
         from actions.call_assistant import hang_up_active_call, start_call_proxy, take_over_active_call
         if action == "take_over":
-            return _require_tool_result(tool, take_over_active_call())
+            result = take_over_active_call()
+            _raise_for_failed_tool_result(result, tool)
+            return result
         if action == "hang_up":
-            return _require_tool_result(tool, hang_up_active_call())
+            result = hang_up_active_call()
+            _raise_for_failed_tool_result(result, tool)
+            return result
         from core.confirm import request
         event = {"title": p.get("caller") or "Incoming call", "app": p.get("app") or "Phone / Call"}
         return request(

@@ -43,6 +43,8 @@ def _is_link_like(path: Path) -> bool:
             reparse = getattr(_stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
             if reparse and attrs & reparse:
                 return True
+        except FileNotFoundError:
+            return False
         except OSError:
             return True
     return False

@@ -36,8 +36,9 @@ def test_smart_home_service_rejects_provider_result_without_explicit_success():
 
     service = SmartHomeService(storage=Storage())
     service._registry._providers = {"fake": Provider}
-    with pytest.raises(RuntimeError, match="authoritative success verification"):
-        service.execute_device_action("device-1", "power", {"is_on": True})
+    result = service.execute_device_action("device-1", "power", {"is_on": True})
+    assert result["success"] is False
+    assert "authoritative success verification" in result["error"]
 
 
 def test_kasa_command_does_not_claim_success_when_final_state_refresh_fails(monkeypatch):

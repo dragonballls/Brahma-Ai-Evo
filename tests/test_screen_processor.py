@@ -55,6 +55,8 @@ def test_screen_process_uses_provided_image_bytes(monkeypatch):
     monkeypatch.setattr(screen_processor._live, "analyze", fake_analyze)
     monkeypatch.setattr(screen_processor._live, "is_ready", lambda: True)
     monkeypatch.setattr(screen_processor, "_ensure_started", lambda player=None: None)
+    from core import window_context
+    monkeypatch.setattr(window_context, "get_foreground_window_info", lambda: None)
 
     result = screen_processor.screen_process(
         parameters={"text": "look at my screen", "angle": "screen"},

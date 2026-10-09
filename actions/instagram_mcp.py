@@ -17,6 +17,7 @@ Features:
 import sys
 import os
 import re
+import stat as _stat
 import time
 import json
 import queue
@@ -77,7 +78,10 @@ def _path_has_link_component(path: Path) -> bool:
             if is_junction is not None and is_junction():
                 return True
             if os.name == "nt":
-                attrs = getattr(current.stat(follow_symlinks=False), "st_file_attributes", 0)
+                try:
+                    attrs = getattr(current.stat(follow_symlinks=False), "st_file_attributes", 0)
+                except FileNotFoundError:
+                    continue
                 reparse = getattr(_stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
                 if reparse and attrs & reparse:
                     return True

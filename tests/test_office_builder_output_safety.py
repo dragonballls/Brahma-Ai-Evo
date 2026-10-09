@@ -57,16 +57,33 @@ def test_real_spreadsheet_is_structurally_readable_after_save(tmp_path):
 def test_presentation_save_failure_cannot_claim_created(monkeypatch, tmp_path):
     from actions import office_builder as office
 
-    Presentation, RGBColor, MSO_SHAPE, Inches, Pt = office._import_pptx()
+    RealPresentation, RGBColor, MSO_SHAPE, Inches, Pt = office._import_pptx()
 
-    class NoSavePresentation(Presentation):
+    class NoSavePresentation:
+        def __init__(self):
+            object.__setattr__(self, "_delegate", RealPresentation())
+
+        def __getattr__(self, name):
+            return getattr(self._delegate, name)
+
+        def __setattr__(self, name, value):
+            if name == "_delegate":
+                object.__setattr__(self, name, value)
+            else:
+                setattr(self._delegate, name, value)
+
         def save(self, _path):
             return None
+
+    def presentation_factory(*args, **kwargs):
+        if args or kwargs:
+            return RealPresentation(*args, **kwargs)
+        return NoSavePresentation()
 
     monkeypatch.setattr(
         office,
         "_import_pptx",
-        lambda: (NoSavePresentation, RGBColor, MSO_SHAPE, Inches, Pt),
+        lambda: (presentation_factory, RGBColor, MSO_SHAPE, Inches, Pt),
     )
     with pytest.raises(RuntimeError, match="save could not be verified"):
         office.create_presentation({

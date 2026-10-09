@@ -60,8 +60,8 @@ def test_weather_incomplete_live_payload_never_uses_synthetic_values(monkeypatch
             return b'{"current_condition":[{"humidity":"55","windspeedKmph":"8"}]}'
 
     monkeypatch.setattr(
-        weather_report.urllib.request,
-        "urlopen",
+        weather_report,
+        "open_fixed_https",
         lambda *args, **kwargs: _Response(),
     )
 

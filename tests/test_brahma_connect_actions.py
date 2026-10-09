@@ -62,7 +62,7 @@ class FakeService:
     def create_pairing_offer(self, *, device_name: str = "Unknown Device", platform: str = "unknown"):
         return {"service": "_BRAHMA._tcp.local.", "host": "192.168.1.20", "port": 8765, "pairing_token": "token", "pairing_code": "123456", "expires": 300}
 
-    async def disconnect_device(self, target: str, *, reason: str = "Disconnected by Brahma"):
+    def disconnect_device_sync(self, target: str, *, reason: str = "Disconnected by Brahma"):
         return {"success": True, "device": {"name": target}, "disconnected": True}
 
     async def approve_pending_request(self, pending_id: str):

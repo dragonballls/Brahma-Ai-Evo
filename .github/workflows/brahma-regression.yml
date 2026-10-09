@@ -172,6 +172,8 @@ jobs:
               tests/test_network_safety.py
               tests/test_network_download_safety.py
               tests/test_windows_file_safety.py
+              tests/test_config_secret_migration.py
+              tests/test_dashboard_crypto_fallback.py
 
     steps:
       - name: Checkout

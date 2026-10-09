@@ -3474,7 +3474,6 @@ class BrahmaLive:
             return
 
         if is_brightness_req:
-            import re
             m = re.search(r"(\d+)", lower_cmd)
             lvl = int(m.group(1)) if m else None
             rel = "dim" in lower_cmd or "lower" in lower_cmd or "increase" in lower_cmd or "boost" in lower_cmd

@@ -29,15 +29,16 @@ def test_platform_script_paths_are_escaped_before_interpolation():
 
 def test_remote_wallpaper_download_is_scheme_bounded_and_size_bounded():
     source = (ROOT / "actions" / "desktop.py").read_text(encoding="utf-8")
-    start = source.index("def set_wallpaper_from_url")
-    end = source.index("\ndef get_current_wallpaper", start)
-    block = source[start:end]
-    assert "urlparse" in block
-    assert 'parsed.scheme.lower() not in {"http", "https"}' in block
+    validator_start = source.index("def _validate_remote_http_target")
+    download_start = source.index("def set_wallpaper_from_url")
+    validator = source[validator_start:download_start]
+    block = source[download_start:source.index("\ndef get_current_wallpaper", download_start)]
+    assert "urlparse" in validator
+    assert 'parsed.scheme.lower() not in {"http", "https"}' in validator
+    assert "safe_url = _validate_remote_http_target(url)" in block
     assert "max_bytes = 20 * 1024 * 1024" in block
     assert "tempfile.mkstemp" in block
     assert "urlretrieve" not in block
-
 
 def test_desktop_task_rejects_explicitly_unsafe_plans_and_bounds_inputs():
     source = (ROOT / "actions" / "desktop.py").read_text(encoding="utf-8")
@@ -72,9 +73,10 @@ def test_reminder_embeds_message_as_data_and_never_shell_executes():
 
 def test_remote_wallpaper_download_rejects_private_resolved_hosts():
     source = (ROOT / "actions" / "desktop.py").read_text(encoding="utf-8")
-    start = source.index("def set_wallpaper_from_url")
-    block = source[start:source.index("def get_current_wallpaper", start)]
-    assert "def _validate_remote_http_target" in source
-    assert "socket.getaddrinfo" in block
-    assert "Remote wallpaper URLs may not target private or local network addresses." in block
+    validator_start = source.index("def _validate_remote_http_target")
+    download_start = source.index("def set_wallpaper_from_url")
+    validator = source[validator_start:download_start]
+    block = source[download_start:source.index("\ndef get_current_wallpaper", download_start)]
+    assert "socket.getaddrinfo" in validator
+    assert "Remote wallpaper URLs may not target private or local network addresses." in validator
     assert "safe_url = _validate_remote_http_target(url)" in block

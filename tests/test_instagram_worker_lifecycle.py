@@ -27,7 +27,7 @@ def test_instagram_browser_dm_is_not_reported_as_verified_success():
     class FakePage:
         url = "https://www.instagram.com/direct/t/123456789012345/"
         keyboard = FakeKeyboard()
-        def wait_for_selector(self, *_args, **_kwargs): return object()
+        def wait_for_selector(self, *_args, **_kwargs): return type("FakeInput", (), {"click": lambda self: None})()
         def wait_for_timeout(self, *_args, **_kwargs): pass
         def query_selector_all(self, *_args, **_kwargs): return []
         def goto(self, *_args, **_kwargs): pass
@@ -96,7 +96,7 @@ def test_browser_send_exception_after_attempt_is_returned_as_ambiguous():
         url = "https://www.instagram.com/direct/t/123456789012345/"
         def __init__(self):
             self.keyboard = FakeKeyboard()
-        def wait_for_selector(self, *_args, **_kwargs): return object()
+        def wait_for_selector(self, *_args, **_kwargs): return type("FakeInput", (), {"click": lambda self: None})()
         def wait_for_timeout(self, *_args, **_kwargs): pass
         def goto(self, *_args, **_kwargs): pass
         def query_selector_all(self, *_args, **_kwargs): return []

@@ -22,16 +22,17 @@ This repository includes a security overview for Brahma Evo's current runtime mo
 
 ### Local credential handling
 
-- API keys are stored in `config/api_keys.json`.
-- The code reads `gemini_api_key` and `openrouter_api_key` directly from this file.
-- This file is a local configuration artifact and should never be committed to source control.
-- There is no built-in secret vault; security depends on file system permissions and local access controls.
+- API keys are persisted in the local config/api_keys.json configuration file (or the configured user-data location).
+- New and migrated Windows API-key values use the dpapi: format and Windows DPAPI protection at rest.
+- Non-Windows values use the portable:v1: format, backed by Fernet and a local .brahma-secret.key file with restrictive permissions. This is application-level local protection, not Windows DPAPI.
+- Legacy unprefixed API-key values are upgraded during configuration loading on supported platforms. Migration uses the same temporary-file-and-replace write path as normal configuration updates; if migration cannot be written, the existing file is retained and the migration is retried on a later load.
+- Keep this file private and never commit it to source control. Legacy plaintext values can remain on disk if a migration repeatedly fails.
 
 ### AI provider access
 
-- Brahma Evo uses Gemini as the primary AI provider and OpenRouter as a fallback.
-- Both API keys are loaded from the local config file and sent to the respective service clients.
-- `config/api_keys.json` is plaintext JSON and is not encrypted by the application.
+- Brahma Evo uses Gemini as a primary provider and OpenRouter as a fallback where configured.
+- Provider keys are decoded in process when needed and sent to the respective provider clients.
+- The on-disk file is not universally plaintext: protected prefixes and migration behavior differ by platform, and older unprefixed values may remain if migration fails.
 
 ### Brahma Connect gateway exposure
 
@@ -86,9 +87,10 @@ Because the gateway binds to `0.0.0.0`, it is reachable from any interface on th
 
 ### Gateway request handling
 
-- The gateway exposes REST endpoints for `/gateway/info`, `/gateway/pair`, `/gateway/devices`, `/gateway/devices/{device_id}/revoke`, `/gateway/devices/{device_id}/forget`, `/gateway/pending`, `/gateway/pending/{pending_id}/approve`, and `/gateway/pending/{pending_id}/reject`.
-- These endpoints are exposed on the same host and port as the gateway service.
-- There is no API authentication for these admin endpoints in the current code, so local network access is effectively trusted.
+- The device-facing WebSocket endpoint is /ws and shares the gateway listener, which defaults to 0.0.0.0:8765.
+- /health and /gateway/info do not apply the loopback peer restriction, so these informational endpoints may be reachable from other interfaces subject to TLS and firewall configuration.
+- Device and pairing management endpoints—including /gateway/pair, device list/revoke/forget, logs, and pending-request approval/rejection—check the actual socket peer address and allow only loopback addresses.
+- These management routes do not have a separate bearer-token layer. The loopback peer check is a boundary for local administration, not a substitute for OS account security or firewall controls.
 
 ### Firewall behavior
 
@@ -113,11 +115,11 @@ Because the gateway binds to `0.0.0.0`, it is reachable from any interface on th
 
 ### Security limitations
 
-- Gateway TLS is enabled by default. Manual clients without the pairing fingerprint must use a certificate-trusted connection or pair again so the client can receive the pin.
-- Gateway admin REST endpoints are loopback-only rather than LAN-accessible; they do not provide a separate bearer-token authentication layer.
-- On Windows, API-key values are protected at rest with Windows DPAPI. Non-Windows environments retain platform-specific file protection requirements.
-- The gateway host default of `0.0.0.0` exposes the service broadly unless OS firewall restrictions are applied.
-- There is no remote access firewall or gateway-level authentication beyond pairing and device credentials.
+- Gateway TLS defaults to enabled (tls_enabled: true) and is configured on the shared listener, so it protects both WebSocket and REST traffic when enabled. Configuration can disable it; verify the active setting rather than assuming TLS is always on.
+- The gateway device-facing listener defaults to 0.0.0.0:8765 and can be reached through host network interfaces unless firewall rules restrict it.
+- Administrative and pairing-management routes use a loopback peer-address check, but no separate bearer-token authentication. /health and /gateway/info are informational exceptions and are not loopback-restricted.
+- Windows API keys are protected at rest with DPAPI after migration. Non-Windows systems use the portable encrypted format and local key file; legacy plaintext can remain if migration fails.
+- Device-facing security still depends on TLS remaining enabled, explicit pairing, device credentials, and appropriate OS firewall policy.
 
 ### Recommendations
 
@@ -126,4 +128,4 @@ Because the gateway binds to `0.0.0.0`, it is reachable from any interface on th
 - Disable `advertise` in `config/brahma_connect.json` unless discovery is needed.
 - Revoke lost or untrusted devices using `/gateway/devices/{device_id}/revoke`.
 - Run Brahma Evo on a trusted local network.
-- Consider adding HTTPS/TLS support for the gateway websocket and admin REST endpoints for secure remote access.
+- Keep tls_enabled enabled in config/brahma_connect.json; TLS applies to the shared gateway listener, including REST responses, when enabled.

@@ -313,17 +313,73 @@ def _ensure_network_access(port: int) -> None:
         pass  # no iptables means firewall is probably off — nothing to do
 
 
+# The pinned minified bundle is small; cap recovery downloads to avoid unbounded writes.
+_CRYPTOJS_MAX_BYTES = 512 * 1024
+_CRYPTOJS_TIMEOUT_SECONDS = 15.0
+
+
 def _ensure_crypto_js() -> None:
-    if _CRYPTOJS_FILE.exists():
+    # Normal startup must remain offline when the packaged/bundled asset exists.
+    if _CRYPTOJS_FILE.is_file():
         return
+
+    import os
+    import tempfile
+
+    temporary_path: Path | None = None
+    temporary_fd = -1
     try:
-        import urllib.request
-        print("[Dashboard] Downloading CryptoJS (one-time setup)…")
-        urllib.request.urlretrieve(_CRYPTOJS_CDN, str(_CRYPTOJS_FILE))
+        from core.network_safety import validate_fixed_https_url, download_public_to_file
+
+        safe_url = validate_fixed_https_url(
+            _CRYPTOJS_CDN,
+            allowed_hosts={"cdnjs.cloudflare.com"},
+        )
+        _CRYPTOJS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temporary_fd, temporary_name = tempfile.mkstemp(
+            prefix=".crypto-js-",
+            suffix=".tmp",
+            dir=str(_CRYPTOJS_FILE.parent),
+        )
+        temporary_path = Path(temporary_name)
+        with os.fdopen(temporary_fd, "wb") as handle:
+            temporary_fd = -1
+            received = download_public_to_file(
+                safe_url,
+                handle,
+                timeout=_CRYPTOJS_TIMEOUT_SECONDS,
+                max_response_bytes=_CRYPTOJS_MAX_BYTES,
+                # This fixed asset URL does not need redirects. Reject all redirects.
+                allowed_redirect_hosts=(),
+                max_redirects=0,
+                require_https=True,
+            )
+            handle.flush()
+            os.fsync(handle.fileno())
+
+        if received <= 0 or received > _CRYPTOJS_MAX_BYTES:
+            raise ValueError("CryptoJS response size is outside the accepted range.")
+        if temporary_path.stat().st_size != received:
+            raise ValueError("CryptoJS download length did not match the written file.")
+
+        if _CRYPTOJS_FILE.is_file():
+            return
+        os.replace(temporary_path, _CRYPTOJS_FILE)
+        temporary_path = None
         print("[Dashboard] CryptoJS cached — will serve locally from now on.")
-    except Exception as e:
-        print(f"[Dashboard] CryptoJS download failed: {e}")
-        print(f"[Dashboard] Encryption will fall back to CDN load on client.")
+    except Exception as exc:
+        print(f"[Dashboard] CryptoJS download failed safely ({type(exc).__name__}).")
+    finally:
+        if temporary_fd >= 0:
+            try:
+                os.close(temporary_fd)
+            except OSError:
+                pass
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 _ensure_crypto_js()

@@ -52,6 +52,24 @@ def _safe_bool(value: object, default: bool) -> bool:
 
 AUTH_HANDSHAKE_TIMEOUT_SECONDS = 30.0
 
+
+def _start_pairing_deadline(
+    existing_deadline: float | None,
+    *,
+    now: float,
+    ttl_seconds: int,
+    accepted: bool,
+) -> float | None:
+    """Start one pairing grace window only after a valid pairing event.
+
+    Once started, the deadline is never refreshed by further unauthenticated
+    traffic, preventing repeated HELLO/PAIR_REQUEST messages from keeping a
+    connection alive indefinitely.
+    """
+    if existing_deadline is not None or not accepted:
+        return existing_deadline
+    return now + max(0.0, float(ttl_seconds))
+
 _MAX_LOG_PAYLOAD_BYTES = 32 * 1024
 _MAX_PENDING_STRING = 256
 _MAX_PENDING_LIST = 64
@@ -916,8 +934,7 @@ class BrahmaGateway:
                         continue
 
                     if msg_type == ProtocolTypes.HELLO:
-                        # A valid pairing HELLO starts the configured pairing TTL.
-                        pairing_deadline = loop.time() + self.config.pairing_ttl_seconds
+                        # Validate the full pairing payload before granting a pairing window.
                         # Replace any older pending request from this socket and
                         # bound the total pending set so unauthenticated HELLO spam
                         # cannot grow memory without limit.
@@ -932,6 +949,12 @@ class BrahmaGateway:
                         except ValueError as exc:
                             await websocket.send_json(build_message(ProtocolTypes.ERROR, {"error": str(exc)}, request_id=request_id))
                             continue
+                        pairing_deadline = _start_pairing_deadline(
+                            pairing_deadline,
+                            now=loop.time(),
+                            ttl_seconds=self.config.pairing_ttl_seconds,
+                            accepted=True,
+                        )
                         with self._pending_lock:
                             stale_ids = [
                                 pending_id
@@ -1012,8 +1035,13 @@ class BrahmaGateway:
                         continue
 
                     if msg_type == ProtocolTypes.PAIR_REQUEST:
-                        pairing_deadline = loop.time() + self.config.pairing_ttl_seconds
                         result = await self._pair_device(payload, websocket)
+                        pairing_deadline = _start_pairing_deadline(
+                            pairing_deadline,
+                            now=loop.time(),
+                            ttl_seconds=self.config.pairing_ttl_seconds,
+                            accepted=bool(result.get("success")),
+                        )
                         await websocket.send_json(build_message(ProtocolTypes.PAIR_APPROVED if result.get("success") else ProtocolTypes.ERROR, result, request_id=request_id))
                         continue
 
