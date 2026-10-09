@@ -205,7 +205,7 @@ def _encode_config_for_storage(config: dict[str, Any]) -> dict[str, Any]:
     encoded = dict(config)
     for key, value in list(encoded.items()):
         if key.endswith(_SECRET_SUFFIXES) and value:
-            if isinstance(value, str) and value.startswith(_PROTECTED_PREFIX):
+            if isinstance(value, str) and value.startswith((_PROTECTED_PREFIX, _PORTABLE_PREFIX)):
                 continue
             encoded[key] = _protect_secret(value)
     return encoded
@@ -231,22 +231,21 @@ def get_config() -> dict[str, Any]:
                 if isinstance(data, dict):
                     decoded = _decode_config_from_storage(data)
                     defaults.update(decoded)
-                    if platform.system().lower() != "windows":
-                        legacy_secrets = {
-                            key: value
-                            for key, value in data.items()
-                            if key.endswith(_SECRET_SUFFIXES)
-                            and value
-                            and not (isinstance(value, str) and value.startswith(_PORTABLE_PREFIX))
-                            and not (isinstance(value, str) and value.startswith(_PROTECTED_PREFIX))
-                        }
-                        if legacy_secrets:
-                            try:
-                                save_config(legacy_secrets)
-                            except Exception:
-                                # Never expose or overwrite the user's live config merely
-                                # because an optional migration could not complete.
-                                pass
+                    legacy_secrets = {
+                        key: value
+                        for key, value in data.items()
+                        if key.endswith(_SECRET_SUFFIXES)
+                        and value
+                        and not (isinstance(value, str) and value.startswith(_PORTABLE_PREFIX))
+                        and not (isinstance(value, str) and value.startswith(_PROTECTED_PREFIX))
+                    }
+                    if legacy_secrets:
+                        try:
+                            save_config(legacy_secrets)
+                        except Exception:
+                            # Keep the original configuration intact and retry migration on
+                            # a later load if the atomic write cannot be completed.
+                            pass
         except (OSError, json.JSONDecodeError):
             pass
         return defaults

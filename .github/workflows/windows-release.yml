@@ -7,6 +7,8 @@ concurrency:
 on:
   push:
     branches: ["main"]
+  pull_request:
+    branches: ["main"]
   workflow_dispatch:
 
 permissions:
@@ -17,7 +19,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
-      - name: Checkout main
+      - name: Checkout tested commit
         uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 1
@@ -56,6 +58,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Python compilation failed with exit code $LASTEXITCODE." }
           python -m unittest -q tests.test_repository_integrity tests.test_runtime_consistency tests.test_conversation_delivery tests.test_brahma_connect
           if ($LASTEXITCODE -ne 0) { throw "Fast repository regression gate failed with exit code $LASTEXITCODE." }
+          python -m pytest -q tests/test_config_secret_migration.py tests/test_dashboard_crypto_fallback.py
+          if ($LASTEXITCODE -ne 0) { throw "Secret migration or CryptoJS fallback regressions failed with exit code $LASTEXITCODE." }
           python -m pytest -q tests/test_followup_audits.py tests/test_browser_pinned_proxy.py
           if ($LASTEXITCODE -ne 0) { throw "Browser/follow-up regressions failed with exit code $LASTEXITCODE." }
 
