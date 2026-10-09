@@ -50,6 +50,7 @@ class OAuthProviderMetadata:
     jwks_uri: str = ""
     revocation_endpoint: str = ""
     scopes_supported: tuple[str, ...] = ()
+    id_token_signing_alg_values_supported: tuple[str, ...] = ("RS256",)
 
 
 @dataclass(frozen=True)
@@ -214,6 +215,15 @@ def discover_oidc_metadata(
     challenge_methods = data.get("code_challenge_methods_supported")
     if challenge_methods is not None and "S256" not in challenge_methods:
         raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "OIDC provider metadata does not advertise PKCE S256 support.")
+    advertised_algorithms = data.get("id_token_signing_alg_values_supported")
+    if not isinstance(advertised_algorithms, list) or not advertised_algorithms:
+        raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "OIDC discovery must declare supported ID-token signing algorithms.")
+    supported_algorithms = tuple(dict.fromkeys(
+        algorithm for algorithm in advertised_algorithms
+        if isinstance(algorithm, str) and algorithm in ("RS256", "ES256")
+    ))
+    if not supported_algorithms:
+        raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "OIDC provider advertises no supported safe signing algorithm; only RS256 and ES256 are implemented.")
     response_types = data.get("response_types_supported")
     if response_types is not None and "code" not in response_types:
         raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "OIDC provider does not advertise the authorization-code response type.")
@@ -225,6 +235,7 @@ def discover_oidc_metadata(
         jwks_uri=jwks,
         revocation_endpoint=revocation,
         scopes_supported=tuple(str(item) for item in (data.get("scopes_supported") or []) if isinstance(item, str)),
+        id_token_signing_alg_values_supported=supported_algorithms,
     )
 
 
@@ -495,6 +506,8 @@ class OAuth2PKCEConnector:
         self.use_oidc = bool(use_oidc)
         if self.use_oidc and ("openid" not in self.requested_scopes or not self.metadata.issuer or not self.metadata.jwks_uri):
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OIDC mode requires the openid scope, issuer, and JWKS metadata.")
+        if self.use_oidc and not set(self.metadata.id_token_signing_alg_values_supported) & {"RS256", "ES256"}:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OIDC mode requires a supported RS256 or ES256 ID-token signing algorithm.")
         if self.use_oidc and self.identity_field != "sub":
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OIDC account identity must use the stable subject (sub) claim.")
         hosts = set(_normalized_host(item) for item in trusted_hosts if item)
@@ -694,8 +707,11 @@ class OAuth2PKCEConnector:
             signature = base64.urlsafe_b64decode(parts[2] + "=" * (-len(parts[2]) % 4))
         except Exception as exc:
             raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "OIDC ID token encoding is malformed.") from exc
-        if not isinstance(header, Mapping) or not isinstance(claims, Mapping) or header.get("alg") != "RS256" or not header.get("kid"):
-            raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "OIDC ID token uses an unsupported or missing signing algorithm.")
+        algorithm = str(header.get("alg") or "") if isinstance(header, Mapping) else ""
+        if (not isinstance(header, Mapping) or not isinstance(claims, Mapping)
+            or algorithm not in self.metadata.id_token_signing_alg_values_supported
+            or algorithm not in ("RS256", "ES256") or not header.get("kid")):
+            raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "OIDC ID token uses an unsupported or undisclosed signing algorithm.")
         if str(claims.get("iss") or "") != self.metadata.issuer:
             raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "OIDC ID token issuer did not match the configured issuer.")
         audiences = claims.get("aud")
@@ -721,18 +737,33 @@ class OAuth2PKCEConnector:
         keys = response.data.get("keys") if response.status == 200 and isinstance(response.data, Mapping) else None
         if not isinstance(keys, list) or len(keys) > 100:
             raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "OIDC JWKS response is malformed.")
+        expected_kty = "RSA" if algorithm == "RS256" else "EC"
         key = next((item for item in keys if isinstance(item, Mapping) and item.get("kid") == header["kid"]
-                    and item.get("kty") == "RSA" and item.get("use") in (None, "sig")
-                    and item.get("alg") in (None, "RS256")), None)
+                    and item.get("kty") == expected_kty and item.get("use") in (None, "sig")
+                    and item.get("alg") in (None, algorithm)
+                    and (algorithm != "ES256" or item.get("crv") == "P-256")), None)
         if not key:
             raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "OIDC signing key was not found in the issuer's JWKS.")
         try:
-            modulus = int.from_bytes(base64.urlsafe_b64decode(str(key["n"]) + "=" * (-len(str(key["n"])) % 4)), "big")
-            exponent = int.from_bytes(base64.urlsafe_b64decode(str(key["e"]) + "=" * (-len(str(key["e"])) % 4)), "big")
             from cryptography.hazmat.primitives import hashes
-            from cryptography.hazmat.primitives.asymmetric import padding, rsa
-            public_key = rsa.RSAPublicNumbers(exponent, modulus).public_key()
-            public_key.verify(signature, (parts[0] + "." + parts[1]).encode("ascii"), padding.PKCS1v15(), hashes.SHA256())
+            if algorithm == "RS256":
+                from cryptography.hazmat.primitives.asymmetric import padding, rsa
+                modulus = int.from_bytes(base64.urlsafe_b64decode(str(key["n"]) + "=" * (-len(str(key["n"])) % 4)), "big")
+                exponent = int.from_bytes(base64.urlsafe_b64decode(str(key["e"]) + "=" * (-len(str(key["e"])) % 4)), "big")
+                public_key = rsa.RSAPublicNumbers(exponent, modulus).public_key()
+                public_key.verify(signature, (parts[0] + "." + parts[1]).encode("ascii"), padding.PKCS1v15(), hashes.SHA256())
+            else:
+                if len(signature) != 64:
+                    raise ValueError("ES256 JOSE signature must contain exactly 64 bytes.")
+                from cryptography.hazmat.primitives.asymmetric import ec
+                from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
+                x = int.from_bytes(base64.urlsafe_b64decode(str(key["x"]) + "=" * (-len(str(key["x"])) % 4)), "big")
+                y = int.from_bytes(base64.urlsafe_b64decode(str(key["y"]) + "=" * (-len(str(key["y"])) % 4)), "big")
+                public_key = ec.EllipticCurvePublicNumbers(x, y, ec.SECP256R1()).public_key()
+                r_value = int.from_bytes(signature[:32], "big")
+                s_value = int.from_bytes(signature[32:], "big")
+                der_signature = encode_dss_signature(r_value, s_value)
+                public_key.verify(der_signature, (parts[0] + "." + parts[1]).encode("ascii"), ec.ECDSA(hashes.SHA256()))
         except Exception as exc:
             raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "OIDC ID token signature verification failed.") from exc
         return dict(claims)
