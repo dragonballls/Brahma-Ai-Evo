@@ -64,6 +64,69 @@ jobs:
           tests/test_network_download_safety.py
           tests/test_windows_file_safety.py
 
+  uncovered-regression-modules:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install repository test dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --prefer-binary -r requirements.txt
+          if ($LASTEXITCODE -ne 0) { throw "Installing repository dependencies failed with exit code $LASTEXITCODE." }
+      - name: Run previously unreferenced test modules
+        shell: pwsh
+        run: |
+          $testFiles = @(
+            "tests/test_autonomous_evolution.py"
+            "tests/test_background_orb_startup.py"
+            "tests/test_brahma_connect_actions.py"
+            "tests/test_computer_control_command_safety.py"
+            "tests/test_computer_settings_safety.py"
+            "tests/test_crash_resilience.py"
+            "tests/test_daily_briefing.py"
+            "tests/test_desktop_organizer_persistence.py"
+            "tests/test_desktop_safety.py"
+            "tests/test_dev_agent_safety.py"
+            "tests/test_device_auth_security.py"
+            "tests/test_device_manager_resolution.py"
+            "tests/test_duplex_voice.py"
+            "tests/test_evo_integrations.py"
+            "tests/test_executor_recovery_contract.py"
+            "tests/test_feature_creation_routing.py"
+            "tests/test_gateway_device_manager_integrity.py"
+            "tests/test_gesture_utils.py"
+            "tests/test_google_workspace_security.py"
+            "tests/test_identity_persistence.py"
+            "tests/test_instagram_worker_lifecycle.py"
+            "tests/test_learned_rules_security.py"
+            "tests/test_live_cricket_scores_safety.py"
+            "tests/test_local_endpoint_security.py"
+            "tests/test_office_builder_output_safety.py"
+            "tests/test_omniroute_runtime_download_safety.py"
+            "tests/test_reminder.py"
+            "tests/test_screen_processor.py"
+            "tests/test_secret_redaction.py"
+            "tests/test_self_model_persistence.py"
+            "tests/test_send_message.py"
+            "tests/test_settings_dispatch_boundaries.py"
+            "tests/test_smart_home_completion_semantics.py"
+            "tests/test_spotify_settings_card.py"
+            "tests/test_stock_prices_safety.py"
+            "tests/test_system_diagnostics.py"
+            "tests/test_updater_ota_security.py"
+            "tests/test_weather_report_safety.py"
+          )
+          python -m pytest -q $testFiles
+          if ($LASTEXITCODE -ne 0) { throw "Previously unreferenced repository tests failed with exit code $LASTEXITCODE." }
+
   parallel-regressions:
     runs-on: windows-latest
     timeout-minutes: 120

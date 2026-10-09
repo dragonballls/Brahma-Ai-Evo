@@ -148,3 +148,43 @@ def test_connection_hub_invalidate_device_revokes_before_socket_close():
         assert socket.close_calls == 1
 
     asyncio.run(scenario())
+
+
+def test_pairing_deadline_starts_only_after_acceptance_and_never_resets():
+    from brahma_connect.gateway.server import _start_pairing_deadline
+
+    assert _start_pairing_deadline(
+        None, now=10.0, ttl_seconds=300, accepted=False
+    ) is None
+
+    deadline = _start_pairing_deadline(
+        None, now=10.0, ttl_seconds=300, accepted=True
+    )
+    assert deadline == 310.0
+    assert _start_pairing_deadline(
+        deadline, now=1000.0, ttl_seconds=300, accepted=True
+    ) == deadline
+    assert _start_pairing_deadline(
+        deadline, now=1000.0, ttl_seconds=300, accepted=False
+    ) == deadline
+
+
+def test_gateway_starts_pairing_deadline_after_hello_validation_and_pair_result():
+    source = (ROOT / "brahma_connect" / "gateway" / "server.py").read_text(encoding="utf-8")
+    hello_start = source.index("if msg_type == ProtocolTypes.HELLO:")
+    auth_start = source.index("if msg_type == ProtocolTypes.AUTHENTICATE:", hello_start)
+    hello_block = source[hello_start:auth_start]
+    assert hello_block.index("hello_metadata = _bounded_metadata") < hello_block.index(
+        "pairing_deadline = _start_pairing_deadline("
+    )
+    assert hello_block.index("except ValueError as exc:") < hello_block.index(
+        "pairing_deadline = _start_pairing_deadline("
+    )
+
+    pair_start = source.index("if msg_type == ProtocolTypes.PAIR_REQUEST:")
+    result_start = source.index("if msg_type == ProtocolTypes.RESULT:", pair_start)
+    pair_block = source[pair_start:result_start]
+    assert pair_block.index("result = await self._pair_device(payload, websocket)") < pair_block.index(
+        "pairing_deadline = _start_pairing_deadline("
+    )
+    assert "accepted=bool(result.get(\"success\"))" in pair_block
