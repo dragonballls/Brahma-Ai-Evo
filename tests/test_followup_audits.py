@@ -278,11 +278,29 @@ def test_task_queue_cancelled_executor_failure_stays_cancelled():
 def test_task_queue_terminal_history_is_bounded():
     queue = TaskQueue()
     queue._history_limit = 3
-    for index in range(3):
-        task = Task(priority=2, created_at=float(index), task_id=str(index), goal="done", status=TaskStatus.COMPLETED)
-        queue._tasks[task.task_id] = task
-    queue.submit("new")
-    assert len(queue._tasks) <= 3
+
+    # Submitting to a real AgentExecutor can start background provider/network work.
+    # This test only checks queue-history eviction, so keep its executor deterministic.
+    class FakeExecutor:
+        def execute(self, **_kwargs):
+            return {"success": True}
+
+    queue._executor = FakeExecutor()
+    try:
+        for index in range(3):
+            task = Task(
+                priority=2,
+                created_at=float(index),
+                task_id=str(index),
+                goal="done",
+                status=TaskStatus.COMPLETED,
+            )
+            queue._tasks[task.task_id] = task
+        queue.submit("new")
+        assert len(queue._tasks) <= 3
+    finally:
+        # Never leave a worker thread or queued task behind after this unit test.
+        queue.stop()
 
 
 def test_updater_refuses_to_update_non_main_branch():
