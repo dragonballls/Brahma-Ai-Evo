@@ -33,6 +33,7 @@ from core.account_integrations import (
     IntegrationManager,
     get_default_manager,
 )
+from core.custom_account_integrations_ui import CustomProvidersWidget
 
 
 class _LoopbackOAuthCallback:
@@ -370,6 +371,11 @@ class AccountsIntegrationsPage(QWidget):
             self._roblox_connect_btn.setEnabled(False)
             self._roblox_status.setText("Status: unavailable — no Roblox adapter is registered.")
         layout.addWidget(roblox_card)
+
+        # Custom provider onboarding uses the same secure store and capability manager.
+        self._custom_providers = CustomProvidersWidget(self.manager, self)
+        self._custom_providers.accountsChanged.connect(self.refresh)
+        layout.addWidget(self._custom_providers)
 
         account_card = self._card()
         account_layout = QVBoxLayout(account_card)

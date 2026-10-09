@@ -32,7 +32,7 @@ a = Analysis(
         'mediapipe', 'cv2', 'instagrapi', 'google.genai', 'PyQt6', 'PyQt6.QtWebEngineCore',
         'PyQt6.QtWebEngineWidgets', 'PyQt6.QtWebChannel', 'pyautogui', 'sounddevice',
         'keyboard', 'docx', 'pptx', 'multipart', 'passlib', 'bcrypt', 'aiohttp', 'websockets',
-        'uvicorn', 'fastapi', 'plyer', 'pydantic', 'typing_extensions', 'requests', 'beautifulsoup4',
+        'uvicorn', 'fastapi', 'plyer', 'pydantic', 'typing_extensions', 'requests', 'bs4',
         'pyaudio', 'numpy', 'speech_recognition', 'pocketsphinx', 'jev_ultrafast', 'jev_ultrafast.agent', 'jev_ultrafast.browser', 'jev_ultrafast.model', 'jev_ultrafast.questions', 'browser_harness'
     ],
     hookspath=[],

@@ -130,6 +130,7 @@ jobs:
             "tests/test_device_auth_security.py"
             "tests/test_account_integrations.py"
             "tests/test_universal_integrations.py"
+            "tests/test_custom_integration_registry.py"
             "tests/test_device_manager_resolution.py"
             "tests/test_duplex_voice.py"
             "tests/test_evo_integrations.py"
@@ -158,7 +159,7 @@ jobs:
             "tests/test_updater_ota_security.py"
             "tests/test_weather_report_safety.py"
           )
-          python -m pytest -q $testFiles
+          python -m pytest -q -rs $testFiles
           if ($LASTEXITCODE -ne 0) { throw "Previously unreferenced repository tests failed with exit code $LASTEXITCODE." }
 
   parallel-regressions:

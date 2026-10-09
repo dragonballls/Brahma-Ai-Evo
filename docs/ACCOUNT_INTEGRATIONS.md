@@ -1,6 +1,6 @@
 # Brahma Evo Accounts & Integrations
 
-This document describes the shared account integration framework in `core/account_integrations.py` and the developer-preview generic OAuth/OpenAPI layer in `core/universal_integrations.py`. Provider presence in a catalog does not imply live credentials or working operations.
+This document describes the shared account integration framework, dynamic custom-provider onboarding UI, and generic OAuth/OpenAPI connector layer. Provider presence in a catalog does not imply live credentials or working operations.
 
 ## Current verified implementation boundary
 
@@ -8,7 +8,8 @@ This document describes the shared account integration framework in `core/accoun
 |---|---|---|
 | GitHub | Limited support; live OAuth flow is implemented | OAuth device authorization; validate account identity; test authorization; read the connected profile; list up to 30 public owned repositories |
 | Roblox | Limited support; OAuth2/PKCE adapter implemented (live account not yet verified) | Authorization-code + PKCE, exact loopback callback/state validation, userinfo identity validation, connection test, basic profile read when scope is granted, refresh-token rotation, and documented token revocation |
-| Amazon | Limited support; informational catalog only | No private account, order, checkout, or purchase operations in the shared account connector |
+| Amazon consumer account | Unsupported | Ordinary consumer login is not an API integration; no password collection or browser-session workaround is provided |
+| Amazon Selling Partner API (SP-API) | Not implemented | Requires an approved SP-API application and authorized seller account; Login with Amazon authorization plus API roles are required. The current connector does not implement Amazon-specific request signing or seller workflows |
 | Google Workspace | Existing legacy path; not migrated | Existing Gmail, Calendar, and Drive paths remain separate |
 | YouTube | Existing legacy path; not migrated | Existing video features remain separate; this connector does not claim authorized-channel or publishing operations |
 | Instagram | Existing legacy path; not migrated | Existing browser/Instagram code remains separate; no shared-account adapter is claimed |
@@ -18,19 +19,20 @@ A provider appearing in the catalog is not evidence that it is connected. A capa
 
 ## Provider manifest contract
 
-Every executable provider manifest carries its stable ID/name, official documentation references, declared capabilities and scope requirements, support status, identity-validation method, supported token expiry/refresh/revocation features, pagination strategy, timeout, rate-limit and retry behavior, cancellation behavior, confirmation/verification policy, setup requirements, and explicit limitations. Individual operations declare risk, idempotency, required scopes, and whether they are supported. The provider-discovery response exposes this metadata so the assistant can explain a limitation without inventing an operation.
+Every executable provider manifest carries its stable ID/name, official documentation references, declared capabilities and scope requirements, required user configuration fields, support status, identity-validation method, supported token expiry/refresh/revocation features, pagination strategy, timeout, rate-limit and retry behavior, cancellation behavior, confirmation/verification policy, setup requirements, and explicit limitations. Individual operations declare risk, idempotency, required scopes, and whether they are supported. The provider-discovery response exposes this metadata so the assistant can explain a limitation without inventing an operation.
 
 Manifest lifecycle fields describe what an adapter implements, not what every token/account is guaranteed to receive. For example, a connector may support refresh-token exchange but a specific OAuth grant may not issue a refresh token. The execution path must still verify the actual credential state and provider response.
 
 ## Architecture
 
 - `core/account_integrations.py` defines the provider manifest, capability/risk taxonomy, result and status contracts, typed errors, registry, bounded activity history, and secure-store protocol.
-- `core/universal_integrations.py` adds reusable OAuth2 authorization-code/PKCE, optional OIDC ID-token verification, OIDC discovery validation, header-based API-key/bearer authentication with account identity validation, and a constrained OpenAPI 3.0/3.1 JSON preview that proposes authenticated GET operations while keeping mutation operations blocked. Query-string and cookie API-key authentication are intentionally disabled. It is a developer-preview adapter core, not a general provider setup form; a developer must construct/configure the adapter and explicitly register it.
+- `core/universal_integrations.py` adds reusable OAuth2 authorization-code/PKCE, optional OIDC ID-token verification, OIDC discovery validation, header-based API-key/bearer authentication with account identity validation, configuration-field manifests, and a constrained OpenAPI 3.0/3.1 JSON preview that proposes authenticated GET operations while keeping mutation operations blocked. Query-string and cookie API-key authentication are intentionally disabled.
 - WindowsCredentialManager uses Windows Credential Manager through pywin32. If the store is unavailable, account connection fails closed. There is intentionally no plaintext token-file fallback. MemoryCredentialStore is for tests only and is never selected as a production fallback.
 - GitHubConnector implements GitHub OAuth device authorization with the minimum read:user scope. It exposes read-only identity/profile, connection-test, and public-owned-repository operations. API results are verified from actual HTTPS responses. Public repository output is filtered so records marked private are never returned.
-- core/account_integrations_ui.py provides the Accounts & Integrations page. ui.py adds it to the existing Settings Hub navigation.
+- `core/account_integrations_ui.py` provides the Accounts & Integrations page and embeds the dynamic `core/custom_account_integrations_ui.py` provider form. `ui.py` adds it to the existing Settings Hub navigation.
 - `features/account_integrations.py` exposes provider/account/capability inspection and read-only provider operations for exact registered action IDs. It retains explicit UI-only connection/disconnection routing and asks the user to identify an account when multiple matches exist.
-- `tests/test_account_integrations.py` and `tests/test_universal_integrations.py` use deterministic HTTP and credential-store fakes. These tests validate logic only and are not proof of live provider availability.
+- `core/custom_integration_registry.py` atomically persists non-secret provider configuration and reviewed OpenAPI JSON. OAuth client secrets are stored separately through the secure credential store. The default manager restores saved adapters at startup; missing secrets or malformed configuration do not become false connected states.
+- `tests/test_account_integrations.py`, `tests/test_universal_integrations.py`, and `tests/test_custom_integration_registry.py` use deterministic HTTP and credential-store fakes. These tests validate logic only and are not proof of live provider availability.
 
 ## Connect a GitHub account
 
@@ -57,14 +59,14 @@ Action statuses distinguish rejected-before-execution, waiting for user authoriz
 
 Credentials and sensitive values are excluded from the bounded activity history. Provider-controlled result fields whose names look like token, secret, password, cookie, credential, authorization, or private-key data are removed before the result is returned to the conversation or UI.
 
-## Reusable OAuth/OIDC and OpenAPI onboarding (developer preview)
+## Custom provider onboarding (OAuth/OIDC and OpenAPI)
 
-The generic module supports standards-compatible OAuth2/OIDC and documented header-based API-key/bearer services to reduce repeated work. It is not a universal magic login: every provider still needs a registered adapter configured with that provider's official client ID, exact redirect URI, trusted HTTPS hosts, issuer metadata, requested scopes, API base URL, and reviewed operations.
+The generic module and Settings UI support documented OAuth2/OIDC and header-based API-key/bearer services that fit the current adapter contracts. This is not a universal magic login: each provider needs official API access, a client ID or credential, explicit trusted HTTPS hosts, the provider's actual scopes, an authoritative identity endpoint, and reviewed operations.
 
 - OIDC discovery verifies the configured issuer exactly and validates trusted HTTPS endpoints. The generic ID-token validator supports the explicitly advertised RS256 and ES256 algorithms and checks the issuer, audience/authorized party, time claims, nonce, subject, JWKS signature, and matching UserInfo subject.
 - OpenAPI onboarding currently accepts JSON OpenAPI 3.0/3.1 only. External references are blocked; one explicit HTTPS server must be declared; read candidates need a single explicit OAuth2/OIDC security scheme and scopes; deprecated or ambiguous/unparameterized operations are skipped. Mutation endpoints are previewed as unsupported and are never executable through the generic connector.
 - Generated GET candidates are previews, not auto-enabled operations. Review the API terms, exact endpoint behavior, permissions, response schema, and provider rate limits; register only reviewed operations. Result verification means the provider returned a successful read response from the configured endpoint, not that every semantic claim in its data is independently true.
-- Generic adapter operations can be routed through the feature tool by exact provider ID and operation ID once the adapter is registered in the manager. The current Settings → Accounts & Integrations UI has dedicated GitHub and Roblox onboarding forms; a dynamic, persisted onboarding form for arbitrary providers has not yet been completed.
+- The Settings → Accounts & Integrations page includes **Add a documented provider**. Enter its provider ID/name, authentication type, trusted hosts, documented identity endpoint (API key/bearer), official OAuth endpoints or OIDC issuer, exact registered redirect URI, minimum scopes, and OpenAPI JSON. Validate and preview, review candidate GET operations, explicitly approve them, and save. Configuration is restored after restart; only registered and declared operations appear as available actions. API keys and bearer tokens are entered separately in a masked field and stored only after provider identity validation. API keys are sent raw in their declared header; bearer credentials use the bearer scheme.
 - Do not point the generic adapter at user-provided private/local addresses or untrusted hosts, and do not use generic discovery to guess endpoints that do not appear in provider documentation.
 
 Example developer workflow:
@@ -88,10 +90,14 @@ Create a provider-specific class implementing the `Connector` contract, or confi
 7. Add deterministic tests for registration, auth denial/expiry, missing scope, malformed response, network/rate-limit handling, identity validation, permission enforcement, cancellation, uncertain outcomes, redaction, disconnect, and the connector's actual read-only operation. Use a provider sandbox or a dedicated, authorized test account for any live tests. Clearly label a live test skipped when no test account is configured.
 8. Add the test module to .github/workflows/quality.yml, document setup and support limitations here, and verify the feature on the final candidate commit in Windows CI before claiming it works in a packaged build.
 
+## Amazon and provider-specific prerequisites
+
+Amazon consumer accounts cannot be connected with an ordinary account password. Amazon SP-API is a separate integration requiring application registration, authorized selling-partner consent, permitted API roles, the current Login with Amazon token contract, and service-specific request handling. The generic header-token adapter does not implement SP-API authorization, token lifecycle, role-specific operations, restricted-operation requirements, or a seller workflow and must not be used as an SP-API substitute. Do not advertise Amazon as ready to connect until a specific official Amazon API/account type and authorized test environment have been implemented and verified. Official references: https://developer-docs.amazon/sp-api/lang-en_us/docs/authorizing-selling-partner-api-applications and https://developer-docs.amazon/sp-api/docs/connecting-to-the-selling-partner-api.
+
 ## Known limitations
 
-- This is a foundation, not universal access to every website. Providers without an adapter remain limited/unavailable rather than receiving invented capabilities.
-- GitHub authorization uses user-supplied OAuth App configuration. This implementation's automated tests use deterministic fake HTTP responses; a live account was not exercised by those tests.
+- This does not provide universal access to every website. Custom onboarding works when a documented API fits OAuth2/PKCE, OIDC, or header API-key/bearer authentication and reviewed read-only GET operations. APIs needing custom signing, nonstandard authentication, write operations, or multi-step workflows require a reviewed provider-specific adapter.
+- GitHub authorization uses user-supplied OAuth App configuration. Automated tests use deterministic fake HTTP responses; CI did not use a real third-party credential and does not claim live provider verification.
 - The Accounts & Integrations UI is a Windows Qt interface and its production secret store requires Windows Credential Manager. A platform without that facility fails closed instead of storing secrets unprotected.
 - GitHub public repository listing is a bounded read (up to 30 results) rather than a fully paginated repository explorer.
 - Existing Google Workspace, YouTube, and Instagram code must be audited and migrated separately before their features can be represented as unified connected accounts.

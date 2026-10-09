@@ -144,6 +144,9 @@ jobs:
               tests/test_speed_test_safety.py
               tests/test_or_client_network_safety.py
               tests/test_send_message_safety.py
+              tests/test_account_integrations.py
+              tests/test_universal_integrations.py
+              tests/test_custom_integration_registry.py
           - name: false-success-actions
             tests: >-
               tests/test_false_success_actions.py

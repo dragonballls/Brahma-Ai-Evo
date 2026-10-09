@@ -567,6 +567,7 @@ class OAuth2PKCEConnector:
             rate_limit_behavior="Surface 401/403/429 as typed errors; no automatic replay.",
             setup_requirements=("Official OAuth client ID", "Exact registered redirect URI", "Explicit minimum scopes", "Trusted endpoint host allowlist", "Reviewed OpenAPI JSON specification"),
             limitations=("Only reviewed GET operations are executable.", "Refresh works only when the provider issues a refresh token.", "No generic browser automation, write operation, or arbitrary endpoint discovery."),
+            configuration_fields=("provider_id", "display_name", "auth_type", "trusted_hosts", "client_id", "client_secret (protected storage only)", "redirect_uri", "requested_scopes", "issuer or oauth_endpoints", "OpenAPI JSON"),
             capabilities=tuple(caps),
         )
 
@@ -1062,6 +1063,7 @@ class APIKeyConnector:
             rate_limit_behavior="Surface 401/403/429 as typed errors; no automatic replay.",
             setup_requirements=("Official provider API credential", "Documented identity endpoint", "Trusted HTTPS host allowlist", "Reviewed OpenAPI JSON specification", "Credential sent only in an explicit header"),
             limitations=("Header API-key and bearer authentication only; query-string and cookie credentials are disabled.", "Only reviewed GET operations are executable.", "Provider-specific key rotation/revocation must be handled by the provider's security settings."),
+            configuration_fields=("provider_id", "display_name", "auth_type", "trusted_hosts", "api_key_header", "identity_url", "identity_field", "documentation_url", "OpenAPI JSON"),
             capabilities=tuple(capabilities),
         )
 
@@ -1242,7 +1244,35 @@ def configure_provider_connector(
             issuer = str(config.get("issuer") or "").strip()
             if not issuer:
                 raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OIDC configuration requires the exact official issuer.")
-            metadata = discover_oidc_metadata(issuer, trusted_hosts=trusted_hosts, requester=requester)
+            cached = config.get("oidc_metadata")
+            if isinstance(cached, Mapping):
+                cached_issuer = str(cached.get("issuer") or "")
+                if cached_issuer != issuer:
+                    raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "Cached OIDC metadata issuer does not match the configured issuer.")
+                parsed_issuer = _check_https_url(issuer, allowed_hosts=trusted_hosts)
+                if parsed_issuer.query or parsed_issuer.fragment:
+                    raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OIDC issuer identifiers may not contain a query or fragment.")
+                raw_scopes_supported = cached.get("scopes_supported", [])
+                raw_algorithms = cached.get("id_token_signing_alg_values_supported", [])
+                algorithms = tuple(dict.fromkeys(x for x in raw_algorithms if isinstance(x, str) and x in ("RS256", "ES256"))) if isinstance(raw_algorithms, list) else ()
+                scopes_supported = tuple(dict.fromkeys(x for x in raw_scopes_supported if isinstance(x, str) and x.strip())) if isinstance(raw_scopes_supported, list) else ()
+                metadata = OAuthProviderMetadata(
+                    issuer=cached_issuer,
+                    authorization_endpoint=str(cached.get("authorization_endpoint") or ""),
+                    token_endpoint=str(cached.get("token_endpoint") or ""),
+                    userinfo_endpoint=str(cached.get("userinfo_endpoint") or ""),
+                    jwks_uri=str(cached.get("jwks_uri") or ""),
+                    revocation_endpoint=str(cached.get("revocation_endpoint") or ""),
+                    scopes_supported=scopes_supported,
+                    id_token_signing_alg_values_supported=algorithms,
+                )
+                required_endpoints = (metadata.authorization_endpoint, metadata.token_endpoint, metadata.userinfo_endpoint, metadata.jwks_uri)
+                if not all(required_endpoints) or not metadata.id_token_signing_alg_values_supported:
+                    raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "Cached OIDC metadata is incomplete or advertises no supported signing algorithm.")
+                for endpoint in required_endpoints + ((metadata.revocation_endpoint,) if metadata.revocation_endpoint else ()):
+                    _check_https_url(endpoint, allowed_hosts=trusted_hosts)
+            else:
+                metadata = discover_oidc_metadata(issuer, trusted_hosts=trusted_hosts, requester=requester)
             unsupported_scopes = set(requested_scopes) - set(metadata.scopes_supported)
             if metadata.scopes_supported and unsupported_scopes:
                 raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Requested scopes include values not listed in the provider's published OIDC metadata.")

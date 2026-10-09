@@ -112,6 +112,7 @@ class IntegrationManifest:
     verification_policy: str = "Only adapter-supplied evidence is reported; unverified results must remain unverified."
     setup_requirements: tuple[str, ...] = ()
     limitations: tuple[str, ...] = ()
+    configuration_fields: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1325,4 +1326,11 @@ def get_default_manager() -> IntegrationManager:
     with _default_manager_lock:
         if _default_manager is None:
             _default_manager = create_default_manager()
+            # Restore validated custom adapters without making a damaged registry fatal
+            # to startup. The Accounts page surfaces restoration errors to the user.
+            try:
+                from core.custom_integration_registry import register_saved_custom_providers
+                register_saved_custom_providers(_default_manager)
+            except Exception:
+                pass
         return _default_manager
