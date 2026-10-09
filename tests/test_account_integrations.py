@@ -22,7 +22,7 @@ from core.account_integrations import (
 
 
 class FakeConnector:
-    def __init__(self, provider_id="sample", *, risk=RiskLevel.READ_ONLY, requires_scope=()):
+    def __init__(self, provider_id="sample", *, risk=RiskLevel.REVERSIBLE, requires_scope=()):
         self.calls = []
         self.identity_number = 0
         self.manifest = IntegrationManifest(
