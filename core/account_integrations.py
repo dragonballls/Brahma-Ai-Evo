@@ -568,14 +568,14 @@ class GitHubConnector:
         refresh_token = str(credentials.get("refresh_token") or "")
         client_id = str(credentials.get("client_id") or "")
         client_secret = str(credentials.get("client_secret") or "")
-        if not refresh_token or not client_id or not client_secret:
+        if not refresh_token or not client_id:
             raise IntegrationError(IntegrationErrorCode.AUTHENTICATION_REQUIRED, "This GitHub authorization cannot be refreshed automatically; reconnect it in Accounts & Integrations.")
+        # GitHub's documented device-flow refresh does not require a client secret.
         response = self._requester(
             GITHUB_TOKEN_URL,
             method="POST",
             form={
                 "client_id": client_id,
-                "client_secret": client_secret,
                 "grant_type": "refresh_token",
                 "refresh_token": refresh_token,
             },
