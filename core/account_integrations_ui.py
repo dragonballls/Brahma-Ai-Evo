@@ -441,7 +441,10 @@ class AccountsIntegrationsPage(QWidget):
         return frame
 
     def _set_account_actions_enabled(self, enabled: bool):
-        account = next((item for item in self.manager.list_accounts() if item.account_id == self._selected_account_id), None) if self._selected_account_id else None
+        try:
+            account = next((item for item in self.manager.list_accounts() if item.account_id == self._selected_account_id), None) if self._selected_account_id else None
+        except IntegrationError:
+            account = None
         provider_id = account.provider_id if account else ""
         self._test_btn.setEnabled(bool(enabled and account))
         self._disconnect_btn.setEnabled(bool(enabled and account))
@@ -647,15 +650,25 @@ class AccountsIntegrationsPage(QWidget):
 
     def _worker_completed(self, result: dict[str, Any]):
         if not result.get("ok"):
-            self._poll_timer.stop()
-            self._flow = None
-            self._code_label.setText("Authorization code: not active")
-            self._open_device_btn.setEnabled(False)
-            self._cancel_btn.setEnabled(False)
+            command = self._worker.command if self._worker is not None else ""
+            if command in ("start", "poll"):
+                self._poll_timer.stop()
+                self._flow = None
+                self._code_label.setText("Authorization code: not active")
+                self._open_device_btn.setEnabled(False)
+                self._cancel_btn.setEnabled(False)
+            if command == "roblox_exchange":
+                self._roblox_flow = None
+                self._roblox_callback_timer.stop()
+                listener, self._roblox_listener = self._roblox_listener, None
+                if listener is not None:
+                    listener.close()
+                self._roblox_cancel_btn.setEnabled(False)
+                self._roblox_status.setText("Roblox authorization did not complete: the token or identity could not be validated.")
             self._status.setText(
                 f"{result.get('error_code', 'error')}: {result.get('message', 'Operation failed.')}"
             )
-            self._connect_btn.setEnabled(self.manager.store.available)
+            self.refresh()
             return
         kind = result.get("kind")
         if kind == "flow_started":
@@ -673,11 +686,18 @@ class AccountsIntegrationsPage(QWidget):
         elif kind == "connected":
             self._poll_timer.stop()
             self._flow = None
+            self._roblox_flow = None
             self._code_label.setText("Authorization code: completed")
             self._open_device_btn.setEnabled(False)
             self._cancel_btn.setEnabled(False)
-            self._status.setText(f"Connected and validated GitHub account: {result.get('identity')}.")
+            provider_id = str(result.get("provider_id") or "github")
+            self._status.setText(f"Connected and validated {provider_id} account: {result.get('identity')}.")
+            if provider_id == "roblox":
+                self._roblox_status.setText(f"Connected and validated Roblox user ID: {result.get('identity')}.")
+                self._roblox_cancel_btn.setEnabled(False)
             self._selected_account_id = str(result.get("account_id") or "")
+        elif kind == "refreshed":
+            self._action_output.setText(f"Authorization refreshed and account identity revalidated: {result.get('identity')} ({result.get('provider_id')}).")
         elif kind == "test":
             data = result.get("data") or {}
             account = data.get("account") or {}
@@ -704,7 +724,8 @@ class AccountsIntegrationsPage(QWidget):
                 f"Provider revocation: {data.get('provider_revocation')}\n"
                 f"{data.get('message')}"
             )
-            self._status.setText("The local account credential was removed. Remote provider revocation was not performed.")
+            revocation = str(data.get("provider_revocation") or "not_supported")
+            self._status.setText(f"Local account credentials were removed. Provider revocation: {revocation}.")
 
     def closeEvent(self, event):
         self._poll_timer.stop()
