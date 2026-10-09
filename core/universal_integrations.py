@@ -545,6 +545,15 @@ class OAuth2PKCEConnector:
             documentation_url=self.metadata.issuer or self.metadata.authorization_endpoint,
             status=ConnectionStatus.LIMITED_SUPPORT,
             status_detail="Generic OAuth2 authorization-code/PKCE adapter; only explicitly configured read-only API operations are executable.",
+            authentication_documentation_url=self.metadata.issuer or self.metadata.authorization_endpoint,
+            identity_validation_method="Validated OIDC RS256 ID token plus matching UserInfo sub" if self.use_oidc else "Configured HTTPS UserInfo endpoint and explicit stable identity field",
+            supports_token_expiration=True,
+            supports_refresh=True,
+            supports_revocation=bool(self.metadata.revocation_endpoint),
+            pagination_strategy="Provider-specific; no automatic multi-page traversal is inferred from OpenAPI.",
+            rate_limit_behavior="Surface 401/403/429 as typed errors; no automatic replay.",
+            setup_requirements=("Official OAuth client ID", "Exact registered redirect URI", "Explicit minimum scopes", "Trusted endpoint host allowlist", "Reviewed OpenAPI JSON specification"),
+            limitations=("Only reviewed GET operations are executable.", "Refresh works only when the provider issues a refresh token.", "No generic browser automation, write operation, or arbitrary endpoint discovery."),
             capabilities=tuple(caps),
         )
 
@@ -1008,6 +1017,15 @@ class APIKeyConnector:
             documentation_url=str(documentation_url or "")[:2048],
             status=ConnectionStatus.LIMITED_SUPPORT,
             status_detail="Header-based API-key/bearer authentication with identity validation and reviewed read-only API operations only.",
+            authentication_documentation_url=str(documentation_url or "")[:2048],
+            identity_validation_method="Configured HTTPS identity endpoint; response must contain the declared stable identity field",
+            supports_token_expiration=False,
+            supports_refresh=False,
+            supports_revocation=False,
+            pagination_strategy="Provider-specific; no automatic multi-page traversal is inferred from OpenAPI.",
+            rate_limit_behavior="Surface 401/403/429 as typed errors; no automatic replay.",
+            setup_requirements=("Official provider API credential", "Documented identity endpoint", "Trusted HTTPS host allowlist", "Reviewed OpenAPI JSON specification", "Credential sent only in an explicit header"),
+            limitations=("Header API-key and bearer authentication only; query-string and cookie credentials are disabled.", "Only reviewed GET operations are executable.", "Provider-specific key rotation/revocation must be handled by the provider's security settings."),
             capabilities=tuple(capabilities),
         )
 
