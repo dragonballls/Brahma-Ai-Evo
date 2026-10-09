@@ -467,6 +467,28 @@ def test_roblox_oauth_pkce_validates_state_callback_identity_and_profile():
     assert "client_secret" not in str(manager.activity_history())
 
 
+def test_roblox_oauth_uses_requested_scopes_when_token_response_omits_scope():
+    class OmittedScopeRequester(RobloxRequester):
+        def __call__(self, url, *, method="GET", form=None, token=None, timeout=8.0):
+            response = super().__call__(url, method=method, form=form, token=token, timeout=timeout)
+            if url.endswith("/oauth/v1/token") and (form or {}).get("grant_type") == "authorization_code":
+                data = dict(response.data)
+                data.pop("scope", None)
+                return HttpResponse(response.status, response.headers, data)
+            return response
+
+    from core.account_integrations import RobloxConnector
+    requester = OmittedScopeRequester()
+    connector = RobloxConnector(requester=requester)
+    _flow, credentials = _roblox_callback(connector, requester)
+    assert credentials["scopes"] == ["openid", "profile"]
+    manager = IntegrationManager(store=MemoryCredentialStore(), adapters=[connector])
+    account = manager.connect("roblox", credentials)
+    assert account.status == ConnectionStatus.CONNECTED
+    profile = manager.execute(account.account_id, "roblox.profile.read")
+    assert profile.status == ActionStatus.SUCCEEDED_VERIFIED
+
+
 def test_roblox_oauth_rejects_forged_state_and_redirect_uri_before_token_exchange():
     from urllib.parse import urlencode
     from core.account_integrations import RobloxConnector
