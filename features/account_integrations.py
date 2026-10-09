@@ -10,6 +10,7 @@ from typing import Any
 
 from core.account_integrations import (
     ConnectionStatus,
+    RiskLevel,
     IntegrationError,
     IntegrationErrorCode,
     get_default_manager,
@@ -19,9 +20,9 @@ FEATURE_METADATA = {
     "name": "account_integrations",
     "aliases": ["accounts", "connected_accounts", "account_connections", "integrations"],
     "description": (
-        "Inspect supported integrations, list connected accounts, explain declared capabilities, "
-        "test authorization, read the connected GitHub profile, and list public GitHub repositories. "
-        "Account connection and disconnection must be completed in the Accounts & Integrations UI."
+        "Inspect provider manifests and connected accounts, explain declared capabilities, test authorization, "
+        "and execute exact registered read-only operations through the matching adapter. GitHub profile and public-repository reads "
+        "and Roblox profile reads are currently implemented. Account connection and disconnection must be completed in the Accounts & Integrations UI."
     ),
     "triggers": [
         "show my connected accounts",
@@ -47,7 +48,7 @@ FEATURE_METADATA = {
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "providers | accounts | capabilities | test_connection | github_profile | roblox_profile | github_public_repositories | connect | disconnect",
+                "description": "providers | accounts | capabilities | test_connection | github_profile | roblox_profile | github_public_repositories | execute | connect | disconnect",
             },
             "provider_id": {
                 "type": "STRING",
@@ -56,6 +57,15 @@ FEATURE_METADATA = {
             "account_id": {
                 "type": "STRING",
                 "description": "Exact account identifier returned by the connected-account listing",
+            },
+            "operation": {
+                "type": "STRING",
+                "description": "Exact action identifier from the selected provider's declared capabilities; used with action=execute.",
+            },
+            "arguments": {
+                "type": "OBJECT",
+                "description": "Parameters declared by the reviewed operation schema. Unknown parameters are rejected.",
+                "properties": {},
             },
         },
     },
@@ -101,7 +111,10 @@ def _select_account(manager, provider_id: str, account_id: str):
     return accounts[0], None
 
 
-def execute_with_manager(manager, *, action: str = "accounts", provider_id: str = "", account_id: str = "") -> dict[str, Any]:
+def execute_with_manager(
+    manager, *, action: str = "accounts", provider_id: str = "", account_id: str = "",
+    operation: str = "", arguments: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Deterministic entry point used by the feature and its tests."""
     action = str(action or "accounts").strip().casefold().replace("-", "_").replace(" ", "_")
     provider_id = str(provider_id or "").strip().casefold()
@@ -164,6 +177,53 @@ def execute_with_manager(manager, *, action: str = "accounts", provider_id: str 
             "account_id": account.account_id if account else None,
             "result": capabilities,
         }
+
+    if action in {"execute", "run", "run_operation", "execute_operation"}:
+        if not provider_id or not operation:
+            return {
+                "status": "rejected_before_execution",
+                "error_code": "invalid_request",
+                "message": "Specify a registered provider and exact operation identifier; no request was sent.",
+            }
+        connector = manager.connector(provider_id)
+        if connector is None:
+            return {
+                "status": "unsupported",
+                "error_code": "unsupported_action",
+                "message": "This provider has no registered executable adapter.",
+            }
+        capability = next(
+            (item for item in connector.manifest.capabilities
+             if item.action == operation and item.supported),
+            None,
+        )
+        if capability is None:
+            return {
+                "status": "unsupported",
+                "error_code": "unsupported_action",
+                "message": "That operation is not declared as supported by the selected provider.",
+            }
+        if capability.risk != RiskLevel.READ_ONLY:
+            return {
+                "status": "rejected_before_execution",
+                "error_code": "confirmation_required",
+                "message": "This natural-language route permits read-only operations only. Use a trusted provider-specific confirmation flow for changes; no request was sent.",
+            }
+        account, error = _select_account(manager, provider_id, account_id)
+        if error:
+            return error
+        if account.status != ConnectionStatus.CONNECTED:
+            return {
+                "status": "rejected_before_execution",
+                "error_code": "authentication_required" if account.status == ConnectionStatus.AUTHENTICATION_REQUIRED else "missing_permission",
+                "message": f"Account status is {account.status.value}; no operation was executed.",
+            }
+        try:
+            return manager.execute(account.account_id, operation, arguments or {}).to_dict()
+        except IntegrationError as exc:
+            return {"status": "failed", "error_code": exc.code.value, "message": str(exc)}
+        except Exception:
+            return {"status": "failed", "error_code": "unexpected_error", "message": "The account request failed without exposing provider credentials."}
 
     action_map = {
         "test": "test_connection",
@@ -237,6 +297,8 @@ def execute(**kwargs):
             action=kwargs.get("action", "accounts"),
             provider_id=kwargs.get("provider_id", ""),
             account_id=kwargs.get("account_id", ""),
+            operation=kwargs.get("operation", ""),
+            arguments=kwargs.get("arguments") if isinstance(kwargs.get("arguments"), dict) else {},
         )
     except IntegrationError as exc:
         return {"status": "failed", "error_code": exc.code.value, "message": str(exc)}
