@@ -61,6 +61,8 @@ class OpenAPIOperation:
     path_params: tuple[str, ...] = ()
     query_params: tuple[str, ...] = ()
     method: str = "GET"
+    auth_type: str = "oauth2"
+    api_key_header: str = ""
 
     def __post_init__(self):
         if not _OPERATION_RE.fullmatch(str(self.action or "")):
@@ -75,6 +77,13 @@ class OpenAPIOperation:
             raise ValueError("Declared path parameters must exactly match the path template.")
         if len(set(self.query_params)) != len(self.query_params) or len(set(self.path_params)) != len(self.path_params):
             raise ValueError("Operation parameter names must be unique.")
+        if self.auth_type not in ("oauth2", "oidc", "api_key", "bearer"):
+            raise ValueError("Operation authentication type is unsupported.")
+        if self.auth_type in ("api_key", "bearer"):
+            if not re.fullmatch(r"[!#$%&'*+.^_|~0-9A-Za-z-]+", self.api_key_header):
+                raise ValueError("API credential header name is invalid.")
+        elif self.api_key_header:
+            raise ValueError("OAuth operations may not declare a static credential header.")
 
 
 def _normalized_host(value: str) -> str:
@@ -312,8 +321,31 @@ def analyze_openapi_spec(
                     continue
                 scheme_name, scopes = next(iter(declared_security[0].items()))
                 scheme = schemes.get(scheme_name) if isinstance(schemes, Mapping) else None
-                if not isinstance(scheme, Mapping) or scheme.get("type") not in ("oauth2", "openIdConnect"):
-                    warnings.append("Skipped GET operation " + operation_id + " because only OAuth2/OIDC security is currently executable in the generic adapter.")
+                if not isinstance(scheme, Mapping):
+                    warnings.append("Skipped GET operation " + operation_id + " because its security scheme is missing.")
+                    continue
+                scheme_type = str(scheme.get("type") or "")
+                auth_type = ""
+                api_key_header = ""
+                if scheme_type in ("oauth2", "openIdConnect"):
+                    auth_type = "oidc" if scheme_type == "openIdConnect" else "oauth2"
+                elif scheme_type == "apiKey" and scheme.get("in") == "header":
+                    api_key_header = str(scheme.get("name") or "")
+                    if not re.fullmatch(r"[!#$%&'*+.^_|~0-9A-Za-z-]+", api_key_header):
+                        warnings.append("Skipped GET operation " + operation_id + " because its API-key header name is invalid.")
+                        continue
+                    auth_type = "api_key"
+                    if scopes:
+                        warnings.append("Skipped GET operation " + operation_id + " because API-key security must not declare OAuth scopes.")
+                        continue
+                elif scheme_type == "http" and str(scheme.get("scheme") or "").casefold() == "bearer":
+                    auth_type = "bearer"
+                    api_key_header = "Authorization"
+                    if scopes:
+                        warnings.append("Skipped GET operation " + operation_id + " because HTTP bearer security must not declare OAuth scopes.")
+                        continue
+                else:
+                    warnings.append("Skipped GET operation " + operation_id + " because its auth method is not supported by the generic executor (query/cookie API keys are intentionally disabled).")
                     continue
                 if not isinstance(scopes, list) or any(not isinstance(scope, str) for scope in scopes):
                     warnings.append("Skipped GET operation " + operation_id + " due to invalid security scopes.")
@@ -362,6 +394,8 @@ def analyze_openapi_spec(
                     "path_params": list(path_params),
                     "query_params": sorted(set(query_params)),
                     "auth_scheme": str(scheme_name),
+                    "auth_type": auth_type,
+                    "api_key_header": api_key_header,
                     "supported": True,
                     "requires_manual_approval": True,
                 })
@@ -403,6 +437,8 @@ def operations_from_openapi(preview: Mapping[str, Any]) -> tuple[OpenAPIOperatio
             path_params=tuple(str(x) for x in item.get("path_params", [])),
             query_params=tuple(str(x) for x in item.get("query_params", [])),
             method=str(item.get("method") or "GET"),
+            auth_type=str(item.get("auth_type") or "oauth2"),
+            api_key_header=str(item.get("api_key_header") or ""),
         ))
     return tuple(operations)
 
@@ -485,6 +521,8 @@ class OAuth2PKCEConnector:
         for operation in self.operations.values():
             if not operation.action.startswith(self.provider_id + "."):
                 raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Operation actions must use the configured provider prefix.")
+            if operation.auth_type not in ("oauth2", "oidc"):
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OAuth connectors may only execute operations configured for OAuth2/OIDC authentication.")
         caps = [
             Capability(
                 item.action, item.summary, RiskLevel.READ_ONLY, item.required_scopes,
@@ -841,6 +879,221 @@ class OAuth2PKCEConnector:
             raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Provider read operation failed.")
         data = response.data
         return _sanitize_payload(data), {
+            "verified": True,
+            "source": "reviewed OpenAPI GET operation",
+            "operation": operation.action,
+            "http_status": response.status,
+        }
+
+
+_HEADER_TOKEN = re.compile(r"^[!#$%&'*+.^_|~0-9A-Za-z-]+$")
+
+
+def _default_header_requester(
+    url: str,
+    *,
+    api_key: str,
+    header_name: str,
+    trusted_hosts: Sequence[str],
+    timeout: float = 8.0,
+) -> HttpResponse:
+    """Send one bounded GET with an explicit header credential and no redirects."""
+    _check_https_url(url, allowed_hosts=trusted_hosts)
+    key = str(api_key or "")
+    header = str(header_name or "")
+    if not key or len(key) > 4096 or any(ord(char) < 32 or ord(char) == 127 for char in key):
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "API key is empty or contains forbidden header characters.")
+    if not _HEADER_TOKEN.fullmatch(header):
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "API-key header name is invalid.")
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "Brahma-Evo-Account-Integrations",
+            header: ("Bearer " + key) if header.casefold() == "authorization" else key,
+        },
+        method="GET",
+    )
+    opener = urllib.request.build_opener(_NoRedirect())
+    try:
+        with opener.open(request, timeout=max(0.5, min(float(timeout), 15.0))) as response:
+            raw = response.read(_MAX_RESPONSE_BYTES + 1)
+            status = int(response.status)
+            headers = dict(response.headers.items())
+    except urllib.error.HTTPError as exc:
+        raw = exc.read(65536)
+        status = int(exc.code)
+        headers = dict(exc.headers.items()) if exc.headers else {}
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+        raise IntegrationError(IntegrationErrorCode.NETWORK_ERROR, "Provider request failed or timed out.", retryable=True) from exc
+    if 300 <= status < 400:
+        raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Provider redirected an API request; redirects are disabled.")
+    if len(raw) > _MAX_RESPONSE_BYTES:
+        raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Provider response exceeded the 1 MiB safety limit.")
+    try:
+        data = json.loads(raw.decode("utf-8")) if raw else {}
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Provider returned malformed JSON.") from exc
+    if not isinstance(data, (dict, list)):
+        raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Provider returned an unexpected response format.")
+    return HttpResponse(status, headers, data)
+
+
+class APIKeyConnector:
+    """Reusable header-based API-key/bearer adapter for explicitly reviewed GETs.
+
+    The API key is passed as account credentials and remains in the configured secure
+    credential store. Keys in query parameters and browser cookies are not supported.
+    """
+
+    def __init__(
+        self,
+        *,
+        provider_id: str,
+        display_name: str,
+        identity_url: str,
+        api_base_url: str,
+        api_key_header: str,
+        trusted_hosts: Sequence[str],
+        operations: Sequence[OpenAPIOperation] = (),
+        identity_field: str = "id",
+        documentation_url: str = "",
+        requester: Callable[..., HttpResponse] | None = None,
+    ):
+        self.provider_id = str(provider_id or "").strip().lower()
+        if not _PROVIDER_RE.fullmatch(self.provider_id):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Invalid provider identifier.")
+        self.api_key_header = str(api_key_header or "").strip()
+        if not _HEADER_TOKEN.fullmatch(self.api_key_header):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "API-key header name is invalid.")
+        hosts = tuple(sorted({_normalized_host(item) for item in trusted_hosts if str(item or "").strip()}))
+        if not hosts:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Declare explicit trusted HTTPS hosts for this provider.")
+        self.trusted_hosts = hosts
+        self.identity_url = str(identity_url or "").strip()
+        self.api_base_url = str(api_base_url or "").rstrip("/")
+        _check_https_url(self.identity_url, allowed_hosts=self.trusted_hosts)
+        base = _check_https_url(self.api_base_url, allowed_hosts=self.trusted_hosts)
+        if base.query or base.fragment:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "API base URL may not contain query or fragment data.")
+        self.identity_field = str(identity_field or "id").strip()
+        if not self.identity_field or len(self.identity_field) > 128 or any(not part for part in self.identity_field.split(".")):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Identity field must be a dotted response path.")
+        self._requester = requester
+        operation_list = tuple(operations)
+        self.operations = {item.action: item for item in operation_list}
+        if len(self.operations) != len(operation_list):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Duplicate API operations are not allowed.")
+        for operation in self.operations.values():
+            if not operation.action.startswith(self.provider_id + "."):
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Operation actions must use the configured provider prefix.")
+            if operation.auth_type not in ("api_key", "bearer") or operation.api_key_header.casefold() != self.api_key_header.casefold():
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Every operation must use the configured header-based API-key or bearer authentication.")
+        capabilities = [
+            Capability(item.action, item.summary, RiskLevel.READ_ONLY, item.required_scopes, idempotent=True, supported=True)
+            for item in self.operations.values()
+        ]
+        capabilities.append(Capability(
+            self.provider_id + ".connection.test",
+            "Verify the API key and stable account identity.",
+            RiskLevel.READ_ONLY,
+            (),
+            idempotent=True,
+            supported=True,
+        ))
+        self.manifest = IntegrationManifest(
+            provider_id=self.provider_id,
+            display_name=str(display_name or self.provider_id)[:120],
+            auth_method="api_key_header" if self.api_key_header.casefold() != "authorization" else "bearer_token",
+            documentation_url=str(documentation_url or "")[:2048],
+            status=ConnectionStatus.LIMITED_SUPPORT,
+            status_detail="Header-based API-key/bearer authentication with identity validation and reviewed read-only API operations only.",
+            capabilities=tuple(capabilities),
+        )
+
+    def _request(self, url: str, api_key: str) -> HttpResponse:
+        _check_https_url(url, allowed_hosts=self.trusted_hosts)
+        if self._requester is not None:
+            return self._requester(url, method="GET", api_key=api_key, api_key_header=self.api_key_header, timeout=8.0)
+        return _default_header_requester(
+            url, api_key=api_key, header_name=self.api_key_header,
+            trusted_hosts=self.trusted_hosts, timeout=8.0,
+        )
+
+    @staticmethod
+    def _status_error(response: HttpResponse, *, operation: str) -> None:
+        if response.status == 401:
+            raise IntegrationError(IntegrationErrorCode.AUTHENTICATION_REQUIRED, "Provider rejected the API credential; reconnect this account.")
+        if response.status == 403:
+            raise IntegrationError(IntegrationErrorCode.MISSING_PERMISSION, "Provider denied this operation with the configured API credential.")
+        if response.status == 429:
+            raise IntegrationError(IntegrationErrorCode.RATE_LIMITED, "Provider rate limit reached; retry later.", retryable=True)
+        if not 200 <= response.status < 300:
+            raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Provider " + operation + " request failed.")
+
+    def validate_credentials(self, credentials: Mapping[str, Any]) -> tuple[str, tuple[str, ...]]:
+        api_key = str(credentials.get("api_key") or "")
+        if not api_key:
+            raise IntegrationError(IntegrationErrorCode.AUTHENTICATION_REQUIRED, "Provider API key is missing.")
+        response = self._request(self.identity_url, api_key)
+        self._status_error(response, operation="identity")
+        if not isinstance(response.data, Mapping):
+            raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "Provider identity response was malformed.")
+        identity = OAuth2PKCEConnector._claim(response.data, self.identity_field)
+        if not identity:
+            raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "Provider identity response did not contain a stable account identity.")
+        return identity, ()
+
+    def health_check(self, credentials: Mapping[str, Any]) -> tuple[bool, Mapping[str, Any]]:
+        try:
+            identity, scopes = self.validate_credentials(credentials)
+            return True, {"verified": True, "identity": identity, "scopes": list(scopes), "source": "configured identity endpoint", "http_status": 200}
+        except IntegrationError as exc:
+            if exc.code in (IntegrationErrorCode.AUTHENTICATION_REQUIRED, IntegrationErrorCode.MISSING_PERMISSION):
+                status = ConnectionStatus.MISSING_PERMISSION if exc.code == IntegrationErrorCode.MISSING_PERMISSION else ConnectionStatus.AUTHENTICATION_REQUIRED
+                return False, {"error_code": exc.code.value, "status": status.value}
+            raise
+
+    def execute(self, action: str, arguments: Mapping[str, Any], credentials: Mapping[str, Any]) -> tuple[Any, Mapping[str, Any]]:
+        api_key = str(credentials.get("api_key") or "")
+        if not api_key:
+            raise IntegrationError(IntegrationErrorCode.AUTHENTICATION_REQUIRED, "Provider API key is missing.")
+        if action == self.provider_id + ".connection.test":
+            identity, scopes = self.validate_credentials(credentials)
+            return {"identity": identity, "scopes": list(scopes)}, {"verified": True, "source": "configured identity endpoint", "http_status": 200, "identity": identity}
+        operation = self.operations.get(action)
+        if operation is None:
+            raise IntegrationError(IntegrationErrorCode.UNSUPPORTED_ACTION, "The provider does not declare this operation.")
+        args = dict(arguments or {})
+        allowed_args = set(operation.path_params) | set(operation.query_params)
+        if set(args) - allowed_args:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Operation arguments contain parameters not declared by the reviewed API contract.")
+        path = operation.path
+        for name in operation.path_params:
+            value = args.get(name)
+            if value is None or isinstance(value, (dict, list, bool)) or len(str(value)) > 256 or not str(value):
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "A required path parameter is missing or invalid.")
+            path = path.replace("{" + name + "}", urllib.parse.quote(str(value), safe=""))
+        if _PATH_PARAM_RE.search(path):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Operation path contains an unresolved path parameter.")
+        url = self.api_base_url + "/" + path.lstrip("/")
+        query_items = []
+        for name in operation.query_params:
+            if name not in args:
+                continue
+            values = args[name] if isinstance(args[name], (list, tuple)) else [args[name]]
+            if len(values) > 20:
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Query parameter contains too many values.")
+            for value in values:
+                if value is None or isinstance(value, (dict, list, tuple)) or len(str(value)) > 512 or any(char in str(value) for char in "\r\n"):
+                    raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "A query parameter is invalid.")
+                query_items.append((name, str(value)))
+        if query_items:
+            url += ("&" if "?" in url else "?") + urllib.parse.urlencode(query_items)
+        _check_https_url(url, allowed_hosts=self.trusted_hosts)
+        response = self._request(url, api_key)
+        self._status_error(response, operation="read")
+        return _sanitize_payload(response.data), {
             "verified": True,
             "source": "reviewed OpenAPI GET operation",
             "operation": operation.action,
