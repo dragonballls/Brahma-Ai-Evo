@@ -2,6 +2,11 @@
 from __future__ import annotations
 
 import json
+import hmac
+import threading
+import time
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from PyQt6.QtCore import QThread, QTimer, Qt, pyqtSignal, QUrl
@@ -23,10 +28,102 @@ from PyQt6.QtWidgets import (
 from core.account_integrations import (
     ConnectionStatus,
     GitHubConnector,
+    RobloxConnector,
     IntegrationError,
     IntegrationManager,
     get_default_manager,
 )
+
+
+class _LoopbackOAuthCallback:
+    """Small loopback-only callback receiver with strict path and OAuth-state checks."""
+
+    def __init__(self, redirect_uri: str, expected_state: str):
+        parsed = RobloxConnector._redirect_parts(redirect_uri)
+        self.redirect_uri = redirect_uri
+        self.expected_state = str(expected_state)
+        self._result: dict[str, str] | None = None
+        self._lock = threading.Lock()
+        self.event = threading.Event()
+        outer = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, _format, *_args):
+                # Authorization query values must never be written to the app log.
+                return
+
+            def _reply(self, status: int, message: str):
+                body = (
+                    "<!doctype html><html><head><meta charset=utf-8>"
+                    "<meta http-equiv=Content-Security-Policy content=\"default-src 'none'; style-src 'unsafe-inline'\">"
+                    "<meta name=viewport content=\"width=device-width,initial-scale=1\"></head>"
+                    "<body style=\"font-family:Segoe UI,sans-serif;padding:2rem\">"
+                    "<h2>Roblox authorization</h2><p>" + message +
+                    "</p><p>You may return to Brahma Evo now.</p></body></html>"
+                ).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Pragma", "no-cache")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                parsed_path = urllib.parse.urlparse(self.path)
+                if parsed_path.path != parsed.path:
+                    self._reply(404, "This callback path is not registered.")
+                    return
+                expected_host = f"{parsed.hostname}:{parsed.port}"
+                if self.headers.get("Host", "") != expected_host:
+                    self._reply(400, "This callback host was not expected.")
+                    return
+                try:
+                    query = urllib.parse.parse_qs(parsed_path.query, keep_blank_values=True, max_num_fields=20)
+                except ValueError:
+                    self._reply(400, "The authorization response was malformed.")
+                    return
+                states = query.get("state") or []
+                if len(states) != 1 or not hmac.compare_digest(str(states[0]), outer.expected_state):
+                    # Do not let a random local process cancel the waiting flow by
+                    # sending a forged callback with a different state.
+                    self._reply(400, "The authorization response did not match this request.")
+                    return
+                errors = query.get("error") or []
+                codes = query.get("code") or []
+                with outer._lock:
+                    if errors:
+                        outer._result = {"error": "access_denied" if errors[0] == "access_denied" else "provider_error"}
+                    elif len(codes) == 1 and codes[0] and len(codes[0]) <= 2048:
+                        outer._result = {"callback_url": outer.redirect_uri + "?" + parsed_path.query}
+                    else:
+                        outer._result = {"error": "missing_code"}
+                    outer.event.set()
+                accepted = bool(outer._result and outer._result.get("callback_url"))
+                self._reply(200 if accepted else 400, "Authorization was received." if accepted else "Authorization was not completed.")
+
+        self.server = ThreadingHTTPServer((parsed.hostname, parsed.port), Handler)
+        self.server.daemon_threads = True
+        self.server.timeout = 0.5
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True, name="BrahmaRobloxOAuthCallback")
+        self.thread.start()
+
+    def result(self) -> dict[str, str] | None:
+        with self._lock:
+            return dict(self._result) if self._result else None
+
+    def close(self):
+        try:
+            self.server.shutdown()
+        except Exception:
+            pass
+        try:
+            self.server.server_close()
+        except Exception:
+            pass
+        if self.thread.is_alive():
+            self.thread.join(timeout=1.0)
 
 
 class _AccountWorker(QThread):
@@ -36,11 +133,12 @@ class _AccountWorker(QThread):
         self,
         command: str,
         manager: IntegrationManager,
-        connector: GitHubConnector,
+        connector: Any,
         *,
         client_id: str = "",
         client_secret: str = "",
         flow: dict[str, Any] | None = None,
+        callback_url: str = "",
         account_id: str = "",
         action: str = "",
     ):
@@ -51,6 +149,7 @@ class _AccountWorker(QThread):
         self.client_id = client_id
         self.client_secret = client_secret
         self.flow = flow
+        self.callback_url = callback_url
         self.account_id = account_id
         self.action = action
 
@@ -58,9 +157,6 @@ class _AccountWorker(QThread):
         try:
             if self.command == "start":
                 flow = self.connector.begin_device_authorization(self.client_id)
-                # Keep the app secret only in the transient flow object. It is never
-                # placed in settings, logs, the activity history, or user-facing output.
-                flow["client_secret"] = self.client_secret
                 self.completed.emit({"ok": True, "kind": "flow_started", "flow": flow})
                 return
             if self.command == "poll":
@@ -70,18 +166,32 @@ class _AccountWorker(QThread):
                     self.completed.emit({"ok": True, "kind": "flow_pending", "flow": flow, "retry_after": outcome.get("retry_after", 5)})
                     return
                 summary = self.manager.connect("github", outcome.get("credentials") or {})
-                self.completed.emit({"ok": True, "kind": "connected", "account_id": summary.account_id, "identity": summary.identity})
+                self.completed.emit({"ok": True, "kind": "connected", "provider_id": "github", "account_id": summary.account_id, "identity": summary.identity})
+                return
+            if self.command == "roblox_exchange":
+                credentials = self.connector.complete_authorization(dict(self.flow or {}), self.callback_url)
+                summary = self.manager.connect("roblox", credentials)
+                self.completed.emit({"ok": True, "kind": "connected", "provider_id": "roblox", "account_id": summary.account_id, "identity": summary.identity})
                 return
             if self.command == "test":
                 self.completed.emit({"ok": True, "kind": "test", "data": self.manager.test_connection(self.account_id)})
                 return
             if self.command == "profile":
-                result = self.manager.execute(self.account_id, "github.profile.read", {})
+                account = next((item for item in self.manager.list_accounts() if item.account_id == self.account_id), None)
+                if account is None:
+                    self.completed.emit({"ok": False, "error_code": "account_not_found", "message": "The connected account was not found."})
+                    return
+                operation = "roblox.profile.read" if account.provider_id == "roblox" else "github.profile.read"
+                result = self.manager.execute(self.account_id, operation, {})
                 self.completed.emit({"ok": True, "kind": "action", "data": result.to_dict()})
                 return
             if self.command == "repositories":
                 result = self.manager.execute(self.account_id, "github.repositories.public.list", {})
                 self.completed.emit({"ok": True, "kind": "action", "data": result.to_dict()})
+                return
+            if self.command == "refresh":
+                account = self.manager.refresh_authorization(self.account_id)
+                self.completed.emit({"ok": True, "kind": "refreshed", "identity": account.identity, "provider_id": account.provider_id})
                 return
             if self.command == "disconnect":
                 self.completed.emit({"ok": True, "kind": "disconnected", "data": self.manager.disconnect(self.account_id)})
