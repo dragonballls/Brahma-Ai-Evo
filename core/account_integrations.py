@@ -23,6 +23,8 @@ from typing import Any, Callable, Mapping, Protocol
 
 CREDENTIAL_TARGET_PREFIX = "BrahmaEvo:IntegrationAccount:"
 ACTIVITY_LIMIT = 200
+PENDING_CONFIRMATION_LIMIT = 64
+PENDING_CONFIRMATION_TTL_SECONDS = 90.0
 REQUEST_TIMEOUT_SECONDS = 8.0
 GITHUB_API = "https://api.github.com"
 GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code"
@@ -567,7 +569,6 @@ class GitHubConnector:
     def refresh_credentials(self, credentials: Mapping[str, Any]) -> dict[str, Any]:
         refresh_token = str(credentials.get("refresh_token") or "")
         client_id = str(credentials.get("client_id") or "")
-        client_secret = str(credentials.get("client_secret") or "")
         if not refresh_token or not client_id:
             raise IntegrationError(IntegrationErrorCode.AUTHENTICATION_REQUIRED, "This GitHub authorization cannot be refreshed automatically; reconnect it in Accounts & Integrations.")
         # GitHub's documented device-flow refresh does not require a client secret.
@@ -1117,10 +1118,29 @@ class IntegrationManager:
                 if cached is not None:
                     return cached
             if capability.risk != RiskLevel.READ_ONLY:
-                confirmation_id = secrets.token_urlsafe(24)
                 safe_args = {str(key): value for key, value in arguments.items() if not _looks_secret(str(key))}
+                pending_key = str(idempotency_key or "")
+                now = time.time()
                 with self._lock:
-                    self._pending[confirmation_id] = (account_id, action, safe_args, str(idempotency_key or ""))
+                    stale = [key for key, item in self._pending.items() if now - item[4] > PENDING_CONFIRMATION_TTL_SECONDS]
+                    for key in stale:
+                        self._pending.pop(key, None)
+                    if capability.idempotent and pending_key:
+                        existing = next((
+                            (key, item) for key, item in self._pending.items()
+                            if item[0] == account_id and item[1] == action and item[3] == pending_key
+                        ), None)
+                        if existing is not None:
+                            confirmation_id = existing[0]
+                        else:
+                            confirmation_id = ""
+                    else:
+                        confirmation_id = ""
+                    if not confirmation_id:
+                        if len(self._pending) >= PENDING_CONFIRMATION_LIMIT:
+                            return self._result(ActionStatus.REJECTED, account.provider_id, account_id, action, code=IntegrationErrorCode.INVALID_REQUEST, message="Too many pending confirmations. Resolve or cancel existing actions first.")
+                        confirmation_id = secrets.token_urlsafe(24)
+                        self._pending[confirmation_id] = (account_id, action, safe_args, pending_key, now)
                 return ActionResult(
                     ActionStatus.WAITING_FOR_CONFIRMATION, account.provider_id, account_id, action,
                     message="Explicit user approval is required. No provider request has been sent.",
@@ -1166,7 +1186,9 @@ class IntegrationManager:
             pending = self._pending.pop(str(confirmation_id or ""), None)
         if pending is None:
             return self._result(ActionStatus.REJECTED, "", None, "", code=IntegrationErrorCode.INVALID_REQUEST, message="Confirmation expired or is unknown; no action was executed.")
-        account_id, action, arguments, _idempotency_key = pending
+        account_id, action, arguments, _idempotency_key, created_at = pending
+        if time.time() - float(created_at) > PENDING_CONFIRMATION_TTL_SECONDS:
+            return self._result(ActionStatus.REJECTED, "", account_id, action, code=IntegrationErrorCode.AUTHORIZATION_EXPIRED, message="The confirmation expired; no provider action was executed.")
         if not approved:
             return self._result(ActionStatus.REJECTED, "", account_id, action, code=IntegrationErrorCode.CANCELLED, message="The user cancelled the action; no provider request was sent.")
         try:
@@ -1184,11 +1206,23 @@ class IntegrationManager:
                 return final
             status = ActionStatus.SUCCEEDED_VERIFIED if evidence.get("verified") is True else ActionStatus.ACCEPTED_UNVERIFIED
             final = ActionResult(status, account.provider_id, account_id, action, result, {key: value for key, value in evidence.items() if key != "verified"}, message="User-approved action executed." if status == ActionStatus.SUCCEEDED_VERIFIED else "User-approved action was accepted but remains unverified.")
+            if capability.idempotent and _idempotency_key:
+                with self._lock:
+                    if len(self._idempotent_results) >= ACTIVITY_LIMIT:
+                        self._idempotent_results.pop(next(iter(self._idempotent_results)))
+                    self._idempotent_results[(account_id, _idempotency_key)] = final
             self._record_activity(account.provider_id, account_id, action, status.value, final.verification_evidence)
             return final
         except IntegrationError as exc:
-            status = ActionStatus.UNSUPPORTED if exc.code == IntegrationErrorCode.UNSUPPORTED_ACTION else ActionStatus.FAILED
-            return self._result(status, "", account_id, action, code=exc.code, message=str(exc))
+            ambiguous = (
+                "capability" in locals()
+                and not capability.idempotent
+                and exc.code in (IntegrationErrorCode.NETWORK_ERROR, IntegrationErrorCode.RATE_LIMITED, IntegrationErrorCode.PROVIDER_ERROR)
+            )
+            status = ActionStatus.OUTCOME_UNKNOWN if ambiguous else (ActionStatus.UNSUPPORTED if exc.code == IntegrationErrorCode.UNSUPPORTED_ACTION else ActionStatus.FAILED)
+            final = self._result(status, "", account_id, action, code=exc.code, message=str(exc), follow_up="Inspect provider state before retrying; the result may be ambiguous." if ambiguous else None)
+            self._record_activity("", account_id, action, final.status.value)
+            return final
         except Exception:
             # Once an approved provider request starts, an unexpected exception
             # is ambiguous rather than an automatic failure: avoid unsafe retries.
