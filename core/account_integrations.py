@@ -799,7 +799,14 @@ class RobloxConnector:
             raise IntegrationError(IntegrationErrorCode.RATE_LIMITED, "Roblox rate limit reached during authorization exchange.", retryable=True)
         if response.status != 200 or not isinstance(data, dict) or not data.get("access_token") or not data.get("refresh_token"):
             raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "Roblox did not return a complete access and refresh token pair.")
-        scopes = tuple(sorted({item for item in str(data.get("scope") or "").split() if item}))
+        if "scope" not in data:
+            # RFC 6749 section 5.1: an omitted scope response means the granted
+            # scope is identical to the requested scope ("openid profile").
+            scopes = ("openid", "profile")
+        elif isinstance(data.get("scope"), str) and data["scope"].strip():
+            scopes = tuple(sorted({item for item in data["scope"].split() if item}))
+        else:
+            raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "Roblox returned an invalid empty scope value.")
         credentials = {
             "access_token": str(data["access_token"]),
             "refresh_token": str(data["refresh_token"]),
