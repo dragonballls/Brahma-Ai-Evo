@@ -1540,6 +1540,472 @@ class APIKeyConnector:
         }
 
 
+
+@dataclass(frozen=True)
+class GraphQLOperation:
+    action: str
+    operation_name: str
+    document: str
+    summary: str
+    operation_type: str
+    required_scopes: tuple[str, ...]
+    risk: RiskLevel
+    schema: Any
+    variable_definitions: tuple[Any, ...]
+    variable_names: tuple[str, ...]
+    input_schema: Mapping[str, Any]
+    idempotent: bool = False
+
+
+def _graphql_library():
+    try:
+        from graphql import (
+            build_client_schema, build_schema, get_named_type, get_variable_values,
+            is_enum_type, is_input_object_type, is_list_type, is_non_null_type,
+            is_scalar_type, parse, type_from_ast, validate, validate_schema,
+        )
+    except ImportError as exc:
+        raise IntegrationError(IntegrationErrorCode.UNSUPPORTED_ACTION, "GraphQL support requires the packaged graphql-core dependency.") from exc
+    return {
+        "build_client_schema": build_client_schema, "build_schema": build_schema,
+        "get_named_type": get_named_type, "get_variable_values": get_variable_values,
+        "is_enum_type": is_enum_type, "is_input_object_type": is_input_object_type,
+        "is_list_type": is_list_type, "is_non_null_type": is_non_null_type,
+        "is_scalar_type": is_scalar_type, "parse": parse, "type_from_ast": type_from_ast,
+        "validate": validate, "validate_schema": validate_schema,
+    }
+
+
+def _graphql_type_schema(value: Any, lib: Mapping[str, Any], *, depth: int = 0, seen: frozenset[str] = frozenset()) -> dict[str, Any]:
+    if depth > 10:
+        return {"description": "Validated against the imported GraphQL schema."}
+    if lib["is_non_null_type"](value):
+        return _graphql_type_schema(value.of_type, lib, depth=depth + 1, seen=seen)
+    if lib["is_list_type"](value):
+        return {"type": "array", "items": _graphql_type_schema(value.of_type, lib, depth=depth + 1, seen=seen), "maxItems": 100}
+    named = lib["get_named_type"](value)
+    if lib["is_scalar_type"](named):
+        simple = {"String": "string", "ID": "string", "Int": "integer", "Float": "number", "Boolean": "boolean"}
+        return {"type": simple[named.name]} if named.name in simple else {"description": "Custom GraphQL scalar " + named.name + " is runtime-validated by graphql-core."}
+    if lib["is_enum_type"](named):
+        return {"type": "string", "enum": sorted(named.values.keys())[:100]}
+    if lib["is_input_object_type"](named):
+        if named.name in seen:
+            return {"type": "object", "description": "Recursive input type validated by graphql-core: " + named.name}
+        props, required = {}, []
+        for field_name, field in list(named.fields.items())[:100]:
+            props[field_name] = _graphql_type_schema(field.type, lib, depth=depth + 1, seen=seen | {named.name})
+            if lib["is_non_null_type"](field.type) and field.default_value is None:
+                required.append(field_name)
+        return {"type": "object", "properties": props, "required": required, "additionalProperties": False}
+    return {"description": "Validated by the imported GraphQL schema."}
+
+
+def _load_graphql_schema(schema_document: str | Mapping[str, Any]) -> tuple[Any, Mapping[str, Any]]:
+    lib = _graphql_library()
+    if isinstance(schema_document, Mapping):
+        raw, source = dict(schema_document), json.dumps(schema_document, ensure_ascii=False)
+    elif isinstance(schema_document, str):
+        source = schema_document
+        try:
+            raw = json.loads(source) if source.lstrip().startswith("{") else None
+        except json.JSONDecodeError:
+            raw = None
+    else:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "GraphQL schema must be SDL or JSON introspection data.")
+    if not source.strip() or len(source.encode("utf-8")) > 1024 * 1024:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "GraphQL schema is empty or exceeds the 1 MiB limit.")
+    try:
+        if isinstance(raw, Mapping):
+            introspection = raw.get("data", raw)
+            if not isinstance(introspection, Mapping) or not isinstance(introspection.get("__schema"), Mapping):
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "GraphQL JSON schema must contain an introspection __schema object.")
+            schema = lib["build_client_schema"](dict(introspection))
+        else:
+            schema = lib["build_schema"](source)
+        schema_errors = lib["validate_schema"](schema)
+        if schema_errors:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Invalid GraphQL schema: " + str(schema_errors[0].message)[:220])
+    except IntegrationError:
+        raise
+    except Exception as exc:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "GraphQL SDL/introspection schema could not be validated.") from exc
+    return schema, lib
+
+
+def _build_graphql_operations(schema: Any, lib: Mapping[str, Any], *, provider_id: str, endpoint: str, declarations: Any):
+    if not isinstance(declarations, list) or not declarations or len(declarations) > 100:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Explicitly list 1 to 100 GraphQL query/mutation documents to review.")
+    built, queries, mutations, warnings, seen = [], [], [], [], set()
+    total_bytes = 0
+    for raw in declarations:
+        if not isinstance(raw, Mapping):
+            warnings.append("Skipped a GraphQL operation with a non-object declaration.")
+            continue
+        op_id = str(raw.get("operation_id") or raw.get("operationId") or "").strip()
+        summary = str(raw.get("summary") or op_id or "GraphQL operation").strip()[:300]
+        document = str(raw.get("document") or raw.get("query") or "")
+        total_bytes += len(document.encode("utf-8"))
+        if total_bytes > 256 * 1024:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Configured GraphQL documents exceed the 256 KiB total limit.")
+        action = provider_id + "." + op_id
+        if not _OPERATION_RE.fullmatch(op_id) or op_id in seen:
+            warnings.append("Skipped a GraphQL operation with a missing, invalid, or duplicate operation ID.")
+            continue
+        seen.add(op_id)
+        try:
+            if not document.strip() or len(document.encode("utf-8")) > 16 * 1024:
+                raise ValueError("Document is empty or exceeds 16 KiB.")
+            ast = lib["parse"](document)
+            definitions = [item for item in ast.definitions if item.__class__.__name__ == "OperationDefinitionNode"]
+            if len(definitions) != 1:
+                raise ValueError("Each action must declare exactly one operation definition.")
+            op_ast = definitions[0]
+            operation_name = op_ast.name.value if op_ast.name is not None else ""
+            operation_type = str(op_ast.operation.value)
+            if not operation_name or not _OPERATION_RE.fullmatch(operation_name):
+                raise ValueError("GraphQL operations must have an explicit stable name.")
+            if operation_type not in ("query", "mutation"):
+                raise ValueError("Only GraphQL queries and mutations are supported.")
+            errors = lib["validate"](schema, ast, max_errors=25)
+            if errors:
+                raise ValueError("Schema validation failed: " + str(errors[0].message)[:200])
+            var_defs = tuple(op_ast.variable_definitions or ())
+            var_names = tuple(item.variable.name.value for item in var_defs)
+            if len(set(var_names)) != len(var_names):
+                raise ValueError("Duplicate GraphQL variable declaration.")
+            properties, required = {}, []
+            for item in var_defs:
+                gql_type = lib["type_from_ast"](schema, item.type)
+                if gql_type is None:
+                    raise ValueError("Could not resolve a GraphQL variable type.")
+                name = item.variable.name.value
+                properties[name] = _graphql_type_schema(gql_type, lib)
+                if lib["is_non_null_type"](gql_type) and item.default_value is None:
+                    required.append(name)
+            input_schema = {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
+            raw_scopes = raw.get("required_scopes", [])
+            if not isinstance(raw_scopes, list) or any(not isinstance(x, str) or not x.strip() for x in raw_scopes):
+                raise ValueError("required_scopes must be a list of nonempty strings.")
+            scopes = tuple(sorted(set(x.strip() for x in raw_scopes)))
+            if operation_type == "query":
+                risk, idempotent = RiskLevel.READ_ONLY, True
+            else:
+                risk = _operation_risk("POST", {"summary": summary, "description": document}, "/graphql/" + operation_name)
+                if raw.get("risk"):
+                    configured = RiskLevel(str(raw["risk"]))
+                    ranks = {RiskLevel.READ_ONLY: 0, RiskLevel.REVERSIBLE: 1, RiskLevel.EXTERNAL_COMMUNICATION: 2, RiskLevel.PUBLICATION: 3, RiskLevel.FINANCIAL: 4, RiskLevel.DESTRUCTIVE: 5}
+                    if ranks[configured] > ranks[risk]:
+                        risk = configured
+                idempotent = raw.get("idempotent") is True
+            op = GraphQLOperation(action, operation_name, document, summary, operation_type, scopes, risk, schema, var_defs, var_names, input_schema, idempotent)
+            candidate = {
+                "action": action, "operation_id": op_id, "operation_name": operation_name, "summary": summary,
+                "method": "GRAPHQL QUERY" if operation_type == "query" else "GRAPHQL MUTATION",
+                "path": endpoint, "document": document, "protocol": "graphql",
+                "required_scopes": list(scopes), "input_schema": input_schema, "risk": risk.value,
+                "idempotent": idempotent, "operation_type": operation_type,
+                "supported": True, "requires_manual_approval": True,
+            }
+            built.append(op)
+            (queries if operation_type == "query" else mutations).append(candidate)
+        except Exception as exc:
+            message = str(exc)[:250]
+            warnings.append("Skipped GraphQL operation " + op_id + ": " + message)
+            mutations.append({
+                "action": action, "operation_id": op_id, "summary": summary, "method": "GRAPHQL",
+                "path": endpoint, "document": document[:1200], "protocol": "graphql", "risk": "unsupported",
+                "supported": False, "requires_manual_approval": True, "unsupported_reason": message,
+            })
+    return tuple(built), queries, mutations, warnings
+
+
+def _graphql_capabilities(provider_id: str, operations: Sequence[GraphQLOperation]) -> tuple[Capability, ...]:
+    capabilities = [Capability(
+        action=op.action, description=op.summary, risk=op.risk, required_scopes=op.required_scopes,
+        idempotent=op.idempotent, supported=True, input_schema=dict(op.input_schema),
+        operation_kind="read" if op.operation_type == "query" else "graphql_mutation",
+        changes_state=op.operation_type == "mutation",
+        reversible=op.operation_type == "mutation" and op.risk == RiskLevel.REVERSIBLE,
+    ) for op in operations]
+    capabilities.append(Capability(
+        action=provider_id + ".connection.test",
+        description="Validate the configured identity endpoint and provider credential.",
+        risk=RiskLevel.READ_ONLY, operation_kind="connection_test",
+    ))
+    return tuple(capabilities)
+
+
+def _graphql_preview(provider_id: str, schema_document: str | Mapping[str, Any], endpoint: str,
+                     queries: list[dict[str, Any]], mutations: list[dict[str, Any]], warnings: list[str]) -> dict[str, Any]:
+    source = schema_document if isinstance(schema_document, str) else json.dumps(schema_document, sort_keys=True)
+    return {
+        "provider_id": provider_id, "protocol": "graphql",
+        "schema_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(), "server_url": endpoint,
+        "read_only_candidates": queries, "mutation_candidates": mutations,
+        "review_candidates": queries + [item for item in mutations if item.get("supported") is True],
+        "warnings": warnings, "registered": False,
+        "note": "Inert preview. Only explicitly configured, schema-validated operations are enabled; each mutation requires individual confirmation.",
+    }
+
+
+def _execute_graphql(endpoint: str, action: str, arguments: Mapping[str, Any], operation: GraphQLOperation,
+                     requester: Callable[..., HttpResponse], *, token: str = "", api_key: str = "", api_key_header: str = ""):
+    if set(arguments) - set(operation.variable_names):
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "GraphQL arguments include variables not declared by the reviewed operation.")
+    try:
+        encoded = json.dumps(dict(arguments), ensure_ascii=False, allow_nan=False).encode("utf-8")
+        if len(encoded) > 256 * 1024:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "GraphQL variables exceed the 256 KiB limit.")
+    except (TypeError, ValueError) as exc:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "GraphQL variables must be JSON-serializable.") from exc
+    lib = _graphql_library()
+    try:
+        variables = lib["get_variable_values"](operation.schema, operation.variable_definitions, dict(arguments), max_errors=25)
+    except Exception as exc:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "GraphQL variables do not match the imported schema.") from exc
+    if isinstance(variables, list):
+        detail = str(variables[0].message)[:180] if variables else "invalid variables"
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Invalid GraphQL variables: " + detail)
+    payload = {"query": operation.document, "operationName": operation.operation_name, "variables": variables}
+    kwargs = {"method": "POST", "json_body": payload, "content_type": "application/json", "timeout": 8.0}
+    if api_key:
+        kwargs.update({"api_key": api_key, "api_key_header": api_key_header})
+    else:
+        kwargs["token"] = token
+    try:
+        response = requester(endpoint, **kwargs)
+    except (TypeError, ValueError) as exc:
+        raise IntegrationError(IntegrationErrorCode.NETWORK_ERROR, "GraphQL transport does not support authenticated JSON POST requests.") from exc
+    if response.status == 401:
+        raise IntegrationError(IntegrationErrorCode.AUTHENTICATION_REQUIRED, "GraphQL provider rejected the credential; reconnect the account.")
+    if response.status == 403:
+        raise IntegrationError(IntegrationErrorCode.MISSING_PERMISSION, "GraphQL provider denied this operation.")
+    if response.status == 429:
+        raise IntegrationError(IntegrationErrorCode.RATE_LIMITED, "GraphQL provider rate limit reached; retry later.", retryable=True)
+    if response.status < 200 or response.status >= 300:
+        raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "GraphQL provider request failed.")
+    if not isinstance(response.data, Mapping):
+        raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "GraphQL provider returned a malformed response.")
+    errors = response.data.get("errors")
+    if errors:
+        if not isinstance(errors, list):
+            raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "GraphQL provider returned a malformed error envelope.")
+        raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "GraphQL provider reported operation errors; success was not claimed.")
+    data = response.data.get("data")
+    if not isinstance(data, Mapping):
+        raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "GraphQL response did not contain a valid data object.")
+    evidence = {"source": "schema-validated GraphQL operation", "operation": action, "operation_type": operation.operation_type, "http_status": response.status}
+    if operation.operation_type == "query":
+        evidence["verified"] = True
+    return _sanitize_payload(data), evidence
+
+
+class GraphQLAPIKeyConnector(APIKeyConnector):
+    """GraphQL schema adapter reusing the existing API-key/bearer credential lifecycle."""
+    def __init__(self, *, graphql_endpoint_url: str, graphql_schema: Any,
+                 graphql_operations: Sequence[GraphQLOperation], credential_auth_type: str = "api_key", **kwargs):
+        pseudo = tuple(OpenAPIOperation(
+            action=op.action, summary=op.summary, path="/graphql",
+            required_scopes=op.required_scopes, method="GET" if op.operation_type == "query" else "PATCH",
+            auth_type=credential_auth_type, api_key_header=kwargs["api_key_header"],
+            risk=op.risk, idempotent=op.idempotent,
+        ) for op in graphql_operations)
+        self.graphql_endpoint_url, self.graphql_schema = graphql_endpoint_url, graphql_schema
+        self.graphql_operations = {op.action: op for op in graphql_operations}
+        super().__init__(operations=pseudo, api_base_url=graphql_endpoint_url, **kwargs)
+        self.operations = self.graphql_operations
+        old = self.manifest
+        self.manifest = IntegrationManifest(
+            provider_id=self.provider_id, display_name=old.display_name, auth_method=old.auth_method,
+            capabilities=_graphql_capabilities(self.provider_id, graphql_operations),
+            documentation_url=old.documentation_url, status=ConnectionStatus.LIMITED_SUPPORT,
+            status_detail="Schema-validated GraphQL operations with explicit mutation confirmation.",
+            authentication_documentation_url=old.authentication_documentation_url,
+            identity_validation_method=old.identity_validation_method,
+            pagination_strategy="Provider-declared cursor fields only; pagination is not guessed.",
+            rate_limit_behavior="GraphQL 401/403/429 and error envelopes are surfaced; no automatic replay.",
+            setup_requirements=("Official HTTPS GraphQL endpoint", "Validated SDL/introspection JSON", "Reviewed named query/mutation documents", "Documented credential header", "Stable identity endpoint"),
+            limitations=("GraphQL queries and mutations are explicitly configured; introspection is not fetched automatically.", "Mutation responses remain accepted-but-unverified without a separate readback.", "Subscriptions and multipart uploads need a dedicated adapter."),
+            configuration_fields=("protocol=graphql", "graphql_endpoint_url", "graphql_operations", "GraphQL schema SDL/introspection JSON", "auth_type", "identity_url"),
+        )
+
+    def execute(self, action: str, arguments: Mapping[str, Any], credentials: Mapping[str, Any]):
+        if action == self.provider_id + ".connection.test":
+            identity, scopes = self.validate_credentials(credentials)
+            return {"identity": identity, "scopes": list(scopes)}, {"verified": True, "source": "configured identity endpoint", "identity": identity, "http_status": 200}
+        operation = self.graphql_operations.get(action)
+        if operation is None:
+            raise IntegrationError(IntegrationErrorCode.UNSUPPORTED_ACTION, "The provider does not declare this GraphQL operation.")
+        scopes = credentials.get("scopes") or ()
+        if isinstance(scopes, str):
+            scopes = scopes.split()
+        if set(operation.required_scopes) - {str(x).strip() for x in scopes if str(x).strip()}:
+            raise IntegrationError(IntegrationErrorCode.MISSING_PERMISSION, "The connected account lacks a scope required by this GraphQL operation.")
+        api_key = str(credentials.get("api_key") or "")
+        if not api_key:
+            raise IntegrationError(IntegrationErrorCode.AUTHENTICATION_REQUIRED, "Provider API key is missing.")
+        return _execute_graphql(
+            self.graphql_endpoint_url, action, arguments or {}, operation,
+            lambda url, **kw: self._request(url, api_key, method=kw.get("method", "POST"), json_body=kw.get("json_body"), content_type=kw.get("content_type", "application/json")),
+            api_key=api_key, api_key_header=self.api_key_header,
+        )
+
+
+class GraphQLOAuth2PKCEConnector(OAuth2PKCEConnector):
+    """GraphQL adapter reusing the existing OAuth2/OIDC PKCE lifecycle."""
+    def __init__(self, *, graphql_endpoint_url: str, graphql_schema: Any,
+                 graphql_operations: Sequence[GraphQLOperation], **kwargs):
+        use_oidc = bool(kwargs.get("use_oidc", True))
+        pseudo = tuple(OpenAPIOperation(
+            action=op.action, summary=op.summary, path="/graphql",
+            required_scopes=op.required_scopes, method="GET" if op.operation_type == "query" else "PATCH",
+            auth_type="oidc" if use_oidc else "oauth2", risk=op.risk, idempotent=op.idempotent,
+        ) for op in graphql_operations)
+        self.graphql_endpoint_url, self.graphql_schema = graphql_endpoint_url, graphql_schema
+        self.graphql_operations = {op.action: op for op in graphql_operations}
+        super().__init__(operations=pseudo, api_base_url=graphql_endpoint_url, **kwargs)
+        self.operations = self.graphql_operations
+        old = self.manifest
+        self.manifest = IntegrationManifest(
+            provider_id=self.provider_id, display_name=old.display_name, auth_method=old.auth_method,
+            capabilities=_graphql_capabilities(self.provider_id, graphql_operations),
+            documentation_url=old.documentation_url, status=ConnectionStatus.LIMITED_SUPPORT,
+            status_detail="Schema-validated GraphQL operations with explicit mutation confirmation.",
+            authentication_documentation_url=old.authentication_documentation_url,
+            identity_validation_method=old.identity_validation_method, supports_token_expiration=True,
+            supports_refresh=True, supports_revocation=bool(self.metadata.revocation_endpoint),
+            pagination_strategy="Provider-declared GraphQL cursor fields only.",
+            rate_limit_behavior="GraphQL 401/403/429 and error envelopes are surfaced; no automatic replay.",
+            setup_requirements=("Official HTTPS GraphQL endpoint", "Validated SDL/introspection JSON", "Reviewed operation documents", "OAuth2/OIDC client and scopes"),
+            limitations=("Mutation responses remain accepted-but-unverified without readback.", "Subscriptions and multipart uploads need a dedicated adapter."),
+            configuration_fields=("protocol=graphql", "graphql_endpoint_url", "graphql_operations", "GraphQL schema SDL/introspection JSON", "OAuth2/OIDC client/issuer/endpoints", "minimum scopes"),
+        )
+
+    def execute(self, action: str, arguments: Mapping[str, Any], credentials: Mapping[str, Any]):
+        if action == self.provider_id + ".connection.test":
+            identity, scopes = self.validate_credentials(credentials)
+            return {"identity": identity, "scopes": list(scopes)}, {"verified": True, "source": "configured UserInfo endpoint", "identity": identity, "http_status": 200}
+        operation = self.graphql_operations.get(action)
+        if operation is None:
+            raise IntegrationError(IntegrationErrorCode.UNSUPPORTED_ACTION, "The provider does not declare this GraphQL operation.")
+        raw_scopes = credentials.get("scopes") or ()
+        if isinstance(raw_scopes, str):
+            raw_scopes = raw_scopes.split()
+        if set(operation.required_scopes) - {str(x).strip() for x in raw_scopes if str(x).strip()}:
+            raise IntegrationError(IntegrationErrorCode.MISSING_PERMISSION, "The connected account lacks a scope required by this GraphQL operation.")
+        try:
+            expires_at = float(credentials.get("expires_at") or 0)
+        except (TypeError, ValueError):
+            expires_at = 0
+        if expires_at and expires_at <= time.time():
+            raise IntegrationError(IntegrationErrorCode.AUTHORIZATION_EXPIRED, "Provider token expired; refresh or reconnect the account.")
+        return _execute_graphql(
+            self.graphql_endpoint_url, action, arguments or {}, operation,
+            lambda url, **kw: self._requester(url, **kw), token=str(credentials.get("access_token") or ""),
+        )
+
+
+def _configure_graphql_connector(config: Mapping[str, Any], schema_document: str | Mapping[str, Any], *,
+                                 provider_id: str, display_name: str, auth_type: str,
+                                 trusted_hosts: Sequence[str], requester: Callable[..., HttpResponse] | None):
+    endpoint = str(config.get("graphql_endpoint_url") or "").strip()
+    if not endpoint:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "GraphQL protocol requires the documented graphql_endpoint_url.")
+    parsed = _check_https_url(endpoint, allowed_hosts=trusted_hosts)
+    if parsed.query or parsed.fragment:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "GraphQL endpoint may not contain a query or fragment.")
+    schema, lib = _load_graphql_schema(schema_document)
+    operations, queries, mutations, warnings = _build_graphql_operations(
+        schema, lib, provider_id=provider_id, endpoint=endpoint, declarations=config.get("graphql_operations"),
+    )
+    if not operations:
+        raise IntegrationError(IntegrationErrorCode.UNSUPPORTED_ACTION, "GraphQL configuration has no valid explicitly declared query or mutation operations.")
+    if auth_type in ("api_key", "bearer"):
+        identity_url = str(config.get("identity_url") or "").strip()
+        if not identity_url:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Configure a documented identity endpoint to validate GraphQL credentials.")
+        header = str(config.get("api_key_header") or ("Authorization" if auth_type == "bearer" else "")).strip()
+        if auth_type == "bearer":
+            header = "Authorization"
+        if not header:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Configure the documented GraphQL credential header.")
+        connector = GraphQLAPIKeyConnector(
+            provider_id=provider_id, display_name=display_name, identity_url=identity_url,
+            graphql_endpoint_url=endpoint, graphql_schema=schema, graphql_operations=operations,
+            api_key_header=header, credential_auth_type=auth_type, trusted_hosts=trusted_hosts,
+            identity_field=str(config.get("identity_field") or "id"),
+            documentation_url=str(config.get("documentation_url") or "")[:2048], requester=requester,
+        )
+    else:
+        client_id, redirect_uri = str(config.get("client_id") or "").strip(), str(config.get("redirect_uri") or "").strip()
+        if not client_id or not redirect_uri:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "GraphQL OAuth requires official client_id and exact registered redirect_uri.")
+        raw_scopes = config.get("requested_scopes")
+        if not isinstance(raw_scopes, (list, tuple)) or not raw_scopes or any(not isinstance(x, str) or not x.strip() for x in raw_scopes):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "requested_scopes must explicitly list minimum provider permissions.")
+        requested_scopes = tuple(dict.fromkeys(str(x).strip() for x in raw_scopes))
+        identity_field = "sub"
+        if auth_type == "oidc":
+            issuer = str(config.get("issuer") or "").strip()
+            if not issuer or "openid" not in requested_scopes:
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "GraphQL OIDC requires its official issuer and openid scope.")
+            cached = config.get("oidc_metadata")
+            if isinstance(cached, Mapping):
+                if str(cached.get("issuer") or "") != issuer:
+                    raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "Cached OIDC issuer does not match the configured issuer.")
+                algs = tuple(x for x in cached.get("id_token_signing_alg_values_supported", []) if isinstance(x, str) and x in ("RS256", "ES256")) if isinstance(cached.get("id_token_signing_alg_values_supported"), list) else ()
+                supported = tuple(x for x in cached.get("scopes_supported", []) if isinstance(x, str) and x.strip()) if isinstance(cached.get("scopes_supported"), list) else ()
+                metadata = OAuthProviderMetadata(
+                    issuer=issuer, authorization_endpoint=str(cached.get("authorization_endpoint") or ""),
+                    token_endpoint=str(cached.get("token_endpoint") or ""), userinfo_endpoint=str(cached.get("userinfo_endpoint") or ""),
+                    jwks_uri=str(cached.get("jwks_uri") or ""), revocation_endpoint=str(cached.get("revocation_endpoint") or ""),
+                    scopes_supported=supported, id_token_signing_alg_values_supported=algs,
+                )
+                if not all((metadata.authorization_endpoint, metadata.token_endpoint, metadata.userinfo_endpoint, metadata.jwks_uri)) or not algs:
+                    raise IntegrationError(IntegrationErrorCode.INVALID_AUTH_RESPONSE, "Cached GraphQL OIDC metadata is incomplete.")
+                for url in (issuer, metadata.authorization_endpoint, metadata.token_endpoint, metadata.userinfo_endpoint, metadata.jwks_uri, metadata.revocation_endpoint):
+                    if url:
+                        _check_https_url(url, allowed_hosts=trusted_hosts)
+            else:
+                metadata = discover_oidc_metadata(issuer, trusted_hosts=trusted_hosts, requester=requester)
+            if metadata.scopes_supported and not set(requested_scopes).issubset(set(metadata.scopes_supported)):
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "GraphQL OIDC requests scopes not advertised by the provider.")
+        else:
+            endpoints = config.get("oauth_endpoints")
+            if not isinstance(endpoints, Mapping):
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "GraphQL OAuth2 requires documented authorization, token and UserInfo endpoints.")
+            metadata = OAuthProviderMetadata(
+                issuer=str(endpoints.get("issuer") or ""), authorization_endpoint=str(endpoints.get("authorization_endpoint") or ""),
+                token_endpoint=str(endpoints.get("token_endpoint") or ""), userinfo_endpoint=str(endpoints.get("userinfo_endpoint") or ""),
+                jwks_uri=str(endpoints.get("jwks_uri") or ""), revocation_endpoint=str(endpoints.get("revocation_endpoint") or ""),
+                scopes_supported=tuple(x for x in endpoints.get("scopes_supported", ()) if isinstance(x, str)),
+            )
+            if not all((metadata.authorization_endpoint, metadata.token_endpoint, metadata.userinfo_endpoint)):
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "GraphQL OAuth2 metadata must define authorization, token and UserInfo endpoints.")
+            for url in (metadata.authorization_endpoint, metadata.token_endpoint, metadata.userinfo_endpoint, metadata.jwks_uri, metadata.revocation_endpoint):
+                if url:
+                    _check_https_url(url, allowed_hosts=trusted_hosts)
+            identity_field = str(config.get("identity_field") or "id")
+        connector = GraphQLOAuth2PKCEConnector(
+            provider_id=provider_id, display_name=display_name, client_id=client_id,
+            client_secret=str(config.get("client_secret") or ""), redirect_uri=redirect_uri,
+            metadata=metadata, api_base_url=endpoint, graphql_endpoint_url=endpoint, graphql_schema=schema,
+            graphql_operations=operations, requested_scopes=requested_scopes, identity_field=identity_field,
+            trusted_hosts=trusted_hosts, requester=requester, use_oidc=(auth_type == "oidc"),
+        )
+    source = schema_document if isinstance(schema_document, str) else json.dumps(schema_document, sort_keys=True)
+    preview = {
+        "provider_id": provider_id, "protocol": "graphql",
+        "schema_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(), "server_url": endpoint,
+        "read_only_candidates": queries, "mutation_candidates": mutations,
+        "review_candidates": queries + [x for x in mutations if x.get("supported") is True],
+        "warnings": warnings, "registered": False,
+        "note": "Inert preview. Only explicitly configured, schema-validated operations are enabled; each mutation requires individual confirmation.",
+    }
+    return connector, preview
+
+
 def configure_provider_connector(
     config: Mapping[str, Any],
     openapi_spec: str | Mapping[str, Any],
@@ -1551,8 +2017,8 @@ def configure_provider_connector(
     Required config is intentionally small but provider-specific: provider_id,
     display_name, auth_type, trusted_hosts, and either OAuth metadata/client details
     or API-key header/identity endpoint. No endpoints are guessed from names.
-    The returned OpenAPI preview is still not registered; callers must review it
-    and explicitly register the returned connector with IntegrationManager.
+    REST OpenAPI and GraphQL previews are both inert. Callers must review the
+    declared schema and capabilities, then explicitly register the connector.
     """
     if not isinstance(config, Mapping):
         raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Provider configuration must be an object.")
@@ -1569,16 +2035,20 @@ def configure_provider_connector(
     trusted_hosts = tuple(sorted({_normalized_host(host) for host in raw_hosts if _normalized_host(host)}))
     if not trusted_hosts:
         raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "No valid trusted HTTPS hostnames were configured.")
+    protocol = str(config.get("protocol") or "openapi").strip().lower()
+    if protocol == "graphql":
+        return _configure_graphql_connector(config, openapi_spec, provider_id=provider_id, display_name=display_name, auth_type=auth_type, trusted_hosts=trusted_hosts, requester=requester)
+    if protocol not in ("openapi", "rest", "rest_openapi"):
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Choose a supported protocol: openapi/rest or graphql.")
     preview = analyze_openapi_spec(
         openapi_spec,
         provider_id=provider_id,
         trusted_server_hosts=trusted_hosts,
         max_operations=int(config.get("max_operations", 250)),
     )
-    candidates = preview["read_only_candidates"]
     operations = operations_from_openapi(preview)
     if not operations:
-        raise IntegrationError(IntegrationErrorCode.UNSUPPORTED_ACTION, "The reviewed API specification contains no safe, authenticated GET operations for this provider.")
+        raise IntegrationError(IntegrationErrorCode.UNSUPPORTED_ACTION, "The reviewed API specification contains no supported, authenticated operations for this provider.")
     if auth_type in ("api_key", "bearer"):
         expected_type = auth_type
         if any(item.auth_type != expected_type for item in operations):
