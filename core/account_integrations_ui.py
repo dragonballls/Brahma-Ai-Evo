@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import webbrowser
 from typing import Any
 
 from PyQt6.QtCore import QThread, QTimer, Qt, pyqtSignal, QUrl
@@ -22,7 +21,6 @@ from PyQt6.QtWidgets import (
 )
 
 from core.account_integrations import (
-    ActionResult,
     ConnectionStatus,
     GitHubConnector,
     IntegrationError,
@@ -66,9 +64,10 @@ class _AccountWorker(QThread):
                 self.completed.emit({"ok": True, "kind": "flow_started", "flow": flow})
                 return
             if self.command == "poll":
-                outcome = self.connector.poll_device_authorization(dict(self.flow or {}))
+                flow = dict(self.flow or {})
+                outcome = self.connector.poll_device_authorization(flow)
                 if outcome.get("pending"):
-                    self.completed.emit({"ok": True, "kind": "flow_pending", "flow": dict(self.flow or {}), "retry_after": outcome.get("retry_after", 5)})
+                    self.completed.emit({"ok": True, "kind": "flow_pending", "flow": flow, "retry_after": outcome.get("retry_after", 5)})
                     return
                 summary = self.manager.connect("github", outcome.get("credentials") or {})
                 self.completed.emit({"ok": True, "kind": "connected", "account_id": summary.account_id, "identity": summary.identity})
@@ -77,11 +76,11 @@ class _AccountWorker(QThread):
                 self.completed.emit({"ok": True, "kind": "test", "data": self.manager.test_connection(self.account_id)})
                 return
             if self.command == "profile":
-                result = self.manager.execute(self.account_id, "github.profile.read", {}, idempotency_key="ui-profile-read")
+                result = self.manager.execute(self.account_id, "github.profile.read", {})
                 self.completed.emit({"ok": True, "kind": "action", "data": result.to_dict()})
                 return
             if self.command == "repositories":
-                result = self.manager.execute(self.account_id, "github.repositories.public.list", {}, idempotency_key="ui-public-repos")
+                result = self.manager.execute(self.account_id, "github.repositories.public.list", {})
                 self.completed.emit({"ok": True, "kind": "action", "data": result.to_dict()})
                 return
             if self.command == "disconnect":
@@ -346,8 +345,7 @@ class AccountsIntegrationsPage(QWidget):
 
     def _open_authorization_page(self):
         if self._flow:
-            QDesktopServices.openUrl(QUrl(GitHubConnector.__dict__.get("GITHUB_DEVICE_URL", "https://github.com/login/device")))
-            # The link is a fixed official URL; do not use provider-supplied arbitrary URLs.
+            # This is the fixed official URL, never a URL supplied by a provider response.
             QDesktopServices.openUrl(QUrl("https://github.com/login/device"))
 
     def _cancel_authorization(self):
