@@ -21,6 +21,7 @@ from core.universal_integrations import (
     OAuth2PKCEConnector,
     OAuthProviderMetadata,
     analyze_openapi_spec,
+    configure_provider_connector,
     discover_oidc_metadata,
     operations_from_openapi,
 )
@@ -456,3 +457,83 @@ def test_header_api_key_connector_validates_identity_and_runs_only_declared_get(
     assert failed_check["ok"] is False
     assert failed_check["evidence"]["error_code"] == IntegrationErrorCode.AUTHENTICATION_REQUIRED.value
     assert failed_check["account"]["status"] == "Authentication Required"
+
+
+def test_provider_onboarding_factory_builds_oauth_and_api_key_adapters_from_explicit_config():
+    oauth_requester = FakeOAuthRequester()
+    oauth_connector, oauth_preview = configure_provider_connector(
+        {
+            "provider_id": "sample",
+            "display_name": "Sample OAuth Service",
+            "auth_type": "oauth2",
+            "trusted_hosts": ["auth.example.test", "api.example.test"],
+            "client_id": "public-client",
+            "client_secret": "client-secret",
+            "redirect_uri": "http://127.0.0.1:8765/oauth/callback",
+            "requested_scopes": ["people:read"],
+            "identity_field": "sub",
+            "oauth_endpoints": {
+                "authorization_endpoint": "https://auth.example.test/oauth/authorize",
+                "token_endpoint": "https://auth.example.test/oauth/token",
+                "userinfo_endpoint": "https://auth.example.test/oauth/userinfo",
+                "revocation_endpoint": "https://auth.example.test/oauth/revoke",
+            },
+            "documentation_url": "https://api.example.test/docs",
+        },
+        _openapi(),
+        requester=oauth_requester,
+    )
+    assert oauth_connector.manifest.provider_id == "sample"
+    assert any(capability.action == "sample.getUser" for capability in oauth_connector.manifest.capabilities)
+    assert oauth_preview["registered"] is False
+    _, oauth_credentials = _authorize(oauth_connector, oauth_requester)
+    manager = IntegrationManager(store=MemoryCredentialStore(), adapters=[oauth_connector])
+    account = manager.connect("sample", oauth_credentials)
+    assert account.identity == "person-123"
+
+    api_key_requester = FakeAPIKeyRequester()
+    key_connector, key_preview = configure_provider_connector(
+        {
+            "provider_id": "samplekey",
+            "display_name": "Sample API Key Service",
+            "auth_type": "api_key",
+            "trusted_hosts": ["api.example.test"],
+            "api_key_header": "X-API-Key",
+            "identity_url": "https://api.example.test/v1/whoami",
+            "identity_field": "id",
+            "documentation_url": "https://api.example.test/docs",
+        },
+        _api_key_openapi(),
+        requester=api_key_requester,
+    )
+    key_manager = IntegrationManager(store=MemoryCredentialStore(), adapters=[key_connector])
+    key_account = key_manager.connect("samplekey", {"api_key": "secure-demo-key"})
+    assert key_account.identity == "api-key-user"
+    assert key_preview["registered"] is False
+
+
+def test_provider_onboarding_factory_fails_closed_for_missing_identity_or_unsafe_hosts():
+    with pytest.raises(IntegrationError) as missing_identity:
+        configure_provider_connector(
+            {
+                "provider_id": "samplekey",
+                "auth_type": "api_key",
+                "trusted_hosts": ["api.example.test"],
+                "api_key_header": "X-API-Key",
+            },
+            _api_key_openapi(),
+        )
+    assert missing_identity.value.code == IntegrationErrorCode.INVALID_REQUEST
+
+    with pytest.raises(IntegrationError) as untrusted:
+        configure_provider_connector(
+            {
+                "provider_id": "samplekey",
+                "auth_type": "api_key",
+                "trusted_hosts": ["untrusted.example.test"],
+                "api_key_header": "X-API-Key",
+                "identity_url": "https://api.example.test/v1/whoami",
+            },
+            _api_key_openapi(),
+        )
+    assert untrusted.value.code == IntegrationErrorCode.INVALID_REQUEST
