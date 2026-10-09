@@ -81,10 +81,27 @@ def test_executor_skill_forge_immediate_execution(monkeypatch):
 
 def test_executor_auto_heal_error_recording(monkeypatch):
     from actions.auto_heal_engine import AutoHealEngine
+    from agent.error_handler import ErrorDecision
     from agent.executor import AgentExecutor
 
     captured_errors = []
+    analysis_calls = []
     monkeypatch.setattr(AutoHealEngine, "record_last_error", lambda tb: captured_errors.append(tb))
+
+    # Keep this unit test focused on error recording. The real error analyzer
+    # calls the provider client and may request generated recovery code, which
+    # is unrelated to this assertion and must not run in the test process.
+    def isolated_analyze_error(step, error, *, attempt=1, max_attempts=2):
+        analysis_calls.append((step, error, attempt))
+        return {
+            "decision": ErrorDecision.ABORT,
+            "reason": "Deterministic test recovery decision",
+            "fix_suggestion": "",
+            "max_retries": 0,
+            "user_message": "",
+        }
+
+    monkeypatch.setattr("agent.executor.analyze_error", isolated_analyze_error)
 
     # Mock create_plan to return a step that calls a failing tool
     failing_plan = {
@@ -107,5 +124,7 @@ def test_executor_auto_heal_error_recording(monkeypatch):
     executor = AgentExecutor()
     executor.execute(goal="test auto heal recording", speak=None, player=None)
 
-    assert len(captured_errors) > 0
+    assert len(captured_errors) == 1
     assert "Simulated tool crash for Auto-Heal test" in captured_errors[0]
+    assert len(analysis_calls) == 1
+    assert analysis_calls[0][1] == "Simulated tool crash for Auto-Heal test"
