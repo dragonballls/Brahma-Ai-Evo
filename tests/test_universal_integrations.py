@@ -485,6 +485,11 @@ def test_provider_onboarding_factory_builds_oauth_and_api_key_adapters_from_expl
     )
     assert oauth_connector.manifest.provider_id == "sample"
     assert any(capability.action == "sample.getUser" for capability in oauth_connector.manifest.capabilities)
+    assert oauth_connector.manifest.identity_validation_method == "Configured HTTPS UserInfo endpoint and explicit stable identity field"
+    assert oauth_connector.manifest.supports_refresh is True
+    assert oauth_connector.manifest.supports_revocation is True
+    assert oauth_connector.manifest.timeout_seconds > 0
+    assert oauth_connector.manifest.confirmation_policy
     assert oauth_preview["registered"] is False
     _, oauth_credentials = _authorize(oauth_connector, oauth_requester)
     manager = IntegrationManager(store=MemoryCredentialStore(), adapters=[oauth_connector])
@@ -509,6 +514,10 @@ def test_provider_onboarding_factory_builds_oauth_and_api_key_adapters_from_expl
     key_manager = IntegrationManager(store=MemoryCredentialStore(), adapters=[key_connector])
     key_account = key_manager.connect("samplekey", {"api_key": "secure-demo-key"})
     assert key_account.identity == "api-key-user"
+    assert key_connector.manifest.supports_token_expiration is False
+    assert key_connector.manifest.supports_refresh is False
+    assert key_connector.manifest.supports_revocation is False
+    assert key_connector.manifest.identity_validation_method.startswith("Configured HTTPS identity endpoint")
     assert key_preview["registered"] is False
 
 
