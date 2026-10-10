@@ -613,7 +613,7 @@ def _normalize_cursor_pagination(
         raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Cursor parameter must be a declared string or numeric query parameter.")
     page_size_parameter = str(raw.get("page_size_parameter") or "").strip()
     if page_size_parameter:
-        if page_size_parameter not in query_params or page_size_parameter in required_query_params or page_size_parameter == cursor_parameter:
+        if page_size_parameter not in query_params or page_size_parameter == cursor_parameter:
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "page_size_parameter must name a different optional query parameter declared by the GET operation.")
         page_schema = query_param_schemas.get(page_size_parameter, {})
         if page_schema.get("type") not in ("string", "integer", "number"):
@@ -1517,7 +1517,7 @@ class OAuth2PKCEConnector:
         query_items = []
         for name in operation.query_params:
             if name not in args:
-                if name in operation.required_query_params:
+                if name in operation.required_query_params and name not in pagination_parameters:
                     raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "A required query parameter is missing.")
                 continue
             value = args[name]
@@ -1831,7 +1831,7 @@ class APIKeyConnector:
         query_items = []
         for name in operation.query_params:
             if name not in args:
-                if name in operation.required_query_params:
+                if name in operation.required_query_params and name not in pagination_parameters:
                     raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "A required query parameter is missing.")
                 continue
             value = args[name]

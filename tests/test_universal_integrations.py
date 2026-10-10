@@ -975,7 +975,7 @@ def _cursor_openapi():
             "operationId": "listItems", "summary": "List items",
             "parameters": [
                 {"name": "cursor", "in": "query", "required": False, "schema": {"type": "string"}},
-                {"name": "limit", "in": "query", "required": False, "schema": {"type": "integer", "minimum": 1, "maximum": 1000}},
+                {"name": "limit", "in": "query", "required": True, "schema": {"type": "integer", "minimum": 1, "maximum": 1000}},
             ],
             "x-brahma-pagination": {
                 "style": "cursor", "cursor_parameter": "cursor", "page_size_parameter": "limit",
