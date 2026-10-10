@@ -288,8 +288,16 @@ def _load_openapi_spec(spec: str | Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(spec, str):
         if len(spec.encode("utf-8")) > _MAX_SPEC_BYTES:
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI description exceeds the 2 MiB onboarding limit.")
+        def _unique_json_object(pairs):
+            value = {}
+            for key, item in pairs:
+                if key in value:
+                    raise ValueError("duplicate JSON mapping key " + repr(key))
+                value[key] = item
+            return value
+
         try:
-            loaded = json.loads(spec)
+            loaded = json.loads(spec, object_pairs_hook=_unique_json_object)
         except json.JSONDecodeError:
             try:
                 import yaml
@@ -299,7 +307,7 @@ def _load_openapi_spec(spec: str | Mapping[str, Any]) -> dict[str, Any]:
             class _UniqueKeySafeLoader(yaml.SafeLoader):
                 """Safe YAML loader rejecting ambiguous or non-string mapping keys."""
                 def construct_mapping(self, node, deep=False):
-                    if not isinstance(node, yaml.MappingNode):
+                    if not isinstance(node, yaml.nodes.MappingNode):
                         return super().construct_mapping(node, deep=deep)
                     self.flatten_mapping(node)
                     mapping = {}
@@ -322,6 +330,8 @@ def _load_openapi_spec(spec: str | Mapping[str, Any]) -> dict[str, Any]:
                 loaded = yaml.load(spec, Loader=_UniqueKeySafeLoader)
             except yaml.YAMLError as exc:
                 raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI YAML is invalid or uses unsafe/ambiguous YAML features.") from exc
+        except ValueError as exc:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI JSON contains a duplicate mapping key.") from exc
     elif isinstance(spec, Mapping):
         loaded = dict(spec)
     else:
