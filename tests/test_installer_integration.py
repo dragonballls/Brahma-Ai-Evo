@@ -104,3 +104,26 @@ def test_install_thread_performs_end_to_end_payload_activation(tmp_path, monkeyp
         or p.name.startswith(f".{target.name}.backup-")
     ]
     assert leftovers == []
+
+
+def test_pyinstaller_hidden_imports_reference_available_module_names():
+    import ast
+
+    repository = Path(__file__).resolve().parents[1]
+    spec_path = repository / "installer" / "BrahmaEvo.spec"
+    tree = ast.parse(spec_path.read_text(encoding="utf-8"))
+    hidden_imports = None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not isinstance(node.func, ast.Name) or node.func.id != "Analysis":
+            continue
+        keyword = next((item for item in node.keywords if item.arg == "hiddenimports"), None)
+        if keyword is not None:
+            hidden_imports = ast.literal_eval(keyword.value)
+            break
+
+    assert isinstance(hidden_imports, list)
+    assert "bs4" in hidden_imports  # Code imports BeautifulSoup from the bs4 module.
+    for stale_or_distribution_name in ("keyboard", "passlib", "plyer", "beautifulsoup4"):
+        assert stale_or_distribution_name not in hidden_imports

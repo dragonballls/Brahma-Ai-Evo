@@ -37,3 +37,6 @@ The current Windows performance engine remains the source of truth for reversibl
 - https://github.com/winsw/winsw
 
 The unified Device Manager is documented in `docs/DEVICE_NETWORK.md`. Android-Web-Control and Home Assistant Core are reference projects; Brahma does not vendor their full runtimes as hard dependencies.
+
+
+The shared account integration registry and its explicitly supported provider operations are documented in [ACCOUNT_INTEGRATIONS.md](ACCOUNT_INTEGRATIONS.md). A catalog entry is not proof of a live account connection; only adapters that authenticate and validate an account expose executable capabilities.
