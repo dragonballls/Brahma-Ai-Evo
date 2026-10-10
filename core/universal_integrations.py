@@ -35,7 +35,8 @@ from core.account_integrations import (
 
 _MAX_SPEC_BYTES = 2 * 1024 * 1024
 _MAX_SPEC_NODES = 50000
-_MAX_OPERATIONS = 500
+# Discovery is bounded by imported-document size/structure instead of an arbitrary small action count.
+_MAX_OPERATIONS = _MAX_SPEC_NODES
 _MAX_RESPONSE_BYTES = 1024 * 1024
 _PROVIDER_RE = re.compile(r"^[a-z][a-z0-9_-]{1,63}$")
 _OPERATION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
@@ -74,6 +75,7 @@ class OpenAPIOperation:
     output_schema: Mapping[str, Any] = field(default_factory=dict)
     risk: RiskLevel = RiskLevel.READ_ONLY
     idempotent: bool = True
+    pagination: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         method = str(self.method).upper()
@@ -538,6 +540,212 @@ def _validate_operation_value(value: Any, schema: Mapping[str, Any], *, depth: i
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Numeric argument is outside its declared range.")
 
 
+
+_POINTER_MISSING = object()
+
+
+def _parse_json_pointer(pointer: Any, *, label: str) -> tuple[str, ...]:
+    value = str(pointer or "")
+    if not value.startswith("#/") or len(value) > 1024:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, label + " must be a bounded RFC 6901 JSON pointer beginning with '#/'.")
+    encoded = value[2:].split("/")
+    if not encoded or len(encoded) > 32:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, label + " has too many pointer segments.")
+    segments = []
+    for segment in encoded:
+        decoded, i = "", 0
+        while i < len(segment):
+            if segment[i] != "~":
+                decoded += segment[i]
+                i += 1
+            else:
+                if i + 1 >= len(segment) or segment[i + 1] not in "01":
+                    raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, label + " contains an invalid JSON-pointer escape.")
+                decoded += "/" if segment[i + 1] == "1" else "~"
+                i += 2
+        segments.append(decoded)
+    return tuple(segments)
+
+
+def _read_json_pointer(value: Any, pointer: str) -> Any:
+    current = value
+    for segment in _parse_json_pointer(pointer, label="Pagination pointer"):
+        if isinstance(current, Mapping):
+            if segment not in current:
+                return _POINTER_MISSING
+            current = current[segment]
+        elif isinstance(current, list) and segment.isdigit():
+            index = int(segment)
+            if index >= len(current):
+                return _POINTER_MISSING
+            current = current[index]
+        else:
+            return _POINTER_MISSING
+    return current
+
+
+def _normalize_cursor_pagination(
+    raw: Any, *, method: str, query_params: Sequence[str],
+    required_query_params: Sequence[str],
+    query_param_schemas: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    if not isinstance(raw, Mapping):
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "x-brahma-pagination must be an object.")
+    if str(method).upper() != "GET" or str(raw.get("style") or "") != "cursor":
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Only explicit cursor pagination on read-only GET operations is supported.")
+    cursor_parameter = str(raw.get("cursor_parameter") or raw.get("parameter") or "").strip()
+    if not cursor_parameter or cursor_parameter not in query_params or cursor_parameter in required_query_params:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "cursor_parameter must name an optional query parameter declared by the GET operation.")
+    if query_param_schemas.get(cursor_parameter, {}).get("type") not in ("string", "integer", "number"):
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Cursor parameter must be a declared string or numeric query parameter.")
+    page_size_parameter = str(raw.get("page_size_parameter") or "").strip()
+    if page_size_parameter:
+        if page_size_parameter not in query_params or page_size_parameter in required_query_params or page_size_parameter == cursor_parameter:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "page_size_parameter must name a different optional query parameter declared by the GET operation.")
+        page_schema = query_param_schemas.get(page_size_parameter, {})
+        if page_schema.get("type") not in ("string", "integer", "number"):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Page-size parameter must be a declared string or numeric query parameter.")
+    try:
+        page_size = int(raw.get("page_size", 100))
+        max_pages = int(raw.get("max_pages", 20))
+        max_items = int(raw.get("max_items", 2000))
+    except (TypeError, ValueError) as exc:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Pagination page_size, max_pages and max_items must be integers.") from exc
+    if any(isinstance(raw.get(name), bool) for name in ("page_size", "max_pages", "max_items") if name in raw):
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Pagination numeric limits must not be booleans.")
+    if not 1 <= page_size <= 1000:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Pagination page_size must be between 1 and 1000.")
+    if not 1 <= max_pages <= 50:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Pagination max_pages must be between 1 and 50.")
+    if not 1 <= max_items <= 5000:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Pagination max_items must be between 1 and 5000.")
+    if page_size_parameter:
+        page_schema = query_param_schemas.get(page_size_parameter, {})
+        if ("minimum" in page_schema and page_size < page_schema["minimum"]) or ("maximum" in page_schema and page_size > page_schema["maximum"]):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Configured page_size falls outside the declared parameter schema.")
+    items_pointer = str(raw.get("items_pointer") or "")
+    next_cursor_pointer = str(raw.get("next_cursor_pointer") or "")
+    has_more_pointer = str(raw.get("has_more_pointer") or "")
+    _parse_json_pointer(items_pointer, label="items_pointer")
+    _parse_json_pointer(next_cursor_pointer, label="next_cursor_pointer")
+    if has_more_pointer:
+        _parse_json_pointer(has_more_pointer, label="has_more_pointer")
+    return {
+        "style": "cursor", "cursor_parameter": cursor_parameter,
+        "page_size_parameter": page_size_parameter, "page_size": page_size,
+        "max_pages": max_pages, "max_items": max_items,
+        "items_pointer": items_pointer, "next_cursor_pointer": next_cursor_pointer,
+        "has_more_pointer": has_more_pointer,
+    }
+
+
+def _operation_input_schema(operation: OpenAPIOperation) -> dict[str, Any]:
+    pagination = dict(operation.pagination or {})
+    hidden = {str(pagination.get("cursor_parameter") or ""), str(pagination.get("page_size_parameter") or "")} - {""}
+    properties = {
+        **{name: dict(schema) for name, schema in operation.path_param_schemas.items()},
+        **{name: dict(schema) for name, schema in operation.query_param_schemas.items() if name not in hidden},
+        **({"body": dict(operation.body_schema)} if operation.body_schema is not None else {}),
+    }
+    required = list(operation.path_params) + [name for name in operation.required_query_params if name not in hidden]
+    if operation.body_required:
+        required.append("body")
+    return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
+
+
+def _validate_openapi_page(response: HttpResponse, operation: OpenAPIOperation) -> Any:
+    if response.status == 401:
+        raise IntegrationError(IntegrationErrorCode.AUTHENTICATION_REQUIRED, "Provider rejected the credential; refresh or reconnect the account.")
+    if response.status == 403:
+        raise IntegrationError(IntegrationErrorCode.MISSING_PERMISSION, "Provider denied this operation.")
+    if response.status == 429:
+        raise IntegrationError(IntegrationErrorCode.RATE_LIMITED, "Provider rate limit reached; retry later.", retryable=True)
+    if response.status < 200 or response.status >= 300:
+        raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Provider pagination request failed.")
+    if operation.output_schema and response.status != 204:
+        try:
+            _validate_operation_value(response.data, operation.output_schema)
+        except IntegrationError as exc:
+            raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Provider page did not match its declared response schema.") from exc
+    return response.data
+
+
+def _execute_cursor_pagination(
+    base_url: str, operation: OpenAPIOperation, request_page: Callable[[str], HttpResponse],
+) -> tuple[dict[str, Any], Mapping[str, Any]]:
+    pagination = dict(operation.pagination or {})
+    if not pagination:
+        response = request_page(base_url)
+        return _sanitize_payload(_validate_openapi_page(response, operation)), {
+            "verified": operation.method == "GET", "http_status": response.status, "pages_fetched": 1,
+        }
+    cursor_parameter = str(pagination["cursor_parameter"])
+    page_size_parameter = str(pagination.get("page_size_parameter") or "")
+    parts = urllib.parse.urlsplit(base_url)
+    internal_params = {cursor_parameter, page_size_parameter} - {""}
+    static_query = [(k, v) for k, v in urllib.parse.parse_qsl(parts.query, keep_blank_values=True) if k not in internal_params]
+    items, seen_cursors = [], set()
+    cursor = None
+    pages_fetched, has_more, truncated, last_status = 0, True, False, 0
+    for page_number in range(int(pagination["max_pages"])):
+        query = list(static_query)
+        if page_size_parameter:
+            query.append((page_size_parameter, str(pagination["page_size"])))
+        if cursor is not None:
+            query.append((cursor_parameter, cursor))
+        page_url = urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, urllib.parse.urlencode(query), ""))
+        parsed_page = _check_https_url(page_url)
+        if (_normalized_host(parsed_page.hostname or "") != _normalized_host(parts.hostname or "")
+                or parsed_page.port != parts.port or parsed_page.scheme != parts.scheme):
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Pagination URL changed the configured API origin.")
+        response = request_page(page_url)
+        pages_fetched += 1
+        last_status = response.status
+        payload = _validate_openapi_page(response, operation)
+        page_items = _read_json_pointer(payload, str(pagination["items_pointer"]))
+        if not isinstance(page_items, list):
+            raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Pagination items_pointer did not resolve to a list.")
+        next_cursor_value = _read_json_pointer(payload, str(pagination["next_cursor_pointer"]))
+        if pagination.get("has_more_pointer"):
+            more_value = _read_json_pointer(payload, str(pagination["has_more_pointer"]))
+            if not isinstance(more_value, bool):
+                raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Pagination has_more_pointer did not resolve to a boolean.")
+            has_more = more_value
+        else:
+            has_more = next_cursor_value is not _POINTER_MISSING and next_cursor_value not in (None, "")
+        remaining = int(pagination["max_items"]) - len(items)
+        items.extend(page_items[:max(0, remaining)])
+        if len(page_items) > remaining:
+            truncated, has_more = True, True
+            break
+        if not has_more:
+            break
+        if next_cursor_value is _POINTER_MISSING or next_cursor_value is None or next_cursor_value == "":
+            raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Provider reported more pages without a next cursor.")
+        if isinstance(next_cursor_value, bool) or isinstance(next_cursor_value, (Mapping, list, tuple)):
+            raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Provider next cursor was not a scalar.")
+        next_cursor = str(next_cursor_value)
+        if len(next_cursor) > 512 or any(ch in next_cursor for ch in "\r\n"):
+            raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Provider next cursor exceeded safe encoding limits.")
+        if next_cursor in seen_cursors:
+            raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Provider repeated a cursor; pagination stopped to prevent a loop.")
+        seen_cursors.add(next_cursor)
+        cursor = next_cursor
+        if len(items) >= int(pagination["max_items"]) or page_number + 1 >= int(pagination["max_pages"]):
+            truncated, has_more = True, True
+            break
+    result = {
+        "items": _sanitize_payload(items), "pages_fetched": pages_fetched,
+        "has_more": bool(has_more), "truncated": bool(truncated),
+    }
+    return result, {
+        "verified": True, "source": "reviewed OpenAPI cursor pagination",
+        "operation": operation.action, "method": "GET", "http_status": last_status,
+        "pages_fetched": pages_fetched, "items_returned": len(items),
+        "has_more": bool(has_more), "truncated": bool(truncated), "pagination_style": "cursor",
+    }
+
+
 def _operation_risk(method: str, operation: Mapping[str, Any], path: str) -> RiskLevel:
     """Use conservative method/path semantics; summaries cannot lower DELETE risk."""
     method = str(method).upper()
@@ -564,7 +772,7 @@ def analyze_openapi_spec(
     *,
     provider_id: str = "custom",
     trusted_server_hosts: Sequence[str] = (),
-    max_operations: int = 250,
+    max_operations: int = _MAX_OPERATIONS,
 ) -> dict[str, Any]:
     """Preview explicitly authenticated OpenAPI operations without executing them."""
     provider = str(provider_id or "").strip().lower()
@@ -749,6 +957,18 @@ def analyze_openapi_spec(
                                 break
                     except IntegrationError:
                         warnings.append("Response schema for " + operation_id + " is outside the supported subset; bounded JSON parsing remains enabled.")
+            pagination: dict[str, Any] = {}
+            if "x-brahma-pagination" in operation:
+                try:
+                    pagination = _normalize_cursor_pagination(
+                        operation.get("x-brahma-pagination"), method=method.upper(),
+                        query_params=tuple(query_params), required_query_params=tuple(required_query_params),
+                        query_param_schemas=query_schemas,
+                    )
+                except IntegrationError as exc:
+                    warnings.append("Skipped operation " + operation_id + " because its x-brahma-pagination contract is invalid: " + str(exc))
+                    seen_ids.add(operation_id)
+                    continue
             candidate = {
                 "action": provider + "." + operation_id, "operation_id": operation_id,
                 "summary": summary, "method": method.upper(), "path": path,
@@ -756,7 +976,7 @@ def analyze_openapi_spec(
                 "query_params": sorted(set(query_params)), "required_query_params": sorted(set(required_query_params)),
                 "path_param_schemas": path_schemas, "query_param_schemas": query_schemas,
                 "body_schema": body_schema, "body_required": body_required, "body_content_type": body_content_type,
-                "output_schema": dict(output_schema), "auth_scheme": str(scheme_name),
+                "output_schema": dict(output_schema), "pagination": pagination, "auth_scheme": str(scheme_name),
                 "auth_type": auth_type, "api_key_header": api_key_header, "risk": risk.value,
                 "idempotent": method in ("get", "put", "delete"), "supported": True,
                 "requires_manual_approval": True,
@@ -815,6 +1035,7 @@ def operations_from_openapi(preview: Mapping[str, Any]) -> tuple[OpenAPIOperatio
             body_required=bool(item.get("body_required")), body_content_type=str(item.get("body_content_type") or "application/json"),
             output_schema=dict(item.get("output_schema") or {}), risk=risk,
             idempotent=bool(item.get("idempotent", str(item.get("method") or "GET").upper() in ("GET", "PUT", "DELETE"))),
+            pagination=dict(item.get("pagination") or {}),
         ))
     return tuple(operations)
 
@@ -904,16 +1125,8 @@ class OAuth2PKCEConnector:
             Capability(
                 item.action, item.summary, item.risk, item.required_scopes,
                 idempotent=item.idempotent, supported=True,
-                input_schema={
-                    "type": "object",
-                    "properties": {
-                        **{name: dict(schema) for name, schema in item.path_param_schemas.items()},
-                        **{name: dict(schema) for name, schema in item.query_param_schemas.items()},
-                        **({"body": dict(item.body_schema)} if item.body_schema is not None else {}),
-                    },
-                    "required": list(item.path_params) + list(item.required_query_params) + (["body"] if item.body_required else []),
-                    "additionalProperties": False,
-                },
+                input_schema=_operation_input_schema(item),
+                pagination=dict(item.pagination),
                 output_schema=dict(item.output_schema),
                 operation_kind=("read" if item.method == "GET" else "delete" if item.method == "DELETE" else "update" if item.method in ("PUT", "PATCH") else "create_or_submit"),
                 changes_state=item.method != "GET",
@@ -1257,7 +1470,12 @@ class OAuth2PKCEConnector:
         if missing:
             raise IntegrationError(IntegrationErrorCode.MISSING_PERMISSION, "The connected account has not granted the scopes required by this operation.")
         args = dict(arguments or {})
-        allowed_args = set(operation.path_params) | set(operation.query_params)
+        pagination = dict(operation.pagination or {})
+        pagination_parameters = {
+            str(pagination.get("cursor_parameter") or ""),
+            str(pagination.get("page_size_parameter") or ""),
+        } - {""}
+        allowed_args = set(operation.path_params) | (set(operation.query_params) - pagination_parameters)
         if operation.body_schema is not None:
             allowed_args.add("body")
         if set(args) - allowed_args:
@@ -1310,6 +1528,11 @@ class OAuth2PKCEConnector:
         if body is not None:
             request_options["json_body"] = body
             request_options["content_type"] = operation.body_content_type
+        if operation.pagination:
+            result, evidence = _execute_cursor_pagination(
+                url, operation, lambda page_url: self._requester(page_url, **request_options)
+            )
+            return _sanitize_payload(result), evidence
         response = self._requester(url, **request_options)
         if response.status == 401:
             raise IntegrationError(IntegrationErrorCode.AUTHENTICATION_REQUIRED, "Provider rejected the access token; refresh or reconnect the account.")
@@ -1463,16 +1686,8 @@ class APIKeyConnector:
             Capability(
                 item.action, item.summary, item.risk, item.required_scopes,
                 idempotent=item.idempotent, supported=True,
-                input_schema={
-                    "type": "object",
-                    "properties": {
-                        **{name: dict(schema) for name, schema in item.path_param_schemas.items()},
-                        **{name: dict(schema) for name, schema in item.query_param_schemas.items()},
-                        **({"body": dict(item.body_schema)} if item.body_schema is not None else {}),
-                    },
-                    "required": list(item.path_params) + list(item.required_query_params) + (["body"] if item.body_required else []),
-                    "additionalProperties": False,
-                },
+                input_schema=_operation_input_schema(item),
+                pagination=dict(item.pagination),
                 output_schema=dict(item.output_schema),
                 operation_kind=("read" if item.method == "GET" else "delete" if item.method == "DELETE" else "update" if item.method in ("PUT", "PATCH") else "create_or_submit"),
                 changes_state=item.method != "GET",
@@ -1569,7 +1784,12 @@ class APIKeyConnector:
         if operation is None:
             raise IntegrationError(IntegrationErrorCode.UNSUPPORTED_ACTION, "The provider does not declare this operation.")
         args = dict(arguments or {})
-        allowed_args = set(operation.path_params) | set(operation.query_params)
+        pagination = dict(operation.pagination or {})
+        pagination_parameters = {
+            str(pagination.get("cursor_parameter") or ""),
+            str(pagination.get("page_size_parameter") or ""),
+        } - {""}
+        allowed_args = set(operation.path_params) | (set(operation.query_params) - pagination_parameters)
         if operation.body_schema is not None:
             allowed_args.add("body")
         if set(args) - allowed_args:
@@ -1618,6 +1838,11 @@ class APIKeyConnector:
         base = urllib.parse.urlparse(self.api_base_url)
         if _normalized_host(parsed.hostname or "") != _normalized_host(base.hostname or ""):
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Resolved operation URL left the configured API host.")
+        if operation.pagination:
+            result, evidence = _execute_cursor_pagination(
+                url, operation, lambda page_url: self._request(page_url, api_key, method="GET")
+            )
+            return _sanitize_payload(result), evidence
         response = self._request(url, api_key, method=operation.method, json_body=body, content_type=operation.body_content_type)
         self._status_error(response, operation="API")
         if operation.output_schema and response.status != 204:
@@ -2141,7 +2366,7 @@ def configure_provider_connector(
         openapi_spec,
         provider_id=provider_id,
         trusted_server_hosts=trusted_hosts,
-        max_operations=int(config.get("max_operations", 250)),
+        max_operations=int(config.get("max_operations", _MAX_OPERATIONS)),
     )
     operations = operations_from_openapi(preview)
     if not operations:

@@ -252,6 +252,10 @@ class CustomProvidersWidget(QWidget):
         self._status.setWordWrap(True)
         self._status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self._status)
+        self._provider_search = QLineEdit()
+        self._provider_search.setPlaceholderText("Search configured providers by name, protocol, or capability…")
+        self._provider_search.textChanged.connect(lambda *_: self._refresh_providers())
+        layout.addWidget(self._provider_search)
         row = QHBoxLayout()
         self._providers = QComboBox()
         self._providers.currentIndexChanged.connect(self._provider_changed)
@@ -288,6 +292,10 @@ class CustomProvidersWidget(QWidget):
         self._disconnect_btn = QPushButton("Disconnect")
         self._disconnect_btn.clicked.connect(self._disconnect_account)
         row.addWidget(self._disconnect_btn)
+        self._operation_search = QLineEdit()
+        self._operation_search.setPlaceholderText("Filter available operations…")
+        self._operation_search.textChanged.connect(lambda *_: self._account_changed())
+        row.addWidget(self._operation_search, 1)
         self._operation = QComboBox()
         row.addWidget(self._operation, 2)
         self._execute_btn = QPushButton("Run selected operation")
@@ -510,6 +518,10 @@ class CustomProvidersWidget(QWidget):
             adapter = self.manager.connector(provider)
             if provider in ("github", "roblox") or not isinstance(adapter, (APIKeyConnector, OAuth2PKCEConnector)):
                 continue
+            searchable = " ".join((manifest.display_name, provider, manifest.auth_method, manifest.status_detail,
+                " ".join(cap.action + " " + cap.description for cap in manifest.capabilities))).casefold()
+            if str(self._provider_search.text() or "").strip().casefold() not in searchable:
+                continue
             self._providers.addItem(manifest.display_name + " (" + provider + ")", provider)
         if current:
             index = self._providers.findData(current)
@@ -658,6 +670,8 @@ class CustomProvidersWidget(QWidget):
                 continue
             missing = sorted(set(cap.required_scopes) - set(account.scopes))
             label = cap.action + " [" + ("READ" if cap.risk.value == "read_only" else cap.risk.value.upper()) + "] — " + cap.description
+            if str(self._operation_search.text() or "").strip().casefold() not in (cap.action + " " + cap.description + " " + cap.risk.value).casefold():
+                continue
             if missing:
                 label += " (missing scopes: " + ", ".join(missing) + ")"
             self._operation.addItem(label, cap.action)

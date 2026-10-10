@@ -946,3 +946,117 @@ paths: {"/items": {get: {operationId: listItems, responses: {"200": {description
             "https://docs.example.test/openapi.yaml",
             trusted_hosts=("docs.example.test",),
         )
+
+
+
+class FakeCursorPaginationRequester:
+    def __init__(self):
+        self.calls = []
+        self.status = 200
+
+    def __call__(self, url, *, method="GET", api_key="", api_key_header="", json_body=None, content_type="application/json", timeout=8.0, token=None, form=None):
+        parsed = urllib.parse.urlparse(url)
+        query = urllib.parse.parse_qs(parsed.query)
+        self.calls.append({"url": url, "method": method, "query": query, "api_key": api_key, "token": token})
+        if parsed.path.endswith("/me"):
+            return HttpResponse(self.status, {}, {"id": "cursor-user"})
+        if query.get("cursor", [""])[0] == "":
+            return HttpResponse(self.status, {}, {"data": {"items": [{"id": "1"}, {"id": "2"}], "next_cursor": "c2", "has_more": True}})
+        return HttpResponse(self.status, {}, {"data": {"items": [{"id": "3"}], "has_more": False}})
+
+
+def _cursor_openapi():
+    return {
+        "openapi": "3.0.3", "info": {"title": "Cursor API", "version": "1"},
+        "servers": [{"url": "https://api.example.test"}],
+        "components": {"securitySchemes": {"key": {"type": "apiKey", "in": "header", "name": "X-API-Key"}}},
+        "security": [{"key": []}],
+        "paths": {"/v1/items": {"get": {
+            "operationId": "listItems", "summary": "List items",
+            "parameters": [
+                {"name": "cursor", "in": "query", "required": False, "schema": {"type": "string"}},
+                {"name": "limit", "in": "query", "required": False, "schema": {"type": "integer", "minimum": 1, "maximum": 1000}},
+            ],
+            "x-brahma-pagination": {
+                "style": "cursor", "cursor_parameter": "cursor", "page_size_parameter": "limit",
+                "page_size": 100, "max_pages": 5, "max_items": 1000,
+                "items_pointer": "#/data/items", "next_cursor_pointer": "#/data/next_cursor",
+                "has_more_pointer": "#/data/has_more",
+            },
+            "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {
+                "type": "object",
+                "properties": {"data": {"type": "object", "properties": {
+                    "items": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"], "additionalProperties": True}},
+                    "next_cursor": {"type": "string"}, "has_more": {"type": "boolean"},
+                }, "required": ["items", "has_more"], "additionalProperties": True}},
+                "required": ["data"], "additionalProperties": True,
+            }}}}},
+        }}},
+    }
+
+
+def test_openapi_cursor_pagination_executes_declared_pages_and_hides_internal_parameters():
+    requester = FakeCursorPaginationRequester()
+    config = {
+        "provider_id": "cursor_api", "display_name": "Cursor API", "auth_type": "api_key",
+        "trusted_hosts": ["api.example.test"], "api_key_header": "X-API-Key",
+        "identity_url": "https://api.example.test/me", "identity_field": "id",
+    }
+    connector, preview = configure_provider_connector(config, _cursor_openapi(), requester=requester)
+    assert len(preview["review_candidates"]) == 1
+    assert preview["review_candidates"][0]["pagination"]["style"] == "cursor"
+    manager = IntegrationManager(store=MemoryCredentialStore(), adapters=[connector])
+    account = manager.connect("cursor_api", {"api_key": "cursor-key"})
+    capability = next(item for item in manager.capabilities("cursor_api") if item["action"] == "cursor_api.listItems")
+    assert "cursor" not in capability["input_schema"]["properties"]
+    assert "limit" not in capability["input_schema"]["properties"]
+    result = manager.execute(account.account_id, "cursor_api.listItems", {})
+    assert result.status == ActionStatus.SUCCEEDED_VERIFIED
+    assert result.result["items"] == [{"id": "1"}, {"id": "2"}, {"id": "3"}]
+    assert result.result["pages_fetched"] == 2
+    assert result.result["has_more"] is False
+    assert result.result["truncated"] is False
+    pages = [call for call in requester.calls if "/v1/items" in call["url"]]
+    assert len(pages) == 2
+    assert pages[0]["query"]["limit"] == ["100"]
+    assert pages[0]["query"].get("cursor") is None
+    assert pages[1]["query"]["cursor"] == ["c2"]
+    assert pages[1]["query"]["limit"] == ["100"]
+
+
+def test_openapi_cursor_pagination_rejects_user_cursor_override_and_invalid_contract():
+    requester = FakeCursorPaginationRequester()
+    config = {
+        "provider_id": "cursor_api", "display_name": "Cursor API", "auth_type": "api_key",
+        "trusted_hosts": ["api.example.test"], "api_key_header": "X-API-Key",
+        "identity_url": "https://api.example.test/me", "identity_field": "id",
+    }
+    connector, _ = configure_provider_connector(config, _cursor_openapi(), requester=requester)
+    manager = IntegrationManager(store=MemoryCredentialStore(), adapters=[connector])
+    account = manager.connect("cursor_api", {"api_key": "cursor-key"})
+    before = len(requester.calls)
+    result = manager.execute(account.account_id, "cursor_api.listItems", {"cursor": "user-controlled"})
+    assert result.status == ActionStatus.FAILED
+    assert result.error_code == IntegrationErrorCode.INVALID_REQUEST.value
+    assert len(requester.calls) == before
+
+    invalid = _cursor_openapi()
+    invalid["paths"]["/v1/items"]["get"]["x-brahma-pagination"]["cursor_parameter"] = "undeclared"
+    preview = analyze_openapi_spec(invalid, provider_id="cursor_api", trusted_server_hosts=("api.example.test",))
+    assert preview["review_candidates"] == []
+    assert any("x-brahma-pagination contract is invalid" in warning for warning in preview["warnings"])
+
+    looping = FakeCursorPaginationRequester()
+    loop_connector = configure_provider_connector(config, _cursor_openapi(), requester=looping)[0]
+    original = looping.__call__
+    def repeated_cursor(url, **kwargs):
+        response = original(url, **kwargs)
+        if urllib.parse.parse_qs(urllib.parse.urlparse(url).query).get("cursor"):
+            return HttpResponse(200, {}, {"data": {"items": [{"id": "9"}], "next_cursor": "c2", "has_more": True}})
+        return response
+    loop_connector._requester = repeated_cursor
+    loop_manager = IntegrationManager(store=MemoryCredentialStore(), adapters=[loop_connector])
+    loop_account = loop_manager.connect("cursor_api", {"api_key": "cursor-key"})
+    loop_result = loop_manager.execute(loop_account.account_id, "cursor_api.listItems", {})
+    assert loop_result.status == ActionStatus.FAILED
+    assert loop_result.error_code == IntegrationErrorCode.PROVIDER_ERROR.value

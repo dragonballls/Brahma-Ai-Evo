@@ -94,6 +94,7 @@ class Capability:
     changes_state: bool = False
     reversible: bool = False
     documentation_url: str = ""
+    pagination: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -1020,6 +1021,7 @@ class IntegrationManager:
                 "changes_state": item.changes_state,
                 "reversible": item.reversible,
                 "documentation_url": item.documentation_url,
+                "pagination": dict(item.pagination),
             })
         return out
 

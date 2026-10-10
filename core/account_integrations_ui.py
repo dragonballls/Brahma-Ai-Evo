@@ -422,6 +422,10 @@ class AccountsIntegrationsPage(QWidget):
         catalog_title = QLabel("Provider catalog and limitations")
         catalog_title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
         catalog_layout.addWidget(catalog_title)
+        self._catalog_search = QLineEdit()
+        self._catalog_search.setPlaceholderText("Search provider catalog and capabilities…")
+        self._catalog_search.textChanged.connect(lambda *_: self.refresh())
+        catalog_layout.addWidget(self._catalog_search)
         self._catalog = QLabel("")
         self._catalog.setWordWrap(True)
         catalog_layout.addWidget(self._catalog)
@@ -498,8 +502,18 @@ class AccountsIntegrationsPage(QWidget):
             self._accounts.setCurrentRow(0)
         self._account_selected(self._accounts.currentItem(), None)
         lines = []
+        query = str(self._catalog_search.text() or "").strip().casefold()
         for manifest in self.manager.catalog():
-            lines.append(f"{manifest.display_name} — {manifest.status.value}: {manifest.status_detail}")
+            adapter = self.manager.connector(manifest.provider_id)
+            capabilities = getattr(getattr(adapter, "manifest", None), "capabilities", ())
+            searchable = " ".join((
+                manifest.display_name, manifest.provider_id, manifest.auth_method, manifest.status.value,
+                manifest.status_detail,
+                " ".join(cap.action + " " + cap.description + " " + cap.risk.value for cap in capabilities),
+            )).casefold()
+            if query and query not in searchable:
+                continue
+            lines.append(f"{manifest.display_name} ({manifest.provider_id}) — {manifest.status.value}: {manifest.status_detail}")
         self._catalog.setText("\n\n".join(lines))
         history = self.manager.activity_history()
         if history:

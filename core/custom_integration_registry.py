@@ -13,8 +13,9 @@ from core.runtime_paths import CONFIG_DIR
 from core.universal_integrations import _load_openapi_spec, configure_provider_connector
 
 CONFIG_PATH = CONFIG_DIR / "custom_account_providers.json"
-MAX_REGISTRY_BYTES = 2 * 1024 * 1024
-MAX_SPEC_BYTES = 1024 * 1024
+# Resource limits come from bounded schema bytes/structure, not a tiny provider allowlist.
+MAX_REGISTRY_BYTES = 32 * 1024 * 1024
+MAX_SPEC_BYTES = 2 * 1024 * 1024
 _SECRET_PROVIDER_SENTINEL = "__custom_provider_secret__"
 _SECRET_NAMESPACE = uuid.UUID("e4f1b9f1-77a0-4b34-a6a9-fc83c7f399cd")
 _PUBLIC_FIELDS = {

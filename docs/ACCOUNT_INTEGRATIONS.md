@@ -109,3 +109,12 @@ Amazon consumer accounts cannot be connected with an ordinary account password. 
 - The Accounts & Integrations UI is a Windows Qt interface and its production secret store requires Windows Credential Manager. A platform without that facility fails closed instead of storing secrets unprotected.
 - GitHub public repository listing is a bounded read (up to 30 results) rather than a fully paginated repository explorer.
 - Existing Google Workspace, YouTube, and Instagram code must be audited and migrated separately before their features can be represented as unified connected accounts.
+
+
+## Cursor pagination and account recovery
+
+Custom OpenAPI providers can opt into cursor pagination with a reviewed `x-brahma-pagination` extension on a documented GET operation. It declares an optional cursor query parameter, the JSON pointer for the item array, the next cursor, and optionally a boolean `has_more` pointer. A documented optional page-size parameter can also be configured. Cursor and page-size parameters are internal, cannot be overridden by callers, and are validated before registration. Each page is checked against the response schema and is fetched from the configured HTTPS origin without redirects. Invalid pointers, repeated cursors, malformed item arrays, and missing continuation tokens fail closed. Safety ceilings are 50 pages, 1,000 items per page and 5,000 total items; reaching a ceiling returns `truncated=true` and `has_more=true` instead of claiming a complete listing.
+
+Operation discovery is bounded by the imported specification's 2 MiB and structural-node safety limits rather than a separate small provider/action count. The custom-provider registry permits multiple definitions within a 32 MiB aggregate resource ceiling.
+
+Persisted `Connected` status is not treated as current authentication after a restart. A restored account shows “Authorization not revalidated” until the provider validates the same saved identity in the current process. The first attempted operation triggers that check before any provider operation or state-changing confirmation is sent. Rejected or mismatched identities stop execution. Provider and operation pickers have text filters for names, IDs and capabilities.
