@@ -51,6 +51,7 @@ class IntegrationErrorCode(str, Enum):
 
 class ConnectionStatus(str, Enum):
     CONNECTED = "Connected"
+    AUTHORIZATION_UNVERIFIED = "Authorization not revalidated"
     AUTHENTICATION_REQUIRED = "Authentication Required"
     MISSING_PERMISSION = "Missing Permission"
     LIMITED_SUPPORT = "Limited Support"
@@ -959,6 +960,8 @@ class IntegrationManager:
         self.store: SecureCredentialStore = store if store is not None else WindowsCredentialManager()
         self._adapters: dict[str, Connector] = {}
         self._lock = threading.RLock()
+        # Persisted status is historical; each process begins without live identity proof.
+        self._verified_account_ids: set[str] = set()
         self._history: deque[dict[str, Any]] = deque(maxlen=ACTIVITY_LIMIT)
         self._idempotent_results: dict[tuple[str, str], ActionResult] = {}
         self._pending: dict[str, tuple[str, str, dict[str, Any], str]] = {}
@@ -1046,8 +1049,10 @@ class IntegrationManager:
             "credentials": safe_credentials,
         }
         self.store.save(account_id, record)
+        with self._lock:
+            self._verified_account_ids.add(account_id)
         self._record_activity(provider_id, account_id, "account.connect", "succeeded_and_verified", {"identity_verified": True})
-        return self._summary(account_id, record)
+        return self._summary_for_session(account_id, record)
 
     @staticmethod
     def _summary(account_id: str, record: Mapping[str, Any]) -> AccountSummary:
@@ -1066,6 +1071,20 @@ class IntegrationManager:
             last_error_code=str(record.get("last_error_code")) if record.get("last_error_code") else None,
         )
 
+    def _summary_for_session(self, account_id: str, record: Mapping[str, Any]) -> AccountSummary:
+        summary = IntegrationManager._summary(account_id, record)
+        with self._lock:
+            verified = str(account_id) in self._verified_account_ids
+        if summary.status != ConnectionStatus.CONNECTED or verified:
+            return summary
+        return AccountSummary(
+            account_id=summary.account_id, provider_id=summary.provider_id, identity=summary.identity,
+            status=ConnectionStatus.AUTHORIZATION_UNVERIFIED, scopes=summary.scopes,
+            connected_at=summary.connected_at, last_checked_at=summary.last_checked_at,
+            last_error_code=summary.last_error_code,
+        )
+
+
     def list_accounts(self, provider_id: str | None = None) -> list[AccountSummary]:
         provider = str(provider_id or "").strip().lower()
         records = self.store.list_records()
@@ -1075,23 +1094,69 @@ class IntegrationManager:
                 continue
             if str(record.get("provider_id") or "") not in self._adapters:
                 continue
-            result.append(self._summary(account_id, record))
+            result.append(self._summary_for_session(account_id, record))
         return sorted(result, key=lambda account: (account.provider_id, account.identity.casefold(), account.connected_at))
 
     def test_connection(self, account_id: str) -> dict[str, Any]:
         account, adapter, record = self._require_account(account_id)
-        ok, evidence = adapter.health_check(record["credentials"])
+        with self._lock:
+            self._verified_account_ids.discard(account.account_id)
+        try:
+            ok, raw_evidence = adapter.health_check(record["credentials"])
+        except IntegrationError as exc:
+            status = (
+                ConnectionStatus.AUTHENTICATION_REQUIRED
+                if exc.code in (IntegrationErrorCode.AUTHENTICATION_REQUIRED, IntegrationErrorCode.AUTHORIZATION_EXPIRED)
+                else ConnectionStatus.MISSING_PERMISSION
+                if exc.code == IntegrationErrorCode.MISSING_PERMISSION
+                else ConnectionStatus.AUTHORIZATION_UNVERIFIED
+            )
+            self._mark_account_status(account.account_id, record, status, exc.code)
+            raise
+        except Exception as exc:
+            self._mark_account_status(account.account_id, record, ConnectionStatus.AUTHORIZATION_UNVERIFIED, IntegrationErrorCode.PROVIDER_ERROR)
+            raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Saved authorization could not be revalidated.") from exc
+        evidence = dict(raw_evidence) if isinstance(raw_evidence, Mapping) else {}
+        identity = str(evidence.get("identity") or "").strip()
+        if ok and (evidence.get("verified") is not True or not identity or identity.casefold() != account.identity.casefold()):
+            ok = False
+            evidence.update({
+                "verified": False, "error_code": IntegrationErrorCode.INVALID_AUTH_RESPONSE.value,
+                "status": ConnectionStatus.AUTHENTICATION_REQUIRED.value,
+                "message": "The identity endpoint did not verify the same account.",
+            })
         changed = dict(record)
         changed["last_checked_at"] = time.time()
         if ok:
             changed["status"] = ConnectionStatus.CONNECTED.value
             changed["last_error_code"] = None
+            scopes = evidence.get("scopes")
+            if isinstance(scopes, (list, tuple, set)):
+                changed["scopes"] = sorted({str(scope).strip() for scope in scopes if str(scope).strip()})
+            with self._lock:
+                self._verified_account_ids.add(account.account_id)
         else:
-            changed["status"] = str(evidence.get("status") or ConnectionStatus.AUTHENTICATION_REQUIRED.value)
-            changed["last_error_code"] = str(evidence.get("error_code") or IntegrationErrorCode.PROVIDER_ERROR.value)
+            try:
+                code = IntegrationErrorCode(str(evidence.get("error_code") or ""))
+            except ValueError:
+                code = IntegrationErrorCode.AUTHENTICATION_REQUIRED
+            try:
+                status = ConnectionStatus(str(evidence.get("status") or ""))
+            except ValueError:
+                status = ConnectionStatus.AUTHORIZATION_UNVERIFIED
+            if status == ConnectionStatus.CONNECTED:
+                status = ConnectionStatus.AUTHORIZATION_UNVERIFIED
+            changed["status"] = status.value
+            changed["last_error_code"] = code.value
+            with self._lock:
+                self._verified_account_ids.discard(account.account_id)
         self.store.save(account.account_id, changed)
-        self._record_activity(account.provider_id, account.account_id, "connection.test", "succeeded_and_verified" if ok else "failed", {"http_status": evidence.get("http_status"), "identity_verified": ok})
-        return {"ok": ok, "account": self._summary(account.account_id, changed).__dict__, "evidence": dict(evidence)}
+        self._record_activity(
+            account.provider_id, account.account_id, "connection.test",
+            "succeeded_and_verified" if ok else "failed",
+            {"http_status": evidence.get("http_status"), "identity_verified": bool(ok)},
+        )
+        return {"ok": ok, "account": self._summary_for_session(account.account_id, changed).__dict__, "evidence": evidence}
 
     def refresh_authorization(self, account_id: str) -> AccountSummary:
         account, adapter, record = self._require_account(account_id)
@@ -1109,8 +1174,10 @@ class IntegrationManager:
         changed["last_checked_at"] = time.time()
         changed["last_error_code"] = None
         self.store.save(account_id, changed)
+        with self._lock:
+            self._verified_account_ids.add(account_id)
         self._record_activity(account.provider_id, account_id, "authorization.refresh", "succeeded_and_verified", {"identity_verified": True})
-        return self._summary(account_id, changed)
+        return self._summary_for_session(account_id, changed)
 
     def disconnect(self, account_id: str) -> dict[str, Any]:
         account, adapter, record = self._require_account(account_id)
@@ -1129,6 +1196,8 @@ class IntegrationManager:
                 provider_revocation = "failed"
                 revocation_error = IntegrationErrorCode.PROVIDER_ERROR.value
         removed = self.store.delete(account_id)
+        with self._lock:
+            self._verified_account_ids.discard(account.account_id)
         self._record_activity(account.provider_id, account_id, "account.disconnect", "succeeded_and_verified" if removed else "failed", {"local_credential_deleted": removed, "provider_revocation": provider_revocation})
         return {
             "ok": removed,
@@ -1142,6 +1211,54 @@ class IntegrationManager:
                 else "This connector did not perform remote revocation; revoke the app grant in the provider's security settings if required."
             ),
         }
+
+    def _ensure_session_authorization(
+        self, account: AccountSummary, adapter: Connector, record: Mapping[str, Any],
+    ) -> tuple[bool, IntegrationErrorCode | None, str]:
+        """Revalidate restored credentials once per process before any provider action."""
+        account_id = account.account_id
+        with self._lock:
+            if account_id in self._verified_account_ids:
+                return True, None, ""
+        try:
+            ok, raw_evidence = adapter.health_check(record["credentials"])
+        except IntegrationError as exc:
+            status = ConnectionStatus.AUTHENTICATION_REQUIRED if exc.code in (IntegrationErrorCode.AUTHENTICATION_REQUIRED, IntegrationErrorCode.AUTHORIZATION_EXPIRED) else ConnectionStatus.MISSING_PERMISSION if exc.code == IntegrationErrorCode.MISSING_PERMISSION else ConnectionStatus.AUTHORIZATION_UNVERIFIED
+            self._mark_account_status(account_id, record, status, exc.code)
+            return False, exc.code, "Saved authorization could not be revalidated; no provider operation was sent. Test or reconnect this account."
+        except Exception:
+            self._mark_account_status(account_id, record, ConnectionStatus.AUTHORIZATION_UNVERIFIED, IntegrationErrorCode.PROVIDER_ERROR)
+            return False, IntegrationErrorCode.PROVIDER_ERROR, "Saved authorization could not be revalidated; no provider operation was sent. Test or reconnect this account."
+        evidence = dict(raw_evidence) if isinstance(raw_evidence, Mapping) else {}
+        identity = str(evidence.get("identity") or "").strip()
+        if not ok:
+            try:
+                code = IntegrationErrorCode(str(evidence.get("error_code") or ""))
+            except ValueError:
+                code = IntegrationErrorCode.AUTHENTICATION_REQUIRED
+            try:
+                status = ConnectionStatus(str(evidence.get("status") or ""))
+            except ValueError:
+                status = ConnectionStatus.AUTHENTICATION_REQUIRED if code in (IntegrationErrorCode.AUTHENTICATION_REQUIRED, IntegrationErrorCode.AUTHORIZATION_EXPIRED) else ConnectionStatus.MISSING_PERMISSION if code == IntegrationErrorCode.MISSING_PERMISSION else ConnectionStatus.AUTHORIZATION_UNVERIFIED
+            if status == ConnectionStatus.CONNECTED:
+                status = ConnectionStatus.AUTHORIZATION_UNVERIFIED
+            self._mark_account_status(account_id, record, status, code)
+            return False, code, "Provider authorization is not verified; no provider operation was sent. Test or reconnect this account."
+        if evidence.get("verified") is not True or not identity or identity.casefold() != account.identity.casefold():
+            code = IntegrationErrorCode.INVALID_AUTH_RESPONSE
+            self._mark_account_status(account_id, record, ConnectionStatus.AUTHENTICATION_REQUIRED, code)
+            return False, code, "The provider did not revalidate the saved account identity; no provider operation was sent."
+        changed = dict(record)
+        changed["status"] = ConnectionStatus.CONNECTED.value
+        changed["last_checked_at"] = time.time()
+        changed["last_error_code"] = None
+        scopes = evidence.get("scopes")
+        if isinstance(scopes, (list, tuple, set)):
+            changed["scopes"] = sorted({str(scope).strip() for scope in scopes if str(scope).strip()})
+        self.store.save(account_id, changed)
+        with self._lock:
+            self._verified_account_ids.add(account_id)
+        return True, None, ""
 
     def execute(
         self,
@@ -1159,6 +1276,15 @@ class IntegrationManager:
             capability = next((item for item in adapter.manifest.capabilities if item.action == action and item.supported), None)
             if capability is None:
                 return self._result(ActionStatus.UNSUPPORTED, account.provider_id, account_id, action, code=IntegrationErrorCode.UNSUPPORTED_ACTION, message="This operation is not declared by the connected provider.")
+            verified, validation_code, validation_message = self._ensure_session_authorization(account, adapter, record)
+            if not verified:
+                return self._result(ActionStatus.FAILED, account.provider_id, account_id, action,
+                    code=validation_code or IntegrationErrorCode.AUTHENTICATION_REQUIRED,
+                    message=validation_message, follow_up="Test connection or reconnect in Accounts & Integrations.")
+            account, adapter, record = self._require_account(account_id)
+            capability = next((item for item in adapter.manifest.capabilities if item.action == action and item.supported), None)
+            if capability is None:
+                return self._result(ActionStatus.UNSUPPORTED, account.provider_id, account_id, action, code=IntegrationErrorCode.UNSUPPORTED_ACTION, message="This operation is no longer declared by the provider.")
             missing = sorted(set(capability.required_scopes) - set(account.scopes))
             if missing and not (missing == ["read:user"] and "user" in account.scopes):
                 self._mark_account_status(account_id, record, ConnectionStatus.MISSING_PERMISSION, IntegrationErrorCode.MISSING_PERMISSION)
@@ -1298,13 +1424,16 @@ class IntegrationManager:
         adapter = self._adapters.get(provider_id)
         if adapter is None:
             raise IntegrationError(IntegrationErrorCode.UNSUPPORTED_ACTION, "No connector is registered for this account.")
-        return self._summary(canonical, record), adapter, record
+        return self._summary_for_session(canonical, record), adapter, record
 
     def _mark_account_status(self, account_id: str, record: Mapping[str, Any], status: ConnectionStatus, code: IntegrationErrorCode) -> None:
         changed = dict(record)
         changed["status"] = status.value
         changed["last_error_code"] = code.value
         changed["last_checked_at"] = time.time()
+        if status != ConnectionStatus.CONNECTED:
+            with self._lock:
+                self._verified_account_ids.discard(str(account_id))
         self.store.save(account_id, changed)
 
     @staticmethod

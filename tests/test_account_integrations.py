@@ -25,6 +25,7 @@ class FakeConnector:
     def __init__(self, provider_id="sample", *, risk=RiskLevel.REVERSIBLE, requires_scope=()):
         self.calls = []
         self.identity_number = 0
+        self.health_check_count = 0
         self.manifest = IntegrationManifest(
             provider_id=provider_id,
             display_name=provider_id.title(),
@@ -42,7 +43,8 @@ class FakeConnector:
         return str(credentials.get("identity") or "test-user"), tuple(credentials.get("scopes") or ())
 
     def health_check(self, credentials):
-        return True, {"verified": True, "source": "test", "identity": credentials.get("identity", "test-user"), "http_status": 200}
+        self.health_check_count += 1
+        return True, {"verified": True, "source": "test", "identity": credentials.get("identity", "test-user"), "scopes": list(credentials.get("scopes") or ()), "http_status": 200}
 
     def execute(self, action, arguments, credentials):
         self.calls.append((action, dict(arguments)))
@@ -561,3 +563,50 @@ def test_roblox_userinfo_permission_failure_is_not_a_success():
     with pytest.raises(IntegrationError) as exc:
         connector.validate_credentials(credentials)
     assert exc.value.code == IntegrationErrorCode.MISSING_PERMISSION
+
+
+
+def test_saved_connected_account_is_marked_unverified_until_revalidated_after_restart():
+    store = MemoryCredentialStore()
+    original = FakeConnector()
+    original_manager = IntegrationManager(store=store, adapters=[original])
+    account = original_manager.connect("sample", {"access_token": "token", "identity": "alice", "scopes": []})
+    assert account.status == ConnectionStatus.CONNECTED
+
+    restored_connector = FakeConnector()
+    restored_manager = IntegrationManager(store=store, adapters=[restored_connector])
+    assert restored_manager.list_accounts()[0].status == ConnectionStatus.AUTHORIZATION_UNVERIFIED
+    assert restored_connector.health_check_count == 0
+    result = restored_manager.execute(account.account_id, "sample.read")
+    assert result.status == ActionStatus.SUCCEEDED_VERIFIED
+    assert restored_connector.health_check_count == 1
+    assert restored_connector.calls == [("sample.read", {})]
+    assert restored_manager.list_accounts()[0].status == ConnectionStatus.CONNECTED
+
+
+def test_restarted_account_never_executes_if_authorization_is_rejected_or_identity_changes():
+    store = MemoryCredentialStore()
+    original = FakeConnector()
+    account = IntegrationManager(store=store, adapters=[original]).connect("sample", {"access_token": "token", "identity": "alice"})
+
+    rejected = FakeConnector()
+    rejected.health_check = lambda _credentials: (False, {
+        "verified": False, "identity": "alice",
+        "status": ConnectionStatus.AUTHENTICATION_REQUIRED.value,
+        "error_code": IntegrationErrorCode.AUTHENTICATION_REQUIRED.value,
+    })
+    manager = IntegrationManager(store=store, adapters=[rejected])
+    result = manager.execute(account.account_id, "sample.read")
+    assert result.status == ActionStatus.FAILED
+    assert result.error_code == IntegrationErrorCode.AUTHENTICATION_REQUIRED.value
+    assert rejected.calls == []
+    assert manager.list_accounts()[0].status == ConnectionStatus.AUTHENTICATION_REQUIRED
+
+    mismatch = FakeConnector()
+    mismatch.health_check = lambda _credentials: (True, {"verified": True, "identity": "other-user", "http_status": 200})
+    manager2 = IntegrationManager(store=store, adapters=[mismatch])
+    result2 = manager2.execute(account.account_id, "sample.read")
+    assert result2.status == ActionStatus.FAILED
+    assert result2.error_code == IntegrationErrorCode.INVALID_AUTH_RESPONSE.value
+    assert mismatch.calls == []
+    assert manager2.list_accounts()[0].status == ConnectionStatus.AUTHENTICATION_REQUIRED
