@@ -414,9 +414,6 @@ def fetch_schema_document_url(
     return document
 
 
-def _resolve_openapi_reference
-
-
 def _resolve_openapi_reference(document: Mapping[str, Any], value: Any, seen: frozenset[str] = frozenset()) -> Any:
     """Resolve internal JSON pointers only; never fetch remote schema references."""
     if not isinstance(value, Mapping) or "$ref" not in value:
