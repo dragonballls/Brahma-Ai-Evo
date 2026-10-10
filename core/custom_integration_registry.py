@@ -10,7 +10,7 @@ from typing import Any, Mapping
 
 from core.account_integrations import IntegrationError, IntegrationErrorCode, IntegrationManager
 from core.runtime_paths import CONFIG_DIR
-from core.universal_integrations import configure_provider_connector
+from core.universal_integrations import _load_openapi_spec, configure_provider_connector
 
 CONFIG_PATH = CONFIG_DIR / "custom_account_providers.json"
 MAX_REGISTRY_BYTES = 2 * 1024 * 1024
@@ -132,9 +132,7 @@ def save_custom_provider(
         if not isinstance(spec_text, str) or len(spec_text.encode("utf-8")) > MAX_SPEC_BYTES:
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Provider schema exceeds the configured size limit.")
         if str(config.get("protocol") or "openapi").strip().lower() != "graphql":
-            parsed_spec = json.loads(spec_text)
-            if not isinstance(parsed_spec, dict):
-                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI spec must be a JSON object.")
+            _load_openapi_spec(spec_text)
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         if isinstance(exc, IntegrationError):
             raise

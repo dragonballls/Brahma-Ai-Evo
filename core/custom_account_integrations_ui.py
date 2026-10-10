@@ -9,13 +9,14 @@ from typing import Any, Mapping
 from PyQt6.QtCore import QThread, QTimer, Qt, pyqtSignal, QUrl
 from PyQt6.QtGui import QDesktopServices, QFont, QStandardItemModel
 from PyQt6.QtWidgets import (
-    QComboBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout, QLabel,
-    QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
+    QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QHBoxLayout,
+    QInputDialog, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton,
+    QVBoxLayout, QWidget,
 )
 
 from core.account_integrations import IntegrationError, IntegrationErrorCode, IntegrationManager
 from core.custom_integration_registry import register_saved_custom_providers, save_custom_provider
-from core.universal_integrations import APIKeyConnector, OAuth2PKCEConnector, configure_provider_connector
+from core.universal_integrations import APIKeyConnector, OAuth2PKCEConnector, configure_provider_connector, fetch_schema_document_url
 
 _SAMPLE_CONFIG = {
     "provider_id": "my_service", "display_name": "My Service", "auth_type": "api_key",
@@ -81,10 +82,24 @@ class _CustomProviderWorker(QThread):
     def run(self):
         try:
             o = self.options
+            if self.command == "fetch_schema_url":
+                config = json.loads(o["config_text"])
+                if not isinstance(config, dict):
+                    raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Provider configuration must be a JSON object.")
+                hosts = config.get("trusted_hosts")
+                if not isinstance(hosts, list) or not hosts or any(not isinstance(host, str) for host in hosts):
+                    raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "List the schema host in trusted_hosts before importing it.")
+                protocol = str(config.get("protocol") or "openapi")
+                document = fetch_schema_document_url(o["url"], trusted_hosts=hosts, protocol=protocol)
+                self.completed.emit({
+                    "ok": True, "kind": "schema_import", "document": document,
+                    "source_host": urllib.parse.urlparse(o["url"]).hostname or "(unknown host)",
+                })
+                return
             if self.command == "preview":
                 config_text, spec_text = o["config_text"], o["openapi_text"]
-                if len(config_text.encode("utf-8")) > 256 * 1024 or len(spec_text.encode("utf-8")) > 1024 * 1024:
-                    raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Provider configuration or OpenAPI JSON exceeds its safety limit.")
+                if len(config_text.encode("utf-8")) > 256 * 1024 or len(spec_text.encode("utf-8")) > 2 * 1024 * 1024:
+                    raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Provider configuration or API schema exceeds its safety limit.")
                 config = json.loads(config_text)
                 if not isinstance(config, dict):
                     raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Provider configuration must be a JSON object.")
@@ -208,6 +223,14 @@ class CustomProvidersWidget(QWidget):
         self._spec.setMinimumHeight(160)
         self._spec.setMaximumHeight(250)
         layout.addWidget(self._spec)
+        schema_row = QHBoxLayout()
+        self._load_schema_btn = QPushButton("Load schema file…")
+        self._load_schema_btn.clicked.connect(self._load_schema_file)
+        schema_row.addWidget(self._load_schema_btn)
+        self._fetch_schema_btn = QPushButton("Import from trusted HTTPS URL…")
+        self._fetch_schema_btn.clicked.connect(self._fetch_schema_url)
+        schema_row.addWidget(self._fetch_schema_btn)
+        layout.addLayout(schema_row)
         row = QHBoxLayout()
         row.addWidget(QLabel("OAuth client secret (only if required)"))
         self._client_secret = QLineEdit()
@@ -297,6 +320,8 @@ class CustomProvidersWidget(QWidget):
     def _busy(self, value: bool):
         self._preview_btn.setEnabled(not value)
         self._save_btn.setEnabled(bool(not value and self._pending and self._pending_snapshot == self._snapshot()))
+        self._load_schema_btn.setEnabled(not value)
+        self._fetch_schema_btn.setEnabled(not value)
         self._connect_btn.setEnabled(bool(not value and self._providers.currentData() and not self._flow))
         account = self._current_account()
         self._test_btn.setEnabled(bool(not value and account))
@@ -343,6 +368,70 @@ class CustomProvidersWidget(QWidget):
                 "confirm", confirmation_id=pending["confirmation_id"],
                 approved=(answer == QMessageBox.StandardButton.Yes),
             )
+
+    def _load_schema_file(self):
+        if self._worker is not None:
+            return
+        path, _selected = QFileDialog.getOpenFileName(
+            self, "Load provider schema", "",
+            "API schemas (*.json *.yaml *.yml *.graphql *.graphqls *.gql);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            with open(path, "rb") as handle:
+                raw = handle.read(2 * 1024 * 1024 + 1)
+            if len(raw) > 2 * 1024 * 1024:
+                raise ValueError("Schema file exceeds the 2 MiB limit.")
+            document = raw.decode("utf-8-sig")
+            if not document.strip():
+                raise ValueError("Schema file is empty.")
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            self._status.setText("Schema import failed: " + str(exc))
+            return
+        self._spec.setPlainText(document)
+        self._invalidate_preview()
+        self._status.setText("Loaded schema from a local file. Validate and review it before enabling any operation.")
+
+    def _fetch_schema_url(self):
+        if self._worker is not None:
+            return
+        url, accepted = QInputDialog.getText(
+            self, "Import schema from HTTPS URL",
+            "Enter the final HTTPS URL without query parameters or redirects:",
+        )
+        if not accepted or not url.strip():
+            return
+        try:
+            parsed = urllib.parse.urlparse(url.strip())
+            config = json.loads(self._config.toPlainText())
+            hosts = config.get("trusted_hosts") if isinstance(config, dict) else None
+            allowed = {
+                str(host).casefold().rstrip(".")
+                for host in hosts if isinstance(host, str)
+            } if isinstance(hosts, list) else set()
+            hostname = str(parsed.hostname or "").casefold().rstrip(".")
+            if parsed.scheme != "https" or not hostname:
+                raise ValueError("Only an HTTPS URL is supported.")
+            if hostname not in allowed:
+                raise ValueError("Add the exact schema hostname to trusted_hosts, then retry.")
+            if parsed.query or parsed.fragment or parsed.username or parsed.password:
+                raise ValueError("Schema URLs cannot contain query strings, fragments, or embedded credentials.")
+        except (ValueError, json.JSONDecodeError) as exc:
+            self._status.setText("Schema URL rejected: " + str(exc))
+            return
+        answer = QMessageBox.question(
+            self, "Approve schema download",
+            "Fetch schema content from this HTTPS host?\n" + hostname +
+            "\n\nBrahma will not follow redirects, execute the schema, or invoke provider operations during import.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            self._status.setText("Schema URL import cancelled.")
+            return
+        self._status.setText("Fetching and validating schema from the approved HTTPS host…")
+        self._start_worker("fetch_schema_url", url=url.strip(), config_text=self._config.toPlainText())
 
     def _preview_provider(self):
         if self._worker is not None:
@@ -614,7 +703,11 @@ class CustomProvidersWidget(QWidget):
                 self._credential.clear()
             return
         kind = result.get("kind")
-        if kind == "preview":
+        if kind == "schema_import":
+            self._spec.setPlainText(str(result.get("document") or ""))
+            self._invalidate_preview()
+            self._status.setText("Imported and parsed schema text from the approved HTTPS host " + str(result.get("source_host") or "(unknown)") + ". Review it with Validate and preview; no provider operations were executed.")
+        elif kind == "preview":
             self._pending, self._pending_snapshot = result, self._snapshot()
             preview = result["preview"]
             rows = [
