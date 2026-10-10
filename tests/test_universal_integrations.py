@@ -843,3 +843,106 @@ def test_graphql_rejects_invalid_documents_variables_and_provider_errors_without
         connector.execute("sample_graphql.getItem", {"id": "item-1"}, {"api_key": "graphql-key"})
     assert provider_error.value.code == IntegrationErrorCode.PROVIDER_ERROR
     assert "private provider detail" not in str(provider_error.value)
+
+
+
+def test_openapi_yaml_is_safe_and_duplicate_or_python_tags_are_rejected():
+    yaml_document = """openapi: 3.0.3
+info:
+  title: YAML test
+  version: "1.0"
+servers:
+  - url: https://api.example.test
+components:
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+security:
+  - apiKey: []
+paths:
+  /items:
+    get:
+      operationId: listItems
+      summary: List items
+      responses:
+        "200":
+          description: OK
+"""
+    parsed = analyze_openapi_spec(yaml_document, provider_id="yaml_test", trusted_server_hosts=("api.example.test",))
+    assert parsed["read_only_candidates"][0]["action"] == "yaml_test.listItems"
+
+    duplicate_yaml = yaml_document.replace(
+        "  title: YAML test",
+        "  title: YAML test" + chr(10) + "  title: ambiguous",
+    )
+    with pytest.raises(IntegrationError):
+        analyze_openapi_spec(duplicate_yaml, provider_id="yaml_test", trusted_server_hosts=("api.example.test",))
+
+    duplicate_json = '{"openapi":"3.0.3","openapi":"3.1.0","info":{},"servers":[],"paths":{}}'
+    with pytest.raises(IntegrationError):
+        analyze_openapi_spec(duplicate_json, provider_id="yaml_test")
+
+    with pytest.raises(IntegrationError):
+        analyze_openapi_spec("!!python/object/apply:os.system ['echo should-not-run']", provider_id="yaml_test")
+
+
+def test_remote_schema_import_requires_trusted_https_host_and_refuses_redirects(monkeypatch):
+    import urllib.error
+    from email.message import Message
+    from core.universal_integrations import fetch_schema_document_url
+
+    yaml_document = b"""openapi: 3.0.3
+info: {title: Remote, version: "1"}
+servers: [{url: "https://api.example.test"}]
+paths: {"/items": {get: {operationId: listItems, responses: {"200": {description: OK}}}}}
+"""
+
+    class Response:
+        status = 200
+        headers = {"Content-Length": str(len(yaml_document)), "Content-Type": "application/yaml"}
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def read(self, size): return yaml_document[:size]
+
+    class Opener:
+        def __init__(self, response=None, error=None): self.response, self.error = response, error
+        def open(self, request, timeout):
+            if self.error:
+                raise self.error
+            assert request.get_method() == "GET"
+            assert timeout <= 15
+            return self.response
+
+    seen = []
+    monkeypatch.setattr(
+        "urllib.request.build_opener",
+        lambda *handlers: (seen.append(handlers), Opener(Response()))[1],
+    )
+    result = fetch_schema_document_url(
+        "https://docs.example.test/openapi.yaml",
+        trusted_hosts=("docs.example.test",),
+    )
+    assert result.startswith("openapi:")
+    assert seen and any(handler.__class__.__name__ == "_NoRedirect" for handler in seen[0])
+
+    seen_before_untrusted = len(seen)
+    with pytest.raises(IntegrationError):
+        fetch_schema_document_url(
+            "https://attacker.example.test/openapi.yaml",
+            trusted_hosts=("docs.example.test",),
+        )
+    assert len(seen) == seen_before_untrusted
+
+    redirect_headers = Message()
+    redirect_headers["Location"] = "https://other.example.test/spec.yaml"
+    redirect = urllib.error.HTTPError(
+        "https://docs.example.test/openapi.yaml", 302, "redirect", redirect_headers, None
+    )
+    monkeypatch.setattr("urllib.request.build_opener", lambda *_: Opener(error=redirect))
+    with pytest.raises(IntegrationError):
+        fetch_schema_document_url(
+            "https://docs.example.test/openapi.yaml",
+            trusted_hosts=("docs.example.test",),
+        )

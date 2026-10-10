@@ -292,3 +292,34 @@ def test_custom_registry_has_no_arbitrary_50_provider_cap(monkeypatch, tmp_path)
     document = registry._read_document()
     assert len(document["providers"]) == 51
     assert document["providers"][-1]["config"]["provider_id"] == "additional_provider"
+
+
+
+def test_custom_registry_accepts_and_restores_safe_openapi_yaml(monkeypatch, tmp_path):
+    monkeypatch.setattr(registry, "CONFIG_PATH", tmp_path / "custom-providers.json")
+    config = {
+        "provider_id": "yaml_registry", "display_name": "YAML Registry",
+        "auth_type": "api_key", "trusted_hosts": ["api.example.test"],
+        "api_key_header": "X-API-Key", "identity_url": "https://api.example.test/me",
+        "identity_field": "id",
+    }
+    schema = """openapi: 3.0.3
+info: {title: YAML registry, version: "1"}
+servers: [{url: "https://api.example.test"}]
+components:
+  securitySchemes:
+    apiKey: {type: apiKey, in: header, name: X-API-Key}
+security: [{apiKey: []}]
+paths:
+  /items:
+    get:
+      operationId: listItems
+      responses: {"200": {description: OK}}
+"""
+    manager = IntegrationManager(store=MemoryCredentialStore())
+    connector, _ = configure_provider_connector(config, schema)
+    registry.save_custom_provider(manager, config, schema, connector)
+    restored_manager = IntegrationManager(store=MemoryCredentialStore())
+    restored = registry.register_saved_custom_providers(restored_manager)
+    assert restored["loaded"] == ["yaml_registry"]
+    assert restored_manager.connector("yaml_registry") is not None

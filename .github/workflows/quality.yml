@@ -53,7 +53,7 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
       - name: Install lightweight test dependency
-        run: python -m pip install --prefer-binary requests psutil pywin32 bleak pytest fastapi uvicorn cryptography numpy pillow==12.3.0 matplotlib==3.11.2 PyQt6==6.11.0 playwright==1.63.0 pyautogui graphql-core==3.2.6
+        run: python -m pip install --prefer-binary requests psutil pywin32 bleak pytest fastapi uvicorn cryptography numpy pillow==12.3.0 matplotlib==3.11.2 PyQt6==6.11.0 playwright==1.63.0 pyautogui graphql-core==3.2.6 PyYAML==6.0.2
       - name: Compile all Python sources
         run: python -m compileall -q .
       - name: Run whole-repository integrity scanner
@@ -222,7 +222,7 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
       - name: Install lightweight test dependency
-        run: python -m pip install requests psutil pywin32 bleak pytest numpy playwright==1.63.0 graphql-core==3.2.6
+        run: python -m pip install requests psutil pywin32 bleak pytest numpy playwright==1.63.0 graphql-core==3.2.6 PyYAML==6.0.2
       - name: Run ${{ matrix.group }} regressions
         shell: pwsh
         run: |
