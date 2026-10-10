@@ -290,12 +290,42 @@ def _load_openapi_spec(spec: str | Mapping[str, Any]) -> dict[str, Any]:
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI description exceeds the 2 MiB onboarding limit.")
         try:
             loaded = json.loads(spec)
-        except json.JSONDecodeError as exc:
-            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Supply an OpenAPI JSON document; YAML conversion is not enabled in this safe onboarding path.") from exc
+        except json.JSONDecodeError:
+            try:
+                import yaml
+            except ImportError as exc:
+                raise IntegrationError(IntegrationErrorCode.UNSUPPORTED_ACTION, "OpenAPI YAML import requires the packaged PyYAML dependency.") from exc
+
+            class _UniqueKeySafeLoader(yaml.SafeLoader):
+                """Safe YAML loader rejecting ambiguous or non-string mapping keys."""
+                def construct_mapping(self, node, deep=False):
+                    if not isinstance(node, yaml.MappingNode):
+                        return super().construct_mapping(node, deep=deep)
+                    self.flatten_mapping(node)
+                    mapping = {}
+                    for key_node, value_node in node.value:
+                        key = self.construct_object(key_node, deep=deep)
+                        if not isinstance(key, str):
+                            raise yaml.constructor.ConstructorError(
+                                "while constructing an OpenAPI mapping", node.start_mark,
+                                "mapping keys must be strings", key_node.start_mark,
+                            )
+                        if key in mapping:
+                            raise yaml.constructor.ConstructorError(
+                                "while constructing an OpenAPI mapping", node.start_mark,
+                                "duplicate mapping key " + repr(key), key_node.start_mark,
+                            )
+                        mapping[key] = self.construct_object(value_node, deep=deep)
+                    return mapping
+
+            try:
+                loaded = yaml.load(spec, Loader=_UniqueKeySafeLoader)
+            except yaml.YAMLError as exc:
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI YAML is invalid or uses unsafe/ambiguous YAML features.") from exc
     elif isinstance(spec, Mapping):
         loaded = dict(spec)
     else:
-        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI description must be a JSON object or JSON string.")
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI description must be a JSON/YAML object or text.")
     if not isinstance(loaded, dict) or not str(loaded.get("openapi") or "").startswith(("3.0.", "3.1.")):
         raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Only OpenAPI 3.0 and 3.1 documents are supported.")
     visited = 0
@@ -318,6 +348,63 @@ def _load_openapi_spec(spec: str | Mapping[str, Any]) -> dict[str, Any]:
     check_refs(loaded)
     return loaded
 
+
+def fetch_schema_document_url(
+    url: str,
+    *,
+    trusted_hosts: Sequence[str],
+    protocol: str = "openapi",
+    timeout: float = 8.0,
+) -> str:
+    """Fetch an approved HTTPS schema with exact-host allowlisting, no redirects and byte limits."""
+    parsed = _check_https_url(url, allowed_hosts=trusted_hosts)
+    if parsed.query:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Schema URLs may not contain query parameters; use a stable documented URL.")
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.oai.openapi+json, application/json, application/yaml, text/yaml, text/plain;q=0.8",
+            "User-Agent": "Brahma-Evo-Schema-Importer",
+        },
+        method="GET",
+    )
+    opener = urllib.request.build_opener(_NoRedirect())
+    try:
+        with opener.open(request, timeout=max(0.5, min(float(timeout), 15.0))) as response:
+            content_length = response.headers.get("Content-Length")
+            if content_length and int(content_length) > _MAX_SPEC_BYTES:
+                raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Remote schema exceeds the 2 MiB import limit.")
+            raw = response.read(_MAX_SPEC_BYTES + 1)
+            status = int(response.status)
+    except urllib.error.HTTPError as exc:
+        if 300 <= int(exc.code) < 400:
+            raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "Schema redirects are not followed; approve and enter the final HTTPS URL.") from exc
+        raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "The approved schema URL returned HTTP " + str(int(exc.code)) + ".") from exc
+    except IntegrationError:
+        raise
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+        raise IntegrationError(IntegrationErrorCode.NETWORK_ERROR, "The approved schema URL could not be fetched or timed out.") from exc
+    if not 200 <= status < 300:
+        raise IntegrationError(IntegrationErrorCode.PROVIDER_ERROR, "The approved schema URL did not return a successful response.")
+    if len(raw) > _MAX_SPEC_BYTES:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Remote schema exceeds the 2 MiB import limit.")
+    try:
+        document = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Remote schema must use UTF-8 encoding.") from exc
+    if not document.strip():
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Remote schema is empty.")
+    selected_protocol = str(protocol or "openapi").strip().lower()
+    if selected_protocol == "graphql":
+        _load_graphql_schema(document)
+    elif selected_protocol in ("openapi", "rest", "rest_openapi"):
+        _load_openapi_spec(document)
+    else:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Remote schema protocol must be OpenAPI/REST or GraphQL.")
+    return document
+
+
+def _resolve_openapi_reference
 
 
 def _resolve_openapi_reference(document: Mapping[str, Any], value: Any, seen: frozenset[str] = frozenset()) -> Any:
