@@ -987,7 +987,7 @@ def _cursor_openapi():
                 "type": "object",
                 "properties": {"data": {"type": "object", "properties": {
                     "items": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"], "additionalProperties": True}},
-                    "next_cursor": {"type": "string"}, "has_more": {"type": "boolean"},
+                    "next_cursor": {"type": "string", "nullable": True}, "has_more": {"type": "boolean"},
                 }, "required": ["items", "has_more"], "additionalProperties": True}},
                 "required": ["data"], "additionalProperties": True,
             }}}}},

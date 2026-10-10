@@ -452,9 +452,20 @@ def _normalize_operation_schema(
     if any(key in schema for key in ("allOf", "oneOf", "anyOf", "not", "patternProperties", "unevaluatedProperties")):
         raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI schema composition or dynamic properties are outside the generic safe subset.")
     kind = schema.get("type")
+    nullable = schema.get("nullable", False)
+    if not isinstance(nullable, bool):
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI nullable constraint must be a boolean.")
+    if isinstance(kind, list):
+        if len(kind) == 2 and "null" in kind and all(item in ("null", "object", "array", "string", "integer", "number", "boolean") for item in kind):
+            kind = next(item for item in kind if item != "null")
+            nullable = True
+        else:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI type unions are outside the supported JSON-schema subset.")
     if kind not in ("object", "array", "string", "integer", "number", "boolean"):
         raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI operation schema must declare a supported JSON type.")
     result: dict[str, Any] = {"type": kind}
+    if nullable:
+        result["nullable"] = True
     if "enum" in schema:
         values = schema["enum"]
         if not isinstance(values, list) or not values or len(values) > 100:
@@ -506,6 +517,8 @@ def _validate_operation_value(value: Any, schema: Mapping[str, Any], *, depth: i
     """Validate an operation argument before any remote request is sent."""
     if depth > 20:
         raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Operation arguments exceed the nesting limit.")
+    if value is None and schema.get("nullable") is True:
+        return
     kind = schema.get("type")
     valid = (
         isinstance(value, Mapping) if kind == "object" else
