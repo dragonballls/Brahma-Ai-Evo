@@ -468,13 +468,13 @@ def _normalize_operation_schema(
         result["nullable"] = True
     if "enum" in schema:
         values = schema["enum"]
-        if not isinstance(values, list) or not values or len(values) > 100:
-            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI enum is malformed or too large.")
+        if not isinstance(values, list) or not values or len(values) > _MAX_SPEC_NODES:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI enum is malformed or exceeds the imported-document safety limit.")
         result["enum"] = values
     if kind == "object":
         properties = schema.get("properties", {})
-        if not isinstance(properties, Mapping) or len(properties) > 100:
-            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI object properties are malformed or too numerous.")
+        if not isinstance(properties, Mapping) or len(properties) > _MAX_SPEC_NODES:
+            raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI object properties are malformed or exceed the imported-document safety limit.")
         if strict_objects and schema.get("additionalProperties", False) not in (False, None):
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Dynamic additional properties are not supported for write arguments.")
         normalized = {}
@@ -491,14 +491,14 @@ def _normalize_operation_schema(
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI array schema must declare item types.")
         result["items"] = _normalize_operation_schema(schema["items"], document, depth=depth + 1, seen_refs=seen_refs, strict_objects=strict_objects)
         try:
-            result["maxItems"] = max(0, min(int(schema.get("maxItems", 100)), 100))
-            result["minItems"] = max(0, min(int(schema.get("minItems", 0)), 100))
+            result["maxItems"] = max(0, min(int(schema.get("maxItems", 1000)), 10000))
+            result["minItems"] = max(0, min(int(schema.get("minItems", 0)), 10000))
         except (TypeError, ValueError) as exc:
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI array size constraints are invalid.") from exc
     elif kind == "string":
         try:
-            result["maxLength"] = max(0, min(int(schema.get("maxLength", 4096)), 4096))
-            result["minLength"] = max(0, min(int(schema.get("minLength", 0)), 4096))
+            result["maxLength"] = max(0, min(int(schema.get("maxLength", 16384)), 65536))
+            result["minLength"] = max(0, min(int(schema.get("minLength", 0)), 65536))
         except (TypeError, ValueError) as exc:
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "OpenAPI string length constraints are invalid.") from exc
     elif kind in ("integer", "number"):
@@ -541,12 +541,12 @@ def _validate_operation_value(value: Any, schema: Mapping[str, Any], *, depth: i
             if key in properties:
                 _validate_operation_value(item, properties[key], depth=depth + 1)
     elif kind == "array":
-        if len(value) > int(schema.get("maxItems", 100)) or len(value) < int(schema.get("minItems", 0)):
+        if len(value) > int(schema.get("maxItems", 1000)) or len(value) < int(schema.get("minItems", 0)):
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Array argument is outside its declared size limits.")
         for item in value:
             _validate_operation_value(item, schema["items"], depth=depth + 1)
     elif kind == "string":
-        if len(value) > int(schema.get("maxLength", 4096)) or len(value) < int(schema.get("minLength", 0)):
+        if len(value) > int(schema.get("maxLength", 16384)) or len(value) < int(schema.get("minLength", 0)):
             raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "String argument is outside its declared length limits.")
     elif kind in ("integer", "number"):
         if ("minimum" in schema and value < schema["minimum"]) or ("maximum" in schema and value > schema["maximum"]):
@@ -1925,7 +1925,7 @@ def _graphql_type_schema(value: Any, lib: Mapping[str, Any], *, depth: int = 0, 
         if named.name in seen:
             return {"type": "object", "description": "Recursive input type validated by graphql-core: " + named.name}
         props, required = {}, []
-        for field_name, field in list(named.fields.items())[:100]:
+        for field_name, field in list(named.fields.items())[:_MAX_SPEC_NODES]:
             props[field_name] = _graphql_type_schema(field.type, lib, depth=depth + 1, seen=seen | {named.name})
             if lib["is_non_null_type"](field.type) and field.default_value is None:
                 required.append(field_name)
@@ -1966,8 +1966,8 @@ def _load_graphql_schema(schema_document: str | Mapping[str, Any]) -> tuple[Any,
 
 
 def _build_graphql_operations(schema: Any, lib: Mapping[str, Any], *, provider_id: str, endpoint: str, declarations: Any):
-    if not isinstance(declarations, list) or not declarations or len(declarations) > 100:
-        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Explicitly list 1 to 100 GraphQL query/mutation documents to review.")
+    if not isinstance(declarations, list) or not declarations or len(declarations) > _MAX_OPERATIONS:
+        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "GraphQL operation count exceeds the imported-document safety limit.")
     built, queries, mutations, warnings, seen = [], [], [], [], set()
     total_bytes = 0
     for raw in declarations:
