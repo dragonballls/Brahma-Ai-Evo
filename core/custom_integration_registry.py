@@ -15,7 +15,6 @@ from core.universal_integrations import configure_provider_connector
 CONFIG_PATH = CONFIG_DIR / "custom_account_providers.json"
 MAX_REGISTRY_BYTES = 2 * 1024 * 1024
 MAX_SPEC_BYTES = 1024 * 1024
-MAX_PROVIDER_COUNT = 50
 _SECRET_PROVIDER_SENTINEL = "__custom_provider_secret__"
 _SECRET_NAMESPACE = uuid.UUID("e4f1b9f1-77a0-4b34-a6a9-fc83c7f399cd")
 _PUBLIC_FIELDS = {
@@ -44,7 +43,7 @@ def _read_document() -> dict[str, Any]:
         raise
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Custom provider registry is unreadable or malformed; it was not overwritten.") from exc
-    if not isinstance(value, dict) or value.get("schema_version") != 1 or not isinstance(value.get("providers"), list) or len(value["providers"]) > MAX_PROVIDER_COUNT:
+    if not isinstance(value, dict) or value.get("schema_version") != 1 or not isinstance(value.get("providers"), list):
         raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "Custom provider registry has an unsupported structure; it was not overwritten.")
     seen: set[str] = set()
     for entry in value["providers"]:
@@ -148,8 +147,6 @@ def save_custom_provider(
     entries = old["providers"]
     if any(str(row["config"].get("provider_id") or "").lower() == provider for row in entries):
         raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "A provider configuration with this identifier already exists.")
-    if len(entries) >= MAX_PROVIDER_COUNT:
-        raise IntegrationError(IntegrationErrorCode.INVALID_REQUEST, "The custom provider registry is full.")
     secret_id = _secret_record_id(provider)
     previous = manager.store.read(secret_id) if client_secret else None
     has_secret = bool(client_secret)

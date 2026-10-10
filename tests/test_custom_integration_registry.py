@@ -254,3 +254,41 @@ def test_custom_registry_persists_and_restores_graphql_schema_and_operations(mon
     restored = registry.register_saved_custom_providers(restored_manager)
     assert restored["loaded"] == ["registry_graphql"]
     assert restored_manager.connector("registry_graphql") is not None
+
+
+
+def test_custom_registry_has_no_arbitrary_50_provider_cap(monkeypatch, tmp_path):
+    monkeypatch.setattr(registry, "CONFIG_PATH", tmp_path / "custom-providers.json")
+    existing = [
+        {"config": {"provider_id": "preexisting-provider-" + str(index)}, "openapi_spec": "{}"}
+        for index in range(50)
+    ]
+    registry._write_document({"schema_version": 1, "providers": existing})
+
+    config = {
+        "provider_id": "additional_provider", "display_name": "Additional API",
+        "auth_type": "api_key", "trusted_hosts": ["api.example.test"],
+        "api_key_header": "X-API-Key", "identity_url": "https://api.example.test/me",
+        "identity_field": "id", "documentation_url": "https://api.example.test/docs",
+    }
+    spec = {
+        "openapi": "3.0.3",
+        "info": {"title": "Additional API", "version": "1.0.0"},
+        "servers": [{"url": "https://api.example.test"}],
+        "components": {"securitySchemes": {
+            "apiKey": {"type": "apiKey", "in": "header", "name": "X-API-Key"},
+        }},
+        "security": [{"apiKey": []}],
+        "paths": {"/items": {"get": {
+            "operationId": "listItems", "summary": "List items",
+            "responses": {"200": {"description": "OK"}},
+        }}},
+    }
+    manager = IntegrationManager(store=MemoryCredentialStore())
+    connector, _preview = configure_provider_connector(config, spec)
+    saved = registry.save_custom_provider(manager, config, spec, connector)
+
+    assert saved["provider_id"] == "additional_provider"
+    document = registry._read_document()
+    assert len(document["providers"]) == 51
+    assert document["providers"][-1]["config"]["provider_id"] == "additional_provider"
