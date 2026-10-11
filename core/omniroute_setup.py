@@ -286,6 +286,10 @@ class OmniRouteProvisioner:
             **os.environ,
             "DATA_DIR": str(self.data_dir),
             "PORT": str(self.port),
+            # OmniRoute 3.8.50 defaults to 0.0.0.0 when this is omitted.
+            # Brahma's gateway is local-only and shares credentials with the
+            # per-user OmniRoute install, so never inherit a broader bind host.
+            "OMNIROUTE_SERVER_HOST": "127.0.0.1",
             "OMNIROUTE_TELEMETRY": os.environ.get("OMNIROUTE_TELEMETRY", "false"),
         }
 
