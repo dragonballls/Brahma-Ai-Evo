@@ -209,7 +209,12 @@ class OpenRouterClient:
             payload["response_format"] = response_format
         headers = {"Content-Type": "application/json"}
         import os
-        omni_key = os.environ.get("BRAHMA_OMNIROUTE_API_KEY", "").strip()
+        try:
+            omni_key = self._omniroute.client_api_key()
+        except Exception:
+            omni_key = ""
+        if not isinstance(omni_key, str) or not omni_key.strip():
+            omni_key = os.environ.get("BRAHMA_OMNIROUTE_API_KEY", "").strip()
         if omni_key:
             headers["Authorization"] = f"Bearer {omni_key}"
         if provider:
@@ -577,7 +582,12 @@ class OpenRouterClient:
 
         headers = {"Content-Type": "application/json"}
         import os
-        omni_key = os.environ.get("BRAHMA_OMNIROUTE_API_KEY", "").strip()
+        try:
+            omni_key = self._omniroute.client_api_key()
+        except Exception:
+            omni_key = ""
+        if not isinstance(omni_key, str) or not omni_key.strip():
+            omni_key = os.environ.get("BRAHMA_OMNIROUTE_API_KEY", "").strip()
         if omni_key:
             headers["Authorization"] = f"Bearer {omni_key}"
         if provider:
