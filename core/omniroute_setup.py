@@ -293,19 +293,39 @@ class OmniRouteProvisioner:
             "OMNIROUTE_TELEMETRY": os.environ.get("OMNIROUTE_TELEMETRY", "false"),
         }
 
+    def client_api_key(self) -> str:
+        """Resolve Brahma's configured OmniRoute key or Abacus' shared local key file."""
+        configured = os.environ.get("BRAHMA_OMNIROUTE_API_KEY", "").strip()
+        if configured:
+            return configured
+        try:
+            key_file = self.data_dir / "abacusai-bot-client-api-key"
+            if not key_file.is_file():
+                return ""
+            value = key_file.read_text(encoding="utf-8").strip()
+            return value if len(value) >= 16 else ""
+        except (OSError, UnicodeError):
+            return ""
+
     def _probe(self) -> bool:
         # Validate the OpenAI-compatible /models contract rather than trusting a
-        # generic health endpoint on the same loopback port.
+        # generic health endpoint on the same loopback port. Shared gateways may
+        # require the API key created by Abacus, so probe with the same credential
+        # used for chat completions.
         try:
             class _NoRedirect(HTTPRedirectHandler):
                 def redirect_request(self, req, fp, code, msg, headers, newurl):
                     raise urllib.error.URLError("Redirects are not permitted for OmniRoute probes.")
 
             opener = urllib.request.build_opener(_NoRedirect)
+            headers = {"Accept": "application/json"}
+            client_key = self.client_api_key()
+            if client_key:
+                headers["Authorization"] = f"Bearer {client_key}"
             with opener.open(
                 urllib.request.Request(
                     self.base_url + "/models",
-                    headers={"Accept": "application/json"},
+                    headers=headers,
                 ),
                 timeout=self.probe_timeout_seconds,
             ) as response:

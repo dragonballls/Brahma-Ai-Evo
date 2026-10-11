@@ -155,7 +155,7 @@ def _catalog_models()->tuple[str,...]:
         gw=gateway()
         if gw.ensure_ready():
             headers={'Accept':'application/json'}
-            key=os.environ.get('BRAHMA_OMNIROUTE_API_KEY','').strip()
+            key=gw.client_api_key()
             if key: headers['Authorization']='Bearer '+key
             resp=requests.get(gw.base_url+'/models',params={'prefix':'alias'},headers=headers,timeout=5)
             if resp.ok:

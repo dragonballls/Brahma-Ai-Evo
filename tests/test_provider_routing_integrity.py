@@ -93,6 +93,7 @@ def test_omniroute_request_pins_explicit_provider(monkeypatch):
     client._omniroute = Mock()
     client._omniroute.ensure_ready.return_value = True
     client._omniroute.base_url = "http://127.0.0.1:8765"
+    client._omniroute.client_api_key.return_value = "shared-omniroute-key-123456"
     response = Mock()
     response.status_code = 200
     response.iter_content.return_value = [
@@ -106,6 +107,7 @@ def test_omniroute_request_pins_explicit_provider(monkeypatch):
         )
     assert result == "provider-pinned"
     headers = post.call_args.kwargs["headers"]
+    assert headers["Authorization"] == "Bearer shared-omniroute-key-123456"
     assert headers["X-OmniRoute-Provider"] == "gemini"
 
 
