@@ -51,6 +51,14 @@ class OmniRouteGateway:
         value = os.environ.get("BRAHMA_OMNIROUTE_ENABLED", "1").strip().lower()
         return value not in {"0", "false", "no", "off"}
 
+    def client_api_key(self) -> str:
+        """Return the configured key or Abacus' app-specific key from shared local data."""
+        try:
+            value = self.provisioner.client_api_key()
+            return value if isinstance(value, str) else ""
+        except Exception:
+            return ""
+
     def ensure_ready(self, *, force: bool = False) -> bool:
         """Return gateway readiness without holding state locks across slow I/O or startup."""
         if not self.enabled:
