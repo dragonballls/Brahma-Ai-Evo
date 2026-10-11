@@ -33,7 +33,7 @@ def test_omniroute_reads_abacus_shared_key_and_prefers_explicit_override(monkeyp
     monkeypatch.delenv("BRAHMA_OMNIROUTE_API_KEY", raising=False)
     monkeypatch.setenv("BRAHMA_OMNIROUTE_DATA_DIR", str(tmp_path))
     key_file = tmp_path / "abacusai-bot-client-api-key"
-    key_file.write_text(shared_key + "\\n", encoding="utf-8")
+    key_file.write_text(shared_key + "\n", encoding="utf-8")
 
     provisioner = OmniRouteProvisioner()
     assert provisioner.client_api_key() == shared_key
