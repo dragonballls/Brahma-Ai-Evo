@@ -31,9 +31,9 @@ a = Analysis(
     hiddenimports=[
         'mediapipe', 'cv2', 'instagrapi', 'google.genai', 'PyQt6', 'PyQt6.QtWebEngineCore',
         'PyQt6.QtWebEngineWidgets', 'PyQt6.QtWebChannel', 'pyautogui', 'sounddevice',
-        'keyboard', 'docx', 'pptx', 'multipart', 'passlib', 'bcrypt', 'aiohttp', 'websockets',
-        'uvicorn', 'fastapi', 'plyer', 'pydantic', 'typing_extensions', 'requests', 'beautifulsoup4',
-        'pyaudio', 'numpy', 'speech_recognition', 'pocketsphinx', 'jev_ultrafast', 'jev_ultrafast.agent', 'jev_ultrafast.browser', 'jev_ultrafast.model', 'jev_ultrafast.questions', 'browser_harness'
+        'docx', 'pptx', 'multipart', 'bcrypt', 'aiohttp', 'websockets',
+        'uvicorn', 'fastapi', 'pydantic', 'typing_extensions', 'requests', 'bs4',
+        'pyaudio', 'numpy', 'speech_recognition', 'pocketsphinx', 'jev_ultrafast', 'jev_ultrafast.agent', 'jev_ultrafast.browser', 'jev_ultrafast.model', 'jev_ultrafast.questions', 'browser_harness', 'graphql', 'graphql.language', 'graphql.type', 'graphql.utilities', 'graphql.validation', 'graphql.execution', 'graphql.error', 'yaml', 'yaml.constructor', 'yaml.resolver', 'yaml.reader', 'yaml.scanner', 'yaml.parser', 'yaml.tokens', 'yaml.events', 'yaml.nodes', 'yaml.composer'
     ],
     hookspath=[],
     hooksconfig={},

@@ -9730,7 +9730,7 @@ class MainWindow(QMainWindow):
                     f"QPushButton {{ background: rgba(12,14,18,200); color: {C.WHITE}; border: 1px solid {C.BORDER_B}; border-radius: 8px; padding: 5px 15px; font-weight: bold; font-family: 'Segoe UI'; font-size: 13px; }} QPushButton:hover {{ color: {C.PRI}; border: 1px solid {C.PRI}; }}"
                 )
         if hasattr(self, "_btn_settings"):
-            if cur_idx in (3, 4):
+            if cur_idx in (3, 4, 5):
                 self._btn_settings.setStyleSheet(
                     f"QPushButton {{ background: rgba(0, 229, 255, 0.18); color: {C.PRI}; border: 1px solid {C.PRI}; border-radius: 8px; padding: 5px 15px; font-weight: bold; font-family: 'Segoe UI'; font-size: 13px; }}"
                 )
@@ -9751,7 +9751,7 @@ class MainWindow(QMainWindow):
     def _set_page(self, page: str):
         self._current_page = page
         if hasattr(self, "_center_stack") and isinstance(self._center_stack, QStackedWidget):
-            index = {"dashboard": 0, "home": 1, "devices": 2, "settings": 3}.get(page, 0)
+            index = {"dashboard": 0, "home": 1, "devices": 2, "settings": 3, "accounts": 5}.get(page, 0)
             self._center_stack.setCurrentIndex(index)
         if page == "devices" and hasattr(self, "_devices_page"):
             try:
@@ -9786,6 +9786,11 @@ class MainWindow(QMainWindow):
         if page == "settings" and hasattr(self, "_settings_sidebar"):
             try:
                 self._settings_sidebar.refresh()
+            except Exception:
+                pass
+        if page == "accounts" and hasattr(self, "_accounts_page"):
+            try:
+                self._accounts_page.refresh()
             except Exception:
                 pass
 
@@ -10957,6 +10962,11 @@ class MainWindow(QMainWindow):
         self._settings_hub_page = SettingsHubPage(lambda page: self._set_page(page))
         self._center_stack.addWidget(self._settings_hub_page)
 
+        # Central account authorization and truthful integration capability page.
+        from core.account_integrations_ui import AccountsIntegrationsPage
+        self._accounts_page = AccountsIntegrationsPage()
+        self._center_stack.addWidget(self._accounts_page)
+
         self._omniroute_window = None
 
         self._center_stack.setCurrentIndex(0)
@@ -11617,6 +11627,7 @@ class SettingsHubPage(QWidget):
             ("Brahma Evo Home", "Configure smart home integrations", "🏠", "home"),
             ("Devices", "Manage and control connected hardware", "🔌", "devices"),
             ("System & Connect", "Configure providers and api preferences", "⚙️", "settings"),
+            ("Accounts & Integrations", "Manage account authorization, permissions, and verified actions", "🔐", "accounts"),
             ("OmniRoute", "Open the real OmniRoute provider and routing console", "🧠", "omniroute")
         ]
 
