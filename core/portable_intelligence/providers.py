@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
@@ -34,6 +36,48 @@ def _status_category(status: int) -> tuple[str, bool]:
     if 300 <= status < 400:
         return "redirect_refused", False
     return "invalid_request_or_provider_error", False
+
+
+def _retry_after_seconds(response: Any) -> float | None:
+    """Parse numeric or HTTP-date Retry-After without retaining response bodies."""
+    headers = getattr(response, "headers", {}) or {}
+    value = next((v for k, v in headers.items() if str(k).casefold() == "retry-after"), None) if isinstance(headers, Mapping) else None
+    if value is None:
+        return None
+    try:
+        return max(0.0, min(float(value), 3600.0))
+    except (TypeError, ValueError):
+        try:
+            deadline = parsedate_to_datetime(str(value))
+            if deadline.tzinfo is None:
+                deadline = deadline.replace(tzinfo=timezone.utc)
+            return max(0.0, min((deadline - datetime.now(timezone.utc)).total_seconds(), 3600.0))
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+
+def _failure_details(response: Any, status: int) -> tuple[str, bool, float | None]:
+    """Classify recoverable rate limiting separately from billing/quota blocks."""
+    category, retryable = _status_category(status)
+    retry_after = _retry_after_seconds(response)
+    try:
+        body = response.json()
+    except Exception:
+        body = None
+    error = body.get("error", body) if isinstance(body, dict) else {}
+    if isinstance(error, dict):
+        code = str(error.get("code") or error.get("type") or error.get("status") or "").casefold()
+        message = str(error.get("message") or "").casefold()
+        billing_failure = (
+            "insufficient_quota" in code
+            or "billing_hard_limit" in code
+            or "billing not active" in message
+            or "insufficient quota" in message
+            or "billing hard limit" in message
+        )
+        if billing_failure:
+            return "quota_exhausted", False, None
+    return category, retryable, retry_after
 
 
 def _content_text(value: Any) -> str:
@@ -144,8 +188,11 @@ class HTTPProvider:
             ) from exc
         status = int(getattr(response, "status_code", 0) or 0)
         if status < 200 or status >= 300:
-            category, retryable = _status_category(status)
-            raise ProviderFailure(self.provider_id, category, status_code=status, retryable=retryable)
+            category, retryable, retry_after = _failure_details(response, status)
+            raise ProviderFailure(
+                self.provider_id, category, status_code=status, retryable=retryable,
+                retry_after_seconds=retry_after,
+            )
         try:
             data = response.json()
         except (ValueError, AttributeError) as exc:
@@ -411,8 +458,11 @@ class GeminiContentProvider(HTTPProvider):
             raise ProviderFailure(self.provider_id, "network_error", type(exc).__name__, retryable=True) from exc
         status = int(getattr(response, "status_code", 0) or 0)
         if status < 200 or status >= 300:
-            category, retryable = _status_category(status)
-            raise ProviderFailure(self.provider_id, category, status_code=status, retryable=retryable)
+            category, retryable, retry_after = _failure_details(response, status)
+            raise ProviderFailure(
+                self.provider_id, category, status_code=status, retryable=retryable,
+                retry_after_seconds=retry_after,
+            )
         try:
             data = response.json()
         except (ValueError, AttributeError) as exc:
