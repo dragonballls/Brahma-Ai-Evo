@@ -266,10 +266,11 @@ class ReasoningEngine:
             adapter = self.providers[route.provider_id]
             if "text" not in route.capabilities or "text" not in adapter.capabilities:
                 continue
-            if route.provider_id in seen_providers:
+            diversity_group = str(getattr(adapter, "diversity_group", route.provider_id) or route.provider_id)
+            if diversity_group in seen_providers:
                 continue
             candidates.append(route)
-            seen_providers.add(route.provider_id)
+            seen_providers.add(diversity_group)
             if len(candidates) >= min(self.policy.max_candidate_calls, self.policy.max_total_model_calls - 1):
                 break
         if len(candidates) < 2:
@@ -313,7 +314,19 @@ class ReasoningEngine:
             return reply.text, [self._label(route)], warnings + ["All ensemble candidates failed; used fallback."]
 
         candidate_provider_ids = {route.provider_id for route, _ in candidate_answers}
-        critic_routes = [route for route in routes if route.provider_id not in candidate_provider_ids]
+        candidate_groups = {
+            str(getattr(self.providers[route.provider_id], "diversity_group", route.provider_id) or route.provider_id)
+            for route, _ in candidate_answers
+        }
+        critic_routes = []
+        critic_groups = set(candidate_groups)
+        for route in routes:
+            adapter = self.providers[route.provider_id]
+            group = str(getattr(adapter, "diversity_group", route.provider_id) or route.provider_id)
+            if route.provider_id in candidate_provider_ids or group in critic_groups:
+                continue
+            critic_routes.append(route)
+            critic_groups.add(group)
         critiques: list[tuple[Route, str]] = []
         if critic_budget and critic_routes:
             candidate_block = "\n\n".join(

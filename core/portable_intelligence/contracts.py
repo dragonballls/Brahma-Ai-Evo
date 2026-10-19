@@ -10,11 +10,17 @@ JSONMap = Mapping[str, Any]
 class ProviderFailure(RuntimeError):
     """Provider failure that is safe to log without exposing request secrets."""
     def __init__(self, provider_id: str, category: str, message: str = "", *,
-                 status_code: int | None = None, retryable: bool = False) -> None:
+                 status_code: int | None = None, retryable: bool = False,
+                 retry_after_seconds: float | None = None) -> None:
         self.provider_id = str(provider_id or "unknown")
         self.category = str(category or "provider_error")
         self.status_code = status_code
         self.retryable = bool(retryable)
+        try:
+            value = float(retry_after_seconds) if retry_after_seconds is not None else None
+        except (TypeError, ValueError):
+            value = None
+        self.retry_after_seconds = max(0.0, min(value, 3600.0)) if value is not None else None
         safe_message = str(message or self.category).replace("\n", " ")[:240]
         super().__init__(f"{self.provider_id}: {self.category}: {safe_message}")
 
