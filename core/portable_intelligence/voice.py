@@ -17,6 +17,20 @@ from urllib.parse import urlencode
 from .providers import validate_base_url
 
 
+def _bounded_live_content(value: str, *, max_utf8_bytes: int = 450) -> str:
+    """Keep each GPT-Live update conservatively below the API's 500-token limit."""
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError("Live update content must not be empty.")
+    encoded = text.encode("utf-8")[:max_utf8_bytes]
+    while encoded:
+        try:
+            return encoded.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            encoded = encoded[:-1]
+    raise ValueError("Live update content has no valid text within the safe payload limit.")
+
+
 @dataclass(frozen=True)
 class VoicePolicy:
     input_sample_rate: int = 24000
@@ -320,29 +334,25 @@ class GPTLiveVoiceAdapter:
     def append_delegation_result(self, delegation_id: str, content: str, *, spoken: bool = True) -> None:
         """Return validated host-backend results for GPT-Live to say or reason over."""
         task_id = str(delegation_id or "").strip()
-        text = str(content or "").strip()
         if not task_id:
             raise ValueError("delegation_id is required.")
         if task_id not in self._known_delegations:
             raise ValueError("delegation_id must refer to an active client delegation from this session.")
-        if not text:
-            raise ValueError("A non-empty delegated result is required.")
+        bounded_content = _bounded_live_content(content)
         self._send({
             "type": "session.commentary.append" if spoken else "session.thinking.append",
             "event_id": "brahma_result_" + uuid.uuid4().hex,
             "delegation_id": task_id,
-            "content": text[:1600],
+            "content": bounded_content,
         })
 
     def append_instruction(self, content: str) -> None:
-        text = str(content or "").strip()
-        if not text:
-            raise ValueError("Instruction content is required.")
+        bounded_content = _bounded_live_content(content)
         self._send({
             "type": "session.instructions.append",
             "event_id": "brahma_instruction_" + uuid.uuid4().hex,
             "delegation_id": None,
-            "content": text[:1600],
+            "content": bounded_content,
         })
 
     def interrupt(self, *, item_id: str | None = None, audio_end_ms: int | None = None) -> None:
@@ -447,22 +457,8 @@ class LiveDelegationCoordinator:
                 end = event.payload.get("end_ms")
                 start_ms = int(start) if isinstance(start, (int, float)) else None
                 end_ms = int(end) if isinstance(end, (int, float)) else None
-                if self._segments:
-                    previous = self._segments[-1]
-                    close_in_time = (
-                        previous.end_ms is None or start_ms is None
-                        or start_ms <= previous.end_ms + 1200
-                    )
-                    if previous.speaker == speaker and close_in_time:
-                        self._segments[-1] = TranscriptSegment(
-                            speaker=speaker,
-                            text=previous.text + text,
-                            start_ms=previous.start_ms if previous.start_ms is not None else start_ms,
-                            end_ms=end_ms if end_ms is not None else previous.end_ms,
-                        )
-                        self._transcript_chars += len(text)
-                        self._trim_transcript_locked()
-                        return None
+                # Keep original provider fragments and timestamps intact. GPT-Live may
+                # emit partial/corrected fragments; grouping belongs in the UI layer.
                 self._segments.append(TranscriptSegment(speaker, text, start_ms, end_ms))
                 self._transcript_chars += len(text)
                 self._trim_transcript_locked()
