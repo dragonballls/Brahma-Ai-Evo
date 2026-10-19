@@ -12,7 +12,10 @@ from core.portable_intelligence.contracts import (
     Route, RunPolicy, ToolCall,
 )
 from core.portable_intelligence.engine import ReasoningEngine
-from core.portable_intelligence.evaluation import BenchmarkCase, EvaluationHarness, load_benchmark_cases
+from core.portable_intelligence.evaluation import (
+    BenchmarkCase, EvaluationHarness, build_pairwise_judge_request,
+    judge_pair_blindly, load_benchmark_cases,
+)
 from core.portable_intelligence.providers import (
     AnthropicMessagesProvider, CallableProvider, OpenAICompatibleProvider,
     OpenAIResponsesProvider, validate_base_url,
@@ -380,6 +383,50 @@ class PortableContractsTests(unittest.TestCase):
         cases = load_benchmark_cases(path)
         self.assertGreaterEqual(len(cases), 6)
         self.assertEqual(len({case.case_id for case in cases}), len(cases))
+
+
+    def test_pairwise_judge_request_is_blinded_and_contains_same_task(self):
+        case = BenchmarkCase(
+            "case-1", "reasoning", "What is 6 * 7?",
+            required_phrases=("42",), forbidden_phrases=("41",),
+        )
+        request = build_pairwise_judge_request(case, "The answer is 42.", "The answer is 41.")
+        payload = json.loads(request.messages[0]["content"])
+        self.assertEqual(payload["task_prompt"], case.prompt)
+        self.assertEqual(payload["candidate_a"], "The answer is 42.")
+        self.assertEqual(payload["candidate_b"], "The answer is 41.")
+        self.assertNotIn("provider", request.system.casefold())
+        self.assertNotIn("openai", request.messages[0]["content"].casefold())
+
+    def test_pairwise_judge_validates_rubric_and_returns_scores(self):
+        provider = FakeProvider("judge", "")
+        provider.complete = Mock(return_value=ModelReply(
+            json.dumps({
+                "scores_a": {"accuracy": 5, "instruction_following": 5, "completeness": 4, "calibration": 4, "safety": 5},
+                "scores_b": {"accuracy": 2, "instruction_following": 4, "completeness": 3, "calibration": 2, "safety": 5},
+                "winner": "A",
+                "rationale": "A is correct; B has an arithmetic error.",
+            }),
+            "judge", "grader-model",
+        ))
+        case = BenchmarkCase("calc-1", "reasoning", "What is 6 * 7?")
+        verdict = judge_pair_blindly(provider, "grader-model", case, "42", "41")
+        self.assertEqual(verdict.winner, "A")
+        self.assertEqual(verdict.scores_a["accuracy"], 5)
+        self.assertEqual(verdict.scores_b["accuracy"], 2)
+        self.assertIn("arithmetic", verdict.rationale)
+        self.assertEqual(provider.complete.call_count, 1)
+
+    def test_pairwise_judge_rejects_invalid_scores_and_winner(self):
+        provider = FakeProvider("judge", "")
+        provider.complete = Mock(return_value=ModelReply(
+            '{"scores_a":{"accuracy":9},"scores_b":{},"winner":"X"}', "judge", "model"
+        ))
+        case = BenchmarkCase("calc-1", "reasoning", "question")
+        with self.assertRaises(ValueError):
+            judge_pair_blindly(provider, "model", case, "A", "B")
+
+
 
 
 if __name__ == "__main__":
