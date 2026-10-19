@@ -159,6 +159,8 @@ class GPTLiveVoiceAdapter:
         self.policy = policy or VoicePolicy()
         if self.policy.input_sample_rate != self.policy.output_sample_rate:
             raise ValueError("GPT-Live requires the same configured audio rate for input and output.")
+        if self.policy.input_sample_rate not in {16000, 24000}:
+            raise ValueError("GPT-Live PCM16 audio supports 16000 Hz or 24000 Hz; use one of those rates.")
         self._socket: Any = None
         self._started = False
         self._closed = False
@@ -167,6 +169,8 @@ class GPTLiveVoiceAdapter:
         self._finalization_error: str | None = None
         self._known_delegations: set[str] = set()
         self._send_lock = threading.Lock()
+        self._audio_lock = threading.Lock()
+        self._pending_pcm_byte = b""
         self._delivery_lock = threading.RLock()
         self._sent_result_chunks: dict[tuple[str, str], int] = {}
         self._pending: deque[dict[str, Any]] = deque()
@@ -201,6 +205,8 @@ class GPTLiveVoiceAdapter:
         self._sent_result_chunks.clear()
         self._last_usage = None
         self._pending.clear()
+        with self._audio_lock:
+            self._pending_pcm_byte = b""
         self.playback.interrupt()
         try:
             import websocket
@@ -275,13 +281,25 @@ class GPTLiveVoiceAdapter:
         if not self._started or self._closed:
             raise RuntimeError("GPT-Live has not emitted session.started.")
         data = bytes(pcm)
-        if len(data) % 2:
-            raise ValueError("PCM16 audio must contain complete 16-bit samples.")
-        if data:
-            self._send({
-                "type": "session.input_audio.append",
-                "audio": base64.b64encode(data).decode("ascii"),
-            })
+        # Microphone APIs may split a PCM16 sample across adjacent reads. Carry one
+        # trailing byte forward so every protocol event contains complete 16-bit samples.
+        with self._audio_lock:
+            combined = self._pending_pcm_byte + data
+            complete_length = len(combined) - (len(combined) % 2)
+            complete = combined[:complete_length]
+            trailing = combined[complete_length:]
+            if complete:
+                try:
+                    self._send({
+                        "type": "session.input_audio.append",
+                        "audio": base64.b64encode(complete).decode("ascii"),
+                    })
+                except Exception:
+                    # Once transport delivery is uncertain, do not splice an old byte
+                    # into a future connection's audio stream.
+                    self._pending_pcm_byte = b""
+                    raise
+            self._pending_pcm_byte = trailing
 
     def send_text(self, text: str) -> None:
         raise NotImplementedError(
@@ -430,6 +448,8 @@ class GPTLiveVoiceAdapter:
                     self._finalization_error = "session.closed was not received before the close timeout"
         finally:
             self.playback.interrupt()
+            with self._audio_lock:
+                self._pending_pcm_byte = b""
             self._socket = None
             self._closed = True
             try:

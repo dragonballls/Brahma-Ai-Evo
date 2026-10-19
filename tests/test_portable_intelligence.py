@@ -330,11 +330,18 @@ class PortableContractsTests(unittest.TestCase):
         self.assertEqual(sock.sent[2]["type"], "response.create")
         adapter.close()
 
-    def test_gpt_live_rejects_non_websocket_endpoint_and_mismatched_audio_rates(self):
+    def test_gpt_live_rejects_non_websocket_endpoint_and_invalid_audio_rates(self):
         with self.assertRaises(ValueError):
             GPTLiveVoiceAdapter("test-key", websocket_url="https://api.openai.com/v1/live/sessions")
         with self.assertRaises(ValueError):
             GPTLiveVoiceAdapter("test-key", policy=VoicePolicy(input_sample_rate=16000, output_sample_rate=24000))
+        with self.assertRaises(ValueError):
+            GPTLiveVoiceAdapter("test-key", policy=VoicePolicy(input_sample_rate=22050, output_sample_rate=22050))
+        # Supported PCM16 sample rates are permitted when input and output match.
+        self.assertEqual(
+            GPTLiveVoiceAdapter("test-key", policy=VoicePolicy(input_sample_rate=16000, output_sample_rate=16000)).policy.input_sample_rate,
+            16000,
+        )
 
     def test_gpt_live_uses_client_delegation_and_returns_delegations_to_host(self):
         class FakeSocket:
@@ -388,8 +395,13 @@ class PortableContractsTests(unittest.TestCase):
             self.assertEqual(sent[-2]["type"], "session.instructions.append")
             self.assertIsNone(sent[-2]["delegation_id"])
             self.assertEqual(sent[-1]["type"], "session.input_audio.append")
-            with self.assertRaises(ValueError):
-                adapter.send_pcm16(b"\x01")
+            before_partial = len(fake_socket.sent)
+            adapter.send_pcm16(b"\x05")
+            self.assertEqual(len(fake_socket.sent), before_partial)
+            adapter.send_pcm16(b"\x06")
+            self.assertEqual(base64.b64decode(fake_socket.sent[-1]["audio"]), b"\x05\x06")
+            adapter.send_pcm16(b"\x07\x08\x09")
+            self.assertEqual(base64.b64decode(fake_socket.sent[-1]["audio"]), b"\x07\x08")
             closed = adapter.receive_event()
             self.assertEqual(closed.kind, "session_closed")
             self.assertTrue(adapter.session_closed_confirmed)
