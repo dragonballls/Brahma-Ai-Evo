@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -55,8 +56,10 @@ class CredentialSpec:
         family = str(self.provider_family or "").strip().casefold()
         if not credential_id:
             raise ValueError("credential_id is required.")
-        if family not in _PROVIDER_DEFAULTS:
-            raise ValueError(f"Unsupported provider_family: {family or '(empty)'}")
+        if not re.fullmatch(r"[a-z][a-z0-9_.-]{0,63}", family):
+            raise ValueError("provider_family must be a short lowercase identifier.")
+        if family not in _PROVIDER_DEFAULTS and not str(self.base_url or "").strip():
+            raise ValueError("Custom provider families must configure an explicit HTTPS base_url.")
         if not str(self.api_key or "").strip():
             raise ValueError("Credential API key must not be empty.")
         if not str(self.quota_group or "").strip():
@@ -65,7 +68,7 @@ class CredentialSpec:
             )
         if self.priority < 0:
             raise ValueError("Credential priority cannot be negative.")
-        default_url = _PROVIDER_DEFAULTS[family][0]
+        default_url = _PROVIDER_DEFAULTS[family][0] if family in _PROVIDER_DEFAULTS else self.base_url
         normalized = validate_base_url(self.base_url or default_url)
         object.__setattr__(self, "credential_id", credential_id)
         object.__setattr__(self, "provider_family", family)
@@ -199,6 +202,9 @@ class CredentialPoolProvider:
         if len(family_endpoints) != 1:
             raise ValueError("A pool must contain one provider family and endpoint. Create separate pools otherwise.")
         family, _endpoint = next(iter(family_endpoints))
+        selected_factory = adapter_factory
+        if selected_factory is None and family not in _PROVIDER_DEFAULTS:
+            raise ValueError(f"Custom provider family {family!r} requires an adapter_factory.")
         ordered = sorted((c for c in credentials if c.enabled), key=lambda c: (c.priority, c.credential_id))
         if not ordered:
             raise ValueError("At least one enabled credential is required.")
@@ -226,7 +232,7 @@ class CredentialPoolProvider:
         self.default_rate_limit_cooldown_seconds = default_rate_limit_cooldown_seconds
         self.transient_cooldown_seconds = transient_cooldown_seconds
         self.auth_disable = auth_disable
-        self._factory = adapter_factory or self._make_builtin_adapter
+        self._factory = selected_factory or self._make_builtin_adapter
         self._credentials = [
             _CredentialState(c, duplicate_aliases=duplicate_counts.get(c.fingerprint, 0))
             for c in deduped
@@ -435,6 +441,7 @@ def build_credential_pools(
     *,
     state: CredentialPoolState | None = None,
     adapter_factory: Callable[[CredentialSpec], Any] | None = None,
+    adapter_factories: Mapping[str, Callable[[CredentialSpec], Any]] | None = None,
     max_parallel_per_scope: int = 2,
     diversity_groups: Mapping[str, str] | None = None,
 ) -> dict[str, CredentialPoolProvider]:
@@ -459,11 +466,12 @@ def build_credential_pools(
         provider_id = f"{family}_{suffix}"
         if provider_id in result:
             raise ValueError("Provider-pool ID collision.")
+        family_factory = (adapter_factories or {}).get(family, adapter_factory)
         result[provider_id] = CredentialPoolProvider(
             provider_id,
             group_credentials,
             state=shared_state,
-            adapter_factory=adapter_factory,
+            adapter_factory=family_factory,
             diversity_group=(diversity_groups or {}).get(provider_id, f"{family}:{endpoint}"),
             max_parallel_per_scope=max_parallel_per_scope,
         )

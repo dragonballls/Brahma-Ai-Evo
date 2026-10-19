@@ -19,7 +19,7 @@ The package is intended to be movable into another desktop app later. Its core u
 
 ## Multi-key provider pools
 
-CredentialSpec and CredentialPoolProvider let a host manage many provider keys. Real key values must stay in environment variables or an approved secret manager. The checked-in `benchmarks/credential_pool.example.json` contains only environment variable names and public endpoint metadata. The checked-in rows are examples, not fixed limits; add or remove any number of credentials without code changes. Duplicate Abacus/OmniRoute source aliases illustrate deduplication.
+CredentialSpec and CredentialPoolProvider let a host manage many provider keys. Built-in families cover native OpenAI Responses, OpenAI-compatible gateways, Anthropic Messages, and Gemini generateContent. Other providers can register a custom family by supplying an explicit HTTPS base_url and adapter_factories mapping; custom adapters implement the portable ProviderAdapter contract. Real key values must stay in environment variables or an approved secret manager. The checked-in `benchmarks/credential_pool.example.json` contains only environment variable names and public endpoint metadata. The checked-in rows are examples, not fixed limits; add or remove any number of credentials without code changes. Duplicate Abacus/OmniRoute source aliases illustrate deduplication.
 
 Example host bootstrap:
 

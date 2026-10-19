@@ -824,6 +824,31 @@ class PortableContractsTests(unittest.TestCase):
         self.assertEqual(gemini_pool.snapshot()["credentials"][0]["duplicate_aliases_collapsed"], 1)
         self.assertNotIn("same-secret-value", repr(gemini_pool.snapshot()))
 
+
+    def test_custom_provider_family_uses_registered_adapter_factory(self):
+        credential = CredentialSpec(
+            "custom-a", "custom_vendor", "opaque-test-key", "custom-account",
+            "https://llm.custom.example/v1",
+        )
+        built = []
+        def factory(spec):
+            built.append(spec.credential_id)
+            return FakeProvider("custom", "custom adapter answer")
+        with self.assertRaises(ValueError):
+            CredentialPoolProvider("custom", [credential])
+        pools = build_credential_pools(
+            [credential],
+            adapter_factories={"custom_vendor": factory},
+            diversity_groups={"custom_vendor_" + "": "unused"},
+        )
+        pool = next(iter(pools.values()))
+        reply = pool.complete(
+            ModelRequest(messages=({"role": "user", "content": "hello"},)), "custom-model"
+        )
+        self.assertEqual(reply.text, "custom adapter answer")
+        self.assertEqual(built, ["custom-a"])
+        self.assertEqual(pool.family, "custom_vendor")
+
     def test_pairwise_judge_request_is_blinded_and_contains_same_task(self):
         case = BenchmarkCase(
             "case-1", "reasoning", "What is 6 * 7?",
