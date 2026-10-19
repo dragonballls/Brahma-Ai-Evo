@@ -338,7 +338,7 @@ class PortableContractsTests(unittest.TestCase):
                     json.dumps({"type": "session.started", "session": {"id": "live-1"}}),
                     json.dumps({"type": "session.delegation.created", "delegation": {"id": "delegation-7", "target": "client"}}),
                     json.dumps({"type": "session.output_audio.delta", "delta": base64.b64encode(b"\x01\x02").decode("ascii")}),
-                    json.dumps({"type": "session.closed", "usage": {"voice_seconds": 4}}),
+                    json.dumps({"type": "session.closed", "usage": {"seconds": 4}}),
                 ]
             def send(self, value):
                 self.sent.append(json.loads(value))
@@ -365,28 +365,68 @@ class PortableContractsTests(unittest.TestCase):
             self.assertEqual(delegation.payload["delegation_id"], "delegation-7")
             audio = adapter.receive_event()
             self.assertEqual(audio.kind, "audio_delta")
-            self.assertEqual(audio.payload["pcm16"], b"\x01\x02")
+            self.assertEqual(audio.payload["byte_count"], 2)
+            self.assertTrue(audio.payload["queued"])
+            self.assertEqual(adapter.playback.pop(), b"\x01\x02")
+            with self.assertRaises(ValueError):
+                adapter.append_delegation_result("unknown-delegation", "Not allowed")
             adapter.append_delegation_result("delegation-7", "Verified result")
+            adapter.append_instruction("Keep the answer concise.")
             adapter.send_pcm16(b"\x03\x04")
             sent = fake_socket.sent
             self.assertEqual(sent[0]["type"], "session.start")
             self.assertEqual(sent[0]["session"]["model"], "gpt-live-1")
             self.assertEqual(sent[0]["session"]["delegation"]["type"], "client")
-            self.assertEqual(sent[-2]["type"], "session.commentary.append")
-            self.assertEqual(sent[-2]["delegation_id"], "delegation-7")
+            self.assertEqual(sent[-3]["type"], "session.commentary.append")
+            self.assertEqual(sent[-3]["delegation_id"], "delegation-7")
+            self.assertEqual(sent[-2]["type"], "session.instructions.append")
+            self.assertIsNone(sent[-2]["delegation_id"])
             self.assertEqual(sent[-1]["type"], "session.input_audio.append")
             with self.assertRaises(ValueError):
                 adapter.send_pcm16(b"\x01")
             closed = adapter.receive_event()
             self.assertEqual(closed.kind, "session_closed")
             self.assertTrue(adapter.session_closed_confirmed)
-            self.assertEqual(adapter.last_usage["voice_seconds"], 4)
+            self.assertIsNone(adapter.finalization_error)
+            self.assertEqual(adapter.last_usage["seconds"], 4)
             adapter.close()
 
-    def test_voice_policy_enforces_realtime_chunking(self):
+    def test_gpt_live_close_reports_unconfirmed_usage_when_terminal_event_is_missing(self):
+        class FakeSocket:
+            def __init__(self):
+                self.sent = []
+                self.incoming = [json.dumps({"type": "session.started", "session": {"id": "live-2"}})]
+            def send(self, value):
+                self.sent.append(json.loads(value))
+            def settimeout(self, _value):
+                pass
+            def recv(self):
+                if self.incoming:
+                    return self.incoming.pop(0)
+                raise RuntimeError("socket ended before final usage")
+            def close(self):
+                pass
+
+        fake_socket = FakeSocket()
+        fake_websocket = SimpleNamespace(
+            create_connection=Mock(return_value=fake_socket),
+            WebSocketTimeoutException=type("WebSocketTimeoutException", (Exception,), {}),
+        )
+        with patch.dict(sys.modules, {"websocket": fake_websocket}):
+            adapter = GPTLiveVoiceAdapter(
+                "test-key", policy=VoicePolicy(close_timeout_seconds=0.05)
+            )
+            adapter.connect()
+            adapter.close()
+            self.assertFalse(adapter.session_closed_confirmed)
+            self.assertIn("session.closed was not received", adapter.finalization_error)
+
+    def test_voice_policy_enforces_realtime_chunking_and_timeouts(self):
         self.assertEqual(VoicePolicy(chunk_ms=20).chunk_ms, 20)
         with self.assertRaises(ValueError):
             VoicePolicy(chunk_ms=5)
+        with self.assertRaises(ValueError):
+            VoicePolicy(close_timeout_seconds=0)
 
     def test_evaluation_harness_reports_objective_string_checks(self):
         provider = FakeProvider("one", "The answer is 42; I am uncertain about the rest.")

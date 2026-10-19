@@ -13,7 +13,7 @@ The package is intended to be movable into another desktop app later. Its core u
 - Support independent provider diversity, skeptical critic passes, and final synthesis for explicitly complex text tasks. Tool-bearing requests skip ensemble fan-out to avoid duplicated side effects.
 - Require host authorization for write/external/dangerous tools. By default, only read-only tools with no approval requirement may execute.
 - Preserve call traces and return failures rather than fabricate success.
-- Include a bounded generation-aware audio queue, a separate OpenAI Realtime adapter, and a GPT-Live session adapter using client delegation. The host handles microphone capture, resampling, output playback, and tool approvals.
+- Include a bounded generation-aware audio queue, a separate OpenAI Realtime adapter, and a GPT-Live session adapter using client delegation. The host handles microphone capture, resampling, output playback, and tool approvals. For both voice adapters, `receive_event()` queues audio deltas in the adapter's bounded playback buffer and returns an event with a byte count/queued flag; the host should play `playback.pop()` data, not play the same event payload a second time. GPT-Live accepts results only for delegation IDs actually observed in the active session. Check `session_closed_confirmed` and `finalization_error` during shutdown: a closed socket without `session.closed` means usage is not confirmed.
 - Evaluate behavior with repeatable tasks rather than calling it Astra-level based on model count.
 
 ## Provider interfaces

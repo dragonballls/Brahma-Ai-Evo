@@ -25,6 +25,7 @@ class VoicePolicy:
     max_buffered_chunks: int = 48
     max_reconnect_attempts: int = 2
     connect_timeout_seconds: float = 10.0
+    close_timeout_seconds: float = 15.0
 
     def __post_init__(self) -> None:
         if self.chunk_ms not in {20, 30, 40}:
@@ -33,6 +34,8 @@ class VoicePolicy:
             raise ValueError("Audio sample rates must be positive.")
         if self.max_buffered_chunks < 1 or self.max_reconnect_attempts < 0:
             raise ValueError("Voice buffer/reconnect limits are invalid.")
+        if self.connect_timeout_seconds <= 0 or self.close_timeout_seconds <= 0:
+            raise ValueError("Voice startup and shutdown timeouts must be positive.")
 
 
 @dataclass(frozen=True)
@@ -135,6 +138,8 @@ class GPTLiveVoiceAdapter:
         self._started = False
         self._closed = False
         self._final_usage_confirmed = False
+        self._finalization_error: str | None = None
+        self._known_delegations: set[str] = set()
         self._send_lock = threading.Lock()
         self._pending: deque[dict[str, Any]] = deque()
         self._last_usage: Mapping[str, Any] | None = None
@@ -148,6 +153,11 @@ class GPTLiveVoiceAdapter:
     def session_closed_confirmed(self) -> bool:
         """Whether GPT-Live emitted session.closed and finalized usage."""
         return self._final_usage_confirmed
+
+    @property
+    def finalization_error(self) -> str | None:
+        """Diagnostic when shutdown did not receive session.closed; None when confirmed."""
+        return self._finalization_error
 
     def connect(self) -> None:
         if self._socket is not None:
@@ -239,8 +249,7 @@ class GPTLiveVoiceAdapter:
             "result with append_delegation_result(); this session adapter handles live audio."
         )
 
-    @staticmethod
-    def _event_to_voice_event(event: Mapping[str, Any]) -> VoiceEvent:
+    def _event_to_voice_event(self, event: Mapping[str, Any]) -> VoiceEvent:
         event_type = str(event.get("type") or "unknown")
         if event_type == "session.output_audio.delta":
             try:
@@ -257,9 +266,13 @@ class GPTLiveVoiceAdapter:
             })
         if event_type == "session.delegation.created":
             delegation = event.get("delegation") if isinstance(event.get("delegation"), dict) else {}
+            delegation_id = str(delegation.get("id") or "").strip()
+            target = str(delegation.get("target") or "")
+            if delegation_id and target == "client":
+                self._known_delegations.add(delegation_id)
             return VoiceEvent("delegation", {
-                "delegation_id": delegation.get("id"),
-                "target": delegation.get("target"),
+                "delegation_id": delegation_id or None,
+                "target": target,
                 "offset_ms": event.get("offset_ms"),
             })
         if event_type == "session.started":
@@ -294,7 +307,9 @@ class GPTLiveVoiceAdapter:
                 raise RuntimeError(f"GPT-Live receive failed ({type(exc).__name__}).") from exc
         result = self._event_to_voice_event(event)
         if result.kind == "audio_delta":
-            self.playback.push(self.playback.generation, bytes(result.payload.get("pcm16", b"")))
+            pcm = bytes(result.payload.get("pcm16", b""))
+            queued = self.playback.push(self.playback.generation, pcm)
+            result = VoiceEvent("audio_delta", {"byte_count": len(pcm), "queued": queued})
         if result.kind == "session_closed":
             usage = result.payload.get("usage")
             self._last_usage = usage if isinstance(usage, Mapping) else None
@@ -308,6 +323,8 @@ class GPTLiveVoiceAdapter:
         text = str(content or "").strip()
         if not task_id:
             raise ValueError("delegation_id is required.")
+        if task_id not in self._known_delegations:
+            raise ValueError("delegation_id must refer to an active client delegation from this session.")
         if not text:
             raise ValueError("A non-empty delegated result is required.")
         self._send({
@@ -324,6 +341,7 @@ class GPTLiveVoiceAdapter:
         self._send({
             "type": "session.instructions.append",
             "event_id": "brahma_instruction_" + uuid.uuid4().hex,
+            "delegation_id": None,
             "content": text[:1600],
         })
 
@@ -337,21 +355,30 @@ class GPTLiveVoiceAdapter:
         if sock is None:
             return
         try:
-            if self._started and not self._closed:
-                self._send({"type": "session.close"})
-                deadline = time.monotonic() + 15.0
-                while time.monotonic() < deadline:
+            if self._started and not self._closed and not self._final_usage_confirmed:
+                try:
+                    self._send({"type": "session.close"})
+                except Exception as exc:
+                    self._finalization_error = f"session.close could not be sent ({type(exc).__name__})"
+                deadline = time.monotonic() + self.policy.close_timeout_seconds
+                while not self._final_usage_confirmed and time.monotonic() < deadline:
                     try:
-                        sock.settimeout(max(0.05, deadline - time.monotonic()))
+                        sock.settimeout(max(0.01, deadline - time.monotonic()))
                         event = self._parse_event(sock.recv())
-                    except Exception:
+                    except Exception as exc:
+                        self._finalization_error = (
+                            f"session.closed was not received ({type(exc).__name__})"
+                        )
                         break
                     if event.get("type") == "session.closed":
                         usage = event.get("usage")
                         self._last_usage = usage if isinstance(usage, Mapping) else None
                         self._final_usage_confirmed = True
+                        self._finalization_error = None
                         self._closed = True
                         break
+                if not self._final_usage_confirmed and self._finalization_error is None:
+                    self._finalization_error = "session.closed was not received before the close timeout"
         finally:
             self.playback.interrupt()
             self._socket = None
@@ -471,8 +498,8 @@ class OpenAIRealtimeVoiceAdapter:
                 pcm = base64.b64decode(str(event.get("delta") or ""), validate=True)
             except (ValueError, TypeError):
                 pcm = b""
-            self.playback.push(self.playback.generation, pcm)
-            return VoiceEvent("audio_delta", {"pcm16": pcm, "item_id": event.get("item_id")})
+            queued = self.playback.push(self.playback.generation, pcm)
+            return VoiceEvent("audio_delta", {"byte_count": len(pcm), "queued": queued, "item_id": event.get("item_id")})
         if event_type in {"response.output_text.delta", "response.text.delta", "response.audio_transcript.delta"}:
             return VoiceEvent("transcript_delta", {"text": str(event.get("delta") or ""), "source_type": event_type})
         if event_type in {"input_audio_buffer.speech_started", "response.cancelled", "response.canceled"}:
