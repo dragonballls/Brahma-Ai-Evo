@@ -12,7 +12,7 @@ from core.portable_intelligence.contracts import (
     Route, RunPolicy, ToolCall,
 )
 from core.portable_intelligence.engine import ReasoningEngine
-from core.portable_intelligence.evaluation import BenchmarkCase, EvaluationHarness
+from core.portable_intelligence.evaluation import BenchmarkCase, EvaluationHarness, load_benchmark_cases
 from core.portable_intelligence.providers import (
     AnthropicMessagesProvider, CallableProvider, OpenAICompatibleProvider,
     OpenAIResponsesProvider, validate_base_url,
@@ -339,6 +339,17 @@ class PortableContractsTests(unittest.TestCase):
         )])
         self.assertEqual(len(results), 1)
         self.assertTrue(results[0].passed)
+        self.assertEqual(results[0].selected_routes, ("one/model",))
+        self.assertEqual(results[0].model_call_count, 1)
+        self.assertIn("42", results[0].answer_preview)
+        self.assertTrue(results[0].trace_summary[0]["ok"])
+
+    def test_benchmark_corpus_loads_unique_case_ids(self):
+        from pathlib import Path
+        path = Path(__file__).resolve().parents[1] / "benchmarks" / "portable_intelligence_cases.json"
+        cases = load_benchmark_cases(path)
+        self.assertGreaterEqual(len(cases), 6)
+        self.assertEqual(len({case.case_id for case in cases}), len(cases))
 
 
 if __name__ == "__main__":
