@@ -113,6 +113,41 @@ class HTTPProvider:
         return data
 
 
+class CallableProvider:
+    """Bridge an existing host/Abacus LLM callback into the portable contract.
+
+    callback receives (ModelRequest, model_name) and may return ModelReply or text.
+    Provider-specific clients and credentials remain owned by the host application.
+    """
+    def __init__(self, provider_id: str, callback, *,
+                 capabilities: frozenset[str] = frozenset({"text"})) -> None:
+        if not str(provider_id or "").strip():
+            raise ValueError("provider_id is required.")
+        if not callable(callback):
+            raise TypeError("callback must be callable.")
+        self.provider_id = str(provider_id).strip()
+        self._callback = callback
+        self.capabilities = frozenset(capabilities)
+
+    def complete(self, request: ModelRequest, model: str) -> ModelReply:
+        try:
+            result = self._callback(request, model)
+        except ProviderFailure:
+            raise
+        except Exception as exc:
+            raise ProviderFailure(self.provider_id, type(exc).__name__) from exc
+        if isinstance(result, ModelReply):
+            return ModelReply(
+                text=result.text, provider_id=self.provider_id, model=result.model or model,
+                tool_calls=result.tool_calls, input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens, response_id=result.response_id,
+                metadata=result.metadata,
+            )
+        if isinstance(result, str):
+            return ModelReply(text=result, provider_id=self.provider_id, model=model)
+        raise ProviderFailure(self.provider_id, "callback_contract_violation")
+
+
 class OpenAICompatibleProvider(HTTPProvider):
     """OpenAI-compatible /chat/completions adapter for OmniRoute and similar gateways."""
     capabilities = frozenset({"text", "tools", "vision"})
@@ -122,6 +157,13 @@ class OpenAICompatibleProvider(HTTPProvider):
         self.provider_id = "openai_compatible"
 
     def complete(self, request: ModelRequest, model: str) -> ModelReply:
+        model_leaf = str(model or "").rsplit("/", 1)[-1].casefold()
+        responses_only_models = {"gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol"}
+        if request.tools and model_leaf in responses_only_models:
+            raise ProviderFailure(
+                self.provider_id, "native_responses_required",
+                "This model's tool-calling path requires the native OpenAI Responses API.",
+            )
         messages = [{"role": "system", "content": request.system}] if request.system else []
         for item in request.messages:
             message: dict[str, Any] = {"role": item["role"], "content": item.get("content", "")}
