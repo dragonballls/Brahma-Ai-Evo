@@ -43,9 +43,11 @@ jobs:
           python-version: "3.12"
       - name: Install minimal dependencies
         run: python -m pip install --disable-pip-version-check requests
-      - name: Compile new package, runner, and tests
-        run: python -m compileall -q core/portable_intelligence scripts/portable_intelligence_benchmark.py tests/test_portable_intelligence.py
-      - name: Validate benchmark runner CLI without network calls
-        run: python scripts/portable_intelligence_benchmark.py --help
+      - name: Compile new package, runners, and tests
+        run: python -m compileall -q core/portable_intelligence scripts/portable_intelligence_benchmark.py scripts/portable_intelligence_compare.py tests/test_portable_intelligence.py
+      - name: Validate benchmark CLIs without network calls
+        run: |
+          python scripts/portable_intelligence_benchmark.py --help
+          python scripts/portable_intelligence_compare.py --help
       - name: Run provider, budget, tool, evaluation and voice tests
         run: python -m unittest tests.test_portable_intelligence -v

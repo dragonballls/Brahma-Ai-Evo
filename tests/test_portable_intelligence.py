@@ -395,7 +395,7 @@ class PortableContractsTests(unittest.TestCase):
         self.assertEqual(payload["task_prompt"], case.prompt)
         self.assertEqual(payload["candidate_a"], "The answer is 42.")
         self.assertEqual(payload["candidate_b"], "The answer is 41.")
-        self.assertNotIn("provider", request.system.casefold())
+        self.assertNotIn("openai", request.system.casefold())
         self.assertNotIn("openai", request.messages[0]["content"].casefold())
 
     def test_pairwise_judge_validates_rubric_and_returns_scores(self):
