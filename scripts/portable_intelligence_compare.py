@@ -28,6 +28,9 @@ from core.portable_intelligence.evaluation import (
     judge_pair_blindly,
     load_benchmark_cases,
 )
+from core.portable_intelligence.key_pool import (
+    CredentialPoolState, build_credential_pools, load_credentials_from_environment, _normalize_endpoint,
+)
 from scripts.portable_intelligence_benchmark import ADAPTERS, _route_from_config
 
 
@@ -36,30 +39,92 @@ def _load_routes(config_path: Path) -> tuple[dict[str, Any], dict[str, Route], d
         config = json.loads(config_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"Could not read provider config: {type(exc).__name__}") from exc
-    rows = config.get("providers") if isinstance(config, dict) else None
-    if not isinstance(rows, list):
-        raise ValueError("Provider config must contain a providers array.")
-    providers: dict[str, Any] = {}
-    routes: dict[str, Route] = {}
-    skipped: dict[str, dict[str, Any]] = {}
-    for row in rows:
+    if not isinstance(config, dict):
+        raise ValueError("Provider config must be a JSON object.")
+
+    rows = config.get("providers")
+    if isinstance(rows, list):
+        # Existing simple config: one environment key per logical provider.
+        providers: dict[str, Any] = {}
+        routes: dict[str, Route] = {}
+        skipped: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                raise ValueError("Every provider entry must be an object.")
+            entry_id = str(row.get("id") or "").strip()
+            if not entry_id or entry_id in providers or entry_id in skipped:
+                raise ValueError("Provider IDs must be non-empty and unique.")
+            try:
+                built = _route_from_config(row)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Invalid provider entry {entry_id}: {type(exc).__name__}") from exc
+            if built is None:
+                skipped[entry_id] = {"reason": "missing API-key environment variable or model"}
+                continue
+            provider_id, provider, route = built
+            if provider_id != entry_id:
+                raise ValueError("Provider loader returned an unexpected ID.")
+            providers[provider_id] = provider
+            routes[provider_id] = route
+        return providers, routes, skipped
+
+    credential_rows = config.get("credentials")
+    route_rows = config.get("routes")
+    if not isinstance(credential_rows, list) or not isinstance(route_rows, list):
+        raise ValueError("Provider config must contain either providers[] or credentials[] plus routes[].")
+    loaded = load_credentials_from_environment(credential_rows)
+    pool_state = CredentialPoolState()
+    try:
+        pools = build_credential_pools(loaded.credentials, state=pool_state)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Credential pool configuration is invalid: {type(exc).__name__}") from exc
+
+    pool_index = {
+        (pool.family, _normalize_endpoint(pool.base_url)): pool
+        for pool in pools.values()
+    }
+    providers = {}
+    routes = {}
+    skipped = {
+        str(row.get("credential_id") or "unknown credential"): {
+            "reason": str(row.get("reason") or "credential not active"),
+            "api_key_env": str(row.get("api_key_env") or ""),
+        }
+        for row in loaded.skipped
+    }
+    for row in route_rows:
         if not isinstance(row, dict):
-            raise ValueError("Every provider entry must be an object.")
-        entry_id = str(row.get("id") or "").strip()
-        if not entry_id or entry_id in providers or entry_id in skipped:
-            raise ValueError("Provider IDs must be non-empty and unique.")
-        try:
-            built = _route_from_config(row)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"Invalid provider entry {entry_id}: {type(exc).__name__}") from exc
-        if built is None:
-            skipped[entry_id] = {"reason": "missing API-key environment variable or model"}
+            raise ValueError("Every model route must be an object.")
+        route_id = str(row.get("id") or "").strip()
+        family = str(row.get("provider_family") or "").strip().casefold()
+        base_url = str(row.get("base_url") or "").strip()
+        model_env = str(row.get("model_env") or "").strip()
+        model = str(os.environ.get(model_env, row.get("model") or "") if model_env else row.get("model") or "").strip()
+        if not route_id or route_id in routes or route_id in skipped:
+            raise ValueError("Model route IDs must be non-empty and unique.")
+        if not family or not base_url:
+            raise ValueError(f"Model route {route_id} must specify provider_family and base_url.")
+        if not model or model.startswith(("YOUR_", "REPLACE_")):
+            skipped[route_id] = {"reason": "model environment variable missing or model is a placeholder"}
             continue
-        provider_id, provider, route = built
-        if provider_id != entry_id:
-            raise ValueError("Provider loader returned an unexpected ID.")
-        providers[provider_id] = provider
-        routes[provider_id] = route
+        pool = pool_index.get((family, _normalize_endpoint(base_url)))
+        if pool is None:
+            skipped[route_id] = {"reason": "no configured credential pool for this provider family/endpoint"}
+            continue
+        pricing = row.get("pricing") or {}
+        route = Route(
+            provider_id=route_id,
+            model=model,
+            priority=int(row.get("priority", 100)),
+            capabilities=frozenset(row.get("capabilities") or getattr(pool, "capabilities", {"text"})),
+            input_usd_per_million=pricing.get("input_usd_per_million"),
+            output_usd_per_million=pricing.get("output_usd_per_million"),
+            diversity_group=str(row.get("diversity_group") or pool.diversity_group),
+        )
+        # Several logical model routes may share a pool object. Key rotation and quota
+        # cooldown are still centralized inside that pool; model choice remains route-owned.
+        providers[route_id] = pool
+        routes[route_id] = route
     return providers, routes, skipped
 
 
@@ -147,9 +212,13 @@ def main(argv: list[str] | None = None) -> int:
         provider_id: provider for provider_id, provider in providers.items()
         if provider_id not in {baseline_id, judge_id}
     }
-    if len({route.provider_id for route in candidate_routes}) < 2:
+    candidate_diversity = {
+        str(route.diversity_group or getattr(candidate_providers[route.provider_id], "diversity_group", route.provider_id))
+        for route in candidate_routes
+    }
+    if len(candidate_diversity) < 2:
         print(
-            "At least two additional, distinct candidate providers must be configured besides baseline and judge.",
+            "At least two additional candidate diversity groups must be configured besides baseline and judge.",
             file=sys.stderr,
         )
         return 2

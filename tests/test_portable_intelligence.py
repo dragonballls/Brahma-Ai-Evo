@@ -849,6 +849,39 @@ class PortableContractsTests(unittest.TestCase):
         self.assertEqual(built, ["custom-a"])
         self.assertEqual(pool.family, "custom_vendor")
 
+
+    def test_blind_comparison_loader_uses_many_key_pools_without_network_calls(self):
+        from pathlib import Path
+        from scripts.portable_intelligence_compare import _load_routes
+        config_path = Path(__file__).resolve().parents[1] / "benchmarks" / "credential_pool.example.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        env = {}
+        for row in config["credentials"]:
+            env[row["api_key_env"]] = "fake-" + row["api_key_env"]
+        env.update({
+            "OPENAI_RESPONSES_MODEL": "gpt-6-astra",
+            "ANTHROPIC_MODEL": "claude-test",
+            "GEMINI_MODEL": "gemini-test",
+            "OPENROUTER_MODEL": "openrouter/test",
+            "MISTRAL_MODEL": "mistral-test",
+            "OMNIROUTE_MODEL": "omniroute/auto",
+        })
+        with patch.dict("os.environ", env, clear=False):
+            providers, routes, skipped = _load_routes(config_path)
+        self.assertIn("openai_astra", routes)
+        self.assertIn("anthropic_judge", routes)
+        self.assertIn("gemini_candidate", routes)
+        self.assertIn("openrouter_candidate", routes)
+        self.assertIs(providers["openai_astra"], providers.get("openai_astra"))
+        self.assertEqual(routes["openai_astra"].model, "gpt-6-astra")
+        self.assertEqual(routes["omniroute_candidate"].diversity_group, "omniroute-auto")
+        self.assertEqual(
+            providers["gemini_candidate"].snapshot()["credential_count"],
+            len({row["api_key_env"] for row in config["credentials"]
+                 if row["provider_family"] == "gemini_generate_content"}),
+        )
+        self.assertIsInstance(skipped, dict)
+
     def test_pairwise_judge_request_is_blinded_and_contains_same_task(self):
         case = BenchmarkCase(
             "case-1", "reasoning", "What is 6 * 7?",
