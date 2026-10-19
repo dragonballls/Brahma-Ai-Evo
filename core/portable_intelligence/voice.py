@@ -5,6 +5,7 @@ Audio device acquisition and playback stay under host-app control.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import threading
 import time
@@ -17,18 +18,28 @@ from urllib.parse import urlencode
 from .providers import validate_base_url
 
 
-def _bounded_live_content(value: str, *, max_utf8_bytes: int = 450) -> str:
-    """Keep each GPT-Live update conservatively below the API's 500-token limit."""
+def _split_live_content(value: str, *, max_utf8_bytes: int = 450) -> tuple[str, ...]:
+    """Split text on UTF-8 boundaries so no append exceeds a conservative byte cap."""
     text = str(value or "").strip()
     if not text:
         raise ValueError("Live update content must not be empty.")
-    encoded = text.encode("utf-8")[:max_utf8_bytes]
-    while encoded:
-        try:
-            return encoded.decode("utf-8").strip()
-        except UnicodeDecodeError:
-            encoded = encoded[:-1]
-    raise ValueError("Live update content has no valid text within the safe payload limit.")
+    if max_utf8_bytes < 32:
+        raise ValueError("max_utf8_bytes is too small.")
+    remaining = text.encode("utf-8")
+    chunks: list[str] = []
+    while remaining:
+        part = remaining[:max_utf8_bytes]
+        while part:
+            try:
+                decoded = part.decode("utf-8")
+                break
+            except UnicodeDecodeError:
+                part = part[:-1]
+        if not part:
+            raise ValueError("Could not split live text at a valid UTF-8 boundary.")
+        chunks.append(decoded)
+        remaining = remaining[len(part):]
+    return tuple(chunks)
 
 
 @dataclass(frozen=True)
@@ -155,6 +166,8 @@ class GPTLiveVoiceAdapter:
         self._finalization_error: str | None = None
         self._known_delegations: set[str] = set()
         self._send_lock = threading.Lock()
+        self._delivery_lock = threading.RLock()
+        self._sent_result_chunks: dict[tuple[str, str], int] = {}
         self._pending: deque[dict[str, Any]] = deque()
         self._last_usage: Mapping[str, Any] | None = None
         self.playback = BoundedPlaybackBuffer(self.policy.max_buffered_chunks)
@@ -338,22 +351,35 @@ class GPTLiveVoiceAdapter:
             raise ValueError("delegation_id is required.")
         if task_id not in self._known_delegations:
             raise ValueError("delegation_id must refer to an active client delegation from this session.")
-        bounded_content = _bounded_live_content(content)
-        self._send({
-            "type": "session.commentary.append" if spoken else "session.thinking.append",
-            "event_id": "brahma_result_" + uuid.uuid4().hex,
-            "delegation_id": task_id,
-            "content": bounded_content,
-        })
+        chunks = _split_live_content(content)
+        digest = hashlib.sha256("\0".join(chunks).encode("utf-8")).hexdigest()[:24]
+        delivery_key = (task_id, digest)
+        event_kind = "session.commentary.append" if spoken else "session.thinking.append"
+        # Retry starts after locally accepted chunks; the currently failing chunk
+        # remains ambiguous if a disconnect happens before its acknowledgement.
+        with self._delivery_lock:
+            start = self._sent_result_chunks.get(delivery_key, 0)
+            if start >= len(chunks):
+                return
+            for index in range(start, len(chunks)):
+                self._send({
+                    "type": event_kind,
+                    "event_id": f"brahma_result_{digest}_{index:04d}",
+                    "delegation_id": task_id,
+                    "content": chunks[index],
+                })
+                self._sent_result_chunks[delivery_key] = index + 1
 
     def append_instruction(self, content: str) -> None:
-        bounded_content = _bounded_live_content(content)
-        self._send({
-            "type": "session.instructions.append",
-            "event_id": "brahma_instruction_" + uuid.uuid4().hex,
-            "delegation_id": None,
-            "content": bounded_content,
-        })
+        chunks = _split_live_content(content)
+        batch_id = uuid.uuid4().hex[:20]
+        for index, chunk in enumerate(chunks):
+            self._send({
+                "type": "session.instructions.append",
+                "event_id": f"brahma_instruction_{batch_id}_{index:04d}",
+                "delegation_id": None,
+                "content": chunk,
+            })
 
     def interrupt(self, *, item_id: str | None = None, audio_end_ms: int | None = None) -> None:
         # GPT-Live manages speech interruption. The host owns cancellation of any
