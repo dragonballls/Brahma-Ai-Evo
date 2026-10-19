@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import base64
 import json
+import sys
 import unittest
-from unittest.mock import Mock
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from core.portable_intelligence.contracts import (
     BudgetExceeded, FunctionTool, ModelReply, ModelRequest, ProviderFailure,
@@ -11,9 +14,12 @@ from core.portable_intelligence.contracts import (
 from core.portable_intelligence.engine import ReasoningEngine
 from core.portable_intelligence.evaluation import BenchmarkCase, EvaluationHarness
 from core.portable_intelligence.providers import (
-    OpenAICompatibleProvider, OpenAIResponsesProvider, validate_base_url,
+    AnthropicMessagesProvider, CallableProvider, OpenAICompatibleProvider,
+    OpenAIResponsesProvider, validate_base_url,
 )
-from core.portable_intelligence.voice import BoundedPlaybackBuffer, OpenAIRealtimeVoiceAdapter, VoicePolicy
+from core.portable_intelligence.voice import (
+    BoundedPlaybackBuffer, GPTLiveVoiceAdapter, OpenAIRealtimeVoiceAdapter, VoicePolicy,
+)
 
 
 class FakeProvider:
@@ -172,6 +178,42 @@ class PortableContractsTests(unittest.TestCase):
         self.assertEqual(payload["reasoning_effort"], "high")
         self.assertNotIn("temperature", payload)
 
+    def test_callable_provider_adapts_existing_host_llm_client(self):
+        seen = []
+        provider = CallableProvider(
+            "abacus_custom_llm",
+            lambda request, model: seen.append((request, model)) or "host answer",
+        )
+        request = ModelRequest(messages=({"role": "user", "content": "hello"},))
+        reply = provider.complete(request, "custom-model")
+        self.assertEqual(reply.text, "host answer")
+        self.assertEqual(reply.provider_id, "abacus_custom_llm")
+        self.assertEqual(seen, [(request, "custom-model")])
+
+    def test_anthropic_adapter_does_not_send_api_key_as_bearer(self):
+        provider = AnthropicMessagesProvider("anthropic-test-key")
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = {"content": [{"type": "text", "text": "ok"}], "usage": {}}
+        provider._session = Mock()
+        provider._session.post.return_value = response
+        provider._post("https://api.anthropic.com/v1/messages", {"messages": []}, {
+            "x-api-key": provider.api_key, "anthropic-version": "2023-06-01",
+        })
+        headers = provider._session.post.call_args.kwargs["headers"]
+        self.assertEqual(headers["x-api-key"], "anthropic-test-key")
+        self.assertNotIn("Authorization", headers)
+
+    def test_gpt6_astra_tool_calling_refuses_compatible_chat_endpoint(self):
+        provider = OpenAICompatibleProvider("test-key", "http://127.0.0.1:20128/v1")
+        tool = FunctionTool("lookup", "Lookup", {"type": "object", "properties": {}}, lambda _args: "ok")
+        with self.assertRaises(ProviderFailure) as raised:
+            provider.complete(
+                ModelRequest(messages=({"role": "user", "content": "look"},), tools=(tool,)),
+                "openai/gpt-6-astra",
+            )
+        self.assertEqual(raised.exception.category, "native_responses_required")
+
     def test_responses_adapter_emits_native_function_call_and_reasoning_effort(self):
         provider = OpenAIResponsesProvider("test-key")
         provider._post = Mock(return_value={
@@ -223,6 +265,54 @@ class PortableContractsTests(unittest.TestCase):
         self.assertEqual(sock.sent[1]["type"], "conversation.item.create")
         self.assertEqual(sock.sent[2]["type"], "response.create")
         adapter.close()
+
+    def test_gpt_live_uses_client_delegation_and_returns_delegations_to_host(self):
+        class FakeSocket:
+            def __init__(self):
+                self.sent = []
+                self.incoming = [
+                    json.dumps({"type": "session.started", "session": {"id": "live-1"}}),
+                    json.dumps({"type": "session.delegation.created", "delegation": {"id": "delegation-7", "target": "client"}}),
+                    json.dumps({"type": "session.output_audio.delta", "delta": base64.b64encode(b"\x01\x02").decode("ascii")}),
+                ]
+            def send(self, value):
+                self.sent.append(json.loads(value))
+            def settimeout(self, _value):
+                pass
+            def recv(self):
+                if not self.incoming:
+                    raise RuntimeError("no fake event left")
+                return self.incoming.pop(0)
+            def close(self):
+                pass
+
+        fake_socket = FakeSocket()
+        fake_websocket = SimpleNamespace(
+            create_connection=Mock(return_value=fake_socket),
+            WebSocketTimeoutException=type("WebSocketTimeoutException", (Exception,), {}),
+        )
+        with patch.dict(sys.modules, {"websocket": fake_websocket}):
+            adapter = GPTLiveVoiceAdapter("test-key")
+            adapter.connect()
+            self.assertEqual(adapter.receive_event().kind, "session_state")
+            delegation = adapter.receive_event()
+            self.assertEqual(delegation.kind, "delegation")
+            self.assertEqual(delegation.payload["delegation_id"], "delegation-7")
+            audio = adapter.receive_event()
+            self.assertEqual(audio.kind, "audio_delta")
+            self.assertEqual(audio.payload["pcm16"], b"\x01\x02")
+            adapter.append_delegation_result("delegation-7", "Verified result")
+            adapter.send_pcm16(b"\x03\x04")
+            sent = fake_socket.sent
+            self.assertEqual(sent[0]["type"], "session.start")
+            self.assertEqual(sent[0]["session"]["model"], "gpt-live-1")
+            self.assertEqual(sent[0]["session"]["delegation"]["type"], "client")
+            self.assertEqual(sent[-2]["type"], "session.commentary.append")
+            self.assertEqual(sent[-2]["delegation_id"], "delegation-7")
+            self.assertEqual(sent[-1]["type"], "session.input_audio.append")
+            with self.assertRaises(ValueError):
+                adapter.send_pcm16(b"\x01")
+            adapter.close()
 
     def test_voice_policy_enforces_realtime_chunking(self):
         self.assertEqual(VoicePolicy(chunk_ms=20).chunk_ms, 20)

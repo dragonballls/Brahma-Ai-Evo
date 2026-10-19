@@ -13,7 +13,7 @@ The package is intended to be movable into another desktop app later. Its core u
 - Support independent provider diversity, skeptical critic passes, and final synthesis for explicitly complex text tasks. Tool-bearing requests skip ensemble fan-out to avoid duplicated side effects.
 - Require host authorization for write/external/dangerous tools. By default, only read-only tools with no approval requirement may execute.
 - Preserve call traces and return failures rather than fabricate success.
-- Include a bounded generation-aware audio queue and OpenAI Realtime WebSocket adapter. The host handles microphone capture, resampling, output playback, and tool approvals.
+- Include a bounded generation-aware audio queue, a separate OpenAI Realtime adapter, and a GPT-Live session adapter using client delegation. The host handles microphone capture, resampling, output playback, and tool approvals.
 - Evaluate behavior with repeatable tasks rather than calling it Astra-level based on model count.
 
 ## Provider interfaces
@@ -30,7 +30,11 @@ Custom providers can implement ProviderAdapter from contracts.py and register a 
 
 ## Voice
 
-OpenAIRealtimeVoiceAdapter targets the OpenAI Realtime WebSocket protocol with gpt-realtime-2.1. Brahma currently has a separate Gemini Live audio loop. The new adapter is optional and isolated; this code does not change which voice backend Brahma starts. Input/output must be PCM16 at the configured sample rate. The host must continuously drain the bounded playback buffer and track actual playback duration for accurate conversation truncation after interruption.
+OpenAIRealtimeVoiceAdapter targets the distinct OpenAI Realtime WebSocket protocol, currently defaulting to gpt-realtime-2.1.
+
+GPTLiveVoiceAdapter targets the GPT-Live WebSocket session contract at /v1/live/sessions and defaults to gpt-live-1 with client delegation. It waits for session.started, sends/receives PCM16 audio and transcript events, surfaces client delegation IDs to the host, returns verified results with session.commentary.append or session.thinking.append, and waits for session.closed during clean shutdown. The host owns the backend work, transcript history, API/provider routing, task cancellation, permissions, approvals, microphone, and speaker playback. This lets a later Abacus port use OmniRoute or any other registered LLM backend while GPT-Live handles speech.
+
+Brahma currently has its existing Gemini Live loop. Both new adapters are optional and isolated; this code does not change the runtime's active voice provider. Live audio requires correctly paced PCM16 and a real device-to-session test.
 
 Provider availability and model/API fields can change. An API key is necessary but not sufficient: a real microphone-to-model-to-speaker test on the user's account and region is required.
 

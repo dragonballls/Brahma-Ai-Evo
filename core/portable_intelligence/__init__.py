@@ -1,15 +1,16 @@
 """Provider-neutral intelligence and live-voice primitives.
 
-This package is additive: importing it does not change Brahma's existing request paths.
-The host application must opt into it explicitly.
+This package is additive; host apps opt into it explicitly.
 """
 from .contracts import FunctionTool, ModelReply, ModelRequest, ProviderFailure, Route, RunPolicy, TaskResult, ToolCall
 from .engine import ReasoningEngine
-from .providers import AnthropicMessagesProvider, GeminiContentProvider, OpenAICompatibleProvider, OpenAIResponsesProvider
+from .providers import AnthropicMessagesProvider, CallableProvider, GeminiContentProvider, OpenAICompatibleProvider, OpenAIResponsesProvider
+from .voice import BoundedPlaybackBuffer, GPTLiveVoiceAdapter, OpenAIRealtimeVoiceAdapter, VoicePolicy
 
 __all__ = [
-    "AnthropicMessagesProvider", "FunctionTool", "GeminiContentProvider",
+    "AnthropicMessagesProvider", "BoundedPlaybackBuffer", "CallableProvider",
+    "FunctionTool", "GeminiContentProvider", "GPTLiveVoiceAdapter",
     "ModelReply", "ModelRequest", "OpenAICompatibleProvider",
-    "OpenAIResponsesProvider", "ProviderFailure", "ReasoningEngine",
-    "Route", "RunPolicy", "TaskResult", "ToolCall",
+    "OpenAIRealtimeVoiceAdapter", "OpenAIResponsesProvider", "ProviderFailure",
+    "ReasoningEngine", "Route", "RunPolicy", "TaskResult", "ToolCall", "VoicePolicy",
 ]
