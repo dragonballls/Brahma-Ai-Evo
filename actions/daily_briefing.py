@@ -278,10 +278,6 @@ def _collect_briefing_intel(category: str, city: Optional[str]) -> Dict[str, Any
             value = exc
         results_queue.put((name, value, time.monotonic()))
 
-    # Start the overall budget before workers are launched. Thread startup time
-    # is part of the fetch deadline; otherwise a slow first source can finish
-    # while later workers are being created and incorrectly appear timely.
-    deadline = time.monotonic() + BRIEFING_FETCH_TIMEOUT_SECONDS
     for name, collector in collectors.items():
         threading.Thread(
             target=collect,
@@ -290,6 +286,10 @@ def _collect_briefing_intel(category: str, city: Optional[str]) -> Dict[str, Any
             name=f"briefing-{name}",
         ).start()
 
+    # Every worker is waiting at the gate, so they receive the same fetch budget.
+    deadline = time.monotonic() + BRIEFING_FETCH_TIMEOUT_SECONDS
+    start_gate.set()
+
     results = {}
     pending = set(collectors)
     while pending:
@@ -297,11 +297,13 @@ def _collect_briefing_intel(category: str, city: Optional[str]) -> Dict[str, Any
         if remaining <= 0:
             break
         try:
-            name, value = results_queue.get(timeout=remaining)
+            name, value, completed_at = results_queue.get(timeout=remaining)
         except queue.Empty:
             break
         pending.discard(name)
-        if isinstance(value, Exception):
+        if completed_at > deadline:
+            print(f"[DailyBriefing] {name.title()} collection timed out.")
+        elif isinstance(value, Exception):
             print(f"[DailyBriefing] {name.title()} collection failed: {value}")
         else:
             results[name] = value
