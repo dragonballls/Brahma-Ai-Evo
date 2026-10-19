@@ -12,6 +12,10 @@ from core.portable_intelligence.contracts import (
     Route, RunPolicy, ToolCall,
 )
 from core.portable_intelligence.engine import ReasoningEngine
+from core.portable_intelligence.key_pool import (
+    CredentialPoolProvider, CredentialPoolState, CredentialSpec,
+    build_credential_pools, load_credentials_from_environment,
+)
 from core.portable_intelligence.evaluation import (
     BenchmarkCase, EvaluationHarness, build_pairwise_judge_request,
     judge_pair_blindly, load_benchmark_cases,
@@ -547,6 +551,141 @@ class PortableContractsTests(unittest.TestCase):
         self.assertGreaterEqual(len(cases), 6)
         self.assertEqual(len({case.case_id for case in cases}), len(cases))
 
+
+
+    def test_credential_pool_deduplicates_identical_keys_and_never_discloses_secrets(self):
+        secret = "fake-secret-should-never-appear"
+        first = CredentialSpec("gemini-a", "gemini_generate_content", secret,
+                               "gemini-project-main", "https://generativelanguage.googleapis.com/v1beta")
+        duplicate = CredentialSpec("gemini-alias", "gemini_generate_content", secret,
+                                   "gemini-project-main", "https://generativelanguage.googleapis.com/v1beta",
+                                   source_label="omniroute-export")
+        pool = CredentialPoolProvider(
+            "gemini-pool", [first, duplicate],
+            adapter_factory=lambda spec: FakeProvider("fake", "ok"),
+        )
+        snapshot = pool.snapshot()
+        self.assertEqual(snapshot["credential_count"], 1)
+        self.assertEqual(snapshot["credentials"][0]["duplicate_aliases_collapsed"], 1)
+        self.assertNotIn(secret, repr(first))
+        self.assertNotIn(secret, repr(snapshot))
+        reply = pool.complete(ModelRequest(messages=({"role": "user", "content": "hi"},)), "gemini-model")
+        self.assertEqual(reply.text, "ok")
+        self.assertEqual(reply.metadata["credential_id"], "gemini-a")
+        self.assertNotIn(secret, repr(reply.metadata))
+
+    def test_credential_pool_rotates_after_auth_failure(self):
+        records = [
+            CredentialSpec("bad", "gemini_generate_content", "bad-key", "project-A",
+                           "https://generativelanguage.googleapis.com/v1beta", priority=1),
+            CredentialSpec("good", "gemini_generate_content", "good-key", "project-A",
+                           "https://generativelanguage.googleapis.com/v1beta", priority=2),
+        ]
+        created = {}
+        def factory(spec):
+            provider = FakeProvider(spec.credential_id, "accepted")
+            if spec.credential_id == "bad":
+                provider.fail = ProviderFailure("fake", "authentication_or_permission", status_code=401)
+            created[spec.credential_id] = provider
+            return provider
+        pool = CredentialPoolProvider("gemini-pool", records, adapter_factory=factory)
+        reply = pool.complete(ModelRequest(messages=({"role": "user", "content": "hello"},)), "gemini-model")
+        self.assertEqual(reply.text, "accepted")
+        self.assertTrue(pool.snapshot()["credentials"][0]["disabled"])
+        self.assertEqual(created["bad"].calls.__len__(), 1)
+        self.assertEqual(created["good"].calls.__len__(), 1)
+
+    def test_credential_pool_rate_limit_cools_shared_quota_not_sibling_keys(self):
+        records = [
+            CredentialSpec("g1", "gemini_generate_content", "key-1", "same-project",
+                           "https://generativelanguage.googleapis.com/v1beta", priority=1),
+            CredentialSpec("g2", "gemini_generate_content", "key-2", "same-project",
+                           "https://generativelanguage.googleapis.com/v1beta", priority=2),
+            CredentialSpec("g3", "gemini_generate_content", "key-3", "other-project",
+                           "https://generativelanguage.googleapis.com/v1beta", priority=3),
+        ]
+        attempts = []
+        def factory(spec):
+            class Adapter(FakeProvider):
+                def complete(self, request, model):
+                    attempts.append(spec.credential_id)
+                    if spec.credential_id == "g1":
+                        raise ProviderFailure("fake", "rate_limited", status_code=429,
+                                               retryable=True, retry_after_seconds=20)
+                    return ModelReply("ok", spec.credential_id, model)
+            return Adapter(spec.credential_id, "unused")
+        pool = CredentialPoolProvider("gemini-pool", records, adapter_factory=factory)
+        result = pool.complete(ModelRequest(messages=({"role": "user", "content": "hi"},)), "gemini-model")
+        self.assertEqual(result.text, "ok")
+        self.assertEqual(attempts, ["g1", "g3"])
+        snap = pool.snapshot()
+        shared = next(s for s in snap["credentials"] if s["credential_id"] == "g2")
+        self.assertGreater(shared["shared_cooldown_remaining_seconds"], 0)
+
+    def test_credential_pool_blocks_exhausted_quota_scope_and_tries_other_account(self):
+        records = [
+            CredentialSpec("limited", "openai_compatible", "k1", "router-account-A",
+                           "https://openrouter.ai/api/v1", priority=1),
+            CredentialSpec("other", "openai_compatible", "k2", "router-account-B",
+                           "https://openrouter.ai/api/v1", priority=2),
+        ]
+        attempts = []
+        def factory(spec):
+            class Adapter(FakeProvider):
+                def complete(self, request, model):
+                    attempts.append(spec.credential_id)
+                    if spec.credential_id == "limited":
+                        raise ProviderFailure("fake", "quota_exhausted", status_code=429, retryable=False)
+                    return ModelReply("other account worked", spec.credential_id, model)
+            return Adapter(spec.credential_id, "unused")
+        pool = CredentialPoolProvider("router-pool", records, adapter_factory=factory)
+        reply = pool.complete(ModelRequest(messages=({"role": "user", "content": "hi"},)), "router/model")
+        self.assertEqual(reply.text, "other account worked")
+        self.assertEqual(attempts, ["limited", "other"])
+        snapshot = pool.snapshot()
+        self.assertTrue(next(s for s in snapshot["quota_scopes"].values())["blocked"])
+
+    def test_environment_loader_skips_missing_keys_without_fabricating_secrets(self):
+        result = load_credentials_from_environment([
+            {"id": "gemini-one", "provider_family": "gemini_generate_content",
+             "api_key_env": "GEMINI_API_KEY_01", "quota_group": "project-A"},
+            {"id": "gemini-two", "provider_family": "gemini_generate_content",
+             "api_key_env": "GEMINI_API_KEY_02", "quota_group": "project-A"},
+        ], environ={"GEMINI_API_KEY_01": "not-a-real-secret"})
+        self.assertEqual(len(result.credentials), 1)
+        self.assertEqual(result.skipped[0]["credential_id"], "gemini-two")
+        self.assertNotIn("not-a-real-secret", repr(result))
+
+    def test_credential_pool_rejects_same_key_with_conflicting_quota_groups(self):
+        credentials = [
+            CredentialSpec("alias-one", "openai_compatible", "same-key", "account-A",
+                           "https://openrouter.ai/api/v1"),
+            CredentialSpec("alias-two", "openai_compatible", "same-key", "account-B",
+                           "https://openrouter.ai/api/v1"),
+        ]
+        with self.assertRaises(ValueError):
+            CredentialPoolProvider("router-pool", credentials)
+
+    def test_ensemble_uses_diversity_group_not_duplicate_adapter_aliases(self):
+        first = FakeProvider("direct-gemini", "answer A")
+        duplicate = FakeProvider("gemini-via-gateway", "answer alias")
+        independent = FakeProvider("anthropic", "answer B")
+        first.diversity_group = "gemini-project-A"
+        duplicate.diversity_group = "gemini-project-A"
+        independent.diversity_group = "anthropic-account"
+        engine = ReasoningEngine(
+            {"direct": first, "gateway": duplicate, "anthropic": independent},
+            [
+                Route("direct", "gemini-model", priority=1, capabilities=frozenset({"text", "tools"})),
+                Route("gateway", "gemini-model", priority=2, capabilities=frozenset({"text", "tools"})),
+                Route("anthropic", "model", priority=3, capabilities=frozenset({"text", "tools"})),
+            ],
+            policy=RunPolicy(strategy="ensemble", max_candidate_calls=2, max_critic_calls=0, max_total_model_calls=3),
+        )
+        engine.answer("compare these", strategy="ensemble")
+        self.assertEqual(len(first.calls), 1)
+        self.assertEqual(len(duplicate.calls), 0)
+        self.assertGreaterEqual(len(independent.calls), 1)
 
     def test_pairwise_judge_request_is_blinded_and_contains_same_task(self):
         case = BenchmarkCase(

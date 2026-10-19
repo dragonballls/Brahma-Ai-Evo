@@ -235,7 +235,8 @@ class CredentialPoolProvider:
         self._condition = threading.Condition(self.state.lock)
         with self.state.lock:
             for credential in deduped:
-                self.state.max_parallel_by_scope[credential.quota_group] = max_parallel_per_scope
+                existing_limit = self.state.max_parallel_by_scope.get(credential.quota_group, max_parallel_per_scope)
+                self.state.max_parallel_by_scope[credential.quota_group] = min(existing_limit, max_parallel_per_scope)
 
     @staticmethod
     def _make_builtin_adapter(credential: CredentialSpec) -> Any:
@@ -259,7 +260,8 @@ class CredentialPoolProvider:
                     continue
                 if self.state.scope_cooldown_until.get(cred.quota_group, 0.0) > now:
                     continue
-                if self.state.scope_in_flight.get(cred.quota_group, 0) >= self.max_parallel_per_scope:
+                shared_limit = self.state.max_parallel_by_scope.get(cred.quota_group, self.max_parallel_per_scope)
+                if self.state.scope_in_flight.get(cred.quota_group, 0) >= shared_limit:
                     continue
                 self._cursor = (index + 1) % total
                 self.state.scope_in_flight[cred.quota_group] = self.state.scope_in_flight.get(cred.quota_group, 0) + 1
@@ -345,7 +347,11 @@ class CredentialPoolProvider:
                     elif exc.category == "quota_exhausted":
                         self.state.scope_blocked_reason[scope] = "provider quota/billing requires operator review"
                     elif exc.status_code == 429 or exc.category in {"rate_limited"}:
-                        cooldown = exc.retry_after_seconds or self.default_rate_limit_cooldown_seconds
+                        cooldown = (
+                            exc.retry_after_seconds
+                            if exc.retry_after_seconds is not None
+                            else self.default_rate_limit_cooldown_seconds
+                        )
                         self.state.scope_cooldown_until[scope] = max(
                             self.state.scope_cooldown_until.get(scope, 0.0), now + cooldown
                         )
@@ -422,3 +428,43 @@ class CredentialPoolProvider:
                     for scope in sorted({s.credential.quota_group for s in self._credentials})
                 },
             }
+
+
+def build_credential_pools(
+    credentials: Sequence[CredentialSpec],
+    *,
+    state: CredentialPoolState | None = None,
+    adapter_factory: Callable[[CredentialSpec], Any] | None = None,
+    max_parallel_per_scope: int = 2,
+    diversity_groups: Mapping[str, str] | None = None,
+) -> dict[str, CredentialPoolProvider]:
+    """Group a merged set of host/provider credential entries into stable endpoint pools.
+
+    Feed entries from every source the host is allowed to use (for example, direct
+    provider settings from a desktop app and provider-specific entries managed by a
+    local gateway). Identical provider/endpoint/key tuples collapse into one credential.
+    Opaque gateway client keys are not upstream provider keys and should instead be
+    represented as one openai_compatible gateway pool.
+    """
+    groups: dict[tuple[str, str], list[CredentialSpec]] = {}
+    for credential in credentials:
+        if not credential.enabled:
+            continue
+        key = (credential.provider_family, _normalize_endpoint(credential.base_url))
+        groups.setdefault(key, []).append(credential)
+    shared_state = state or CredentialPoolState()
+    result: dict[str, CredentialPoolProvider] = {}
+    for (family, endpoint), group_credentials in sorted(groups.items()):
+        suffix = hashlib.sha256(f"{family}\\0{endpoint}".encode("utf-8")).hexdigest()[:8]
+        provider_id = f"{family}_{suffix}"
+        if provider_id in result:
+            raise ValueError("Provider-pool ID collision.")
+        result[provider_id] = CredentialPoolProvider(
+            provider_id,
+            group_credentials,
+            state=shared_state,
+            adapter_factory=adapter_factory,
+            diversity_group=(diversity_groups or {}).get(provider_id, family),
+            max_parallel_per_scope=max_parallel_per_scope,
+        )
+    return result

@@ -266,7 +266,7 @@ class ReasoningEngine:
             adapter = self.providers[route.provider_id]
             if "text" not in route.capabilities or "text" not in adapter.capabilities:
                 continue
-            diversity_group = str(getattr(adapter, "diversity_group", route.provider_id) or route.provider_id)
+            diversity_group = str(route.diversity_group or getattr(adapter, "diversity_group", route.provider_id) or route.provider_id)
             if diversity_group in seen_providers:
                 continue
             candidates.append(route)
@@ -315,14 +315,14 @@ class ReasoningEngine:
 
         candidate_provider_ids = {route.provider_id for route, _ in candidate_answers}
         candidate_groups = {
-            str(getattr(self.providers[route.provider_id], "diversity_group", route.provider_id) or route.provider_id)
+            str(route.diversity_group or getattr(self.providers[route.provider_id], "diversity_group", route.provider_id) or route.provider_id)
             for route, _ in candidate_answers
         }
         critic_routes = []
         critic_groups = set(candidate_groups)
         for route in routes:
             adapter = self.providers[route.provider_id]
-            group = str(getattr(adapter, "diversity_group", route.provider_id) or route.provider_id)
+            group = str(route.diversity_group or getattr(adapter, "diversity_group", route.provider_id) or route.provider_id)
             if route.provider_id in candidate_provider_ids or group in critic_groups:
                 continue
             critic_routes.append(route)

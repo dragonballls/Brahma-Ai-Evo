@@ -113,12 +113,15 @@ class Route:
     capabilities: frozenset[str] = frozenset({"text"})
     input_usd_per_million: float | None = None
     output_usd_per_million: float | None = None
+    diversity_group: str | None = None
 
     def __post_init__(self) -> None:
         if not self.provider_id.strip() or not self.model.strip():
             raise ValueError("Routes require provider_id and model.")
         if self.priority < 0:
             raise ValueError("Route priority cannot be negative.")
+        if self.diversity_group is not None and not str(self.diversity_group).strip():
+            raise ValueError("diversity_group must be non-empty when provided.")
         for rate in (self.input_usd_per_million, self.output_usd_per_million):
             if rate is not None and rate < 0:
                 raise ValueError("Token prices cannot be negative.")
