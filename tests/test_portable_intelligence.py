@@ -993,9 +993,10 @@ class PortableContractsTests(unittest.TestCase):
 
     def test_pairwise_comparison_budget_counts_baseline_ensemble_and_judge(self):
         from scripts.portable_intelligence_compare import _comparison_call_limits
-        self.assertEqual(_comparison_call_limits(6, 3, 4), (4, 3))
-        self.assertEqual(_comparison_call_limits(6, 2, 4), (4, 2))
-        self.assertEqual(_comparison_call_limits(5, 3, 2), (3, 2))
+        self.assertEqual(_comparison_call_limits(6, 3, 4, 1), (4, 2))
+        self.assertEqual(_comparison_call_limits(6, 3, 4, 0), (4, 3))
+        self.assertEqual(_comparison_call_limits(6, 2, 4, 1), (4, 2))
+        self.assertEqual(_comparison_call_limits(5, 3, 2, 2), (3, 2))
         for total_calls, max_candidates, route_count in (
             (4, 2, 2),
             (5, 1, 2),

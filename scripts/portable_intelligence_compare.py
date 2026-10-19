@@ -36,19 +36,29 @@ from scripts.portable_intelligence_benchmark import ADAPTERS, _route_from_config
 
 
 
-def _comparison_call_limits(total_calls: int, max_candidates: int, available_candidate_routes: int) -> tuple[int, int]:
+def _comparison_call_limits(
+    total_calls: int,
+    max_candidates: int,
+    available_candidate_routes: int,
+    max_critics: int = 0,
+) -> tuple[int, int]:
     """Return (ensemble_call_budget, candidate_budget) inside a total per-case cap.
 
     Two calls are reserved for the direct baseline and independent blind judge.
-    At least two independent candidates plus one final synthesis call are required
-    for an actual ensemble comparison.
+    At least two independent candidates and synthesis are reserved, plus a critic
+    call when the configured budget allows one.
     """
     if total_calls < 5:
         raise ValueError("A comparison needs at least five calls: baseline, two candidates, synthesis, and judge.")
-    if max_candidates < 2 or available_candidate_routes < 2:
-        raise ValueError("At least two candidate routes and a candidate limit of two are required.")
+    if max_candidates < 2 or available_candidate_routes < 2 or max_critics < 0:
+        raise ValueError("At least two candidate routes/slots and a non-negative critic limit are required.")
     ensemble_budget = total_calls - 2
-    candidate_budget = min(max_candidates, available_candidate_routes, ensemble_budget - 1)
+    reserved_critics = min(max_critics, max(0, ensemble_budget - 3))
+    candidate_budget = min(
+        max_candidates,
+        available_candidate_routes,
+        ensemble_budget - 1 - reserved_critics,
+    )
     if candidate_budget < 2:
         raise ValueError("The total call budget is too small to leave two candidates and a synthesis call.")
     return ensemble_budget, candidate_budget
@@ -247,7 +257,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         ensemble_call_budget, candidate_call_budget = _comparison_call_limits(
-            args.max_calls, args.max_candidates, len(candidate_routes)
+            args.max_calls, args.max_candidates, len(candidate_routes), args.max_critics
         )
     except ValueError as exc:
         print(f"Comparison call budget invalid: {exc}", file=sys.stderr)
