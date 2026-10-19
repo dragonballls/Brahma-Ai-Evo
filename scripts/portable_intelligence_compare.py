@@ -34,6 +34,25 @@ from core.portable_intelligence.key_pool import (
 from scripts.portable_intelligence_benchmark import ADAPTERS, _route_from_config
 
 
+
+
+def _comparison_call_limits(total_calls: int, max_candidates: int, available_candidate_routes: int) -> tuple[int, int]:
+    """Return (ensemble_call_budget, candidate_budget) inside a total per-case cap.
+
+    Two calls are reserved for the direct baseline and independent blind judge.
+    At least two independent candidates plus one final synthesis call are required
+    for an actual ensemble comparison.
+    """
+    if total_calls < 5:
+        raise ValueError("A comparison needs at least five calls: baseline, two candidates, synthesis, and judge.")
+    if max_candidates < 2 or available_candidate_routes < 2:
+        raise ValueError("At least two candidate routes and a candidate limit of two are required.")
+    ensemble_budget = total_calls - 2
+    candidate_budget = min(max_candidates, available_candidate_routes, ensemble_budget - 1)
+    if candidate_budget < 2:
+        raise ValueError("The total call budget is too small to leave two candidates and a synthesis call.")
+    return ensemble_budget, candidate_budget
+
 def _load_routes(config_path: Path) -> tuple[dict[str, Any], dict[str, Route], dict[str, dict[str, Any]]]:
     try:
         config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -168,7 +187,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--case-limit", type=int, default=4,
                         help="Maximum cases to run; 0 means all checked-in cases.")
     parser.add_argument("--max-calls", type=int, default=6,
-                        help="Maximum model calls per ensemble case.")
+                        help="Maximum total model calls per case, including baseline, ensemble candidates/review/synthesis, and blind judge. Minimum 5.")
     parser.add_argument("--max-candidates", type=int, default=3)
     parser.add_argument("--max-critics", type=int, default=1)
     parser.add_argument("--max-estimated-cost-usd", type=float, default=None,
@@ -179,8 +198,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.confirm_live_calls:
         parser.error("Add --confirm-live-calls only when ready to make real provider requests.")
-    if args.case_limit < 0 or args.max_calls < 2 or args.max_candidates < 2 or args.max_critics < 0:
-        parser.error("Invalid case/call limits; ensemble comparison requires at least two candidates and two total calls.")
+    if args.case_limit < 0 or args.max_calls < 5 or args.max_candidates < 2 or args.max_critics < 0:
+        parser.error("Invalid case/call limits; comparison requires baseline, two candidates, synthesis, and judge (at least five calls).")
     if args.max_estimated_cost_usd is not None and args.max_estimated_cost_usd < 0:
         parser.error("--max-estimated-cost-usd cannot be negative.")
     try:
@@ -224,6 +243,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if not candidate_routes:
         print("No candidate routes are active.", file=sys.stderr)
+        return 2
+
+    try:
+        ensemble_call_budget, candidate_call_budget = _comparison_call_limits(
+            args.max_calls, args.max_candidates, len(candidate_routes)
+        )
+    except ValueError as exc:
+        print(f"Comparison call budget invalid: {exc}", file=sys.stderr)
         return 2
 
     baseline_route = routes[baseline_id]
@@ -293,9 +320,9 @@ def main(argv: list[str] | None = None) -> int:
             candidate_routes,
             policy=RunPolicy(
                 strategy="ensemble",
-                max_candidate_calls=min(args.max_candidates, len(candidate_routes)),
+                max_candidate_calls=candidate_call_budget,
                 max_critic_calls=args.max_critics,
-                max_total_model_calls=args.max_calls,
+                max_total_model_calls=ensemble_call_budget,
                 max_parallel_calls=max(1, min(3, len(candidate_routes))),
                 max_tool_rounds=0,
                 max_tool_calls=0,
@@ -371,6 +398,9 @@ def main(argv: list[str] | None = None) -> int:
             "tie": sum(1 for row in judged if row["judge"]["winner"] == "tie"),
         },
         "model_calls_reported": calls,
+        "max_total_model_calls_per_case": args.max_calls,
+        "ensemble_call_budget_per_case": ensemble_call_budget,
+        "candidate_call_budget_per_case": candidate_call_budget,
         "estimated_cost_usd_sum": round(spend, 8) if spend else None,
         "estimated_cost_is_not_actual_billing": True,
         "budget_stopped": budget_stopped,
