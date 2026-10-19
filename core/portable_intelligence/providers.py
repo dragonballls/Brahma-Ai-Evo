@@ -87,7 +87,10 @@ class HTTPProvider:
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
-        request_headers.update(dict(headers or {}))
+        extra_headers = dict(headers or {})
+        if any(str(key).casefold() == "x-api-key" for key in extra_headers):
+            request_headers.pop("Authorization", None)
+        request_headers.update(extra_headers)
         try:
             response = self._session.post(
                 url, headers=request_headers, json=dict(payload),
@@ -128,8 +131,10 @@ class OpenAICompatibleProvider(HTTPProvider):
             messages.append(message)
         payload: dict[str, Any] = {
             "model": model, "messages": messages,
-            "max_tokens": request.max_output_tokens, "temperature": request.temperature,
+            "max_tokens": request.max_output_tokens,
         }
+        if not request.reasoning_effort or request.reasoning_effort == "none":
+            payload["temperature"] = request.temperature
         if request.tools:
             payload["tools"] = [tool.openai_chat_schema() for tool in request.tools]
             payload["tool_choice"] = "auto"
@@ -197,12 +202,14 @@ class OpenAIResponsesProvider(HTTPProvider):
     def complete(self, request: ModelRequest, model: str) -> ModelReply:
         payload: dict[str, Any] = {
             "model": model, "input": self._input_items(request),
-            "max_output_tokens": request.max_output_tokens, "temperature": request.temperature,
+            "max_output_tokens": request.max_output_tokens,
         }
         if request.system:
             payload["instructions"] = request.system
         if request.reasoning_effort:
             payload["reasoning"] = {"effort": request.reasoning_effort}
+        else:
+            payload["temperature"] = request.temperature
         if request.tools:
             payload["tools"] = [tool.openai_responses_schema() for tool in request.tools]
         data = self._post(self.base_url + "/responses", payload)

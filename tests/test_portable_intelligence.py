@@ -161,6 +161,17 @@ class PortableContractsTests(unittest.TestCase):
         provider._session.post.assert_called_once()
         self.assertFalse(provider._session.post.call_args.kwargs["allow_redirects"])
 
+    def test_chat_completions_adapter_omits_temperature_for_reasoning_effort(self):
+        provider = OpenAICompatibleProvider("test-key", "http://127.0.0.1:20128/v1")
+        provider._post = Mock(return_value={"choices": [{"message": {"content": "ok"}}]})
+        provider.complete(
+            ModelRequest(messages=({"role": "user", "content": "solve"},), reasoning_effort="high"),
+            "model",
+        )
+        payload = provider._post.call_args.args[1]
+        self.assertEqual(payload["reasoning_effort"], "high")
+        self.assertNotIn("temperature", payload)
+
     def test_responses_adapter_emits_native_function_call_and_reasoning_effort(self):
         provider = OpenAIResponsesProvider("test-key")
         provider._post = Mock(return_value={
@@ -178,6 +189,7 @@ class PortableContractsTests(unittest.TestCase):
         payload = provider._post.call_args.args[1]
         self.assertEqual(payload["reasoning"]["effort"], "high")
         self.assertEqual(payload["tools"][0]["name"], "lookup")
+        self.assertNotIn("temperature", payload)
 
     def test_bounded_voice_buffer_drops_oldest_and_clears_stale_audio_on_interrupt(self):
         audio = BoundedPlaybackBuffer(max_chunks=2)

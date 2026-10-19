@@ -135,7 +135,7 @@ class OpenAIRealtimeVoiceAdapter:
         url = self.websocket_url + "?" + urlencode({"model": self.model})
         self._socket = websocket.create_connection(
             url,
-            header=[f"Authorization: Bearer {self.api_key}", "OpenAI-Beta: realtime=v1"],
+            header=[f"Authorization: Bearer {self.api_key}"],
             timeout=self.policy.connect_timeout_seconds,
             enable_multithread=True,
         )
