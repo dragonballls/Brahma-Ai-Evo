@@ -274,6 +274,10 @@ def _collect_briefing_intel(category: str, city: Optional[str]) -> Dict[str, Any
         except Exception as exc:
             results_queue.put((name, exc))
 
+    # Start the overall budget before workers are launched. Thread startup time
+    # is part of the fetch deadline; otherwise a slow first source can finish
+    # while later workers are being created and incorrectly appear timely.
+    deadline = time.monotonic() + BRIEFING_FETCH_TIMEOUT_SECONDS
     for name, collector in collectors.items():
         threading.Thread(
             target=collect,
@@ -284,7 +288,6 @@ def _collect_briefing_intel(category: str, city: Optional[str]) -> Dict[str, Any
 
     results = {}
     pending = set(collectors)
-    deadline = time.monotonic() + BRIEFING_FETCH_TIMEOUT_SECONDS
     while pending:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
