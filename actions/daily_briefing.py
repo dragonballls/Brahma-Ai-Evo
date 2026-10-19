@@ -267,12 +267,16 @@ def _collect_briefing_intel(category: str, city: Optional[str]) -> Dict[str, Any
         "headlines": [],
     }
     results_queue: queue.Queue = queue.Queue()
+    start_gate = threading.Event()
 
     def collect(name: str, collector) -> None:
+        # A gate lets every worker start together, avoiding order-dependent time budgets.
+        start_gate.wait()
         try:
-            results_queue.put((name, collector()))
+            value = collector()
         except Exception as exc:
-            results_queue.put((name, exc))
+            value = exc
+        results_queue.put((name, value, time.monotonic()))
 
     # Start the overall budget before workers are launched. Thread startup time
     # is part of the fetch deadline; otherwise a slow first source can finish
