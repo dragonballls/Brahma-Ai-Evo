@@ -62,11 +62,11 @@ CallableProvider lets a host wrap an existing LLM client with a small callback a
 
 OpenAIRealtimeVoiceAdapter targets the distinct OpenAI Realtime WebSocket protocol, currently defaulting to gpt-realtime-2.1.
 
-GPTLiveVoiceAdapter targets the GPT-Live primary WebSocket contract at /v1/live/sessions and defaults to gpt-live-1 with client delegation. It waits for session.started, sends raw mono PCM16 frames and receives audio/transcript events, surfaces client delegation IDs, returns results through session.commentary.append or session.thinking.append, and checks whether session.closed confirmed final usage during shutdown.
+GPTLiveVoiceAdapter is an experimental protocol scaffold for a proposed GPT-Live-shaped session at /v1/live/sessions (default model label: gpt-live-1). Its session.start/session.started and session.commentary.append event schema has not been verified against a public OpenAI API contract or a live provider account. Do not treat this adapter as production-ready. The documented OpenAI Realtime API uses a different event contract; use OpenAIRealtimeVoiceAdapter for that API, then perform a real account-level smoke test before deployment. See https://platform.openai.com/docs/api-reference/realtime.
 
 LiveDelegationCoordinator consumes each original transcript fragment with timestamps, retains a bounded recent history, and bridges client delegations to any ReasoningEngine. It blocks duplicate backend execution for the same delegation and saves each result before delivery; if delivery fails, it can retry the saved result without rerunning model/tool calls. The host still decides when the transcript is sufficient, enforces permissions and idempotency for side effects, and handles backend cancellation.
 
-GPT-Live append updates are conservatively capped to 450 UTF-8 bytes to stay below the API's 500-token-per-append limit. The host supplies microphone capture and speaker playback, continuously sends mono PCM16 at the configured rate, and plays queued output in order. This separation allows a future Abacus port to route backend work through OmniRoute or any registered LLM without integrating it into Abacus now.
+The experimental GPT-Live-shaped append helper caps updates to 450 UTF-8 bytes; this is a defensive local limit, not a verified public API limit. The host supplies microphone capture and speaker playback, sends mono PCM16 at the configured rate, and plays queued output in order. A future Abacus port can route backend work through OmniRoute or another registered LLM only after the target voice API contract is verified.
 
 Brahma currently has its existing Gemini Live loop. Both new adapters are optional and isolated; this code does not change the runtime's active voice provider. Live audio requires correctly paced PCM16 and a real device-to-session test.
 
@@ -81,4 +81,4 @@ Provider availability and model/API fields can change. An API key is necessary b
 
 Host integrations may adapt their already-authorized in-memory credentials into CredentialSpec and pass them through merge_credential_specs({'abacus': ..., 'omniroute': ..., 'direct': ...}). The library does not read another application's private config on its own. Duplicate provider/endpoint/key fingerprints collapse when building the pools.
 
-GPT-Live event IDs include a per-connection session nonce and task/content identity. Reusing an adapter starts a fresh session, clears stale delegation IDs and result-delivery cursors, and drops prior session usage. A client delegation from an earlier session cannot authorize a result in a later one.
+The experimental GPT-Live-shaped scaffold uses event IDs with a per-connection session nonce and task/content identity. Reusing it starts a fresh session and clears stale delegation IDs and result-delivery cursors. These local safeguards do not establish compatibility with a public provider endpoint.

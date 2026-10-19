@@ -127,12 +127,14 @@ class BoundedPlaybackBuffer:
 
 
 class GPTLiveVoiceAdapter:
-    """GPT-Live voice session with client delegation to a host-owned backend.
+    """Experimental GPT-Live-shaped voice protocol scaffold.
 
-    It deliberately uses the GPT-Live /v1/live/sessions event protocol, not the
-    separate Realtime /v1/realtime API. The application may route a delegation
-    event to ReasoningEngine, OmniRoute, an Abacus LLM wrapper, or any custom
-    provider, then return verified results using append_delegation_result().
+    The /v1/live/sessions endpoint and event schema have not been verified
+    against a public OpenAI API contract or a live provider account. This is not
+    the documented OpenAI Realtime protocol and must not be treated as production
+    ready until compatibility is confirmed. The host owns microphone capture,
+    playback, and delegated task execution, returning verified results only
+    after host-side authorization.
     """
     def __init__(
         self,
