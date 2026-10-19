@@ -1,0 +1,3 @@
+[submodule "graveyard/abacusai-omni"]
+	path = graveyard/abacusai-omni
+	url = https://github.com/dragonballls/abacusai-omni.git
