@@ -143,7 +143,7 @@ class PortableContractsTests(unittest.TestCase):
             "id": "r1", "model": "test",
             "choices": [{"message": {"content": "", "tool_calls": [{
                 "id": "call1", "type": "function",
-                "function": {"name": "lookup", "arguments": "{\"q\":\"x\"}"},
+                "function": {"name": "lookup", "arguments": "{\"q\":\"x\"}"}},
             ]}}],
             "usage": {"prompt_tokens": 4, "completion_tokens": 2},
         }
