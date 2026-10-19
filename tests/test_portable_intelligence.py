@@ -949,6 +949,13 @@ class PortableContractsTests(unittest.TestCase):
         self.assertEqual(reply.text, "custom adapter answer")
         self.assertEqual(built, ["custom-a"])
         self.assertEqual(pool.family, "custom_vendor")
+        self.assertEqual(pool.capabilities, frozenset({"text"}))
+        capable_pools = build_credential_pools(
+            [credential],
+            adapter_factories={"custom_vendor": factory},
+            capabilities_by_family={"custom_vendor": ("text", "tools")},
+        )
+        self.assertEqual(next(iter(capable_pools.values())).capabilities, frozenset({"text", "tools"}))
 
 
     def test_blind_comparison_loader_uses_many_key_pools_without_network_calls(self):

@@ -191,6 +191,7 @@ class CredentialPoolProvider:
         default_rate_limit_cooldown_seconds: float = 60.0,
         transient_cooldown_seconds: float = 2.0,
         auth_disable: bool = True,
+        capabilities: Sequence[str] | None = None,
     ) -> None:
         if not str(provider_id or "").strip():
             raise ValueError("provider_id is required.")
@@ -226,7 +227,11 @@ class CredentialPoolProvider:
         self.family = family
         self.base_url = deduped[0].base_url
         self.diversity_group = str(diversity_group or family).strip()
-        self.capabilities = frozenset({"text", "tools", "vision"})
+        default_capabilities = frozenset({"text", "tools", "vision"}) if family in _PROVIDER_DEFAULTS else frozenset({"text"})
+        selected_capabilities = frozenset(capabilities) if capabilities is not None else default_capabilities
+        if "text" not in selected_capabilities or not selected_capabilities.issubset({"text", "tools", "vision"}):
+            raise ValueError("Provider pool capabilities must include text and may only include tools/vision explicitly.")
+        self.capabilities = selected_capabilities
         self.state = state or CredentialPoolState()
         self.max_parallel_per_scope = max_parallel_per_scope
         self.default_rate_limit_cooldown_seconds = default_rate_limit_cooldown_seconds
@@ -454,6 +459,7 @@ def build_credential_pools(
     state: CredentialPoolState | None = None,
     adapter_factory: Callable[[CredentialSpec], Any] | None = None,
     adapter_factories: Mapping[str, Callable[[CredentialSpec], Any]] | None = None,
+    capabilities_by_family: Mapping[str, Sequence[str]] | None = None,
     max_parallel_per_scope: int = 2,
     diversity_groups: Mapping[str, str] | None = None,
 ) -> dict[str, CredentialPoolProvider]:
@@ -484,6 +490,7 @@ def build_credential_pools(
             group_credentials,
             state=shared_state,
             adapter_factory=family_factory,
+            capabilities=(capabilities_by_family or {}).get(family),
             diversity_group=(diversity_groups or {}).get(provider_id, f"{family}:{endpoint}"),
             max_parallel_per_scope=max_parallel_per_scope,
         )
