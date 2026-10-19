@@ -11,7 +11,7 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol, Sequence
 from urllib.parse import urlencode
 
 from .providers import validate_base_url
@@ -387,6 +387,224 @@ class GPTLiveVoiceAdapter:
                 sock.close()
             except Exception:
                 pass
+
+
+
+
+@dataclass(frozen=True)
+class TranscriptSegment:
+    speaker: str
+    text: str
+    start_ms: int | None = None
+    end_ms: int | None = None
+
+
+@dataclass
+class _ClientDelegationState:
+    delegation_id: str
+    offset_ms: int | None
+    status: str = "pending"
+    result_text: str = ""
+    error: str = ""
+
+
+class LiveDelegationCoordinator:
+    """Bridge GPT-Live client delegations to any host-owned reasoning backend.
+
+    The delegation-created event does not contain the spoken task. Feed transcript
+    and delegation VoiceEvents to observe(), then let the application decide when
+    there is enough context to run the backend. Provider choice, tools, permissions,
+    confirmation, and cancellation remain owned by the host application.
+    """
+
+    def __init__(
+        self,
+        *,
+        max_segments: int = 256,
+        max_transcript_chars: int = 40000,
+        max_delegations: int = 64,
+    ) -> None:
+        if max_segments < 1 or max_transcript_chars < 1000 or max_delegations < 1:
+            raise ValueError("Transcript and delegation limits are invalid.")
+        self.max_segments = max_segments
+        self.max_transcript_chars = max_transcript_chars
+        self.max_delegations = max_delegations
+        self._segments: deque[TranscriptSegment] = deque()
+        self._delegations: dict[str, _ClientDelegationState] = {}
+        self._lock = threading.RLock()
+        self._transcript_chars = 0
+
+    def observe(self, event: VoiceEvent) -> str | None:
+        """Record an event and return a new ID only for a fresh client delegation."""
+        with self._lock:
+            if event.kind == "transcript_delta":
+                text = str(event.payload.get("text") or "")
+                if not text:
+                    return None
+                source_type = str(event.payload.get("source_type") or "")
+                speaker = "user" if "input_transcript" in source_type else "assistant"
+                start = event.payload.get("start_ms")
+                end = event.payload.get("end_ms")
+                start_ms = int(start) if isinstance(start, (int, float)) else None
+                end_ms = int(end) if isinstance(end, (int, float)) else None
+                if self._segments:
+                    previous = self._segments[-1]
+                    close_in_time = (
+                        previous.end_ms is None or start_ms is None
+                        or start_ms <= previous.end_ms + 1200
+                    )
+                    if previous.speaker == speaker and close_in_time:
+                        self._segments[-1] = TranscriptSegment(
+                            speaker=speaker,
+                            text=previous.text + text,
+                            start_ms=previous.start_ms if previous.start_ms is not None else start_ms,
+                            end_ms=end_ms if end_ms is not None else previous.end_ms,
+                        )
+                        self._transcript_chars += len(text)
+                        self._trim_transcript_locked()
+                        return None
+                self._segments.append(TranscriptSegment(speaker, text, start_ms, end_ms))
+                self._transcript_chars += len(text)
+                self._trim_transcript_locked()
+                return None
+
+            if event.kind != "delegation":
+                return None
+            delegation_id = str(event.payload.get("delegation_id") or "").strip()
+            if str(event.payload.get("target") or "") != "client" or not delegation_id:
+                return None
+            if delegation_id in self._delegations:
+                return None
+            active_count = sum(
+                state.status in {"pending", "running", "result_ready"}
+                for state in self._delegations.values()
+            )
+            if active_count >= self.max_delegations:
+                raise RuntimeError("Too many active client delegations; finish or close existing work.")
+            offset = event.payload.get("offset_ms")
+            offset_ms = int(offset) if isinstance(offset, (int, float)) else None
+            self._delegations[delegation_id] = _ClientDelegationState(delegation_id, offset_ms)
+            return delegation_id
+
+    def _trim_transcript_locked(self) -> None:
+        while self._segments and (
+            len(self._segments) > self.max_segments
+            or self._transcript_chars > self.max_transcript_chars
+        ):
+            segment = self._segments.popleft()
+            self._transcript_chars -= len(segment.text)
+        if self._segments and len(self._segments[0].text) > self.max_transcript_chars:
+            first = self._segments[0]
+            clipped = first.text[-self.max_transcript_chars:]
+            self._segments[0] = TranscriptSegment(first.speaker, clipped, first.start_ms, first.end_ms)
+            self._transcript_chars = sum(len(item.text) for item in self._segments)
+
+    def transcript_snapshot(self) -> tuple[TranscriptSegment, ...]:
+        with self._lock:
+            return tuple(self._segments)
+
+    def status(self, delegation_id: str) -> str:
+        with self._lock:
+            state = self._delegations.get(str(delegation_id or ""))
+            if state is None:
+                raise KeyError("Unknown client delegation ID.")
+            return state.status
+
+    def context_for(self, delegation_id: str, *, application_context: str = "") -> str:
+        with self._lock:
+            state = self._delegations.get(str(delegation_id or ""))
+            if state is None:
+                raise KeyError("Unknown client delegation ID.")
+            segments = tuple(self._segments)
+            offset_ms = state.offset_ms
+        rendered: list[str] = []
+        for segment in segments:
+            stamp = ""
+            if segment.start_ms is not None or segment.end_ms is not None:
+                start = segment.start_ms if segment.start_ms is not None else "?"
+                end = segment.end_ms if segment.end_ms is not None else "?"
+                stamp = f" [{start}-{end} ms]"
+            rendered.append(f"{segment.speaker}{stamp}: {segment.text}")
+        parts = [
+            "The live transcript contains partial and sometimes corrected speech fragments; it is not a perfect transcript. "
+            "Use later corrections and current application state. Ask for clarification if ambiguity could materially change "
+            "the answer or action. Never claim an action completed without verified output from the actual tool or service.",
+            f"Client delegation ID: {delegation_id}",
+            f"Delegation offset (session-relative ms): {offset_ms if offset_ms is not None else 'unknown'}",
+            "Recent live transcript:",
+            "\n".join(rendered) if rendered else "(No transcript fragments received yet.)",
+        ]
+        if application_context.strip():
+            parts.extend(["Current application context:", application_context.strip()[:20000]])
+        return "\n\n".join(parts)
+
+    def run_delegation(
+        self,
+        delegation_id: str,
+        engine: Any,
+        voice_adapter: Any,
+        *,
+        application_context: str = "",
+        task_prompt: str = (
+            "Resolve the caller's latest request using the live transcript and application context. "
+            "Return verified findings and a useful next step. Ask one concise clarifying question if necessary."
+        ),
+        system: str = (
+            "You are the backend task agent for a live voice assistant. The host owns permissions and tools. "
+            "Never invent successful actions; use only registered and authorized tools. Treat speech transcripts as fallible."
+        ),
+        complexity: str = "complex",
+        tools: Sequence[Any] = (),
+        authorize_tool: Callable[[Any, Mapping[str, Any]], bool] | None = None,
+        strategy: str = "auto",
+    ) -> Any:
+        """Run backend reasoning once. Delivery failures can be retried without repeating backend calls."""
+        task_id = str(delegation_id or "").strip()
+        with self._lock:
+            state = self._delegations.get(task_id)
+            if state is None:
+                raise KeyError("Unknown client delegation ID.")
+            if state.status != "pending":
+                raise RuntimeError(f"Delegation is already {state.status}; refusing duplicate backend execution.")
+            state.status = "running"
+        try:
+            context = self.context_for(task_id, application_context=application_context)
+            result = engine.answer(
+                task_prompt,
+                system=system,
+                context=context,
+                complexity=complexity,
+                strategy=strategy,
+                tools=tools,
+                authorize_tool=authorize_tool,
+            )
+            result_text = str(result.text or "").strip()
+            if not result_text:
+                raise RuntimeError("Backend returned an empty result; no voice result was sent.")
+        except Exception as exc:
+            with self._lock:
+                state.status = "failed"
+                state.error = type(exc).__name__
+            raise
+        with self._lock:
+            state.result_text = result_text
+            state.status = "result_ready"
+        self.deliver_result(task_id, voice_adapter, spoken=True)
+        return result
+
+    def deliver_result(self, delegation_id: str, voice_adapter: Any, *, spoken: bool = True) -> None:
+        """Deliver a saved result. If sending fails, the saved result stays retryable."""
+        task_id = str(delegation_id or "").strip()
+        with self._lock:
+            state = self._delegations.get(task_id)
+            if state is None:
+                raise KeyError("Unknown client delegation ID.")
+            if state.status != "result_ready" or not state.result_text:
+                raise RuntimeError("No saved backend result is ready for delivery.")
+            result_text = state.result_text
+        voice_adapter.append_delegation_result(task_id, result_text, spoken=spoken)
+        with self._lock:
+            state.status = "delivered"
 
 
 class OpenAIRealtimeVoiceAdapter:
