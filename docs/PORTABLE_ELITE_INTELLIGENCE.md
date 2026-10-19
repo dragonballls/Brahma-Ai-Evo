@@ -16,6 +16,36 @@ The package is intended to be movable into another desktop app later. Its core u
 - Include a bounded generation-aware audio queue, a separate OpenAI Realtime adapter, and a GPT-Live session adapter using client delegation. The host handles microphone capture, resampling, output playback, and tool approvals. For both voice adapters, `receive_event()` queues audio deltas in the adapter's bounded playback buffer and returns an event with a byte count/queued flag; the host should play `playback.pop()` data, not play the same event payload a second time. GPT-Live accepts results only for delegation IDs actually observed in the active session. Check `session_closed_confirmed` and `finalization_error` during shutdown: a closed socket without `session.closed` means usage is not confirmed.
 - Evaluate behavior with repeatable tasks rather than calling it Astra-level based on model count.
 
+
+## Multi-key provider pools
+
+CredentialSpec and CredentialPoolProvider let a host manage many provider keys. Real key values must stay in environment variables or an approved secret manager. The checked-in `benchmarks/credential_pool.example.json` contains only environment variable names and public endpoint metadata. It models 10 Gemini keys and 4 OpenRouter keys, plus duplicate source aliases to demonstrate deduplication.
+
+Example host bootstrap:
+
+```python
+import json
+from pathlib import Path
+from core.portable_intelligence.key_pool import CredentialPoolState, build_credential_pools, load_credentials_from_environment
+
+config = json.loads(Path('benchmarks/credential_pool.example.json').read_text('utf-8'))
+loaded = load_credentials_from_environment(config['credentials'])
+shared_state = CredentialPoolState()
+providers = build_credential_pools(loaded.credentials, state=shared_state)
+for provider_id, pool in providers.items():
+    print(provider_id, pool.snapshot()['credential_count'], 'deduplicated credentials')
+print('Missing optional environment variables:', len(loaded.skipped))
+```
+
+Operational behavior:
+
+- Identical key + provider family + normalized endpoint tuples collapse to one credential. Duplicate labels are counted but never treated as extra capacity.
+- Keys sharing a quota_group share cooldown and in-flight limits. Rate-limit responses honor Retry-After where available; hard quota/billing errors block that scope until the host operator calls shared_state.reset_scope(scope) after the underlying provider issue is resolved.
+- Invalid/unauthorized keys are disabled until corrected and explicitly re-enabled with reset_credential(credential_id). Transient errors cool down the affected credential and may fail over.
+- snapshot() returns labels, fingerprints, token counters, cooldowns, failures, and shared-scope state—never raw API keys. Token totals and estimated route costs are not provider billing records.
+- Merge credential records from all sources the host is permitted to use before build_credential_pools() so duplicate keys can be found in one pass. Reuse one CredentialPoolState anywhere quota scopes must be shared.
+- An opaque OmniRoute client key only authenticates to the local gateway; it does not reveal upstream provider keys. If OmniRoute owns upstream rotation, register the gateway as one route. For a direct route and gateway alias serving the same underlying model/quota, assign the same Route.diversity_group so they are not counted as independent ensemble evidence.
+- More keys do not automatically increase quota. Gemini quotas are project-scoped, and OpenRouter documents that extra keys do not increase its account-level capacity. Rotation is for safe recovery, failover, diagnostics, and genuinely independent provider projects/accounts where permitted—not quota bypass.
 ## Provider interfaces
 
 OpenAIResponsesProvider: native OpenAI Responses API with reasoning effort and function tools.
