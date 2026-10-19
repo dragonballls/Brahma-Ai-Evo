@@ -77,7 +77,7 @@ def _result_dict(result) -> dict[str, Any]:
         "elapsed_ms": result.elapsed_ms,
         "matched_required": list(result.matched_required),
         "matched_forbidden": list(result.matched_forbidden),
-        "answer_text": result.answer_text[:12000],
+        "answer_text": result.answer_preview[:12000],
         "selected_routes": list(result.selected_routes),
         "model_call_count": result.model_call_count,
         "estimated_cost_usd": result.estimated_cost_usd,

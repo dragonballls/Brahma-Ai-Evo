@@ -32,7 +32,11 @@ CallableProvider lets a host wrap an existing LLM client with a small callback a
 
 OpenAIRealtimeVoiceAdapter targets the distinct OpenAI Realtime WebSocket protocol, currently defaulting to gpt-realtime-2.1.
 
-GPTLiveVoiceAdapter targets the GPT-Live WebSocket session contract at /v1/live/sessions and defaults to gpt-live-1 with client delegation. It waits for session.started, sends/receives PCM16 audio and transcript events, surfaces client delegation IDs to the host, returns verified results with session.commentary.append or session.thinking.append, and waits for session.closed during clean shutdown. The host owns the backend work, transcript history, API/provider routing, task cancellation, permissions, approvals, microphone, and speaker playback. This lets a later Abacus port use OmniRoute or any other registered LLM backend while GPT-Live handles speech.
+GPTLiveVoiceAdapter targets the GPT-Live primary WebSocket contract at /v1/live/sessions and defaults to gpt-live-1 with client delegation. It waits for session.started, sends raw mono PCM16 frames and receives audio/transcript events, surfaces client delegation IDs, returns results through session.commentary.append or session.thinking.append, and checks whether session.closed confirmed final usage during shutdown.
+
+LiveDelegationCoordinator consumes each original transcript fragment with timestamps, retains a bounded recent history, and bridges client delegations to any ReasoningEngine. It blocks duplicate backend execution for the same delegation and saves each result before delivery; if delivery fails, it can retry the saved result without rerunning model/tool calls. The host still decides when the transcript is sufficient, enforces permissions and idempotency for side effects, and handles backend cancellation.
+
+GPT-Live append updates are conservatively capped to 450 UTF-8 bytes to stay below the API's 500-token-per-append limit. The host supplies microphone capture and speaker playback, continuously sends mono PCM16 at the configured rate, and plays queued output in order. This separation allows a future Abacus port to route backend work through OmniRoute or any registered LLM without integrating it into Abacus now.
 
 Brahma currently has its existing Gemini Live loop. Both new adapters are optional and isolated; this code does not change the runtime's active voice provider. Live audio requires correctly paced PCM16 and a real device-to-session test.
 
