@@ -266,9 +266,11 @@ class PortableContractsTests(unittest.TestCase):
         self.assertEqual(sock.sent[2]["type"], "response.create")
         adapter.close()
 
-    def test_gpt_live_rejects_non_websocket_endpoint(self):
+    def test_gpt_live_rejects_non_websocket_endpoint_and_mismatched_audio_rates(self):
         with self.assertRaises(ValueError):
             GPTLiveVoiceAdapter("test-key", websocket_url="https://api.openai.com/v1/live/sessions")
+        with self.assertRaises(ValueError):
+            GPTLiveVoiceAdapter("test-key", policy=VoicePolicy(input_sample_rate=16000, output_sample_rate=24000))
 
     def test_gpt_live_uses_client_delegation_and_returns_delegations_to_host(self):
         class FakeSocket:
@@ -278,6 +280,7 @@ class PortableContractsTests(unittest.TestCase):
                     json.dumps({"type": "session.started", "session": {"id": "live-1"}}),
                     json.dumps({"type": "session.delegation.created", "delegation": {"id": "delegation-7", "target": "client"}}),
                     json.dumps({"type": "session.output_audio.delta", "delta": base64.b64encode(b"\x01\x02").decode("ascii")}),
+                    json.dumps({"type": "session.closed", "usage": {"voice_seconds": 4}}),
                 ]
             def send(self, value):
                 self.sent.append(json.loads(value))
@@ -316,6 +319,10 @@ class PortableContractsTests(unittest.TestCase):
             self.assertEqual(sent[-1]["type"], "session.input_audio.append")
             with self.assertRaises(ValueError):
                 adapter.send_pcm16(b"\x01")
+            closed = adapter.receive_event()
+            self.assertEqual(closed.kind, "session_closed")
+            self.assertTrue(adapter.session_closed_confirmed)
+            self.assertEqual(adapter.last_usage["voice_seconds"], 4)
             adapter.close()
 
     def test_voice_policy_enforces_realtime_chunking(self):

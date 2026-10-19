@@ -129,13 +129,25 @@ class GPTLiveVoiceAdapter:
         self.voice = str(voice or "marin").strip()
         self.instructions = str(instructions or "")
         self.policy = policy or VoicePolicy()
+        if self.policy.input_sample_rate != self.policy.output_sample_rate:
+            raise ValueError("GPT-Live requires the same configured audio rate for input and output.")
         self._socket: Any = None
         self._started = False
         self._closed = False
+        self._final_usage_confirmed = False
         self._send_lock = threading.Lock()
         self._pending: deque[dict[str, Any]] = deque()
         self._last_usage: Mapping[str, Any] | None = None
         self.playback = BoundedPlaybackBuffer(self.policy.max_buffered_chunks)
+
+    @property
+    def last_usage(self) -> Mapping[str, Any] | None:
+        return dict(self._last_usage) if self._last_usage is not None else None
+
+    @property
+    def session_closed_confirmed(self) -> bool:
+        """Whether GPT-Live emitted session.closed and finalized usage."""
+        return self._final_usage_confirmed
 
     def connect(self) -> None:
         if self._socket is not None:
@@ -286,6 +298,7 @@ class GPTLiveVoiceAdapter:
         if result.kind == "session_closed":
             usage = result.payload.get("usage")
             self._last_usage = usage if isinstance(usage, Mapping) else None
+            self._final_usage_confirmed = True
             self._closed = True
         return result
 
@@ -336,6 +349,7 @@ class GPTLiveVoiceAdapter:
                     if event.get("type") == "session.closed":
                         usage = event.get("usage")
                         self._last_usage = usage if isinstance(usage, Mapping) else None
+                        self._final_usage_confirmed = True
                         self._closed = True
                         break
         finally:
