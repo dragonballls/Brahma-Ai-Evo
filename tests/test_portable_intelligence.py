@@ -266,6 +266,10 @@ class PortableContractsTests(unittest.TestCase):
         self.assertEqual(sock.sent[2]["type"], "response.create")
         adapter.close()
 
+    def test_gpt_live_rejects_non_websocket_endpoint(self):
+        with self.assertRaises(ValueError):
+            GPTLiveVoiceAdapter("test-key", websocket_url="https://api.openai.com/v1/live/sessions")
+
     def test_gpt_live_uses_client_delegation_and_returns_delegations_to_host(self):
         class FakeSocket:
             def __init__(self):

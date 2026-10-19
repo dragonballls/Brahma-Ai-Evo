@@ -26,7 +26,7 @@ AnthropicMessagesProvider: native Anthropic Messages API with tool conversion.
 
 GeminiContentProvider: native Gemini generateContent API for text and tools. It is not the Gemini Live streaming-audio adapter.
 
-Custom providers can implement ProviderAdapter from contracts.py and register a Route. This includes a wrapper around any Abacus LLM/model abstraction. Never store credentials in route objects or repository files.
+CallableProvider lets a host wrap an existing LLM client with a small callback accepting (ModelRequest, model_name). Custom providers can instead implement ProviderAdapter and register a Route. Both approaches let a later Abacus adapter wrap its native LLM choices, direct API options, OmniRoute, or another compatible model service without hard-coding those choices into this package. Never store credentials in route objects or repository files.
 
 ## Voice
 

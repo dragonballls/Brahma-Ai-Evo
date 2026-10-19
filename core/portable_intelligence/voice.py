@@ -119,6 +119,8 @@ class GPTLiveVoiceAdapter:
         self.api_key = str(api_key or "").strip()
         if not self.api_key:
             raise ValueError("An OpenAI API key is required.")
+        if not str(websocket_url or "").startswith("wss://"):
+            raise ValueError("GPT-Live requires a secure WebSocket (wss://) URL.")
         validated = validate_base_url(websocket_url.replace("wss://", "https://", 1))
         if validated != "https://api.openai.com/v1/live/sessions":
             raise ValueError("GPT-Live credentials may only be sent to the official session endpoint.")
