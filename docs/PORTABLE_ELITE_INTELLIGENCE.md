@@ -40,7 +40,7 @@ print('Missing optional environment variables:', len(loaded.skipped))
 Operational behavior:
 
 - Identical key + provider family + normalized endpoint tuples collapse to one credential. Duplicate labels are counted but never treated as extra capacity.
-- Keys sharing a quota_group share cooldown and in-flight limits. Rate-limit responses honor Retry-After where available; hard quota/billing errors block that scope until the host operator calls shared_state.reset_scope(scope) after the underlying provider issue is resolved.
+- Keys sharing a quota_group share cooldown and in-flight limits. Rate-limit responses honor Retry-After where available; OpenRouter's per-key caps cool down or disable just that key, while OpenRouter credits/workspace limits are applied to the shared quota scope. Account-wide hard quota/billing errors block that scope until the host operator calls shared_state.reset_scope(scope) after the underlying provider issue is resolved.
 - Invalid/unauthorized keys are disabled until corrected and explicitly re-enabled with reset_credential(credential_id). Transient errors cool down the affected credential and may fail over.
 - snapshot() returns labels, fingerprints, token counters, cooldowns, failures, and shared-scope state—never raw API keys. Token totals and estimated route costs are not provider billing records.
 - Merge credential records from all sources the host is permitted to use before build_credential_pools() so duplicate keys can be found in one pass. Reuse one CredentialPoolState anywhere quota scopes must be shared.

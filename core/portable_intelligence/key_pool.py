@@ -350,8 +350,20 @@ class CredentialPoolProvider:
                     now = time.monotonic()
                     if exc.category in {"authentication_or_permission"} and self.auth_disable:
                         selected.disabled = True
+                    elif exc.category == "credential_limit_exhausted":
+                        if exc.retry_after_seconds is None:
+                            selected.disabled = True
+                        else:
+                            selected.cooldown_until = max(
+                                selected.cooldown_until, now + exc.retry_after_seconds
+                            )
                     elif exc.category == "quota_exhausted":
                         self.state.scope_blocked_reason[scope] = "provider quota/billing requires operator review"
+                    elif exc.category == "quota_cooldown":
+                        cooldown = exc.retry_after_seconds if exc.retry_after_seconds is not None else self.default_rate_limit_cooldown_seconds
+                        self.state.scope_cooldown_until[scope] = max(
+                            self.state.scope_cooldown_until.get(scope, 0.0), now + cooldown
+                        )
                     elif exc.status_code == 429 or exc.category in {"rate_limited"}:
                         cooldown = (
                             exc.retry_after_seconds

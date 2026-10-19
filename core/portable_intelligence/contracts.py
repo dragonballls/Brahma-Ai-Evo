@@ -20,7 +20,7 @@ class ProviderFailure(RuntimeError):
             value = float(retry_after_seconds) if retry_after_seconds is not None else None
         except (TypeError, ValueError):
             value = None
-        self.retry_after_seconds = max(0.0, min(value, 3600.0)) if value is not None else None
+        self.retry_after_seconds = max(0.0, min(value, 31_536_000.0)) if value is not None else None
         safe_message = str(message or self.category).replace("\n", " ")[:240]
         super().__init__(f"{self.provider_id}: {self.category}: {safe_message}")
 

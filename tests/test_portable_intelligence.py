@@ -691,6 +691,57 @@ class PortableContractsTests(unittest.TestCase):
         self.assertGreaterEqual(len(independent.calls), 1)
 
 
+
+    def test_openrouter_key_cap_rotates_one_key_without_blocking_siblings(self):
+        records = [
+            CredentialSpec("capped", "openai_compatible", "key-capped", "router-main",
+                           "https://openrouter.ai/api/v1", priority=1),
+            CredentialSpec("usable", "openai_compatible", "key-usable", "router-main",
+                           "https://openrouter.ai/api/v1", priority=2),
+        ]
+        calls = []
+        def factory(spec):
+            class Adapter(FakeProvider):
+                def complete(self, request, model):
+                    calls.append(spec.credential_id)
+                    if spec.credential_id == "capped":
+                        raise ProviderFailure("fake", "credential_limit_exhausted", status_code=402)
+                    return ModelReply("usable key succeeded", spec.credential_id, model)
+            return Adapter(spec.credential_id, "unused")
+        pool = CredentialPoolProvider("router-pool", records, adapter_factory=factory)
+        reply = pool.complete(ModelRequest(messages=({"role": "user", "content": "hi"},)), "model")
+        self.assertEqual(reply.text, "usable key succeeded")
+        self.assertEqual(calls, ["capped", "usable"])
+        capped = next(row for row in pool.snapshot()["credentials"] if row["credential_id"] == "capped")
+        self.assertTrue(capped["disabled"])
+        self.assertFalse(pool.snapshot()["quota_scopes"]["router-main"]["blocked"])
+
+    def test_openrouter_limit_source_classification_distinguishes_key_account_and_inflight(self):
+        key_cap = Mock()
+        key_cap.headers = {}
+        key_cap.json.return_value = {
+            "error": {"code": 402, "metadata": {
+                "limit_source": "openrouter_key_limit", "resets_at": "2099-01-01T00:00:00Z"
+            }}
+        }
+        kind, retryable, reset_after = _failure_details(key_cap, 402)
+        self.assertEqual((kind, retryable), ("credential_limit_exhausted", False))
+        self.assertGreater(reset_after, 0)
+
+        account = Mock()
+        account.headers = {}
+        account.json.return_value = {
+            "error": {"code": 402, "metadata": {"limit_source": "openrouter_credits"}}
+        }
+        self.assertEqual(_failure_details(account, 402), ("quota_exhausted", False, None))
+
+        inflight = Mock()
+        inflight.headers = {"Retry-After": "9"}
+        inflight.json.return_value = {
+            "error": {"code": 402, "metadata": {"limit_source": "openrouter_in_flight_budget"}}
+        }
+        self.assertEqual(_failure_details(inflight, 402), ("rate_limited", True, 9.0))
+
     def test_retry_after_and_hard_billing_quota_are_distinguished(self):
         rate_limited = Mock()
         rate_limited.headers = {"Retry-After": "12"}

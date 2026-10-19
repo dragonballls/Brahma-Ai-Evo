@@ -45,19 +45,19 @@ def _retry_after_seconds(response: Any) -> float | None:
     if value is None:
         return None
     try:
-        return max(0.0, min(float(value), 3600.0))
+        return max(0.0, min(float(value), 86400.0))
     except (TypeError, ValueError):
         try:
             deadline = parsedate_to_datetime(str(value))
             if deadline.tzinfo is None:
                 deadline = deadline.replace(tzinfo=timezone.utc)
-            return max(0.0, min((deadline - datetime.now(timezone.utc)).total_seconds(), 3600.0))
+            return max(0.0, min((deadline - datetime.now(timezone.utc)).total_seconds(), 86400.0))
         except (TypeError, ValueError, OverflowError):
             return None
 
 
 def _failure_details(response: Any, status: int) -> tuple[str, bool, float | None]:
-    """Classify recoverable rate limiting separately from billing/quota blocks."""
+    """Classify key-, account-, and transient limits using provider error metadata."""
     category, retryable = _status_category(status)
     retry_after = _retry_after_seconds(response)
     try:
@@ -68,6 +68,31 @@ def _failure_details(response: Any, status: int) -> tuple[str, bool, float | Non
     if isinstance(error, dict):
         code = str(error.get("code") or error.get("type") or error.get("status") or "").casefold()
         message = str(error.get("message") or "").casefold()
+        metadata = error.get("metadata") if isinstance(error.get("metadata"), dict) else {}
+        limit_source = str(metadata.get("limit_source") or "").casefold()
+        scope = str(metadata.get("scope") or "").casefold()
+        resets_at = metadata.get("resets_at")
+        reset_after = None
+        if resets_at:
+            try:
+                reset_time = datetime.fromisoformat(str(resets_at).replace("Z", "+00:00"))
+                if reset_time.tzinfo is None:
+                    reset_time = reset_time.replace(tzinfo=timezone.utc)
+                reset_after = max(0.0, min((reset_time - datetime.now(timezone.utc)).total_seconds(), 31_536_000.0))
+            except (TypeError, ValueError, OverflowError):
+                reset_after = None
+
+        # OpenRouter reports some account-wide and per-key caps with HTTP 402/403.
+        # A key cap should rotate that credential; account budgets must affect the shared scope.
+        if limit_source == "openrouter_key_limit" or (
+            limit_source == "openrouter_guardrail_budget" and scope in {"api_key", "key_limit"}
+        ):
+            return "credential_limit_exhausted", False, reset_after
+        if limit_source == "openrouter_in_flight_budget":
+            return "rate_limited", True, retry_after
+        if limit_source in {"openrouter_credits", "openrouter_workspace_budget", "openrouter_guardrail_budget"}:
+            return ("quota_cooldown", False, reset_after) if reset_after is not None else ("quota_exhausted", False, None)
+
         billing_failure = (
             "insufficient_quota" in code
             or "billing_hard_limit" in code
