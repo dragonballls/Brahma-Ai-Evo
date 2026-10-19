@@ -22,7 +22,7 @@ from core.portable_intelligence.evaluation import (
 )
 from core.portable_intelligence.providers import (
     AnthropicMessagesProvider, CallableProvider, OpenAICompatibleProvider,
-    OpenAIResponsesProvider, validate_base_url,
+    OpenAIResponsesProvider, _failure_details, validate_base_url,
 )
 from core.portable_intelligence.voice import (
     BoundedPlaybackBuffer, GPTLiveVoiceAdapter, LiveDelegationCoordinator,
@@ -688,6 +688,78 @@ class PortableContractsTests(unittest.TestCase):
         self.assertEqual(len(first.calls), 2)
         self.assertEqual(len(duplicate.calls), 0)
         self.assertGreaterEqual(len(independent.calls), 1)
+
+
+    def test_retry_after_and_hard_billing_quota_are_distinguished(self):
+        rate_limited = Mock()
+        rate_limited.headers = {"Retry-After": "12"}
+        rate_limited.json.return_value = {"error": {"code": "rate_limit_exceeded"}}
+        self.assertEqual(_failure_details(rate_limited, 429), ("rate_limited", True, 12.0))
+
+        exhausted = Mock()
+        exhausted.headers = {}
+        exhausted.json.return_value = {"error": {"code": "insufficient_quota"}}
+        self.assertEqual(_failure_details(exhausted, 429), ("quota_exhausted", False, None))
+
+    def test_credential_pool_example_merges_abacus_and_omniroute_aliases(self):
+        from pathlib import Path
+        import hashlib
+        path = Path(__file__).resolve().parents[1] / "benchmarks" / "credential_pool.example.json"
+        config = json.loads(path.read_text(encoding="utf-8"))
+        env_names = {
+            row["api_key_env"] for row in config["credentials"]
+            if row.get("enabled", True)
+        }
+        fake_env = {name: "test-key-" + name for name in env_names}
+        loaded = load_credentials_from_environment(config["credentials"], environ=fake_env)
+        self.assertEqual(len(config["credentials"]), 34)
+        self.assertEqual(len(loaded.credentials), 34)
+        pools = build_credential_pools(loaded.credentials)
+        by_family = {}
+        for pool in pools.values():
+            by_family[pool.family] = pool
+        gemini_pool = next(p for p in pools.values() if p.family == "gemini_generate_content")
+        router_pool = next(p for p in pools.values()
+                           if p.family == "openai_compatible" and "openrouter.ai" in p.base_url)
+        self.assertEqual(gemini_pool.snapshot()["credential_count"], 10)
+        self.assertEqual(router_pool.snapshot()["credential_count"], 4)
+        self.assertEqual(
+            sum(c["duplicate_aliases_collapsed"] for c in gemini_pool.snapshot()["credentials"]), 10
+        )
+        serialized = path.read_text(encoding="utf-8")
+        self.assertNotIn("test-key-", serialized)
+        self.assertNotIn("api_key\":", serialized)
+
+    def test_gpt_live_long_delegation_is_split_and_retry_resumes_after_accepted_chunks(self):
+        class Socket:
+            def __init__(self):
+                self.sent = []
+                self.calls = 0
+                self.fail_once_on_call = 2
+            def send(self, value):
+                self.calls += 1
+                if self.calls == self.fail_once_on_call:
+                    self.fail_once_on_call = -1
+                    raise RuntimeError("simulated transient websocket send failure")
+                self.sent.append(json.loads(value))
+
+        adapter = GPTLiveVoiceAdapter("test-key")
+        socket = Socket()
+        adapter._socket = socket
+        adapter._started = True
+        adapter._known_delegations.add("long-result")
+        text = ("Résumé 🙂; verified result. " * 100).strip()
+        with self.assertRaises(RuntimeError):
+            adapter.append_delegation_result("long-result", text)
+        first_chunk = socket.sent[0]["content"]
+        self.assertLessEqual(len(first_chunk.encode("utf-8")), 450)
+        adapter.append_delegation_result("long-result", text)
+        self.assertEqual("".join(item["content"] for item in socket.sent), text)
+        self.assertTrue(all(len(item["content"].encode("utf-8")) <= 450 for item in socket.sent))
+        total = len(socket.sent)
+        adapter.append_delegation_result("long-result", text)
+        self.assertEqual(len(socket.sent), total)
+        self.assertNotIn("test-key", json.dumps(socket.sent))
 
     def test_pairwise_judge_request_is_blinded_and_contains_same_task(self):
         case = BenchmarkCase(
