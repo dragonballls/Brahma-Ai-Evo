@@ -7,6 +7,8 @@ from __future__ import annotations
 import base64
 import json
 import threading
+import time
+import uuid
 from collections import deque
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol
@@ -94,6 +96,254 @@ class BoundedPlaybackBuffer:
     def clear(self) -> None:
         with self._lock:
             self._items.clear()
+
+
+class GPTLiveVoiceAdapter:
+    """GPT-Live voice session with client delegation to a host-owned backend.
+
+    It deliberately uses the GPT-Live /v1/live/sessions event protocol, not the
+    separate Realtime /v1/realtime API. The application may route a delegation
+    event to ReasoningEngine, OmniRoute, an Abacus LLM wrapper, or any custom
+    provider, then return verified results using append_delegation_result().
+    """
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        model: str = "gpt-live-1",
+        voice: str = "marin",
+        instructions: str = "Be helpful, concise, and transparent. Confirm before side effects.",
+        policy: VoicePolicy | None = None,
+        websocket_url: str = "wss://api.openai.com/v1/live/sessions",
+    ) -> None:
+        self.api_key = str(api_key or "").strip()
+        if not self.api_key:
+            raise ValueError("An OpenAI API key is required.")
+        validated = validate_base_url(websocket_url.replace("wss://", "https://", 1))
+        if validated != "https://api.openai.com/v1/live/sessions":
+            raise ValueError("GPT-Live credentials may only be sent to the official session endpoint.")
+        self.websocket_url = websocket_url.rstrip("/")
+        self.model = str(model or "").strip()
+        self.voice = str(voice or "marin").strip()
+        self.instructions = str(instructions or "")
+        self.policy = policy or VoicePolicy()
+        self._socket: Any = None
+        self._started = False
+        self._closed = False
+        self._send_lock = threading.Lock()
+        self._pending: deque[dict[str, Any]] = deque()
+        self._last_usage: Mapping[str, Any] | None = None
+        self.playback = BoundedPlaybackBuffer(self.policy.max_buffered_chunks)
+
+    def connect(self) -> None:
+        if self._socket is not None:
+            return
+        try:
+            import websocket
+        except ImportError as exc:
+            raise RuntimeError("websocket-client is required for GPT-Live voice.") from exc
+        sock = websocket.create_connection(
+            self.websocket_url,
+            header=[f"Authorization: Bearer {self.api_key}"],
+            timeout=self.policy.connect_timeout_seconds,
+            enable_multithread=True,
+        )
+        self._socket = sock
+        try:
+            self._send({
+                "type": "session.start",
+                "event_id": "brahma_session_start",
+                "session": {
+                    "model": self.model,
+                    "instructions": self.instructions,
+                    "audio": {
+                        "format": {"type": "audio/pcm", "rate": self.policy.input_sample_rate},
+                        "output": {"voice": self.voice},
+                    },
+                    "delegation": {"type": "client"},
+                },
+            })
+            deadline = time.monotonic() + self.policy.connect_timeout_seconds
+            while time.monotonic() < deadline:
+                sock.settimeout(max(0.05, deadline - time.monotonic()))
+                try:
+                    raw = sock.recv()
+                except Exception as exc:
+                    try:
+                        import websocket
+                        if isinstance(exc, websocket.WebSocketTimeoutException):
+                            continue
+                    except ImportError:
+                        pass
+                    raise RuntimeError(f"GPT-Live session startup failed ({type(exc).__name__}).") from exc
+                event = self._parse_event(raw)
+                self._pending.append(event)
+                event_type = str(event.get("type") or "")
+                if event_type == "session.started":
+                    self._started = True
+                    return
+                if event_type == "error":
+                    raise RuntimeError("GPT-Live rejected the session.start event.")
+            raise TimeoutError("Timed out waiting for GPT-Live session.started.")
+        except Exception:
+            self.close()
+            raise
+
+    def _send(self, payload: Mapping[str, Any]) -> None:
+        if self._socket is None or self._closed:
+            raise RuntimeError("GPT-Live session is not connected.")
+        if not self._started and payload.get("type") != "session.start":
+            raise RuntimeError("Wait for session.started before sending GPT-Live events.")
+        with self._send_lock:
+            self._socket.send(json.dumps(dict(payload), ensure_ascii=False))
+
+    @staticmethod
+    def _parse_event(raw: Any) -> dict[str, Any]:
+        try:
+            event = json.loads(raw)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("GPT-Live returned invalid JSON.") from exc
+        if not isinstance(event, dict):
+            raise RuntimeError("GPT-Live returned an unexpected event.")
+        return event
+
+    def send_pcm16(self, pcm: bytes) -> None:
+        if not self._started or self._closed:
+            raise RuntimeError("GPT-Live has not emitted session.started.")
+        data = bytes(pcm)
+        if len(data) % 2:
+            raise ValueError("PCM16 audio must contain complete 16-bit samples.")
+        if data:
+            self._send({
+                "type": "session.input_audio.append",
+                "audio": base64.b64encode(data).decode("ascii"),
+            })
+
+    def send_text(self, text: str) -> None:
+        raise NotImplementedError(
+            "Route typed text through the host intelligence engine and return the verified "
+            "result with append_delegation_result(); this session adapter handles live audio."
+        )
+
+    @staticmethod
+    def _event_to_voice_event(event: Mapping[str, Any]) -> VoiceEvent:
+        event_type = str(event.get("type") or "unknown")
+        if event_type == "session.output_audio.delta":
+            try:
+                pcm = base64.b64decode(str(event.get("delta") or ""), validate=True)
+            except (ValueError, TypeError):
+                pcm = b""
+            return VoiceEvent("audio_delta", {"pcm16": pcm})
+        if event_type in {"session.input_transcript.delta", "session.output_transcript.delta"}:
+            return VoiceEvent("transcript_delta", {
+                "text": str(event.get("delta") or ""),
+                "source_type": event_type,
+                "start_ms": event.get("start_ms"),
+                "end_ms": event.get("end_ms"),
+            })
+        if event_type == "session.delegation.created":
+            delegation = event.get("delegation") if isinstance(event.get("delegation"), dict) else {}
+            return VoiceEvent("delegation", {
+                "delegation_id": delegation.get("id"),
+                "target": delegation.get("target"),
+                "offset_ms": event.get("offset_ms"),
+            })
+        if event_type == "session.started":
+            return VoiceEvent("session_state", event)
+        if event_type == "session.closed":
+            return VoiceEvent("session_closed", {"usage": event.get("usage"), "session": event.get("session")})
+        if event_type == "error":
+            error = event.get("error") if isinstance(event.get("error"), dict) else {}
+            return VoiceEvent("error", {
+                "code": error.get("code"),
+                "message": str(error.get("message") or "GPT-Live provider error")[:240],
+                "client_event_id": error.get("client_event_id"),
+            })
+        return VoiceEvent("provider_event", event)
+
+    def receive_event(self, timeout_seconds: float = 0.1) -> VoiceEvent | None:
+        if self._socket is None or self._closed:
+            raise RuntimeError("GPT-Live session is not connected.")
+        if self._pending:
+            event = self._pending.popleft()
+        else:
+            try:
+                self._socket.settimeout(max(0.01, float(timeout_seconds)))
+                event = self._parse_event(self._socket.recv())
+            except Exception as exc:
+                try:
+                    import websocket
+                    if isinstance(exc, websocket.WebSocketTimeoutException):
+                        return None
+                except ImportError:
+                    pass
+                raise RuntimeError(f"GPT-Live receive failed ({type(exc).__name__}).") from exc
+        result = self._event_to_voice_event(event)
+        if result.kind == "audio_delta":
+            self.playback.push(self.playback.generation, bytes(result.payload.get("pcm16", b"")))
+        if result.kind == "session_closed":
+            usage = result.payload.get("usage")
+            self._last_usage = usage if isinstance(usage, Mapping) else None
+            self._closed = True
+        return result
+
+    def append_delegation_result(self, delegation_id: str, content: str, *, spoken: bool = True) -> None:
+        """Return validated host-backend results for GPT-Live to say or reason over."""
+        task_id = str(delegation_id or "").strip()
+        text = str(content or "").strip()
+        if not task_id:
+            raise ValueError("delegation_id is required.")
+        if not text:
+            raise ValueError("A non-empty delegated result is required.")
+        self._send({
+            "type": "session.commentary.append" if spoken else "session.thinking.append",
+            "event_id": "brahma_result_" + uuid.uuid4().hex,
+            "delegation_id": task_id,
+            "content": text[:1600],
+        })
+
+    def append_instruction(self, content: str) -> None:
+        text = str(content or "").strip()
+        if not text:
+            raise ValueError("Instruction content is required.")
+        self._send({
+            "type": "session.instructions.append",
+            "event_id": "brahma_instruction_" + uuid.uuid4().hex,
+            "content": text[:1600],
+        })
+
+    def interrupt(self, *, item_id: str | None = None, audio_end_ms: int | None = None) -> None:
+        # GPT-Live manages speech interruption. The host owns cancellation of any
+        # already-running delegated backend job.
+        self.playback.interrupt()
+
+    def close(self) -> None:
+        sock = self._socket
+        if sock is None:
+            return
+        try:
+            if self._started and not self._closed:
+                self._send({"type": "session.close"})
+                deadline = time.monotonic() + 15.0
+                while time.monotonic() < deadline:
+                    try:
+                        sock.settimeout(max(0.05, deadline - time.monotonic()))
+                        event = self._parse_event(sock.recv())
+                    except Exception:
+                        break
+                    if event.get("type") == "session.closed":
+                        usage = event.get("usage")
+                        self._last_usage = usage if isinstance(usage, Mapping) else None
+                        self._closed = True
+                        break
+        finally:
+            self.playback.interrupt()
+            self._socket = None
+            self._closed = True
+            try:
+                sock.close()
+            except Exception:
+                pass
 
 
 class OpenAIRealtimeVoiceAdapter:
