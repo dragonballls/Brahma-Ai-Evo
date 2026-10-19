@@ -158,7 +158,13 @@ class OpenAICompatibleProvider(HTTPProvider):
 
     def complete(self, request: ModelRequest, model: str) -> ModelReply:
         model_leaf = str(model or "").rsplit("/", 1)[-1].casefold()
+        is_gpt6_model = model_leaf.startswith("gpt-6")
         responses_only_models = {"gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol"}
+        if is_gpt6_model and request.reasoning_effort == "none":
+            raise ProviderFailure(
+                self.provider_id, "unsupported_reasoning_effort",
+                "GPT-6 models do not support reasoning_effort='none'.",
+            )
         if request.tools and model_leaf in responses_only_models:
             raise ProviderFailure(
                 self.provider_id, "native_responses_required",
@@ -175,7 +181,7 @@ class OpenAICompatibleProvider(HTTPProvider):
             "model": model, "messages": messages,
             "max_tokens": request.max_output_tokens,
         }
-        if not request.reasoning_effort or request.reasoning_effort == "none":
+        if not is_gpt6_model and (not request.reasoning_effort or request.reasoning_effort == "none"):
             payload["temperature"] = request.temperature
         if request.tools:
             payload["tools"] = [tool.openai_chat_schema() for tool in request.tools]
@@ -242,6 +248,13 @@ class OpenAIResponsesProvider(HTTPProvider):
         return items
 
     def complete(self, request: ModelRequest, model: str) -> ModelReply:
+        model_leaf = str(model or "").rsplit("/", 1)[-1].casefold()
+        is_gpt6_model = model_leaf.startswith("gpt-6")
+        if is_gpt6_model and request.reasoning_effort == "none":
+            raise ProviderFailure(
+                self.provider_id, "unsupported_reasoning_effort",
+                "GPT-6 models do not support reasoning_effort='none'.",
+            )
         payload: dict[str, Any] = {
             "model": model, "input": self._input_items(request),
             "max_output_tokens": request.max_output_tokens,
@@ -250,7 +263,7 @@ class OpenAIResponsesProvider(HTTPProvider):
             payload["instructions"] = request.system
         if request.reasoning_effort:
             payload["reasoning"] = {"effort": request.reasoning_effort}
-        else:
+        elif not is_gpt6_model:
             payload["temperature"] = request.temperature
         if request.tools:
             payload["tools"] = [tool.openai_responses_schema() for tool in request.tools]
