@@ -63,6 +63,39 @@ def _comparison_call_limits(
         raise ValueError("The total call budget is too small to leave two candidates and a synthesis call.")
     return ensemble_budget, candidate_budget
 
+
+
+def _route_diversity_group(route: Route, providers: Mapping[str, Any]) -> str:
+    provider = providers[route.provider_id]
+    return str(route.diversity_group or getattr(provider, "diversity_group", route.provider_id) or route.provider_id)
+
+
+def _independent_candidate_routes(
+    routes: Mapping[str, Route],
+    providers: Mapping[str, Any],
+    *,
+    baseline_id: str,
+    judge_id: str,
+) -> tuple[Route, ...]:
+    """Exclude baseline/judge and any aliases of their pool or diversity groups."""
+    baseline_provider = providers[baseline_id]
+    judge_provider = providers[judge_id]
+    blocked_object_ids = {id(baseline_provider), id(judge_provider)}
+    blocked_groups = {
+        _route_diversity_group(routes[baseline_id], providers),
+        _route_diversity_group(routes[judge_id], providers),
+    }
+    result = []
+    for route_id, route in routes.items():
+        if route_id in {baseline_id, judge_id}:
+            continue
+        if id(providers[route_id]) in blocked_object_ids:
+            continue
+        if _route_diversity_group(route, providers) in blocked_groups:
+            continue
+        result.append(route)
+    return tuple(result)
+
 def _load_routes(config_path: Path) -> tuple[dict[str, Any], dict[str, Route], dict[str, dict[str, Any]]]:
     try:
         config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -233,13 +266,12 @@ def main(argv: list[str] | None = None) -> int:
         print("Configured active routes: " + ", ".join(sorted(routes)), file=sys.stderr)
         return 2
 
-    candidate_routes = tuple(
-        route for provider_id, route in routes.items()
-        if provider_id not in {baseline_id, judge_id}
+    candidate_routes = _independent_candidate_routes(
+        routes, providers, baseline_id=baseline_id, judge_id=judge_id
     )
+    candidate_provider_ids = {route.provider_id for route in candidate_routes}
     candidate_providers = {
-        provider_id: provider for provider_id, provider in providers.items()
-        if provider_id not in {baseline_id, judge_id}
+        provider_id: providers[provider_id] for provider_id in candidate_provider_ids
     }
     candidate_diversity = {
         str(route.diversity_group or getattr(candidate_providers[route.provider_id], "diversity_group", route.provider_id))

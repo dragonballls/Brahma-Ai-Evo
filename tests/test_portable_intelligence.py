@@ -1006,6 +1006,34 @@ class PortableContractsTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     _comparison_call_limits(total_calls, max_candidates, route_count)
 
+
+    def test_comparison_excludes_baseline_and_judge_aliases_by_pool_and_group(self):
+        from scripts.portable_intelligence_compare import _independent_candidate_routes
+        baseline_pool = FakeProvider("openai-pool", "baseline")
+        judge_pool = FakeProvider("anthropic-pool", "judge")
+        routes = {
+            "baseline": Route("baseline", "gpt-6-astra", diversity_group="openai-account"),
+            "baseline-alias": Route("baseline-alias", "gpt-6-sol", diversity_group="openai-account"),
+            "baseline-same-pool": Route("baseline-same-pool", "gpt-6-luna", diversity_group="misconfigured-other"),
+            "judge": Route("judge", "claude", diversity_group="anthropic-account"),
+            "judge-alias": Route("judge-alias", "claude-alt", diversity_group="anthropic-account"),
+            "gemini": Route("gemini", "gemini-model", diversity_group="gemini-project"),
+            "mistral": Route("mistral", "mistral-model", diversity_group="mistral-project"),
+        }
+        providers = {
+            "baseline": baseline_pool,
+            "baseline-alias": FakeProvider("openai-alias", "same underlying account"),
+            "baseline-same-pool": baseline_pool,
+            "judge": judge_pool,
+            "judge-alias": FakeProvider("anthropic-alias", "same underlying judge account"),
+            "gemini": FakeProvider("gemini", "candidate"),
+            "mistral": FakeProvider("mistral", "candidate"),
+        }
+        candidates = _independent_candidate_routes(
+            routes, providers, baseline_id="baseline", judge_id="judge"
+        )
+        self.assertEqual({route.provider_id for route in candidates}, {"gemini", "mistral"})
+
     def test_pairwise_judge_request_is_blinded_and_contains_same_task(self):
         case = BenchmarkCase(
             "case-1", "reasoning", "What is 6 * 7?",

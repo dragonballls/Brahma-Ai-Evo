@@ -63,6 +63,7 @@ def _route_from_config(row: dict[str, Any]) -> tuple[str, Any, Route] | None:
         capabilities=frozenset(row.get("capabilities") or getattr(provider, "capabilities", {"text"})),
         input_usd_per_million=pricing.get("input_usd_per_million"),
         output_usd_per_million=pricing.get("output_usd_per_million"),
+        diversity_group=str(row.get("diversity_group") or provider_id),
     )
     return provider_id, provider, route
 
