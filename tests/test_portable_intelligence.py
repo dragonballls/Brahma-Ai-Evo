@@ -596,6 +596,50 @@ class PortableContractsTests(unittest.TestCase):
         self.assertEqual(created["bad"].calls.__len__(), 1)
         self.assertEqual(created["good"].calls.__len__(), 1)
 
+    def test_credential_pool_retry_excludes_attempted_key_after_cursor_interleaving(self):
+        records = [
+            CredentialSpec("first", "gemini_generate_content", "first-key", "project-A",
+                           "https://generativelanguage.googleapis.com/v1beta", priority=1),
+            CredentialSpec("second", "gemini_generate_content", "second-key", "project-B",
+                           "https://generativelanguage.googleapis.com/v1beta", priority=2),
+        ]
+        attempts = []
+
+        def factory(spec):
+            class Adapter(FakeProvider):
+                def complete(self, request, model):
+                    attempts.append(spec.credential_id)
+                    if spec.credential_id == "first":
+                        raise ProviderFailure(
+                            "fake", "temporary_failure", status_code=503, retryable=True
+                        )
+                    return ModelReply("recovered", spec.credential_id, model)
+            return Adapter(spec.credential_id, "unused")
+
+        pool = CredentialPoolProvider(
+            "gemini-pool", records, adapter_factory=factory, transient_cooldown_seconds=0
+        )
+        original_pick = pool._pick
+        pick_calls = 0
+
+        def interleaved_pick(excluded_fingerprints=None):
+            nonlocal pick_calls
+            pick_calls += 1
+            if pick_calls == 2:
+                # Simulate another request moving the shared round-robin cursor.
+                with pool.state.lock:
+                    pool._cursor = 0
+            return original_pick(excluded_fingerprints=excluded_fingerprints)
+
+        pool._pick = interleaved_pick
+        reply = pool.complete(
+            ModelRequest(messages=({"role": "user", "content": "retry safely"},)), "gemini-model"
+        )
+        self.assertEqual(reply.text, "recovered")
+        self.assertEqual(attempts, ["first", "second"])
+        self.assertEqual(pool.snapshot()["credentials"][0]["failures"], 1)
+        self.assertEqual(pool.snapshot()["credentials"][1]["successes"], 1)
+
     def test_credential_pool_rate_limit_cools_shared_quota_not_sibling_keys(self):
         records = [
             CredentialSpec("g1", "gemini_generate_content", "key-1", "same-project",

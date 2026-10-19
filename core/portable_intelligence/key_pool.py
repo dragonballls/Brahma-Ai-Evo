@@ -257,7 +257,13 @@ class CredentialPoolProvider:
             return factory(**kwargs)
         return factory(**kwargs)
 
-    def _pick(self) -> _CredentialState:
+    def _pick(self, excluded_fingerprints: set[str] | None = None) -> _CredentialState:
+        """Pick an eligible credential not already attempted by this request.
+
+        The excluded set matters under concurrency: other requests can move the
+        round-robin cursor between attempts, so the cursor alone cannot guarantee
+        that one request will not revisit a credential it already tried.
+        """
         now = time.monotonic()
         with self.state.lock:
             total = len(self._credentials)
@@ -265,6 +271,8 @@ class CredentialPoolProvider:
                 index = (self._cursor + offset) % total
                 candidate = self._credentials[index]
                 cred = candidate.credential
+                if excluded_fingerprints and cred.fingerprint in excluded_fingerprints:
+                    continue
                 if candidate.disabled or candidate.cooldown_until > now:
                     continue
                 if self.state.scope_blocked_reason.get(cred.quota_group):
@@ -306,18 +314,14 @@ class CredentialPoolProvider:
         failures: list[ProviderFailure] = []
         for _ in range(len(self._credentials)):
             try:
-                selected = self._pick()
+                selected = self._pick(excluded_fingerprints=attempted)
             except ProviderFailure as exc:
                 if failures:
                     break
                 raise
             credential = selected.credential
             scope = credential.quota_group
-            attempt_key = credential.fingerprint
-            if attempt_key in attempted:
-                self._release(selected)
-                break
-            attempted.add(attempt_key)
+            attempted.add(credential.fingerprint)
             try:
                 reply = self._adapter_for(selected).complete(request, model)
                 if not isinstance(reply, ModelReply):
