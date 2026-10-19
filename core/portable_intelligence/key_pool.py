@@ -455,7 +455,7 @@ def build_credential_pools(
     shared_state = state or CredentialPoolState()
     result: dict[str, CredentialPoolProvider] = {}
     for (family, endpoint), group_credentials in sorted(groups.items()):
-        suffix = hashlib.sha256(f"{family}\\0{endpoint}".encode("utf-8")).hexdigest()[:8]
+        suffix = hashlib.sha256(f"{family}|{endpoint}".encode("utf-8")).hexdigest()[:8]
         provider_id = f"{family}_{suffix}"
         if provider_id in result:
             raise ValueError("Provider-pool ID collision.")
@@ -464,7 +464,64 @@ def build_credential_pools(
             group_credentials,
             state=shared_state,
             adapter_factory=adapter_factory,
-            diversity_group=(diversity_groups or {}).get(provider_id, family),
+            diversity_group=(diversity_groups or {}).get(provider_id, f"{family}:{endpoint}"),
             max_parallel_per_scope=max_parallel_per_scope,
         )
     return result
+
+
+def merge_credential_specs(
+    sources: Mapping[str, Sequence[CredentialSpec]],
+) -> tuple[CredentialSpec, ...]:
+    """Merge already-loaded credentials from multiple host integrations in memory.
+
+    Each source can adapt an existing settings/key store (for example Abacus, an
+    OmniRoute gateway config, or direct provider settings) to CredentialSpec. IDs
+    are namespaced by source, but identical actual key/provider/endpoint values
+    remain detectable by build_credential_pools(). This does not discover or open
+    another app's private config; the host must explicitly supply its authorized
+    credential objects. Keys never enter logs or generated source files.
+    """
+    merged: list[CredentialSpec] = []
+    for source_name, specs in sorted(sources.items(), key=lambda item: str(item[0]).casefold()):
+        label = str(source_name or "").strip()
+        if not label:
+            raise ValueError("Credential source labels must be non-empty.")
+        for spec in specs:
+            if not isinstance(spec, CredentialSpec):
+                raise TypeError("Credential sources must provide CredentialSpec objects.")
+            merged.append(CredentialSpec(
+                credential_id=f"{label}:{spec.credential_id}",
+                provider_family=spec.provider_family,
+                api_key=spec.api_key,
+                quota_group=spec.quota_group,
+                base_url=spec.base_url,
+                priority=spec.priority,
+                source_label=label,
+                enabled=spec.enabled,
+            ))
+    return tuple(merged)
+
+
+def load_credentials_from_sources(
+    sources: Mapping[str, Sequence[Mapping[str, Any]]],
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> CredentialLoadResult:
+    """Load any number of rows from multiple public configs via environment keys."""
+    rows: list[dict[str, Any]] = []
+    for source_name, source_rows in sorted(sources.items(), key=lambda item: str(item[0]).casefold()):
+        label = str(source_name or "").strip()
+        if not label:
+            raise ValueError("Credential source labels must be non-empty.")
+        for row in source_rows:
+            if not isinstance(row, Mapping):
+                raise ValueError("Each source credential row must be an object.")
+            entry = dict(row)
+            original_id = str(entry.get("id") or "").strip()
+            if not original_id:
+                raise ValueError(f"Credential from {label} has no ID.")
+            entry["id"] = f"{label}:{original_id}"
+            entry["source_label"] = label
+            rows.append(entry)
+    return load_credentials_from_environment(rows, environ=environ)

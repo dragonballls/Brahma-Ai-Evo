@@ -19,7 +19,7 @@ The package is intended to be movable into another desktop app later. Its core u
 
 ## Multi-key provider pools
 
-CredentialSpec and CredentialPoolProvider let a host manage many provider keys. Real key values must stay in environment variables or an approved secret manager. The checked-in `benchmarks/credential_pool.example.json` contains only environment variable names and public endpoint metadata. It models 10 Gemini keys and 4 OpenRouter keys, plus duplicate source aliases to demonstrate deduplication.
+CredentialSpec and CredentialPoolProvider let a host manage many provider keys. Real key values must stay in environment variables or an approved secret manager. The checked-in `benchmarks/credential_pool.example.json` contains only environment variable names and public endpoint metadata. The checked-in rows are examples, not fixed limits; add or remove any number of credentials without code changes. Duplicate Abacus/OmniRoute source aliases illustrate deduplication.
 
 Example host bootstrap:
 
@@ -78,3 +78,5 @@ Provider availability and model/API fields can change. An API key is necessary b
 - A real-provider smoke suite must be opt-in and use valid keys. It should measure latency, completion rate, interruptions, missing audio, tool accuracy, token use, estimated versus actual cost, and unsupported success claims.
 - Compare against GPT-6 Astra and GPT-Live on the same tasks, context, permissions, and tool access. Deterministic phrase matching is only a harness sanity check, not an intelligence benchmark.
 - Do not wire this into the default runtime until CI passes, live-provider checks are recorded, and performance/cost regressions are reviewed.
+
+Host integrations may adapt their already-authorized in-memory credentials into CredentialSpec and pass them through merge_credential_specs({'abacus': ..., 'omniroute': ..., 'direct': ...}). The library does not read another application's private config on its own. Duplicate provider/endpoint/key fingerprints collapse when building the pools.

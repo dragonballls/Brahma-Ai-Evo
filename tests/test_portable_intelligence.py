@@ -15,6 +15,7 @@ from core.portable_intelligence.engine import ReasoningEngine
 from core.portable_intelligence.key_pool import (
     CredentialPoolProvider, CredentialPoolState, CredentialSpec,
     build_credential_pools, load_credentials_from_environment,
+    load_credentials_from_sources, merge_credential_specs,
 )
 from core.portable_intelligence.evaluation import (
     BenchmarkCase, EvaluationHarness, build_pairwise_judge_request,
@@ -712,19 +713,31 @@ class PortableContractsTests(unittest.TestCase):
         }
         fake_env = {name: "test-key-" + name for name in env_names}
         loaded = load_credentials_from_environment(config["credentials"], environ=fake_env)
-        self.assertEqual(len(config["credentials"]), 34)
-        self.assertEqual(len(loaded.credentials), 34)
+        self.assertGreater(len(config["credentials"]), 0)
+        self.assertEqual(len(loaded.credentials), sum(
+            1 for row in config["credentials"]
+            if row.get("enabled", True) and row.get("api_key_env") in fake_env
+        ))
         pools = build_credential_pools(loaded.credentials)
-        by_family = {}
-        for pool in pools.values():
-            by_family[pool.family] = pool
+        gemini_specs = [c for c in loaded.credentials if c.provider_family == "gemini_generate_content"]
+        router_specs = [
+            c for c in loaded.credentials
+            if c.provider_family == "openai_compatible" and "openrouter.ai" in c.base_url
+        ]
         gemini_pool = next(p for p in pools.values() if p.family == "gemini_generate_content")
         router_pool = next(p for p in pools.values()
                            if p.family == "openai_compatible" and "openrouter.ai" in p.base_url)
-        self.assertEqual(gemini_pool.snapshot()["credential_count"], 10)
-        self.assertEqual(router_pool.snapshot()["credential_count"], 4)
         self.assertEqual(
-            sum(c["duplicate_aliases_collapsed"] for c in gemini_pool.snapshot()["credentials"]), 10
+            gemini_pool.snapshot()["credential_count"],
+            len({c.fingerprint for c in gemini_specs}),
+        )
+        self.assertEqual(
+            router_pool.snapshot()["credential_count"],
+            len({c.fingerprint for c in router_specs}),
+        )
+        self.assertEqual(
+            sum(c["duplicate_aliases_collapsed"] for c in gemini_pool.snapshot()["credentials"]),
+            len(gemini_specs) - len({c.fingerprint for c in gemini_specs}),
         )
         serialized = path.read_text(encoding="utf-8")
         self.assertNotIn("test-key-", serialized)
@@ -760,6 +773,56 @@ class PortableContractsTests(unittest.TestCase):
         adapter.append_delegation_result("long-result", text)
         self.assertEqual(len(socket.sent), total)
         self.assertNotIn("test-key", json.dumps(socket.sent))
+
+
+    def test_multi_source_key_merge_scales_without_fixed_provider_key_count(self):
+        # Intentionally use an arbitrary count here; the loader has no fixed key limit.
+        env = {}
+        abacus_rows = []
+        gateway_rows = []
+        for index in range(1, 14):
+            variable = f"GEMINI_POOL_KEY_{index:02d}"
+            env[variable] = f"fake-gemini-key-{index:02d}"
+            row = {
+                "id": f"gemini-{index:02d}",
+                "provider_family": "gemini_generate_content",
+                "api_key_env": variable,
+                "base_url": "https://generativelanguage.googleapis.com/v1beta",
+                "quota_group": "same-google-project",
+                "priority": index,
+            }
+            (abacus_rows if index % 2 else gateway_rows).append(row)
+        loaded = load_credentials_from_sources(
+            {"abacus": abacus_rows, "omniroute": gateway_rows},
+            environ=env,
+        )
+        self.assertEqual(len(loaded.credentials), 13)
+        specs = merge_credential_specs({
+            "abacus": loaded.credentials[:6],
+            "omniroute": loaded.credentials[6:],
+        })
+        self.assertEqual(len(specs), 13)
+        pool = build_credential_pools(specs)
+        gemini_pool = next(iter(pool.values()))
+        self.assertEqual(gemini_pool.snapshot()["credential_count"], 13)
+        self.assertEqual({c["source_label"] for c in gemini_pool.snapshot()["credentials"]},
+                         {"abacus", "omniroute"})
+
+    def test_source_merge_detects_same_secret_alias_across_sources(self):
+        shared = CredentialSpec(
+            "provider-key-1", "gemini_generate_content", "same-secret-value",
+            "google-project-1", "https://generativelanguage.googleapis.com/v1beta",
+        )
+        merged = merge_credential_specs({
+            "abacus": (shared,),
+            "omniroute": (shared,),
+        })
+        self.assertEqual(len(merged), 2)
+        pool = build_credential_pools(merged)
+        gemini_pool = next(iter(pool.values()))
+        self.assertEqual(gemini_pool.snapshot()["credential_count"], 1)
+        self.assertEqual(gemini_pool.snapshot()["credentials"][0]["duplicate_aliases_collapsed"], 1)
+        self.assertNotIn("same-secret-value", repr(gemini_pool.snapshot()))
 
     def test_pairwise_judge_request_is_blinded_and_contains_same_task(self):
         case = BenchmarkCase(

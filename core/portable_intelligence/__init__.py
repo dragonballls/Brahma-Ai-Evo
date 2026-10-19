@@ -7,6 +7,7 @@ from .engine import ReasoningEngine
 from .key_pool import (
     CredentialLoadResult, CredentialPoolProvider, CredentialPoolState, CredentialSpec,
     build_credential_pools, load_credentials_from_environment,
+    load_credentials_from_sources, merge_credential_specs,
 )
 from .providers import AnthropicMessagesProvider, CallableProvider, GeminiContentProvider, OpenAICompatibleProvider, OpenAIResponsesProvider
 from .voice import BoundedPlaybackBuffer, GPTLiveVoiceAdapter, LiveDelegationCoordinator, OpenAIRealtimeVoiceAdapter, VoicePolicy
@@ -19,4 +20,5 @@ __all__ = [
     "OpenAIRealtimeVoiceAdapter", "OpenAIResponsesProvider", "ProviderFailure",
     "ReasoningEngine", "Route", "RunPolicy", "TaskResult", "ToolCall", "VoicePolicy",
     "build_credential_pools", "load_credentials_from_environment",
+    "load_credentials_from_sources", "merge_credential_specs",
 ]
