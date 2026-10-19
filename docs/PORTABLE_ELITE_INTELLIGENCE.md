@@ -7,7 +7,7 @@ The package is intended to be movable into another desktop app later. Its core u
 ## Targets
 
 - Use direct provider APIs, OpenAI-compatible endpoints, or a local gateway such as OmniRoute without coupling the engine to one app's settings or UI.
-- Prefer native APIs when full model capabilities require them. GPT-6 Astra function calling must be routed through the OpenAI Responses API, not assumed to work through every Chat Completions gateway.
+- Prefer native APIs when full model capabilities require them. GPT-6 Astra and GPT-6.1 Sol function calling must be routed through the OpenAI Responses API, not assumed to work through every Chat Completions gateway. Keep restrictions model-specific: Astra and 6.1 Sol reject `none`/`minimal` reasoning and custom sampling values; GPT-6 Sol and GPT-6 Luna support `none`, while their Chat Completions function-calling mode requires `reasoning_effort="none"`. Recheck the official model guide when new model IDs are added.
 - Keep model inference on configured hosted providers where chosen, reducing local model RAM and compute requirements.
 - Make latency and spending tradeoffs explicit with bounded parallel calls, model-call limits, operator-supplied token rates, and a hard estimated-spend ceiling.
 - Support independent provider diversity, skeptical critic passes, and final synthesis for explicitly complex text tasks. Tool-bearing requests skip ensemble fan-out to avoid duplicated side effects.

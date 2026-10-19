@@ -65,6 +65,37 @@ def _tool_by_name(request: ModelRequest, name: str) -> FunctionTool | None:
     return next((tool for tool in request.tools if tool.name == name), None)
 
 
+_GPT6_SAMPLING_RESTRICTED = frozenset({"gpt-6-astra", "gpt-6.1-sol"})
+_GPT6_RESPONSES_REQUIRED_FOR_TOOLS = frozenset({"gpt-6-astra", "gpt-6.1-sol"})
+_GPT6_CHAT_TOOLS_REQUIRE_NONE = frozenset({"gpt-6-sol", "gpt-6-luna"})
+
+
+def _model_leaf(model: str) -> str:
+    return str(model or "").rsplit("/", 1)[-1].casefold()
+
+
+def _validate_gpt6_request(provider_id: str, request: ModelRequest, model: str) -> bool:
+    """Return whether sampling parameters are restricted for this known model."""
+    leaf = _model_leaf(model)
+    restricted_sampling = leaf in _GPT6_SAMPLING_RESTRICTED
+    if restricted_sampling and request.reasoning_effort in {"none", "minimal"}:
+        raise ProviderFailure(
+            provider_id, "unsupported_reasoning_effort",
+            f"{leaf} supports low/medium/high/xhigh/max reasoning effort, not {request.reasoning_effort!r}.",
+        )
+    if request.tools and leaf in _GPT6_RESPONSES_REQUIRED_FOR_TOOLS:
+        raise ProviderFailure(
+            provider_id, "native_responses_required",
+            f"{leaf} tool calling requires the native OpenAI Responses API.",
+        )
+    if request.tools and leaf in _GPT6_CHAT_TOOLS_REQUIRE_NONE and request.reasoning_effort != "none":
+        raise ProviderFailure(
+            provider_id, "chat_tool_calling_requires_none",
+            f"{leaf} Chat Completions function calling requires reasoning_effort='none'; use Responses otherwise.",
+        )
+    return restricted_sampling
+
+
 class HTTPProvider:
     provider_id = "http_provider"
     capabilities = frozenset({"text", "tools"})
@@ -157,19 +188,7 @@ class OpenAICompatibleProvider(HTTPProvider):
         self.provider_id = "openai_compatible"
 
     def complete(self, request: ModelRequest, model: str) -> ModelReply:
-        model_leaf = str(model or "").rsplit("/", 1)[-1].casefold()
-        is_gpt6_model = model_leaf.startswith("gpt-6")
-        responses_only_models = {"gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol"}
-        if is_gpt6_model and request.reasoning_effort == "none":
-            raise ProviderFailure(
-                self.provider_id, "unsupported_reasoning_effort",
-                "GPT-6 models do not support reasoning_effort='none'.",
-            )
-        if request.tools and model_leaf in responses_only_models:
-            raise ProviderFailure(
-                self.provider_id, "native_responses_required",
-                "This model's tool-calling path requires the native OpenAI Responses API.",
-            )
+        restricted_sampling = _validate_gpt6_request(self.provider_id, request, model)
         messages = [{"role": "system", "content": request.system}] if request.system else []
         for item in request.messages:
             message: dict[str, Any] = {"role": item["role"], "content": item.get("content", "")}
@@ -181,7 +200,7 @@ class OpenAICompatibleProvider(HTTPProvider):
             "model": model, "messages": messages,
             "max_tokens": request.max_output_tokens,
         }
-        if not is_gpt6_model and (not request.reasoning_effort or request.reasoning_effort == "none"):
+        if not restricted_sampling and (not request.reasoning_effort or request.reasoning_effort == "none"):
             payload["temperature"] = request.temperature
         if request.tools:
             payload["tools"] = [tool.openai_chat_schema() for tool in request.tools]
@@ -248,13 +267,7 @@ class OpenAIResponsesProvider(HTTPProvider):
         return items
 
     def complete(self, request: ModelRequest, model: str) -> ModelReply:
-        model_leaf = str(model or "").rsplit("/", 1)[-1].casefold()
-        is_gpt6_model = model_leaf.startswith("gpt-6")
-        if is_gpt6_model and request.reasoning_effort == "none":
-            raise ProviderFailure(
-                self.provider_id, "unsupported_reasoning_effort",
-                "GPT-6 models do not support reasoning_effort='none'.",
-            )
+        restricted_sampling = _validate_gpt6_request(self.provider_id, request, model)
         payload: dict[str, Any] = {
             "model": model, "input": self._input_items(request),
             "max_output_tokens": request.max_output_tokens,
@@ -263,7 +276,7 @@ class OpenAIResponsesProvider(HTTPProvider):
             payload["instructions"] = request.system
         if request.reasoning_effort:
             payload["reasoning"] = {"effort": request.reasoning_effort}
-        elif not is_gpt6_model:
+        elif not restricted_sampling:
             payload["temperature"] = request.temperature
         if request.tools:
             payload["tools"] = [tool.openai_responses_schema() for tool in request.tools]

@@ -238,14 +238,39 @@ class PortableContractsTests(unittest.TestCase):
         )
         self.assertNotIn("temperature", provider._post.call_args.args[1])
 
-    def test_responses_adapter_rejects_gpt6_none_reasoning_effort(self):
+    def test_responses_adapter_rejects_gpt6_astra_none_and_minimal_reasoning(self):
         provider = OpenAIResponsesProvider("test-key")
+        for effort in ("none", "minimal"):
+            with self.subTest(effort=effort), self.assertRaises(ProviderFailure) as raised:
+                provider.complete(
+                    ModelRequest(messages=({"role": "user", "content": "answer"},), reasoning_effort=effort),
+                    "gpt-6-astra",
+                )
+            self.assertEqual(raised.exception.category, "unsupported_reasoning_effort")
+
+    def test_gpt6_luna_can_use_none_reasoning_and_sampling(self):
+        provider = OpenAIResponsesProvider("test-key")
+        provider._post = Mock(return_value={
+            "id": "resp-luna", "model": "gpt-6-luna",
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": "answer"}]}],
+        })
+        provider.complete(
+            ModelRequest(messages=({"role": "user", "content": "answer"},), reasoning_effort="none", temperature=0.7),
+            "gpt-6-luna",
+        )
+        payload = provider._post.call_args.args[1]
+        self.assertEqual(payload["reasoning"]["effort"], "none")
+        self.assertEqual(payload["temperature"], 0.7)
+
+    def test_gpt6_sol_chat_tools_allow_only_none_effort(self):
+        provider = OpenAICompatibleProvider("test-key", "http://127.0.0.1:20128/v1")
+        tool = FunctionTool("lookup", "Lookup", {"type": "object", "properties": {}}, lambda _args: "ok")
         with self.assertRaises(ProviderFailure) as raised:
             provider.complete(
-                ModelRequest(messages=({"role": "user", "content": "answer"},), reasoning_effort="none"),
-                "gpt-6-astra",
+                ModelRequest(messages=({"role": "user", "content": "look"},), tools=(tool,), reasoning_effort="high"),
+                "gpt-6-sol",
             )
-        self.assertEqual(raised.exception.category, "unsupported_reasoning_effort")
+        self.assertEqual(raised.exception.category, "chat_tool_calling_requires_none")
 
     def test_responses_adapter_emits_native_function_call_and_reasoning_effort(self):
         provider = OpenAIResponsesProvider("test-key")
