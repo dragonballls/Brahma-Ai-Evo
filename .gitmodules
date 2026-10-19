@@ -1,0 +1,3 @@
+[submodule "external/gods-eye-view"]
+	path = external/gods-eye-view
+	url = https://github.com/bilawalsidhu/gods-eye-view.git

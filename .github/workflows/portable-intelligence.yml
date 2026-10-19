@@ -1,0 +1,52 @@
+name: Portable Intelligence Contract Tests
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "core/portable_intelligence/**"
+      - "tests/test_portable_intelligence.py"
+      - "docs/PORTABLE_ELITE_INTELLIGENCE.md"
+      - ".github/workflows/portable-intelligence.yml"
+  push:
+    branches:
+      - "main"
+    paths:
+      - "core/portable_intelligence/**"
+      - "tests/test_portable_intelligence.py"
+      - "docs/PORTABLE_ELITE_INTELLIGENCE.md"
+      - ".github/workflows/portable-intelligence.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: portable-intelligence-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract-tests:
+    name: Provider and voice contracts (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install minimal dependencies
+        run: python -m pip install --disable-pip-version-check requests
+      - name: Compile new package, runners, and tests
+        run: python -m compileall -q core/portable_intelligence scripts/portable_intelligence_benchmark.py scripts/portable_intelligence_compare.py tests/test_portable_intelligence.py
+      - name: Validate benchmark CLIs without network calls
+        run: |
+          python scripts/portable_intelligence_benchmark.py --help
+          python scripts/portable_intelligence_compare.py --help
+      - name: Run provider, budget, tool, evaluation and voice tests
+        run: python -m unittest tests.test_portable_intelligence -v

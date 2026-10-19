@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "description": "Copy this file to a private local config and replace model placeholders. API key values belong only in environment variables.",
+  "providers": [
+    {
+      "id": "openai_astra",
+      "adapter": "openai_responses",
+      "model": "gpt-6-astra",
+      "model_env": "OPENAI_RESPONSES_MODEL",
+      "api_key_env": "OPENAI_API_KEY",
+      "base_url": "https://api.openai.com/v1",
+      "priority": 10,
+      "capabilities": ["text", "tools", "vision"]
+    },
+    {
+      "id": "anthropic",
+      "adapter": "anthropic_messages",
+      "model": "YOUR_ANTHROPIC_MODEL",
+      "model_env": "ANTHROPIC_MODEL",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "base_url": "https://api.anthropic.com/v1",
+      "priority": 20,
+      "capabilities": ["text", "tools", "vision"]
+    },
+    {
+      "id": "gemini",
+      "adapter": "gemini_generate_content",
+      "model": "YOUR_GEMINI_MODEL",
+      "model_env": "GEMINI_MODEL",
+      "api_key_env": "GEMINI_API_KEY",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta",
+      "priority": 30,
+      "capabilities": ["text", "tools", "vision"]
+    },
+    {
+      "id": "omniroute",
+      "adapter": "openai_compatible",
+      "model": "auto/smart",
+      "model_env": "OMNIROUTE_MODEL",
+      "api_key_env": "OMNIROUTE_API_KEY",
+      "base_url": "http://127.0.0.1:20128/v1",
+      "priority": 40,
+      "capabilities": ["text", "tools", "vision"]
+    }
+  ]
+}

@@ -267,12 +267,16 @@ def _collect_briefing_intel(category: str, city: Optional[str]) -> Dict[str, Any
         "headlines": [],
     }
     results_queue: queue.Queue = queue.Queue()
+    start_gate = threading.Event()
 
     def collect(name: str, collector) -> None:
+        # A gate lets every worker start together, avoiding order-dependent time budgets.
+        start_gate.wait()
         try:
-            results_queue.put((name, collector()))
+            value = collector()
         except Exception as exc:
-            results_queue.put((name, exc))
+            value = exc
+        results_queue.put((name, value, time.monotonic()))
 
     for name, collector in collectors.items():
         threading.Thread(
@@ -282,19 +286,24 @@ def _collect_briefing_intel(category: str, city: Optional[str]) -> Dict[str, Any
             name=f"briefing-{name}",
         ).start()
 
+    # Every worker is waiting at the gate, so they receive the same fetch budget.
+    deadline = time.monotonic() + BRIEFING_FETCH_TIMEOUT_SECONDS
+    start_gate.set()
+
     results = {}
     pending = set(collectors)
-    deadline = time.monotonic() + BRIEFING_FETCH_TIMEOUT_SECONDS
     while pending:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
         try:
-            name, value = results_queue.get(timeout=remaining)
+            name, value, completed_at = results_queue.get(timeout=remaining)
         except queue.Empty:
             break
         pending.discard(name)
-        if isinstance(value, Exception):
+        if completed_at > deadline:
+            print(f"[DailyBriefing] {name.title()} collection timed out.")
+        elif isinstance(value, Exception):
             print(f"[DailyBriefing] {name.title()} collection failed: {value}")
         else:
             results[name] = value
