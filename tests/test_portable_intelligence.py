@@ -21,7 +21,8 @@ from core.portable_intelligence.providers import (
     OpenAIResponsesProvider, validate_base_url,
 )
 from core.portable_intelligence.voice import (
-    BoundedPlaybackBuffer, GPTLiveVoiceAdapter, OpenAIRealtimeVoiceAdapter, VoicePolicy,
+    BoundedPlaybackBuffer, GPTLiveVoiceAdapter, LiveDelegationCoordinator,
+    OpenAIRealtimeVoiceAdapter, VoiceEvent, VoicePolicy,
 )
 
 
@@ -390,6 +391,103 @@ class PortableContractsTests(unittest.TestCase):
             self.assertIsNone(adapter.finalization_error)
             self.assertEqual(adapter.last_usage["seconds"], 4)
             adapter.close()
+
+
+    def test_live_delegation_coordinator_builds_context_and_delivers_once(self):
+        coordinator = LiveDelegationCoordinator()
+        coordinator.observe(VoiceEvent("transcript_delta", {
+            "text": "Can you check my schedule? ",
+            "source_type": "session.input_transcript.delta",
+            "start_ms": 0, "end_ms": 500,
+        }))
+        coordinator.observe(VoiceEvent("transcript_delta", {
+            "text": "I meant tomorrow, not today.",
+            "source_type": "session.input_transcript.delta",
+            "start_ms": 510, "end_ms": 900,
+        }))
+        task_id = coordinator.observe(VoiceEvent("delegation", {
+            "delegation_id": "task-live-1", "target": "client", "offset_ms": 900,
+        }))
+        self.assertEqual(task_id, "task-live-1")
+        self.assertIsNone(coordinator.observe(VoiceEvent("delegation", {
+            "delegation_id": "task-live-1", "target": "client", "offset_ms": 900,
+        })))
+        context = coordinator.context_for(
+            task_id, application_context="Selected calendar: personal"
+        )
+        self.assertIn("tomorrow, not today", context)
+        self.assertIn("Selected calendar: personal", context)
+
+        provider = FakeProvider("one", "Your calendar is clear tomorrow.")
+        engine = ReasoningEngine({"one": provider}, [make_route("one", "model")])
+
+        class Sink:
+            def __init__(self):
+                self.results = []
+            def append_delegation_result(self, delegation_id, content, *, spoken=True):
+                self.results.append((delegation_id, content, spoken))
+
+        sink = Sink()
+        result = coordinator.run_delegation(
+            task_id, engine, sink, application_context="Selected calendar: personal"
+        )
+        self.assertEqual(result.text, "Your calendar is clear tomorrow.")
+        self.assertEqual(coordinator.status(task_id), "delivered")
+        self.assertEqual(len(sink.results), 1)
+        with self.assertRaises(RuntimeError):
+            coordinator.run_delegation(task_id, engine, sink)
+
+    def test_live_delegation_delivery_retry_does_not_repeat_backend_call(self):
+        coordinator = LiveDelegationCoordinator()
+        coordinator.observe(VoiceEvent("transcript_delta", {
+            "text": "Summarize the notes.",
+            "source_type": "session.input_transcript.delta",
+            "start_ms": 0, "end_ms": 200,
+        }))
+        task_id = coordinator.observe(VoiceEvent("delegation", {
+            "delegation_id": "task-live-2", "target": "client", "offset_ms": 200,
+        }))
+        provider = FakeProvider("one", "Notes summarized.")
+        engine = ReasoningEngine({"one": provider}, [make_route("one", "model")])
+
+        class FailsOnceSink:
+            def __init__(self):
+                self.calls = 0
+                self.results = []
+            def append_delegation_result(self, delegation_id, content, *, spoken=True):
+                self.calls += 1
+                if self.calls == 1:
+                    raise RuntimeError("socket is disconnected")
+                self.results.append((delegation_id, content, spoken))
+
+        sink = FailsOnceSink()
+        with self.assertRaises(RuntimeError):
+            coordinator.run_delegation(task_id, engine, sink)
+        self.assertEqual(coordinator.status(task_id), "result_ready")
+        self.assertEqual(len(provider.calls), 1)
+        coordinator.deliver_result(task_id, sink)
+        self.assertEqual(coordinator.status(task_id), "delivered")
+        self.assertEqual(len(provider.calls), 1)
+        self.assertEqual(sink.results[0][1], "Notes summarized.")
+
+    def test_live_delegation_ignores_non_client_and_bounds_transcript(self):
+        coordinator = LiveDelegationCoordinator(max_segments=2, max_transcript_chars=1000)
+        self.assertIsNone(coordinator.observe(VoiceEvent("delegation", {
+            "delegation_id": "responses-owned", "target": "responses",
+        })))
+        coordinator.observe(VoiceEvent("transcript_delta", {
+            "text": "A", "source_type": "session.input_transcript.delta",
+            "start_ms": 0, "end_ms": 1,
+        }))
+        coordinator.observe(VoiceEvent("transcript_delta", {
+            "text": "B", "source_type": "session.output_transcript.delta",
+            "start_ms": 2, "end_ms": 3,
+        }))
+        coordinator.observe(VoiceEvent("transcript_delta", {
+            "text": "C", "source_type": "session.input_transcript.delta",
+            "start_ms": 4, "end_ms": 5,
+        }))
+        self.assertLessEqual(len(coordinator.transcript_snapshot()), 2)
 
     def test_gpt_live_close_reports_unconfirmed_usage_when_terminal_event_is_missing(self):
         class FakeSocket:
