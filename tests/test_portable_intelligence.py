@@ -683,7 +683,9 @@ class PortableContractsTests(unittest.TestCase):
             policy=RunPolicy(strategy="ensemble", max_candidate_calls=2, max_critic_calls=0, max_total_model_calls=3),
         )
         engine.answer("compare these", strategy="ensemble")
-        self.assertEqual(len(first.calls), 1)
+        # The first provider answers its candidate and can also be selected for
+        # synthesis when no unused provider family remains; its alias is never called.
+        self.assertEqual(len(first.calls), 2)
         self.assertEqual(len(duplicate.calls), 0)
         self.assertGreaterEqual(len(independent.calls), 1)
 

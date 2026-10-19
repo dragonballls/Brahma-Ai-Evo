@@ -103,7 +103,13 @@ class ReasoningEngine:
     def _ask(self, routes: Sequence[Route], request: ModelRequest, meter: _Meter,
              stage: str) -> tuple[ModelReply, Route]:
         errors: list[Exception] = []
+        seen_groups: set[str] = set()
         for route in routes:
+            adapter = self.providers[route.provider_id]
+            group = str(route.diversity_group or getattr(adapter, "diversity_group", route.provider_id) or route.provider_id)
+            if group in seen_groups:
+                continue
+            seen_groups.add(group)
             for attempt in range(self.policy.retry_attempts):
                 try:
                     return self._call_one(route, request, meter, stage), route
