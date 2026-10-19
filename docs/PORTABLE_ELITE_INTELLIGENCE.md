@@ -80,3 +80,5 @@ Provider availability and model/API fields can change. An API key is necessary b
 - Do not wire this into the default runtime until CI passes, live-provider checks are recorded, and performance/cost regressions are reviewed.
 
 Host integrations may adapt their already-authorized in-memory credentials into CredentialSpec and pass them through merge_credential_specs({'abacus': ..., 'omniroute': ..., 'direct': ...}). The library does not read another application's private config on its own. Duplicate provider/endpoint/key fingerprints collapse when building the pools.
+
+GPT-Live event IDs include a per-connection session nonce and task/content identity. Reusing an adapter starts a fresh session, clears stale delegation IDs and result-delivery cursors, and drops prior session usage. A client delegation from an earlier session cannot authorize a result in a later one.

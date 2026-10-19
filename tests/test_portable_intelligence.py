@@ -794,6 +794,56 @@ class PortableContractsTests(unittest.TestCase):
         self.assertNotIn("test-key-", serialized)
         self.assertNotIn("api_key\":", serialized)
 
+
+    def test_gpt_live_uses_unique_event_ids_across_delegations_and_resets_on_reconnect(self):
+        class Socket:
+            def __init__(self, session_number):
+                self.sent = []
+                self.incoming = [json.dumps({
+                    "type": "session.started",
+                    "session": {"id": f"live-session-{session_number}"},
+                })]
+            def send(self, value):
+                self.sent.append(json.loads(value))
+            def settimeout(self, _value):
+                pass
+            def recv(self):
+                if not self.incoming:
+                    raise RuntimeError("unexpected receive")
+                return self.incoming.pop(0)
+            def close(self):
+                pass
+
+        first = Socket(1)
+        second = Socket(2)
+        fake_websocket = SimpleNamespace(
+            create_connection=Mock(side_effect=[first, second]),
+            WebSocketTimeoutException=type("WebSocketTimeoutException", (Exception,), {}),
+        )
+        with patch.dict(sys.modules, {"websocket": fake_websocket}):
+            adapter = GPTLiveVoiceAdapter("test-key")
+            adapter.connect()
+            adapter.receive_event()  # consume the queued session.started event
+            adapter._known_delegations.update({"delegation-a", "delegation-b"})
+            adapter.append_delegation_result("delegation-a", "Same verified answer.")
+            adapter.append_delegation_result("delegation-b", "Same verified answer.")
+            result_events = [
+                item for item in first.sent
+                if item["type"] == "session.commentary.append"
+            ]
+            self.assertEqual(len(result_events), 2)
+            self.assertNotEqual(result_events[0]["event_id"], result_events[1]["event_id"])
+            first_nonce = adapter._session_nonce
+            adapter.close()
+            adapter.connect()
+            self.assertNotEqual(first_nonce, adapter._session_nonce)
+            self.assertFalse(adapter.session_closed_confirmed)
+            with self.assertRaises(ValueError):
+                adapter.append_delegation_result("delegation-a", "stale result")
+            self.assertEqual(second.sent[0]["type"], "session.start")
+            self.assertNotEqual(first.sent[0]["event_id"], second.sent[0]["event_id"])
+            adapter.close()
+
     def test_gpt_live_long_delegation_is_split_and_retry_resumes_after_accepted_chunks(self):
         class Socket:
             def __init__(self):

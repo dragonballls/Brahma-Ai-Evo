@@ -162,6 +162,7 @@ class GPTLiveVoiceAdapter:
         self._socket: Any = None
         self._started = False
         self._closed = False
+        self._session_nonce = uuid.uuid4().hex[:12]
         self._final_usage_confirmed = False
         self._finalization_error: str | None = None
         self._known_delegations: set[str] = set()
@@ -189,6 +190,18 @@ class GPTLiveVoiceAdapter:
     def connect(self) -> None:
         if self._socket is not None:
             return
+        # Reused adapters start a fresh session; state from an old session must
+        # never authorize a delegation or suppress result delivery in the new one.
+        self._started = False
+        self._closed = False
+        self._session_nonce = uuid.uuid4().hex[:12]
+        self._final_usage_confirmed = False
+        self._finalization_error = None
+        self._known_delegations.clear()
+        self._sent_result_chunks.clear()
+        self._last_usage = None
+        self._pending.clear()
+        self.playback.interrupt()
         try:
             import websocket
         except ImportError as exc:
@@ -203,7 +216,7 @@ class GPTLiveVoiceAdapter:
         try:
             self._send({
                 "type": "session.start",
-                "event_id": "brahma_session_start",
+                "event_id": f"brahma_session_start_{self._session_nonce}",
                 "session": {
                     "model": self.model,
                     "instructions": self.instructions,
@@ -352,7 +365,7 @@ class GPTLiveVoiceAdapter:
         if task_id not in self._known_delegations:
             raise ValueError("delegation_id must refer to an active client delegation from this session.")
         chunks = _split_live_content(content)
-        digest = hashlib.sha256("\0".join(chunks).encode("utf-8")).hexdigest()[:24]
+        digest = hashlib.sha256((task_id + "\0" + "\0".join(chunks)).encode("utf-8")).hexdigest()[:24]
         delivery_key = (task_id, digest)
         event_kind = "session.commentary.append" if spoken else "session.thinking.append"
         # Retry starts after locally accepted chunks; the currently failing chunk
@@ -364,7 +377,7 @@ class GPTLiveVoiceAdapter:
             for index in range(start, len(chunks)):
                 self._send({
                     "type": event_kind,
-                    "event_id": f"brahma_result_{digest}_{index:04d}",
+                    "event_id": f"brahma_result_{self._session_nonce}_{digest}_{index:04d}",
                     "delegation_id": task_id,
                     "content": chunks[index],
                 })
